@@ -1,0 +1,13 @@
+{
+  "localIpcChannelClass": 1,
+  "mapping": {
+    "1": 1,
+    "2": 1,
+    "3": 1,
+    "4": 1,
+    "5": 1,
+    "6": 1
+  },
+  "maxFrameBytes": 65535,
+  "maxFrameContentBytes": 65515
+}

@@ -1,0 +1,61 @@
+{
+  "schema": "hiverelay-vnext-blind-v3-staged-put-gate-v1",
+  "createdAt": "2026-07-12T15:40:38Z",
+  "sourceAudit": "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json",
+  "sourceV1Candidate": "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/docs/vnext/blind-protocol-v1-field-remediation.json",
+  "custodyRoot": "00-core/vnext-custody/blind-v3-staged-put-20260712-70e85f9",
+  "base": "065e1a8c457658b72ea627a8ae1f0f2b3b86dd8d",
+  "tip": "70e85f90bdbe811c379bfce02075d4491c67d0e6",
+  "branch": "fix/blind-v3-staged-put",
+  "bundle": {
+    "file": "blind-v3-staged-put-20260712.bundle",
+    "sha256": "79d54047228f32f2e6dbc74a5b5291b8c02e29c5e91c85b841f662b140eaa494",
+    "completeHistory": true,
+    "verified": true
+  },
+  "result": {
+    "gate": "V-3/CR-2",
+    "status": "targeted-pass",
+    "realStack": true,
+    "maximumCanonicalCellPut": {
+      "sizeClass": 5,
+      "cellBytes": 1048576,
+      "admissionTokenBytes": 4096,
+      "canonicalBodyBytes": 1052974
+    },
+    "invalidAdmissionOutcome": "SPEND_INVALID",
+    "proofChecks": 1,
+    "bodyPulls": 0,
+    "stageOpaqueCalls": 0,
+    "stagingByteDelta": 0,
+    "walSequenceDelta": 0,
+    "walFileByteDelta": 0,
+    "walRecordEvents": 0,
+    "operationFsyncEvents": 0
+  },
+  "verification": {
+    "independentReview": "no-blocking-findings",
+    "focused": "11/11 tests; 119/119 assertions",
+    "adjacentRegression": "72/72 tests; 484/484 assertions",
+    "standard": "pass",
+    "diffCheck": "pass",
+    "fullBlindBoundary": "not-rerun-unsandboxed-after-sandbox-only-unix-socket-eperm",
+    "browserArtifact": "blocked-by-inherited-authority-drift"
+  },
+  "residualLimitations": [
+    "The gate is in-process rather than the real IPC/socket stream",
+    "Invalidity is injected by a verifier adapter returning null rather than a concrete proof scheme",
+    "Fsync observation uses transaction-store hooks rather than syscall interception",
+    "Protocol V-1 and the remaining CR controls are still open",
+    "D-6, D-7, and PG-2 still prohibit final hashes or protocol freeze"
+  ],
+  "authorityPolicy": {
+    "v3TargetedGatePassed": true,
+    "protocolFreezePassed": false,
+    "regenerateBrowserAuthorityNow": false,
+    "regenerateFinalHashesNow": false,
+    "mergeAllowed": false,
+    "releaseAllowed": false,
+    "deploymentAllowed": false
+  }
+}

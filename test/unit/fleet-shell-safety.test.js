@@ -2,15 +2,59 @@ import test from 'brittle'
 import { readFileSync } from 'node:fs'
 
 const updater = readFileSync('fleet/updater.sh', 'utf8')
+const updaterLauncher = readFileSync('fleet/updater-launcher.sh', 'utf8')
+const updaterInstaller = readFileSync('fleet/install-updater.sh', 'utf8')
+const updaterService = readFileSync('fleet/hiverelay-updater.service', 'utf8')
+const gatewayQuarantine = readFileSync('fleet/quarantine-public-gateway.sh', 'utf8')
 const fleetStatus = readFileSync('fleet/fleet-status.sh', 'utf8')
 const deployVps = readFileSync('scripts/deploy-vps.sh', 'utf8')
 const rolloutCheck = readFileSync('scripts/check-fleet-rollout.mjs', 'utf8')
 const relayJanitor = readFileSync('scripts/relay-janitor.js', 'utf8')
 const cli = readFileSync('packages/core/cli/index.js', 'utf8')
 
-test('fleet scripts pass channel names into JSON parsing as data', (t) => {
-  t.ok(updater.includes('CHANNEL="$CHANNEL" python3 -c'))
-  t.ok(updater.includes('os.environ["CHANNEL"]'))
+test('fleet updater installation executes only an exact signed-checkout updater', (t) => {
+  const blobGate = 'fleet/updater.sh differs from the signed checkout'
+  const tagGate = 'is not an allowed-signer-verified release tag'
+  const execUpdater = 'exec /bin/bash --noprofile --norc "$UPDATER" "$@"'
+
+  t.ok(updaterInstaller.includes('install -m 0755 "$SRC/updater-launcher.sh" "$BIN_DIR/hiverelay-updater"'))
+  t.absent(updaterInstaller.includes('install -m 0755 "$SRC/updater.sh"'),
+    'the mutable installed copy is gone')
+  t.ok(updaterLauncher.includes("rev-parse --verify 'HEAD:fleet/updater.sh'"))
+  t.ok(updaterLauncher.includes('hash-object --no-filters "$UPDATER"'))
+  t.ok(updaterLauncher.includes('verify-tag --raw "$tag"'))
+  t.ok(updaterLauncher.includes('gpg.ssh.program=/usr/bin/ssh-keygen'))
+  t.ok(updaterLauncher.includes(blobGate))
+  t.ok(updaterLauncher.includes(tagGate))
+  t.ok(updaterLauncher.indexOf(blobGate) < updaterLauncher.indexOf(execUpdater))
+  t.ok(updaterLauncher.indexOf(tagGate) < updaterLauncher.indexOf(execUpdater))
+  t.absent(updaterLauncher.includes('source "$CONF"'))
+  t.absent(updaterLauncher.includes('. "$CONF"'))
+})
+
+test('fleet updater service requires the preserved root-only runtime environment', (t) => {
+  t.ok(updaterService.includes('ExecStart=/usr/bin/env -i HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin /bin/bash --noprofile --norc /usr/local/bin/hiverelay-updater'))
+  t.absent(updaterService.includes('EnvironmentFile='),
+    'systemd never imports unchecked updater data into the root process environment')
+  t.ok(updaterInstaller.includes('ENV_FILE="$ENV_DIR/hiverelay-updater.env"'))
+  t.ok(updaterInstaller.includes('chmod 0600 "$ENV_TMP"'))
+  t.ok(updaterService.includes('StateDirectory=hiverelay-updater'))
+  t.ok(updaterService.includes('StateDirectoryMode=0700'))
+  t.ok(updaterInstaller.includes('quarantined unsafe updater environment path'))
+  t.ok(updaterInstaller.includes("printf 'CHANNEL=%s\\nRELAY_NAME=%s\\nREPO_DIR=%s\\n'"))
+  t.ok(updaterInstaller.includes('install -m 0755 "$SRC/quarantine-public-gateway.sh"'))
+  t.absent(updaterInstaller.includes('printf \'HIVERELAY_PUBLIC_GATEWAY_'),
+    'installer never regenerates operator gateway settings')
+})
+
+test('fleet updater accepts channel authority only from signed monotonic Git control', (t) => {
+  t.ok(updater.includes('scripts/resolve-signed-fleet-channel.mjs'))
+  t.ok(updater.includes('--channel "$CHANNEL"'))
+  t.ok(updater.includes('--state "$CONTROL_STATE"'))
+  t.ok(updater.includes('--installed-head "$CUR_SHA"'))
+  t.absent(updater.includes('HIVERELAY_CHANNELS_URL'))
+  t.absent(updater.includes('raw.githubusercontent.com'))
+  t.absent(updater.includes('cannot fetch channels.json'))
   t.ok(fleetStatus.includes('CHANNEL="$channel" python3 -c'))
   t.ok(fleetStatus.includes('os.environ["CHANNEL"]'))
   t.absent(fleetStatus.includes(".get('$channel'"))
@@ -23,6 +67,10 @@ test('fleet updater routes dependency-install failures through rollback', (t) =>
   t.ok(updater.includes('if ! git checkout --quiet "$CUR_SHA"; then'))
   t.ok(updater.includes('CRITICAL could not checkout previous SHA'))
   t.ok(updater.includes('if ! deps_if_changed "$TARGET_SHA" "$CUR_SHA"; then'))
+  t.ok(updater.includes('npm ci --omit=dev --no-audit --no-fund'))
+  t.absent(updater.includes('npm install --omit=dev'), 'npm ci failure cannot fall back to a non-lockfile install')
+  t.ok(updater.includes('verify_raw_tracked_tree || rollback_to_previous "dependency install changed tracked release bytes on $TARGET"'))
+  t.ok(updater.includes('if ! verify_raw_tracked_tree; then'))
   t.absent(updater.includes('git checkout --quiet "$CUR_SHA" || log "CRITICAL could not checkout previous SHA"'))
 })
 
@@ -37,6 +85,117 @@ test('fleet updater health-gates target and rollback runtime versions', (t) => {
   t.ok(updater.includes(targetHealthGate))
   t.ok(updater.includes(rollbackHealthGate))
   t.absent(updater.includes('if healthy; then'))
+})
+
+test('signed manifest cohort forces exact preflight and evidence bindings', (t) => {
+  const dollar = '$'
+  const probeInvocation = 'HIVERELAY_API_KEY="$key" timeout "$PUBLIC_GATEWAY_PROBE_TIMEOUT" "' + dollar + '{probe_args[@]}"'
+  const verifyIndex = updater.indexOf('verify_tag "$TARGET"')
+  const manifestIndex = updater.indexOf('resolve_public_gateway_contract', verifyIndex)
+
+  t.ok(updater.includes('RELAY_NAME is required in $CONF'))
+  t.ok(updater.includes('PUBLIC_GATEWAY_REQUIRED=0'))
+  t.ok(updater.includes('git ls-tree --name-only "$TARGET_SHA" -- "$PUBLIC_GATEWAY_MANIFEST_PATH"'))
+  t.ok(updater.includes('git show "$TARGET_SHA:$PUBLIC_GATEWAY_MANIFEST_PATH"'))
+  t.ok(updater.includes('scripts/resolve-public-hive-gateway-node.mjs'))
+  t.ok(verifyIndex !== -1 && manifestIndex > verifyIndex,
+    'target trust is established before signed policy is interpreted')
+  t.ok(updater.includes('[ "$PUBLIC_GATEWAY_REQUIRED" = 1 ] || return 0'))
+  t.ok(updater.includes('scripts/preflight-public-hive-gateway.mjs'))
+  t.ok(updater.includes('scripts/verify-public-hive-gateway-evidence.mjs'))
+  t.ok(updater.includes('PUBLIC_GATEWAY_DEPLOYMENT_PROFILE="legacy"'))
+  t.ok(updater.includes('PUBLIC_GATEWAY_OPERATOR_CONTRACT_SHA256="-"'))
+  t.ok(updater.includes('public-t1-gateway)'))
+  t.ok(updater.includes('PUBLIC_GATEWAY_OPS_REQUIRED=1'))
+  t.ok(updater.includes('--require-public-t1'))
+  t.ok(updater.includes('enabled public gateway updater cohort must use public-t1-gateway'))
+  t.ok(updater.includes('scripts/preflight-public-hive-gateway-ops.mjs'))
+  t.ok(updater.includes('scripts/verify-public-hive-gateway-ops-evidence.mjs'))
+  t.ok(updater.includes('[[ "$PUBLIC_GATEWAY_PROBE_EVIDENCE" != /* ]]'))
+  t.ok(updater.includes('[ "$PUBLIC_GATEWAY_PROBE_PUBLIC_SUFFIX_READY" != "0" ]'))
+  t.ok(updater.includes('--mode fleet'))
+  t.ok(updater.includes('--probe-origin "$PUBLIC_GATEWAY_EXPECTED_ORIGIN"'))
+  t.ok(updater.includes('--connect-address "$PUBLIC_GATEWAY_EXPECTED_CONNECT_ADDRESS"'))
+  t.ok(updater.includes('--app-key "$PUBLIC_GATEWAY_EXPECTED_APP_KEY"'))
+  t.ok(updater.includes('--path "$PUBLIC_GATEWAY_EXPECTED_PATH"'))
+  t.ok(updater.includes('--nginx-config "$PUBLIC_GATEWAY_PROBE_NGINX_CONFIG"'))
+  t.ok(updater.includes('--nginx-binary "$PUBLIC_GATEWAY_PROBE_NGINX_BINARY"'))
+  t.ok(updater.includes('--expected-sha256 "$PUBLIC_GATEWAY_EXPECTED_SHA256"'))
+  t.ok(updater.includes('--evidence "$PUBLIC_GATEWAY_PROBE_EVIDENCE"'))
+  t.ok(updater.includes('[ "$PUBLIC_GATEWAY_PROBE_PUBLIC_SUFFIX_READY" != "1" ] || probe_args+=(--public-suffix-ready)'))
+  t.ok(updater.includes('--release-target "$TARGET"'))
+  t.ok(updater.includes('--release-sha "$TARGET_SHA"'))
+  t.ok(updater.includes('--require-admission-profile "$PUBLIC_GATEWAY_ADMISSION_PROFILE"'))
+  t.ok(updater.includes('--expected-drive-version "$PUBLIC_GATEWAY_EXPECTED_DRIVE_VERSION"'))
+  t.ok(updater.includes('--expected-peer-fingerprint256 "$PUBLIC_GATEWAY_EXPECTED_PEER_FINGERPRINT256"'))
+  t.ok(updater.includes('--expected-nginx-sha256 "$PUBLIC_GATEWAY_EXPECTED_NGINX_SHA256"'))
+  t.ok(updater.includes('--release-manifest "$release_manifest"'))
+  t.ok(updater.includes('--expected-contract-sha256 "$PUBLIC_GATEWAY_OPERATOR_CONTRACT_SHA256"'))
+  t.ok(updater.includes('--dns-live'))
+  t.ok(updater.includes('--ss-binary "$PUBLIC_GATEWAY_OPS_SS_BINARY"'))
+  t.ok(updater.includes(probeInvocation))
+  t.absent(updater.includes('env HIVERELAY_API_KEY='), 'API key is not exposed in child argv')
+  for (const retired of [
+    'HIVERELAY_PUBLIC_GATEWAY_PROBE_ORIGIN',
+    'HIVERELAY_PUBLIC_GATEWAY_PROBE_CONNECT_ADDRESS',
+    'HIVERELAY_PUBLIC_GATEWAY_PROBE_APP_KEY',
+    'HIVERELAY_PUBLIC_GATEWAY_PROBE_PATH',
+    'HIVERELAY_PUBLIC_GATEWAY_PROBE_SHA256',
+    'HIVERELAY_PUBLIC_GATEWAY_PROBE_MODE'
+  ]) t.absent(updater.includes(retired), `${retired} cannot weaken or redirect signed policy`)
+})
+
+test('fleet updater contains both same-release and failed public-t1 transition edges', (t) => {
+  const targetHealthGate = 'if healthy "' + '$' + '{TARGET#v}"; then'
+  const gatewayGate = 'public_gateway_healthy || rollback_to_previous "public HTTPS gateway probe failed on ' + '$' + 'TARGET"'
+  const successLog = 'log "OK updated ' + '$' + 'CUR_VER -> ' + '$' + 'TARGET — health green"'
+  const rollbackHealthGate = 'if healthy "' + '$' + '{CUR_VER#v}"; then'
+  const noOpBranch = 'if [ "$UP_TO_DATE" = 1 ]; then'
+  const containCall = 'if contain_up_to_date_gateway_failure; then'
+
+  const noOpIndex = updater.lastIndexOf(noOpBranch)
+  const noOpProbeIndex = updater.indexOf('if ! public_gateway_healthy; then', noOpIndex)
+  const containmentIndex = updater.indexOf(containCall, noOpIndex)
+  const targetHealthIndex = updater.indexOf(targetHealthGate)
+  const gatewayGateIndex = updater.indexOf(gatewayGate)
+  const successIndex = updater.indexOf(successLog)
+  const rollbackFunctionIndex = updater.indexOf('rollback_to_previous()')
+  const rollbackHealthIndex = updater.indexOf(rollbackHealthGate, rollbackFunctionIndex)
+  const updateSectionIndex = updater.indexOf('# ── update')
+
+  t.ok(noOpIndex > rollbackFunctionIndex, 'same-release decision runs after the probe helper exists')
+  t.ok(noOpProbeIndex > noOpIndex && noOpProbeIndex < updateSectionIndex,
+    'same-release tick refreshes gateway evidence before exiting')
+  t.ok(containmentIndex > noOpProbeIndex && containmentIndex < updateSectionIndex,
+    'same-release probe failure enters narrow containment')
+  t.absent(updater.slice(noOpIndex, updateSectionIndex).includes('rollback_to_previous'),
+    'same-release probe failure cannot enter rollback')
+  t.absent(updater.slice(noOpIndex, updateSectionIndex).includes('systemctl'),
+    'same-release containment does not stop or restart management service')
+  t.ok(updater.includes('hiverelay-public-gateway-evidence-invalid-v1'))
+  t.ok(updater.includes('hiverelay-public-gateway-operator-readiness-invalid-v1'))
+  t.ok(updater.indexOf('invalidate_public_gateway_evidence ||') < updater.indexOf('quarantine_public_gateway_edge ||'))
+  t.ok(updater.indexOf('invalidate_public_gateway_evidence ||') <
+    updater.indexOf('invalidate_public_gateway_ops_evidence ||'))
+  t.ok(updater.indexOf('invalidate_public_gateway_ops_evidence ||') <
+    updater.indexOf('quarantine_public_gateway_edge ||'))
+  t.ok(updater.includes('management API left running'))
+  t.absent(gatewayQuarantine.includes('systemctl'))
+  t.absent(gatewayQuarantine.includes('sudo'))
+  t.ok(gatewayQuarantine.includes('return 421;'))
+  t.ok(gatewayQuarantine.includes('"$NGINX_BINARY" "$@"'))
+  t.ok(gatewayQuarantine.includes('run_trusted_nginx -t'))
+  t.ok(gatewayQuarantine.includes('run_trusted_nginx -s reload'))
+  t.ok(targetHealthIndex > updateSectionIndex, 'target health gate is in the update path')
+  t.ok(gatewayGateIndex > targetHealthIndex, 'gateway probe follows target API health')
+  t.ok(successIndex > gatewayGateIndex, 'success is declared only after the gateway probe')
+  t.ok(rollbackHealthIndex > rollbackFunctionIndex && rollbackHealthIndex < updateSectionIndex,
+    'rollback retains its independent API-only health gate')
+  t.absent(updater.slice(rollbackFunctionIndex, noOpIndex).includes('public_gateway_healthy'),
+    'rollback function never invokes the public gateway probe')
+  t.ok(updater.slice(rollbackFunctionIndex, noOpIndex).includes('contain_up_to_date_gateway_failure'),
+    'failed public-t1 transitions contain the public edge before code rollback')
+  t.ok(updater.includes('public edge remains quarantined pending refreshed previous-release manifest/config/nginx/DNS/TLS/SPKI/socket/content evidence'))
 })
 
 test('deploy script keeps API keys out of world-readable systemd units', (t) => {

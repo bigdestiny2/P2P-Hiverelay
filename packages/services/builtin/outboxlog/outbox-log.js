@@ -34,6 +34,12 @@ export const DEFAULT_MAX_DIRECTORY_LIMIT = 5000
 export const DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX = 1000
 export const DEFAULT_MAX_APPEND_EVENT_LIMIT = 1000
 export const DEFAULT_CHECKPOINT_INTERVAL = 256
+// caps.bytesPerDay: rolling 24h ingest window per namespace (NOT calendar-day).
+// Uncapped by default — the engine-level fallback only bites when an operator
+// sets a finite global maxBytesPerDay; a per-namespace cap resolves as
+// min(namespace cap, global fallback), like the other namespace caps.
+export const OUTBOXLOG_BYTE_WINDOW_MS = 24 * 60 * 60 * 1000
+export const DEFAULT_MAX_BYTES_PER_DAY = Number.MAX_SAFE_INTEGER
 // App-neutral default namespace. Registered apps SHOULD pass an explicit
 // namespace; this fallback exists only so an operator who configures nothing
 // still gets a working single-namespace registry. It is intentionally NOT
@@ -64,6 +70,7 @@ export function createOutboxLog ({
   maxAppIdLength = DEFAULT_MAX_APP_ID_LENGTH,
   maxValueBytes = DEFAULT_MAX_VALUE_BYTES,
   maxTotalBytes = DEFAULT_MAX_TOTAL_BYTES,
+  maxBytesPerDay = DEFAULT_MAX_BYTES_PER_DAY,
   directoryLimit = DEFAULT_DIRECTORY_LIMIT,
   maxDirectoryLimit = DEFAULT_MAX_DIRECTORY_LIMIT,
   maxAppendEventsPerOutbox = DEFAULT_MAX_APPEND_EVENTS_PER_OUTBOX,
@@ -79,6 +86,7 @@ export function createOutboxLog ({
   storagePath = null,
   checkpointInterval = DEFAULT_CHECKPOINT_INTERVAL,
   onAppend = null,
+  now = null,
   log = () => {}
 } = {}) {
   const groups = new Map()
@@ -91,6 +99,30 @@ export function createOutboxLog ({
   // so a takedown survives restart.
   const suppressed = new Set()
   let namespaceRegistry = createOutboxNamespaceRegistry({ namespace, namespaces })
+  // Rolling 24h per-namespace ingest charges for caps.bytesPerDay. "bytes" is
+  // the same measure as maxValueBytes — Buffer.byteLength(JSON.stringify(record))
+  // — and every ACCEPTED append charges the full record bytes (in-place updates
+  // included): this is an ingest-rate cap, not a storage cap (maxTotalBytes
+  // covers stored bytes with delta accounting). Keyed by namespace name; the
+  // null key is the namespace-less legacy mode (only tracked when a finite
+  // global maxBytesPerDay is configured).
+  //
+  // Restart honesty: a capped namespace's last-24h window is rebuilt exactly —
+  // journaled appends carry a `ts` and re-charge on replay (the durable fast
+  // path), and checkpoints persist the pruned charge list as `byteWindows`.
+  // The boundaries are explicit, never silent:
+  //  - journal appends written before this feature carry no `ts` and do NOT
+  //    re-charge — the window under-counts by that legacy volume for up to 24h
+  //    after upgrade (new appends carry `ts`, so it self-heals);
+  //  - expiry is wall-clock (Date.now()): a backward clock jump delays expiry
+  //    (conservative — rejects early), a forward jump frees budget early;
+  //  - tracking is lazy: an uncapped namespace records nothing, so a cap added
+  //    later via configureNamespaces observes traffic from that point on.
+  const byteWindows = new Map()
+  const byteDayFallback = positiveInteger(maxBytesPerDay, DEFAULT_MAX_BYTES_PER_DAY)
+  // Injectable clock (same testability pattern as sweepGhosts' `now`) — used
+  // for every byte-window timestamp, including the journaled `ts`.
+  const clock = typeof now === 'function' ? now : Date.now
   const customVerifyAppend = typeof verifyAppend === 'function' ? verifyAppend : null
   const shouldVerifyAppend = verifyAppend !== false
   let statePersistence = normalizePersistence(persistence)
@@ -190,6 +222,8 @@ export function createOutboxLog ({
       const previousAppEvents = appendEventsByApp.has(appId) ? appendEventsByApp.get(appId).slice() : null
       if (old === undefined && group.rows.size >= namespaceCap(namespaceInfo, 'maxEntriesPerOutbox', maxRowsPerGroup)) throw fail('outbox at row capacity', 503)
       if (size > oldSize && totalBytes - oldSize + size > maxTotalBytes) throw fail('relay at storage capacity', 503)
+      const appendNow = clock()
+      const byteBucket = assertNamespaceByteBudget(namespaceInfo, size, appendNow)
 
       group.rows.set(key, op.data)
       totalBytes += size - oldSize
@@ -203,10 +237,14 @@ export function createOutboxLog ({
         type: op.type,
         version: group.version
       })
+      // Charge before saveState so a checkpoint snapshot taken in that same
+      // call already carries the charge (and the journaled `ts` matches it).
+      if (byteBucket) chargeNamespaceByteBucket(byteBucket, size, appendNow)
 
       try {
-        saveState(journalAppendEntry(appId, group, op))
+        saveState(journalAppendEntry(appId, group, op, appendNow))
       } catch (err) {
+        if (byteBucket) unchargeNamespaceByteBucket(byteBucket)
         if (old === undefined) group.rows.delete(key)
         else group.rows.set(key, old)
         totalBytes += oldSize - size
@@ -320,6 +358,41 @@ export function createOutboxLog ({
     sweepGhosts,
     isSuppressed,
     snapshot,
+    /**
+     * Operator-dashboard stats: namespace config + live writers + rolling 24h
+     * ingest + opaque suppression counts. No record bodies or keys are returned
+     * beyond the opaque-id takedown audit list (via takedowns()).
+     */
+    operatorStats () {
+      const now = clock()
+      const writersByNs = new Map()
+      for (const group of groups.values()) {
+        const ns = group && group.namespace ? group.namespace : DEFAULT_OUTBOXLOG_NAMESPACE
+        writersByNs.set(ns, (writersByNs.get(ns) || 0) + 1)
+      }
+      const namespaces = namespaceRegistry.snapshot().map((entry) => {
+        const bucket = byteWindows.get(entry.name)
+        if (bucket) pruneNamespaceByteWindow(bucket, now)
+        const bytes24h = bucket && Number.isFinite(bucket.total) ? bucket.total : 0
+        const capBytes24h = entry.caps && entry.caps.bytesPerDay != null
+          ? entry.caps.bytesPerDay
+          : (byteDayFallback < DEFAULT_MAX_BYTES_PER_DAY ? byteDayFallback : null)
+        return {
+          name: entry.name,
+          blind: entry.blind === true,
+          writers: writersByNs.get(entry.name) || 0,
+          bytes24h,
+          capBytes24h,
+          caps: { ...entry.caps }
+        }
+      })
+      return {
+        groups: groups.size,
+        totalBytes,
+        suppressedCount: suppressed.size,
+        namespaces
+      }
+    },
     _stats () {
       return { groups: groups.size, totalBytes, directorySeq, appendSeq }
     }
@@ -452,6 +525,72 @@ export function createOutboxLog ({
     const maxOutboxes = namespaceInfo.caps.maxOutboxes
     if (maxOutboxes != null && namespaceOutboxCount(namespaceInfo.name) >= maxOutboxes) {
       throw fail('namespace at outbox capacity', 503)
+    }
+  }
+
+  // caps.bytesPerDay gate for the live append path. Returns the bucket to
+  // charge AFTER the append's other checks pass (null when uncapped — nothing
+  // is tracked then). Check-before-charge: a rejected append never consumes
+  // budget, so a client retrying through a 503 is not self-locking.
+  function assertNamespaceByteBudget (namespaceInfo, size, now) {
+    const cap = namespaceCap(namespaceInfo, 'bytesPerDay', byteDayFallback)
+    if (cap >= DEFAULT_MAX_BYTES_PER_DAY) return null // uncapped: not tracked
+    const bucket = namespaceByteBucket(namespaceInfo)
+    pruneNamespaceByteWindow(bucket, now)
+    if (bucket.total + size > cap) throw fail('namespace at daily byte capacity', 503)
+    return bucket
+  }
+
+  // Journal/snapshot replay re-charges the window for already-accepted history
+  // — the cap gates NEW appends, never history, so this never throws. Entries
+  // without a finite ts (pre-feature journals) are skipped: the documented
+  // under-count boundary at the top of this file.
+  function noteNamespaceByteCharge (namespaceInfo, size, ts) {
+    if (!Number.isFinite(ts)) return
+    if (namespaceCap(namespaceInfo, 'bytesPerDay', byteDayFallback) >= DEFAULT_MAX_BYTES_PER_DAY) return
+    const now = clock()
+    if (ts <= now - OUTBOXLOG_BYTE_WINDOW_MS) return // already outside the window
+    const bucket = namespaceByteBucket(namespaceInfo)
+    pruneNamespaceByteWindow(bucket, now)
+    chargeNamespaceByteBucket(bucket, size, ts)
+  }
+
+  function namespaceByteBucket (namespaceInfo) {
+    const key = namespaceInfo ? namespaceInfo.name : null
+    let bucket = byteWindows.get(key)
+    if (!bucket) {
+      bucket = { charges: [], total: 0 }
+      byteWindows.set(key, bucket)
+    }
+    return bucket
+  }
+
+  function chargeNamespaceByteBucket (bucket, size, ts) {
+    bucket.charges.push({ ts, bytes: size })
+    bucket.total += size
+  }
+
+  // LIFO twin of chargeNamespaceByteBucket — used only by the append rollback
+  // path, where the charge being reverted is always the most recent one.
+  function unchargeNamespaceByteBucket (bucket) {
+    const last = bucket.charges.pop()
+    if (last) bucket.total -= last.bytes
+  }
+
+  function pruneNamespaceByteWindow (bucket, now) {
+    const cutoff = now - OUTBOXLOG_BYTE_WINDOW_MS
+    // Charges arrive in ~ts order (append order; journal replay is seq order),
+    // so expired entries sit at the front. A charge with an out-of-order ts
+    // (wall-clock jump) simply expires late — conservative, never silent.
+    let expired = 0
+    let bytes = 0
+    while (expired < bucket.charges.length && bucket.charges[expired].ts <= cutoff) {
+      bytes += bucket.charges[expired].bytes
+      expired++
+    }
+    if (expired > 0) {
+      bucket.charges.splice(0, expired)
+      bucket.total -= bytes
     }
   }
 
@@ -698,6 +837,14 @@ export function createOutboxLog ({
       // Persist DO-NOT-SERVE ids as opaque [appId, key] pairs so takedowns
       // survive restart. Never carries any record content.
       suppressed: [...suppressed].map(splitSuppressionKey).filter(Boolean),
+      // Rolling-24h ingest charges (caps.bytesPerDay) as opaque
+      // [namespace, [[ts, bytes], ...]] pairs, pruned at save time, so a capped
+      // namespace's byte window survives restart exactly. Additive field: old
+      // snapshots load fine without it, old readers ignore it.
+      byteWindows: [...byteWindows.entries()].map(([name, bucket]) => {
+        pruneNamespaceByteWindow(bucket, clock())
+        return [name, bucket.charges.map(charge => [charge.ts, charge.bytes])]
+      }),
       appendEvents: [...appendEventsByApp.entries()].map(([appId, events]) => [
         appId,
         events.map(event => clone(event))
@@ -818,6 +965,31 @@ export function createOutboxLog ({
       const composite = suppressionKey(entry[0], entry[1])
       if (composite) suppressed.add(composite)
     }
+    // Restore the rolling-24h ingest windows persisted by snapshot(). Invalid
+    // pairs are dropped silently (the state file is not a trust root), expired
+    // charges are pruned against load time, and empty buckets are not kept.
+    byteWindows.clear()
+    const byteWindowNow = clock()
+    for (const entry of Array.isArray(state.byteWindows) ? state.byteWindows : []) {
+      if (!Array.isArray(entry) || entry.length !== 2 || !Array.isArray(entry[1])) continue
+      let name = null
+      if (entry[0] !== null) {
+        if (typeof entry[0] !== 'string') continue
+        name = normalizeNamespaceName(entry[0])
+        if (!name || byteWindows.has(name)) continue
+      } else if (byteWindows.has(null)) continue
+      const bucket = { charges: [], total: 0 }
+      for (const charge of entry[1]) {
+        if (!Array.isArray(charge) || charge.length !== 2) continue
+        const ts = Number(charge[0])
+        const bytes = Number(charge[1])
+        if (!Number.isFinite(ts) || ts <= 0 || !Number.isSafeInteger(bytes) || bytes <= 0) continue
+        bucket.charges.push({ ts, bytes })
+        bucket.total += bytes
+      }
+      pruneNamespaceByteWindow(bucket, byteWindowNow)
+      if (bucket.charges.length > 0) byteWindows.set(name, bucket)
+    }
     totalBytes = nextTotalBytes
     directorySeq = Math.max(
       Number.isSafeInteger(state.directorySeq) && state.directorySeq >= 0 ? state.directorySeq : 0,
@@ -859,12 +1031,15 @@ export function createOutboxLog ({
     }
   }
 
-  function journalAppendEntry (appId, group, op) {
+  function journalAppendEntry (appId, group, op, ts = null) {
     return {
       kind: 'append',
       appId,
       inviteKey: group.inviteKey,
       namespace: group.namespace || recordNamespace(op.data),
+      // Wall-clock append time: replay re-charges the caps.bytesPerDay window
+      // from it. Optional on read — pre-feature entries carry none.
+      ts: Number.isFinite(ts) ? ts : null,
       op: {
         type: op.type,
         data: clone(op.data)
@@ -979,6 +1154,10 @@ export function createOutboxLog ({
       type: op.type,
       version: group.version
     })
+    // Re-charge the rolling byte window from the journaled ts so a capped
+    // namespace's last-24h budget survives restart (never rejects — the cap
+    // gates new appends, not replayed history).
+    noteNamespaceByteCharge(opNamespaceInfo, size, entry.ts)
   }
 }
 
@@ -1413,6 +1592,10 @@ function normalizeJournalEntry (entry, expectedSeq) {
     appId: entry.appId,
     inviteKey: entry.inviteKey,
     namespace,
+    // Optional: pre-feature append entries carry no ts (their bytes simply do
+    // not re-charge the caps.bytesPerDay window on replay — documented in the
+    // byteWindows note at the top of createOutboxLog).
+    ts: Number.isFinite(entry.ts) ? entry.ts : null,
     op: {
       type: op.type,
       data: clone(op.data)

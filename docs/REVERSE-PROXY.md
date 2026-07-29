@@ -4,6 +4,15 @@ This guide walks through putting a HiveRelay node behind nginx with HTTPS.
 It is aimed at operators who run a single relay on a VPS or home server and
 want a clean, copy-pasteable setup.
 
+This is the API/dashboard/WSS proxy, not the key-derived public app gateway.
+Do not add wildcard app hosts to this `9100` virtual host. The public app
+gateway uses a separate loopback listener, hostname, certificate, strict nginx
+template, and release gate documented in
+[`PUBLIC-HIVE-GATEWAY-CANARY-RUNBOOK.md`](PUBLIC-HIVE-GATEWAY-CANARY-RUNBOOK.md).
+When both virtual hosts exist, keep this API server on one exact `server_name`
+and configure a separate default TLS server that rejects unmatched names; the
+API server must not become the fallback for malformed app hosts.
+
 ## Why bother with a reverse proxy?
 
 A bare HiveRelay binds three plaintext ports on the host:

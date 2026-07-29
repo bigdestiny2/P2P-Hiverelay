@@ -1,0 +1,1297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Pear Ecosystem — Simple Explainer</title>
+  <style>
+    :root {
+      --bg: #f6f8f7;
+      --card: #ffffff;
+      --ink: #1c2420;
+      --muted: #5c6b63;
+      --line: #dce5df;
+      --green: #0c8a68;
+      --green-d: #066b50;
+      --green-s: #e3f6ef;
+      --blue: #2b6cb0;
+      --blue-s: #e8f1fb;
+      --amber: #b7791f;
+      --amber-s: #fdf6e3;
+      --coral: #c45c4a;
+      --coral-s: #fdecea;
+      --purple: #6b5b95;
+      --purple-s: #f0ecf8;
+      --shadow: 0 12px 40px rgba(28, 36, 32, 0.08);
+      --radius: 18px;
+      --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --display: "Segoe UI", system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--ink);
+      background:
+        radial-gradient(900px 500px at 0% 0%, rgba(12, 138, 104, 0.09), transparent 55%),
+        radial-gradient(700px 400px at 100% 10%, rgba(43, 108, 176, 0.07), transparent 50%),
+        var(--bg);
+      line-height: 1.65;
+    }
+    a { color: var(--green-d); }
+    .wrap { max-width: 960px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+
+    /* Hero */
+    .hero {
+      background: linear-gradient(145deg, #0a5c47 0%, #0c8a68 48%, #1a9b7a 100%);
+      color: #fff;
+      border-radius: 28px;
+      padding: 2.25rem 2rem 2rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1.75rem;
+      position: relative;
+      overflow: hidden;
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -40px; top: -40px;
+      width: 220px; height: 220px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.08);
+    }
+    .hero .eyebrow {
+      font-size: .78rem; letter-spacing: .14em; text-transform: uppercase;
+      opacity: .85; font-weight: 600; margin: 0 0 .75rem;
+    }
+    .hero h1 {
+      font-size: clamp(1.85rem, 4.5vw, 2.6rem);
+      line-height: 1.15; margin: 0 0 .85rem; font-weight: 700;
+      letter-spacing: -0.02em; max-width: 16ch;
+    }
+    .hero p {
+      margin: 0; font-size: 1.08rem; opacity: .94; max-width: 38ch; line-height: 1.55;
+    }
+    .hero .pills { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: 1.25rem; }
+    .hero .pill {
+      background: rgba(255,255,255,0.15); border: 1px solid rgba(255,255,255,0.25);
+      padding: .3rem .7rem; border-radius: 999px; font-size: .8rem; font-weight: 600;
+    }
+
+    /* Nav */
+    .toc {
+      display: flex; flex-wrap: wrap; gap: .45rem; margin: 0 0 2rem;
+    }
+    .toc a {
+      text-decoration: none;
+      background: var(--card);
+      border: 1px solid var(--line);
+      padding: .4rem .75rem;
+      border-radius: 999px;
+      font-size: .82rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .toc a:hover { border-color: var(--green); color: var(--green-d); }
+
+    /* Sections */
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1.5rem 1.4rem 1.6rem;
+      margin-bottom: 1.25rem;
+      box-shadow: 0 4px 16px rgba(28,36,32,0.03);
+    }
+    section h2 {
+      margin: 0 0 .35rem;
+      font-size: 1.45rem;
+      letter-spacing: -0.02em;
+    }
+    section .step-num {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 1.7rem; height: 1.7rem; border-radius: 8px;
+      background: var(--green-s); color: var(--green-d);
+      font-size: .85rem; font-weight: 800; margin-right: .45rem;
+      vertical-align: middle;
+    }
+    .lede {
+      color: var(--muted); font-size: 1.05rem; margin: 0 0 1.1rem; max-width: 52ch;
+    }
+    p { margin: .55rem 0; max-width: 58ch; }
+    h3 { font-size: 1.05rem; margin: 1.25rem 0 .45rem; }
+    ul { margin: .4rem 0 1rem; padding-left: 1.2rem; max-width: 55ch; }
+    li { margin: .35rem 0; }
+
+    /* Callouts */
+    .tip, .warn, .idea {
+      border-radius: 14px; padding: .9rem 1rem; margin: 1rem 0; max-width: 58ch;
+      font-size: .95rem;
+    }
+    .tip { background: var(--green-s); border: 1px solid #b8e6d4; }
+    .warn { background: var(--amber-s); border: 1px solid #f0d89a; }
+    .idea { background: var(--blue-s); border: 1px solid #c5daf3; }
+    .tip strong, .warn strong, .idea strong { display: block; margin-bottom: .2rem; }
+
+    /* Analogy cards */
+    .analogies {
+      display: grid; grid-template-columns: repeat(3, 1fr); gap: .75rem; margin: 1rem 0;
+    }
+    @media (max-width: 720px) { .analogies { grid-template-columns: 1fr; } }
+    .analogy {
+      background: var(--bg); border-radius: 14px; padding: 1rem; border: 1px solid var(--line);
+    }
+    .analogy .icon { font-size: 1.5rem; margin-bottom: .35rem; }
+    .analogy h4 { margin: 0 0 .3rem; font-size: .95rem; }
+    .analogy p { margin: 0; font-size: .88rem; color: var(--muted); max-width: none; }
+
+    /* Diagram shells */
+    .fig {
+      margin: 1.15rem 0 1.35rem;
+      background: linear-gradient(180deg, #fbfcfb 0%, #f3f7f5 100%);
+      border: 1px solid var(--line);
+      border-radius: 16px;
+      padding: 1rem .75rem .85rem;
+      overflow-x: auto;
+    }
+    .fig svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+    .fig-cap {
+      text-align: center; font-size: .8rem; color: var(--muted);
+      margin: .55rem 0 0; font-weight: 500;
+    }
+
+    /* Simple compare */
+    .compare {
+      display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin: 1rem 0;
+    }
+    @media (max-width: 640px) { .compare { grid-template-columns: 1fr; } }
+    .compare .box {
+      border-radius: 14px; padding: 1rem; border: 1px solid var(--line);
+    }
+    .compare .bad { background: var(--coral-s); border-color: #f0c4bc; }
+    .compare .good { background: var(--green-s); border-color: #b8e6d4; }
+    .compare h4 { margin: 0 0 .4rem; }
+    .compare ul { margin: 0; max-width: none; font-size: .9rem; }
+
+    /* Glossary chips */
+    .chips { display: flex; flex-wrap: wrap; gap: .4rem; margin: .75rem 0; }
+    .chip {
+      background: var(--bg); border: 1px solid var(--line); border-radius: 999px;
+      padding: .25rem .65rem; font-size: .8rem; font-weight: 600; color: var(--muted);
+    }
+
+    /* Timeline */
+    .tl { margin: 1rem 0 0; padding: 0; list-style: none; max-width: 58ch; }
+    .tl li {
+      position: relative; padding: 0 0 1.1rem 1.4rem;
+      border-left: 3px solid var(--line); margin: 0;
+    }
+    .tl li:last-child { border-left-color: transparent; padding-bottom: 0; }
+    .tl li::before {
+      content: ""; position: absolute; left: -7px; top: .35rem;
+      width: 11px; height: 11px; border-radius: 50%;
+      background: var(--green); box-shadow: 0 0 0 3px var(--green-s);
+    }
+    .tl strong { display: block; margin-bottom: .15rem; }
+
+    /* Service grid */
+    .svc-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: .55rem;
+      margin: 1rem 0;
+    }
+    .svc {
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: .7rem .75rem;
+      background: var(--bg);
+      font-size: .82rem;
+    }
+    .svc .name { font-weight: 800; font-size: .88rem; color: var(--ink); margin-bottom: .2rem; }
+    .svc .use { color: var(--muted); line-height: 1.4; }
+    .svc .tag {
+      display: inline-block; margin-top: .4rem; font-size: .68rem; font-weight: 700;
+      padding: .12rem .4rem; border-radius: 999px; text-transform: uppercase; letter-spacing: .04em;
+    }
+    .tag.ready { background: var(--green-s); color: var(--green-d); }
+    .tag.stable { background: var(--blue-s); color: var(--blue); }
+    .tag.exp { background: var(--amber-s); color: var(--amber); }
+    .tag.peerit { background: #e8f1fb; color: #2b6cb0; }
+
+    table.plain {
+      width: 100%; border-collapse: collapse; font-size: .88rem; margin: .8rem 0 1rem;
+    }
+    table.plain th, table.plain td {
+      text-align: left; padding: .55rem .6rem; border-bottom: 1px solid var(--line); vertical-align: top;
+    }
+    table.plain th { background: var(--bg); font-size: .78rem; color: var(--muted); }
+    table.plain tr:last-child td { border-bottom: 0; }
+
+    .stat-row {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: .55rem; margin: 1rem 0;
+    }
+    @media (max-width: 720px) { .stat-row { grid-template-columns: 1fr 1fr; } }
+    .stat-card {
+      background: var(--bg); border: 1px solid var(--line); border-radius: 14px;
+      padding: .85rem .75rem; text-align: center;
+    }
+    .stat-card .n { font-size: 1.45rem; font-weight: 800; color: var(--green-d); line-height: 1.1; }
+    .stat-card .l { font-size: .75rem; color: var(--muted); margin-top: .3rem; line-height: 1.3; }
+
+    footer {
+      text-align: center; color: var(--muted); font-size: .82rem; margin-top: 1.5rem;
+      padding: 1rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+
+    <header class="hero">
+      <p class="eyebrow">Noob-friendly guide · Pear · HiveRelay · Peerit</p>
+      <h1>Apps that keep working when you close your laptop</h1>
+      <p>
+        A simple tour of the whole idea — with real diagrams.
+        No heavy jargon first. Details later if you want them.
+      </p>
+      <div class="pills">
+        <span class="pill">Beginner friendly</span>
+        <span class="pill">SVG diagrams</span>
+        <span class="pill">Services · scale · business</span>
+        <span class="pill">~15 minute read</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="Sections">
+      <a href="#eli5">In one minute</a>
+      <a href="#problem">The problem</a>
+      <a href="#fix">The fix</a>
+      <a href="#parts">The main pieces</a>
+      <a href="#flow">How data moves</a>
+      <a href="#services">15 services</a>
+      <a href="#peerit">Peerit</a>
+      <a href="#doors">Two doors</a>
+      <a href="#blind-scale">Blind + many apps</a>
+      <a href="#scale">How it scales</a>
+      <a href="#business">Business model</a>
+      <a href="#decentralized">Decentralized?</a>
+      <a href="#who">Who does what?</a>
+      <a href="#now">What’s real today?</a>
+      <a href="#words">Glossary</a>
+    </nav>
+
+    <!-- 1 -->
+    <section id="eli5">
+      <h2><span class="step-num">1</span>In one minute</h2>
+      <p class="lede">
+        Most apps live on a company’s servers. If that company blocks you, goes down, or changes the rules, you’re stuck.
+      </p>
+      <p>
+        <strong>Peer-to-peer (P2P)</strong> apps try something else: your phone and laptop talk more directly,
+        and <em>you</em> hold your data (with crypto keys), not a giant central database.
+      </p>
+      <p>
+        But pure P2P has a silly-sounding problem: <strong>when everyone goes to sleep, the app disappears</strong>.
+      </p>
+      <p>
+        This project builds <strong>always-on helper computers (“relays”)</strong> that keep apps online —
+        without needing those helpers to <em>own</em> or (for private stuff) <em>read</em> your content.
+        On top of that, we’re shipping real apps — especially <strong>Peerit</strong>, a Reddit-like social app.
+      </p>
+      <div class="tip">
+        <strong>Kitchen analogy</strong>
+        Your recipe book is the app. Your friends’ kitchens are other users.
+        A relay is a 24/7 community fridge that can hold a copy of the public cookbook —
+        or a locked box only you have the key for — so dinner still happens when you’re out.
+      </div>
+    </section>
+
+    <!-- 2 -->
+    <section id="problem">
+      <h2><span class="step-num">2</span>The problem (shown, not just told)</h2>
+      <p class="lede">Two different internet problems stack on top of each other.</p>
+
+      <h3>A) Big platforms are single switches</h3>
+      <p>
+        One company runs the servers, the login, the feed, the ban hammer.
+        Convenient — until the switch flips (outage, ban, price change, government order).
+      </p>
+
+      <h3>B) Pure P2P falls asleep</h3>
+      <p>
+        If the only copy of an app lives on the creator’s laptop, closing that laptop
+        is like unplugging the website.
+      </p>
+
+      <div class="fig" role="img" aria-label="Diagram: without a relay the app goes dark when the publisher is offline">
+        <svg viewBox="0 0 880 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s1" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.12"/>
+            </filter>
+            <linearGradient id="gRed" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#f7c4bc"/><stop offset="100%" stop-color="#e89588"/>
+            </linearGradient>
+            <linearGradient id="gGray" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#f0f2f1"/>
+            </linearGradient>
+          </defs>
+          <text x="440" y="28" text-anchor="middle" fill="#5c6b63" font-size="14" font-weight="700">WITHOUT a relay — pure P2P at 11pm</text>
+
+          <!-- publisher -->
+          <g filter="url(#s1)">
+            <rect x="60" y="70" width="200" height="120" rx="16" fill="url(#gRed)"/>
+            <text x="160" y="115" text-anchor="middle" font-size="15" font-weight="700" fill="#6b2c22">Creator’s laptop</text>
+            <text x="160" y="138" text-anchor="middle" font-size="12" fill="#7a3d34">closed · offline · sleeping</text>
+            <text x="160" y="162" text-anchor="middle" font-size="20">💤</text>
+          </g>
+
+          <!-- broken links -->
+          <path d="M270 120 C340 90, 400 90, 470 110" stroke="#c45c4a" stroke-width="2.5" fill="none" stroke-dasharray="7 6"/>
+          <path d="M270 140 C350 160, 400 190, 470 200" stroke="#c45c4a" stroke-width="2.5" fill="none" stroke-dasharray="7 6"/>
+          <path d="M270 155 C340 220, 400 250, 470 260" stroke="#c45c4a" stroke-width="2.5" fill="none" stroke-dasharray="7 6"/>
+          <circle cx="360" cy="100" r="10" fill="#c45c4a"/>
+          <text x="360" y="104" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">✕</text>
+          <circle cx="380" cy="175" r="10" fill="#c45c4a"/>
+          <text x="380" y="179" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">✕</text>
+          <circle cx="370" cy="245" r="10" fill="#c45c4a"/>
+          <text x="370" y="249" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">✕</text>
+
+          <!-- readers -->
+          <g filter="url(#s1)">
+            <rect x="500" y="70" width="160" height="70" rx="14" fill="url(#gGray)" stroke="#dce5df"/>
+            <text x="580" y="100" text-anchor="middle" font-size="13" font-weight="700" fill="#1c2420">Reader on web</text>
+            <text x="580" y="120" text-anchor="middle" font-size="11" fill="#c45c4a">can’t load app</text>
+          </g>
+          <g filter="url(#s1)">
+            <rect x="500" y="160" width="160" height="70" rx="14" fill="url(#gGray)" stroke="#dce5df"/>
+            <text x="580" y="190" text-anchor="middle" font-size="13" font-weight="700" fill="#1c2420">Reader on phone</text>
+            <text x="580" y="210" text-anchor="middle" font-size="11" fill="#c45c4a">no peers awake</text>
+          </g>
+          <g filter="url(#s1)">
+            <rect x="500" y="250" width="160" height="70" rx="14" fill="url(#gGray)" stroke="#dce5df"/>
+            <text x="580" y="280" text-anchor="middle" font-size="13" font-weight="700" fill="#1c2420">New visitor</text>
+            <text x="580" y="300" text-anchor="middle" font-size="11" fill="#c45c4a">empty street</text>
+          </g>
+
+          <rect x="700" y="130" width="150" height="90" rx="14" fill="#fdecea" stroke="#f0c4bc"/>
+          <text x="775" y="168" text-anchor="middle" font-size="13" font-weight="800" fill="#a33b3b">App is dark</text>
+          <text x="775" y="190" text-anchor="middle" font-size="11" fill="#7a3d34">nobody holds</text>
+          <text x="775" y="206" text-anchor="middle" font-size="11" fill="#7a3d34">a live copy</text>
+        </svg>
+        <p class="fig-cap">Figure 1 — Pure P2P: when the publisher sleeps, the product can vanish for everyone else.</p>
+      </div>
+    </section>
+
+    <!-- 3 -->
+    <section id="fix">
+      <h2><span class="step-num">3</span>The fix: always-on helpers called relays</h2>
+      <p class="lede">
+        A <strong>HiveRelay</strong> is a computer that stays online and acts like an extra peer.
+        It can keep a copy of public app data, help people connect, and (for private data) hold locked boxes it can’t open.
+      </p>
+
+      <div class="fig" role="img" aria-label="Diagram: with HiveRelay the app stays online while the publisher sleeps">
+        <svg viewBox="0 0 880 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s2" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.12"/>
+            </filter>
+            <linearGradient id="gGreen" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#1a9b7a"/><stop offset="100%" stop-color="#0c8a68"/>
+            </linearGradient>
+            <linearGradient id="gMint" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#e3f6ef"/><stop offset="100%" stop-color="#c8ecdd"/>
+            </linearGradient>
+            <linearGradient id="gWhite" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="#fff"/><stop offset="100%" stop-color="#f3f7f5"/>
+            </linearGradient>
+          </defs>
+          <text x="440" y="28" text-anchor="middle" fill="#5c6b63" font-size="14" font-weight="700">WITH HiveRelay — same night, app still works</text>
+
+          <!-- publisher offline but ok -->
+          <g filter="url(#s2)">
+            <rect x="40" y="55" width="170" height="88" rx="14" fill="url(#gWhite)" stroke="#dce5df"/>
+            <text x="125" y="90" text-anchor="middle" font-size="13" font-weight="700">Creator laptop</text>
+            <text x="125" y="112" text-anchor="middle" font-size="11" fill="#5c6b63">offline — that’s fine</text>
+          </g>
+          <path d="M125 143 L125 175" stroke="#0c8a68" stroke-width="2.5" marker-end="url(#arrow)"/>
+          <text x="145" y="165" font-size="11" fill="#0c8a68" font-weight="600">seeded once earlier</text>
+
+          <!-- central relay cluster -->
+          <g filter="url(#s2)">
+            <rect x="280" y="150" width="320" height="130" rx="20" fill="url(#gGreen)"/>
+            <text x="440" y="188" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">HiveRelay quorum</text>
+            <text x="440" y="212" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">always-on peers · keep copies · help connect</text>
+            <!-- mini nodes -->
+            <circle cx="360" cy="245" r="14" fill="#fff" opacity="0.95"/>
+            <circle cx="400" cy="245" r="14" fill="#fff" opacity="0.85"/>
+            <circle cx="440" cy="245" r="14" fill="#fff" opacity="0.95"/>
+            <circle cx="480" cy="245" r="14" fill="#fff" opacity="0.85"/>
+            <circle cx="520" cy="245" r="14" fill="#fff" opacity="0.95"/>
+            <text x="440" y="268" text-anchor="middle" fill="rgba(255,255,255,0.85)" font-size="10">signed receipts · verified copies</text>
+          </g>
+
+          <!-- link down from laptop area to relay -->
+          <path d="M210 100 C250 100, 270 160, 280 190" stroke="#0c8a68" stroke-width="2.5" fill="none"/>
+
+          <!-- readers connected -->
+          <path d="M600 190 C650 120, 680 100, 720 95" stroke="#0c8a68" stroke-width="2.5" fill="none"/>
+          <path d="M600 215 C660 215, 690 200, 720 185" stroke="#0c8a68" stroke-width="2.5" fill="none"/>
+          <path d="M600 240 C650 280, 680 300, 720 305" stroke="#0c8a68" stroke-width="2.5" fill="none"/>
+
+          <g filter="url(#s2)">
+            <rect x="720" y="60" width="140" height="58" rx="12" fill="url(#gMint)" stroke="#b8e6d4"/>
+            <text x="790" y="85" text-anchor="middle" font-size="12" font-weight="700">Web reader</text>
+            <text x="790" y="103" text-anchor="middle" font-size="11" fill="#066b50">✓ online</text>
+          </g>
+          <g filter="url(#s2)">
+            <rect x="720" y="150" width="140" height="58" rx="12" fill="url(#gMint)" stroke="#b8e6d4"/>
+            <text x="790" y="175" text-anchor="middle" font-size="12" font-weight="700">Phone reader</text>
+            <text x="790" y="193" text-anchor="middle" font-size="11" fill="#066b50">✓ online</text>
+          </g>
+          <g filter="url(#s2)">
+            <rect x="720" y="270" width="140" height="58" rx="12" fill="url(#gMint)" stroke="#b8e6d4"/>
+            <text x="790" y="295" text-anchor="middle" font-size="12" font-weight="700">New visitor</text>
+            <text x="790" y="313" text-anchor="middle" font-size="11" fill="#066b50">✓ finds app</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 2 — Relays are just peers that don’t sleep. The creator can go offline; the app stays reachable.</p>
+      </div>
+
+      <div class="compare">
+        <div class="box bad">
+          <h4>❌ Old “just host it on our server”</h4>
+          <ul>
+            <li>Company owns the database</li>
+            <li>You hope they stay nice</li>
+            <li>One ban = everything gone</li>
+          </ul>
+        </div>
+        <div class="box good">
+          <h4>✓ Relay as a peer with uptime</h4>
+          <ul>
+            <li>Keys identify content, not “account rows”</li>
+            <li>You can check proofs (not only trust marketing)</li>
+            <li>Another relay can replace a bad one</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- 4 -->
+    <section id="parts">
+      <h2><span class="step-num">4</span>The main pieces (cast of characters)</h2>
+      <p class="lede">Remember three names. Everything else hangs off them.</p>
+
+      <div class="fig" role="img" aria-label="Three product pillars: HiveRelay, Peerit, PearBrowser and apps">
+        <svg viewBox="0 0 880 280" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s3" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="4" stdDeviation="5" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+
+          <!-- HiveRelay -->
+          <g filter="url(#s3)">
+            <rect x="30" y="40" width="250" height="200" rx="20" fill="#0c8a68"/>
+            <circle cx="155" y="95" r="28" fill="rgba(255,255,255,0.2)"/>
+            <text x="155" y="102" text-anchor="middle" font-size="22">⬡</text>
+            <text x="155" y="145" text-anchor="middle" fill="#fff" font-size="18" font-weight="800">HiveRelay</text>
+            <text x="155" y="172" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">The always-on layer</text>
+            <text x="155" y="195" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">keeps apps alive</text>
+            <text x="155" y="212" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">seeds · proves · connects</text>
+          </g>
+
+          <!-- Peerit -->
+          <g filter="url(#s3)">
+            <rect x="315" y="40" width="250" height="200" rx="20" fill="#2b6cb0"/>
+            <circle cx="440" y="95" r="28" fill="rgba(255,255,255,0.2)"/>
+            <text x="440" y="102" text-anchor="middle" font-size="22">💬</text>
+            <text x="440" y="145" text-anchor="middle" fill="#fff" font-size="18" font-weight="800">Peerit</text>
+            <text x="440" y="172" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">Social app (like Reddit)</text>
+            <text x="440" y="195" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">posts you can verify</text>
+            <text x="440" y="212" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">live on the public web</text>
+          </g>
+
+          <!-- Browser + apps -->
+          <g filter="url(#s3)">
+            <rect x="600" y="40" width="250" height="200" rx="20" fill="#6b5b95"/>
+            <circle cx="725" y="95" r="28" fill="rgba(255,255,255,0.2)"/>
+            <text x="725" y="102" text-anchor="middle" font-size="22">🌐</text>
+            <text x="725" y="145" text-anchor="middle" fill="#fff" font-size="18" font-weight="800">Browser + apps</text>
+            <text x="725" y="172" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">PearBrowser + ~20 apps</text>
+            <text x="725" y="195" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">tickets, POS, paste…</text>
+            <text x="725" y="212" text-anchor="middle" fill="rgba(255,255,255,0.8)" font-size="11">same building blocks</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 3 — Three pillars: infrastructure (HiveRelay), flagship social app (Peerit), access + vertical apps.</p>
+      </div>
+
+      <div class="analogies">
+        <div class="analogy">
+          <div class="icon">🧱</div>
+          <h4>Holepunch / Pear</h4>
+          <p>The Lego bricks underneath (logs, peer discovery, encryption). We build with them; we’re an independent project.</p>
+        </div>
+        <div class="analogy">
+          <div class="icon">📡</div>
+          <h4>HiveRelay</h4>
+          <p>The always-on Wi‑Fi of the neighborhood — not the landlord of your house.</p>
+        </div>
+        <div class="analogy">
+          <div class="icon">🏘️</div>
+          <h4>Apps (Peerit &amp; friends)</h4>
+          <p>The actual products people use — forums, shops, tickets — built on the same pattern.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- 5 -->
+    <section id="flow">
+      <h2><span class="step-num">5</span>How data moves (big picture)</h2>
+      <p class="lede">Think layers like a cake. Apps on top, crypto plumbing in the middle, relays at the bottom for uptime.</p>
+
+      <div class="fig" role="img" aria-label="Layer cake architecture diagram">
+        <svg viewBox="0 0 880 420" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s4" x="-5%" y="-5%" width="110%" height="120%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+
+          <!-- layer 1 apps -->
+          <g filter="url(#s4)">
+            <rect x="80" y="30" width="720" height="70" rx="16" fill="#2b6cb0"/>
+            <text x="440" y="60" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">You use apps</text>
+            <text x="440" y="82" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">Peerit · tickets · POS · paste · browser</text>
+          </g>
+          <text x="440" y="118" text-anchor="middle" fill="#5c6b63" font-size="18">↓</text>
+
+          <!-- layer 2 keys -->
+          <g filter="url(#s4)">
+            <rect x="80" y="130" width="720" height="70" rx="16" fill="#6b5b95"/>
+            <text x="440" y="160" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">Crypto keys &amp; signed data</text>
+            <text x="440" y="182" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">Your post is signed by you — not “row #4821 in a company DB”</text>
+          </g>
+          <text x="440" y="218" text-anchor="middle" fill="#5c6b63" font-size="18">↓</text>
+
+          <!-- layer 3 holepunch -->
+          <g filter="url(#s4)">
+            <rect x="80" y="230" width="720" height="70" rx="16" fill="#0c8a68"/>
+            <text x="440" y="260" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">P2P plumbing (Holepunch stack)</text>
+            <text x="440" y="282" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">Hypercore logs · peer discovery · encrypted links</text>
+          </g>
+          <text x="440" y="318" text-anchor="middle" fill="#5c6b63" font-size="18">↓</text>
+
+          <!-- layer 4 relays -->
+          <g filter="url(#s4)">
+            <rect x="80" y="330" width="720" height="70" rx="16" fill="#0a5c47"/>
+            <text x="440" y="360" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">HiveRelay nodes (always on)</text>
+            <text x="440" y="382" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="12">seed public apps · help browsers connect · optional locked storage</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 4 — Stack from “what you click” down to “what stays online at 3 a.m.”</p>
+      </div>
+
+      <div class="idea">
+        <strong>One important idea</strong>
+        The <em>identity of an app</em> is a cryptographic key (think: a unique fingerprint), not a domain name and not a relay brand.
+        Domains and relays are doors. The key is the house number that never moves.
+      </div>
+    </section>
+
+    <!-- SERVICES -->
+    <section id="services">
+      <h2><span class="step-num">6</span>The 15 services (plug-in superpowers)</h2>
+      <p class="lede">
+        HiveRelay is not only “store files.” On top of the kernel sits an <strong>opt-in service layer</strong> —
+        small capabilities apps can call over P2P RPC. Think: apps store, identity checks, fair randomness,
+        feeds, push hints… each one either works or disappears from discovery (fail closed).
+      </p>
+
+      <div class="stat-row">
+        <div class="stat-card"><div class="n">15</div><div class="l">built-in services in the catalog</div></div>
+        <div class="stat-card"><div class="n">94</div><div class="l">RPC capabilities across them</div></div>
+        <div class="stat-card"><div class="n">3</div><div class="l">setup profiles that run zero services by default</div></div>
+        <div class="stat-card"><div class="n">1</div><div class="l">production-ready service (VRF) today; others staged</div></div>
+      </div>
+
+      <div class="fig" role="img" aria-label="Service switchboard: app calls service through router and registry">
+        <svg viewBox="0 0 880 200" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="ssvc" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+          <g filter="url(#ssvc)">
+            <rect x="30" y="55" width="140" height="90" rx="14" fill="#2b6cb0"/>
+            <text x="100" y="95" text-anchor="middle" fill="#fff" font-weight="800" font-size="14">Your app</text>
+            <text x="100" y="118" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">callService(…)</text>
+          </g>
+          <path d="M175 100 H230" stroke="#94a39b" stroke-width="3"/>
+          <polygon points="228,94 240,100 228,106" fill="#94a39b"/>
+          <g filter="url(#ssvc)">
+            <rect x="245" y="55" width="150" height="90" rx="14" fill="#6b5b95"/>
+            <text x="320" y="90" text-anchor="middle" fill="#fff" font-weight="800" font-size="13">Router</text>
+            <text x="320" y="110" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">rate limits</text>
+            <text x="320" y="126" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">best-effort pick</text>
+          </g>
+          <path d="M400 100 H455" stroke="#94a39b" stroke-width="3"/>
+          <polygon points="453,94 465,100 453,106" fill="#94a39b"/>
+          <g filter="url(#ssvc)">
+            <rect x="470" y="55" width="160" height="90" rx="14" fill="#0c8a68"/>
+            <text x="550" y="90" text-anchor="middle" fill="#fff" font-weight="800" font-size="13">Service registry</text>
+            <text x="550" y="110" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">discover · health</text>
+            <text x="550" y="126" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">fail → unlist</text>
+          </g>
+          <path d="M635 100 H690" stroke="#94a39b" stroke-width="3"/>
+          <polygon points="688,94 700,100 688,106" fill="#94a39b"/>
+          <g filter="url(#ssvc)">
+            <rect x="705" y="40" width="150" height="120" rx="14" fill="#1c2420"/>
+            <text x="780" y="75" text-anchor="middle" fill="#8ad4b8" font-weight="800" font-size="12">15 services</text>
+            <text x="780" y="98" text-anchor="middle" fill="#b8c4be" font-size="11">vrf · identity</text>
+            <text x="780" y="116" text-anchor="middle" fill="#b8c4be" font-size="11">outboxlog · notify</text>
+            <text x="780" y="134" text-anchor="middle" fill="#b8c4be" font-size="11">storage · …</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 5 — Opt-in services: one RPC call, supervised plugins, broken services get delisted.</p>
+      </div>
+
+      <h3>How operators turn them on</h3>
+      <p>
+        Services are <strong>not all forced on</strong>. Operators pick a profile (or custom list).
+        Core-only profiles can run <em>zero</em> plugins — just seeding + custody kernel.
+      </p>
+      <table class="plain">
+        <thead><tr><th>Setup profile</th><th>What you get</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Relay Core / Custody / HomeHive</strong></td><td>Kernel only — availability + custody. No optional plugins.</td></tr>
+          <tr><td><strong>Service Operator</strong></td><td>identity · storage · schema · vrf (common “do useful work” set)</td></tr>
+          <tr><td><strong>Experimental Lab</strong></td><td>Adds research-y ones (AI route, ZK, SLA, arbitration…)</td></tr>
+          <tr><td><strong>Custom</strong></td><td>Hand-pick any of the 15</td></tr>
+        </tbody>
+      </table>
+
+      <h3>The full catalog (plain English)</h3>
+      <div class="svc-grid">
+        <div class="svc"><div class="name">vrf</div><div class="use">Unbiasable public randomness — lotteries, fair draws, nobody can rig the dice.</div><span class="tag ready">production-ready</span></div>
+        <div class="svc"><div class="name">identity</div><div class="use">“Is this key one of my devices?” — sign / verify helpers.</div><span class="tag stable">stable default</span></div>
+        <div class="svc"><div class="name">storage</div><div class="use">Encrypted attachments over RPC without standing up your own seeder.</div><span class="tag stable">stable default</span></div>
+        <div class="svc"><div class="name">schema</div><div class="use">Shared versioned JSON schemas so two apps agree on “what a post is.”</div><span class="tag stable">stable default</span></div>
+        <div class="svc"><div class="name">storage-proof</div><div class="use">Challenge a relay: “prove you still hold this drive.”</div><span class="tag exp">opt-in</span></div>
+        <div class="svc"><div class="name">outboxlog</div><div class="use">Signed personal feeds over HTTP/SSE — <strong>powers live Peerit</strong> for browsers.</div><span class="tag peerit">powers Peerit</span></div>
+        <div class="svc"><div class="name">shard-store</div><div class="use">Split secrets so no single relay can rebuild them (k-of-n).</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">notify</div><div class="use">Wake a sleeping phone with encrypted hints (message body stays private).</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">poker</div><div class="use">Provably-fair card / auction style games substrate.</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">zk</div><div class="use">“My balance is in range X” style proofs without revealing the value.</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">sla</div><div class="use">Coded uptime contracts — miss checks, lose collateral (research path).</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">arbitration</div><div class="use">Peer-voted disputes with reputation-gated judges.</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">ai</div><div class="use">Route model inference (e.g. fraud checks) without owning the GPU farm yourself.</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">witnesslog</div><div class="use">Third parties sign “I saw relay X serve drive Y at time T.”</div><span class="tag exp">experimental</span></div>
+        <div class="svc"><div class="name">repairticket</div><div class="use">Marketplace workflow when a seeder drops and someone should re-replicate.</div><span class="tag exp">experimental</span></div>
+      </div>
+
+      <div class="tip">
+        <strong>Why this matters for “thousands of apps”</strong>
+        New apps should not each invent randomness, push, or feed plumbing.
+        They call the same service names. Relays stay <em>app-agnostic</em> —
+        Peerit is a customer of OutboxLog, not a hard-coded special case inside the kernel.
+      </div>
+    </section>
+
+    <!-- 7 peerit renumber visually - keep id peerit, update step num -->
+    <section id="peerit">
+      <h2><span class="step-num">7</span>Peerit — a social app without “the company database”</h2>
+      <p class="lede">
+        Peerit feels a bit like Reddit: communities, posts, comments, votes.
+        Under the hood it’s very different.
+      </p>
+
+      <div class="fig" role="img" aria-label="Peerit: each author has their own signed outbox, clients merge the view">
+        <svg viewBox="0 0 880 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s5" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+          <text x="440" y="30" text-anchor="middle" fill="#5c6b63" font-size="14" font-weight="700">Everyone writes only their own notebook</text>
+
+          <!-- three authors -->
+          <g filter="url(#s5)">
+            <rect x="40" y="60" width="180" height="130" rx="16" fill="#e8f1fb" stroke="#c5daf3"/>
+            <text x="130" y="95" text-anchor="middle" font-size="14" font-weight="800" fill="#2b6cb0">Alex’s outbox</text>
+            <text x="130" y="120" text-anchor="middle" font-size="12" fill="#5c6b63">signed post A1</text>
+            <text x="130" y="140" text-anchor="middle" font-size="12" fill="#5c6b63">signed post A2</text>
+            <text x="130" y="160" text-anchor="middle" font-size="12" fill="#5c6b63">🔒 only Alex signs</text>
+          </g>
+          <g filter="url(#s5)">
+            <rect x="250" y="60" width="180" height="130" rx="16" fill="#e3f6ef" stroke="#b8e6d4"/>
+            <text x="340" y="95" text-anchor="middle" font-size="14" font-weight="800" fill="#0c8a68">Blake’s outbox</text>
+            <text x="340" y="120" text-anchor="middle" font-size="12" fill="#5c6b63">signed post B1</text>
+            <text x="340" y="140" text-anchor="middle" font-size="12" fill="#5c6b63">signed comment</text>
+            <text x="340" y="160" text-anchor="middle" font-size="12" fill="#5c6b63">🔒 only Blake signs</text>
+          </g>
+          <g filter="url(#s5)">
+            <rect x="460" y="60" width="180" height="130" rx="16" fill="#f0ecf8" stroke="#d4cce8"/>
+            <text x="550" y="95" text-anchor="middle" font-size="14" font-weight="800" fill="#6b5b95">Casey outbox</text>
+            <text x="550" y="120" text-anchor="middle" font-size="12" fill="#5c6b63">signed vote</text>
+            <text x="550" y="140" text-anchor="middle" font-size="12" fill="#5c6b63">signed post C1</text>
+            <text x="550" y="160" text-anchor="middle" font-size="12" fill="#5c6b63">🔒 only Casey signs</text>
+          </g>
+
+          <!-- arrows down -->
+          <path d="M130 190 L130 220 L340 220" stroke="#94a39b" stroke-width="2" fill="none"/>
+          <path d="M340 190 L340 220" stroke="#94a39b" stroke-width="2" fill="none"/>
+          <path d="M550 190 L550 220 L340 220" stroke="#94a39b" stroke-width="2" fill="none"/>
+          <path d="M340 220 L340 250" stroke="#94a39b" stroke-width="2" fill="none"/>
+
+          <!-- merge -->
+          <g filter="url(#s5)">
+            <rect x="200" y="250" width="280" height="90" rx="16" fill="#1c2420"/>
+            <text x="340" y="285" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Your browser merges the view</text>
+            <text x="340" y="308" text-anchor="middle" fill="#b8c4be" font-size="12">checks signatures · builds the feed</text>
+            <text x="340" y="326" text-anchor="middle" fill="#8ad4b8" font-size="11">no single “posts” table to seize</text>
+          </g>
+
+          <!-- relay help -->
+          <g filter="url(#s5)">
+            <rect x="680" y="90" width="170" height="180" rx="16" fill="#0c8a68"/>
+            <text x="765" y="130" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">HiveRelay</text>
+            <text x="765" y="155" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="11">helps browsers</text>
+            <text x="765" y="172" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="11">keep outboxes</text>
+            <text x="765" y="189" text-anchor="middle" fill="rgba(255,255,255,0.9)" font-size="11">available 24/7</text>
+            <text x="765" y="220" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">(today: OutboxLog</text>
+            <text x="765" y="235" text-anchor="middle" fill="rgba(255,255,255,0.75)" font-size="10">path for web)</text>
+          </g>
+          <path d="M640 125 L680 140" stroke="#0c8a68" stroke-width="2"/>
+          <path d="M640 150 L680 170" stroke="#0c8a68" stroke-width="2"/>
+        </svg>
+        <p class="fig-cap">Figure 6 — Peerit: many personal signed notebooks + client merge — not one company spreadsheet of all posts.</p>
+      </div>
+
+      <ul>
+        <li><strong>You sign what you write</strong> — forgery fails crypto checks.</li>
+        <li><strong>Devices merge by rules</strong> — not by “whatever the server says.”</li>
+        <li><strong>Moderation is signed data too</strong> — not an invisible admin rewrite of history.</li>
+        <li><strong>Relays help availability</strong> for browsers via the <strong>OutboxLog</strong> service (see catalog above).</li>
+      </ul>
+      <div class="warn">
+        <strong>Honest status</strong>
+        Peerit is live as a <em>public writable canary</em> (real users can post). That is not the same as
+        “fully multi-operator, marketing-scale GA.” We’re still hardening capacity, extra relays, and polish.
+      </div>
+    </section>
+
+    <!-- doors -->
+    <section id="doors">
+      <h2><span class="step-num">8</span>Two different doors (don’t mix them up)</h2>
+      <p class="lede">
+        People often mash “HTTPS website” and “private encrypted storage” into one idea.
+        We intentionally keep them separate.
+      </p>
+
+      <div class="fig" role="img" aria-label="Public gateway door vs blind storage vault">
+        <svg viewBox="0 0 880 320" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s6" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="3" stdDeviation="4" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+
+          <!-- Public door -->
+          <g filter="url(#s6)">
+            <rect x="40" y="40" width="380" height="240" rx="20" fill="#e8f1fb" stroke="#c5daf3" stroke-width="2"/>
+            <rect x="160" y="70" width="140" height="170" rx="12" fill="#2b6cb0"/>
+            <rect x="185" y="100" width="90" height="110" rx="6" fill="#7eb6e8"/>
+            <circle cx="270" cy="160" r="6" fill="#fff"/>
+            <text x="230" y="250" text-anchor="middle" fill="#2b6cb0" font-size="15" font-weight="800">Public HTTPS door</text>
+          </g>
+          <text x="230" y="40" text-anchor="middle" fill="#2b6cb0" font-size="13" font-weight="700">Door A · Public T1 gateway</text>
+          <text x="230" y="300" text-anchor="middle" fill="#5c6b63" font-size="12">Anyone can view public app pages</text>
+          <text x="230" y="316" text-anchor="middle" fill="#5c6b63" font-size="11">Like a glass shop window — not a secret vault</text>
+
+          <!-- Private vault -->
+          <g filter="url(#s6)">
+            <rect x="460" y="40" width="380" height="240" rx="20" fill="#e3f6ef" stroke="#b8e6d4" stroke-width="2"/>
+            <rect x="575" y="85" width="150" height="130" rx="14" fill="#0c8a68"/>
+            <rect x="600" y="115" width="100" height="70" rx="8" fill="#066b50"/>
+            <text x="650" y="158" text-anchor="middle" fill="#fff" font-size="28">🔐</text>
+            <text x="650" y="250" text-anchor="middle" fill="#0c8a68" font-size="15" font-weight="800">Blind cell storage</text>
+          </g>
+          <text x="650" y="40" text-anchor="middle" fill="#0c8a68" font-size="13" font-weight="700">Door B · Blind substrate (in progress)</text>
+          <text x="650" y="300" text-anchor="middle" fill="#5c6b63" font-size="12">Relay holds locked boxes it can’t open</text>
+          <text x="650" y="316" text-anchor="middle" fill="#5c6b63" font-size="11">App encrypts first · still maturing for Peerit</text>
+        </svg>
+        <p class="fig-cap">Figure 7 — Public gateway ≠ privacy product. Blind cells ≠ “any HTTPS link is private.”</p>
+      </div>
+
+      <div class="compare">
+        <div class="box good">
+          <h4>Door A — Public gateway</h4>
+          <ul>
+            <li>Goal: open public P2P apps in normal Chrome/Safari</li>
+            <li>Serves exact public files</li>
+            <li>Hostname is replaceable</li>
+            <li><strong>No privacy brag</strong></li>
+          </ul>
+        </div>
+        <div class="box good">
+          <h4>Door B — Blind cells</h4>
+          <ul>
+            <li>Goal: store opaque encrypted slots</li>
+            <li>App (e.g. Peerit later) encrypts on the device</li>
+            <li>Relay shouldn’t learn post text</li>
+            <li><strong>Still in active development</strong></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- BLIND SCALE -->
+    <section id="blind-scale">
+      <h2><span class="step-num">9</span>Blind substrate: one warehouse, thousands of apps &amp; users</h2>
+      <p class="lede">
+        The next-generation storage path is deliberately <strong>app-agnostic</strong>.
+        Relays do not install “the Peerit plugin” for every new social app.
+        They only store locked boxes (cells), opaque inboxes, and receipts.
+      </p>
+
+      <div class="fig" role="img" aria-label="Many apps and users share the same blind relays without the relay knowing app schemas">
+        <svg viewBox="0 0 880 380" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="sbl" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+          <text x="440" y="28" text-anchor="middle" fill="#5c6b63" font-size="13" font-weight="700">Same blind relays · many apps · many users · no app registry on the daemon</text>
+
+          <!-- apps row -->
+          <g filter="url(#sbl)">
+            <rect x="40" y="50" width="110" height="70" rx="12" fill="#2b6cb0"/>
+            <text x="95" y="80" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">Peerit</text>
+            <text x="95" y="98" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">users A–Z</text>
+          </g>
+          <g filter="url(#sbl)">
+            <rect x="170" y="50" width="110" height="70" rx="12" fill="#6b5b95"/>
+            <text x="225" y="80" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">Tickets</text>
+            <text x="225" y="98" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">events</text>
+          </g>
+          <g filter="url(#sbl)">
+            <rect x="300" y="50" width="110" height="70" rx="12" fill="#b7791f"/>
+            <text x="355" y="80" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">POS</text>
+            <text x="355" y="98" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">shops</text>
+          </g>
+          <g filter="url(#sbl)">
+            <rect x="430" y="50" width="110" height="70" rx="12" fill="#0c8a68"/>
+            <text x="485" y="80" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">Paste</text>
+            <text x="485" y="98" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">notes</text>
+          </g>
+          <g filter="url(#sbl)">
+            <rect x="560" y="50" width="110" height="70" rx="12" fill="#2b6cb0"/>
+            <text x="615" y="80" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">… app N</text>
+            <text x="615" y="98" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">no install</text>
+          </g>
+          <g filter="url(#sbl)">
+            <rect x="690" y="50" width="150" height="70" rx="12" fill="#1c2420"/>
+            <text x="765" y="80" text-anchor="middle" fill="#8ad4b8" font-size="12" font-weight="800">Thousands</text>
+            <text x="765" y="98" text-anchor="middle" fill="#b8c4be" font-size="10">of users per app</text>
+          </g>
+
+          <!-- encrypt on client -->
+          <text x="440" y="150" text-anchor="middle" fill="#0c8a68" font-size="12" font-weight="700">each client encrypts first → only opaque cells leave the device</text>
+          <path d="M95 120 V170 H765 V120" stroke="#b8e6d4" stroke-width="2" fill="none" stroke-dasharray="4 4"/>
+
+          <!-- shared warehouse -->
+          <g filter="url(#sbl)">
+            <rect x="120" y="180" width="640" height="160" rx="20" fill="#0a5c47"/>
+            <text x="440" y="215" text-anchor="middle" fill="#fff" font-size="16" font-weight="800">Shared blind substrate (edge + daemon)</text>
+            <text x="440" y="238" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="12">DESCRIBE · CELL · INBOX · CORE · FORWARD — no Peerit schema, no author graph</text>
+
+            <!-- cell slots -->
+            <rect x="160" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.15)"/>
+            <rect x="220" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.2)"/>
+            <rect x="280" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.15)"/>
+            <rect x="340" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.2)"/>
+            <rect x="400" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.15)"/>
+            <rect x="460" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.2)"/>
+            <rect x="520" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.15)"/>
+            <rect x="580" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.2)"/>
+            <rect x="640" y="260" width="50" height="40" rx="6" fill="rgba(255,255,255,.15)"/>
+            <text x="440" y="320" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="11">fixed-size locked slots · quotas · receipts · multi-relay copies</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 8 — Scaling model for privacy path: N apps × M users share relays; apps never need a relay-side install.</p>
+      </div>
+
+      <h3>Why this scales to “many apps”</h3>
+      <ul>
+        <li><strong>No per-app daemon code</strong> — supporting a new app is a client change, not a fleet upgrade.</li>
+        <li><strong>No semantic indexes on the relay</strong> — posts, shops, tickets stay inside ciphertext.</li>
+        <li><strong>Quotas &amp; admission</strong> — each relay sells capacity (bytes, ops), not “Peerit seats.”</li>
+        <li><strong>Horizontal growth</strong> — add more relay operators; clients pick several for copies (G2-S multi-replica).</li>
+        <li><strong>Peerit is customer #1</strong>, not the protocol owner — two fixture apps prove the substrate isn’t Peerit-shaped.</li>
+      </ul>
+
+      <h3>How thousands of users fit (simple picture)</h3>
+      <table class="plain">
+        <thead><tr><th>Layer</th><th>What grows with users</th><th>What does <em>not</em> grow linearly on one machine</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>User devices</td>
+            <td>Keys, local UI, encryption work</td>
+            <td>Relay does not run your app UI</td>
+          </tr>
+          <tr>
+            <td>Blind cells / inboxes</td>
+            <td>More opaque slots &amp; bandwidth</td>
+            <td>Relay still sees only ciphertext size/rate</td>
+          </tr>
+          <tr>
+            <td>Relay fleet</td>
+            <td>More nodes / regions as demand rises</td>
+            <td>No single global “Peerit database shard map”</td>
+          </tr>
+          <tr>
+            <td>Public gateway (T1)</td>
+            <td>More public app bytes served</td>
+            <td>Separate from private cells; public ≠ blind</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="warn">
+        <strong>Honest ceiling</strong>
+        The architecture is built for multi-app, multi-user scale. The <em>live</em> Peerit path today is still OutboxLog
+        on a small bootstrap fleet. Blind cells are a large draft on the vNext train — the design supports thousands;
+        production claims wait for freeze, soak, and dual-read migration.
+      </div>
+    </section>
+
+    <!-- SCALE -->
+    <section id="scale">
+      <h2><span class="step-num">10</span>How the network scales (no central control plane)</h2>
+      <p class="lede">
+        There is no master load balancer you must grow past. Growth means
+        <strong>more relays announcing on the same discovery topic</strong> — clients find them in seconds.
+      </p>
+
+      <div class="fig" role="img" aria-label="Horizontal scaling: more relays join one discovery topic">
+        <svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="ssc" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+          <text x="440" y="28" text-anchor="middle" fill="#5c6b63" font-size="13" font-weight="700">Discovery topic: hiverelay-discovery-v1 — join by announcing, no permission server</text>
+
+          <!-- center topic -->
+          <circle cx="440" cy="150" r="48" fill="#0c8a68" filter="url(#ssc)"/>
+          <text x="440" y="145" text-anchor="middle" fill="#fff" font-size="11" font-weight="800">DHT</text>
+          <text x="440" y="162" text-anchor="middle" fill="#fff" font-size="10">topic</text>
+
+          <!-- relays around -->
+          <g filter="url(#ssc)">
+            <circle cx="240" cy="90" r="36" fill="#e3f6ef" stroke="#0c8a68" stroke-width="2"/>
+            <text x="240" y="86" text-anchor="middle" font-size="11" font-weight="800">NA</text>
+            <text x="240" y="102" text-anchor="middle" font-size="9" fill="#5c6b63">relays</text>
+          </g>
+          <g filter="url(#ssc)">
+            <circle cx="640" cy="90" r="36" fill="#e3f6ef" stroke="#0c8a68" stroke-width="2"/>
+            <text x="640" y="86" text-anchor="middle" font-size="11" font-weight="800">EU</text>
+            <text x="640" y="102" text-anchor="middle" font-size="9" fill="#5c6b63">relays</text>
+          </g>
+          <g filter="url(#ssc)">
+            <circle cx="240" cy="230" r="36" fill="#e3f6ef" stroke="#0c8a68" stroke-width="2"/>
+            <text x="240" y="226" text-anchor="middle" font-size="11" font-weight="800">APAC</text>
+            <text x="240" y="242" text-anchor="middle" font-size="9" fill="#5c6b63">relays</text>
+          </g>
+          <g filter="url(#ssc)">
+            <circle cx="640" cy="230" r="36" fill="#e3f6ef" stroke="#0c8a68" stroke-width="2"/>
+            <text x="640" y="226" text-anchor="middle" font-size="11" font-weight="800">ME</text>
+            <text x="640" y="242" text-anchor="middle" font-size="9" fill="#5c6b63">relays</text>
+          </g>
+          <g filter="url(#ssc)">
+            <circle cx="440" cy="260" r="32" fill="#fdf6e3" stroke="#d69e2e" stroke-width="2"/>
+            <text x="440" y="256" text-anchor="middle" font-size="10" font-weight="800">new op</text>
+            <text x="440" y="270" text-anchor="middle" font-size="9" fill="#5c6b63">joins</text>
+          </g>
+
+          <line x1="276" y1="100" x2="400" y2="130" stroke="#0c8a68" stroke-width="1.5"/>
+          <line x1="604" y1="100" x2="480" y2="130" stroke="#0c8a68" stroke-width="1.5"/>
+          <line x1="276" y1="220" x2="400" y2="170" stroke="#0c8a68" stroke-width="1.5"/>
+          <line x1="604" y1="220" x2="480" y2="170" stroke="#0c8a68" stroke-width="1.5"/>
+          <line x1="440" y1="198" x2="440" y2="228" stroke="#d69e2e" stroke-width="1.5" stroke-dasharray="4 3"/>
+
+          <text x="100" y="160" fill="#5c6b63" font-size="11">Client finds</text>
+          <text x="100" y="176" fill="#5c6b63" font-size="11">relays in 2–5s</text>
+        </svg>
+        <p class="fig-cap">Figure 9 — Scale-out: more operators announce; no central “add node” ticket queue.</p>
+      </div>
+
+      <div class="stat-row">
+        <div class="stat-card"><div class="n">2–5s</div><div class="l">typical client → relay discovery</div></div>
+        <div class="stat-card"><div class="n">~95%</div><div class="l">connections holepunch direct; relays catch the rest</div></div>
+        <div class="stat-card"><div class="n">9</div><div class="l">bootstrap raw-fleet boxes today (multi-region)</div></div>
+        <div class="stat-card"><div class="n">~20</div><div class="l">apps in the portfolio sharing the pattern</div></div>
+      </div>
+
+      <h3>Scale rules of thumb (friendly)</h3>
+      <ul>
+        <li><strong>Availability scales with replicas</strong> — more independent operators, not one fatter server.</li>
+        <li><strong>Trust scales with signatures</strong> — verifying a receipt does not get slower just because the planet has more relays.</li>
+        <li><strong>Per-node costs stay bounded</strong> — storage caps, eviction, rate limits, AutoHeal proof budgets.</li>
+        <li><strong>Direct P2P first</strong> — relays are the always-on backup path, not a forced middlebox for every byte.</li>
+        <li><strong>Year-1 ambition (planning, not promise)</strong> — ecosystem report sketches thousands of operators via home nodes + Lightning funnel; bootstrap starts from founder fleet + appliances.</li>
+      </ul>
+    </section>
+
+    <!-- BUSINESS -->
+    <section id="business">
+      <h2><span class="step-num">11</span>Business &amp; money model (phased, not “coin first”)</h2>
+      <p class="lede">
+        The product is infrastructure + apps. Money is allowed to show up
+        <strong>after demand is real</strong> — deliberately anti-hype.
+      </p>
+
+      <div class="fig" role="img" aria-label="Three economic phases from reputation to Lightning to optional token">
+        <svg viewBox="0 0 880 200" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="sbus" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+          <g filter="url(#sbus)">
+            <rect x="30" y="40" width="240" height="120" rx="16" fill="#0c8a68"/>
+            <text x="150" y="80" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Phase 1 · LIVE</text>
+            <text x="150" y="105" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="12">Reputation only</text>
+            <text x="150" y="125" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">$0 protocol payments</text>
+            <text x="150" y="142" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="10">prove apps &amp; uptime</text>
+          </g>
+          <path d="M280 100 H320" stroke="#94a39b" stroke-width="3"/>
+          <polygon points="318,94 330,100 318,106" fill="#94a39b"/>
+          <g filter="url(#sbus)">
+            <rect x="340" y="40" width="240" height="120" rx="16" fill="#2b6cb0"/>
+            <text x="460" y="80" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Phase 2</text>
+            <text x="460" y="105" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="12">Lightning marketplace</text>
+            <text x="460" y="125" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">sats for GB / bandwidth</text>
+            <text x="460" y="142" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="10">after demand gates</text>
+          </g>
+          <path d="M590 100 H630" stroke="#94a39b" stroke-width="3"/>
+          <polygon points="628,94 640,100 628,106" fill="#94a39b"/>
+          <g filter="url(#sbus)">
+            <rect x="650" y="40" width="200" height="120" rx="16" fill="#6b5b95"/>
+            <text x="750" y="80" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Phase 3</text>
+            <text x="750" y="105" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="12">Optional later</text>
+            <text x="750" y="125" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="11">only if operators vote</text>
+            <text x="750" y="142" text-anchor="middle" fill="rgba(255,255,255,.75)" font-size="10">escape hatch exists</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 10 — Economics: reputation → pay-for-work → maybe more. Not “issue a coin on day one.”</p>
+      </div>
+
+      <h3>What operators sell (Phase 2 rate-card idea)</h3>
+      <table class="plain">
+        <thead><tr><th>Service</th><th>Idea</th><th>Why a buyer cares</th></tr></thead>
+        <tbody>
+          <tr><td>Storage / GB-month</td><td>Hold seeded drives or blind cells</td><td>App stays online when creators sleep</td></tr>
+          <tr><td>Bandwidth / GB</td><td>Serve bytes to readers</td><td>Snappy loads for users worldwide</td></tr>
+          <tr><td>Relay forwarding</td><td>Help peers who can’t holepunch</td><td>Mobile / hard NATs still connect</td></tr>
+          <tr><td>Availability / hour</td><td>Keep a quota of always-on capacity</td><td>SLO-ish product for serious apps</td></tr>
+          <tr><td>Service RPC calls</td><td>VRF, proofs, outbox, notify…</td><td>Apps buy capabilities, not bare metal</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Where the money comes from (story for colleagues)</h3>
+      <ul>
+        <li><strong>App builders / communities</strong> pay (or self-host) for uptime of their product.</li>
+        <li><strong>End users</strong> usually don’t buy “relay futures” — they use Peerit / tickets / POS.</li>
+        <li><strong>Operators</strong> run VPS or home appliances; Phase 1 builds reputation; Phase 2 earns sats.</li>
+        <li><strong>Project</strong> ships open source + bootstrap fleet so the marketplace isn’t empty on day one.</li>
+      </ul>
+
+      <div class="stat-row">
+        <div class="stat-card"><div class="n">$0</div><div class="l">protocol cashflows in Phase 1 (by design)</div></div>
+        <div class="stat-card"><div class="n">No token</div><div class="l">required to run or use the core product</div></div>
+        <div class="stat-card"><div class="n">Pi → VPS</div><div class="l">home nodes to dedicated boxes as demand grows</div></div>
+        <div class="stat-card"><div class="n">Multi-app</div><div class="l">one relay stack serves many verticals</div></div>
+      </div>
+
+      <div class="idea">
+        <strong>Business thesis in one line</strong>
+        Sell verifiable always-on capacity (and optional services) to many apps —
+        cheaper and more credible than “trust our pin server” — without forcing a token.
+      </div>
+    </section>
+
+    <!-- decentralized renumber -->
+    <section id="decentralized">
+      <h2><span class="step-num">12</span>Is it “decentralized”? (honest answer)</h2>
+      <p class="lede">
+        Yes in the places that matter most for ownership — and not magically everywhere yet.
+        Good projects say both sides out loud.
+      </p>
+
+      <div class="fig" role="img" aria-label="What is decentralized vs still concentrated">
+        <svg viewBox="0 0 880 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s7" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+
+          <g filter="url(#s7)">
+            <rect x="30" y="30" width="400" height="240" rx="18" fill="#e3f6ef" stroke="#b8e6d4"/>
+            <text x="230" y="65" text-anchor="middle" fill="#0c8a68" font-size="16" font-weight="800">✓ More decentralized</text>
+            <text x="55" y="100" fill="#1c2420" font-size="13">• Your keys own your posts / apps</text>
+            <text x="55" y="128" fill="#1c2420" font-size="13">• History is signed (hard to silently rewrite)</text>
+            <text x="55" y="156" fill="#1c2420" font-size="13">• Many machines can hold copies</text>
+            <text x="55" y="184" fill="#1c2420" font-size="13">• Clients re-check signatures</text>
+            <text x="55" y="212" fill="#1c2420" font-size="13">• Open source — anyone can run it</text>
+            <text x="55" y="240" fill="#1c2420" font-size="13">• Another relay can replace a bad one</text>
+          </g>
+
+          <g filter="url(#s7)">
+            <rect x="450" y="30" width="400" height="240" rx="18" fill="#fdf6e3" stroke="#f0d89a"/>
+            <text x="650" y="65" text-anchor="middle" fill="#9a6b12" font-size="16" font-weight="800">~ Still concentrated (for now)</text>
+            <text x="475" y="100" fill="#1c2420" font-size="13">• Early relay fleet is still small / project-run</text>
+            <text x="475" y="128" fill="#1c2420" font-size="13">• Peerit web still has few write gateways</text>
+            <text x="475" y="156" fill="#1c2420" font-size="13">• Normal websites need DNS + HTTPS hosts</text>
+            <text x="475" y="184" fill="#1c2420" font-size="13">• App stores / npm / cloud images exist</text>
+            <text x="475" y="212" fill="#1c2420" font-size="13">• Strong privacy modes still shipping carefully</text>
+            <text x="475" y="240" fill="#1c2420" font-size="13">• We widen this with evidence, not slogans</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 11 — Decentralization scorecard: cryptographic ownership first; operator diversity grows over time.</p>
+      </div>
+
+      <div class="tip">
+        <strong>Sentence you can reuse</strong>
+        “Users cryptographically own their data; availability is multi-party; bootstrap infrastructure is still early and we don’t pretend nine boxes equal the whole internet.”
+      </div>
+    </section>
+
+    <!-- who -->
+    <section id="who">
+      <h2><span class="step-num">13</span>Who does what? (roles)</h2>
+      <div class="fig" role="img" aria-label="Actors: users, builders, operators, maintainers">
+        <svg viewBox="0 0 880 220" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="s8" x="-10%" y="-10%" width="120%" height="130%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.1"/>
+            </filter>
+          </defs>
+          <g filter="url(#s8)">
+            <rect x="20" y="30" width="200" height="160" rx="16" fill="#fff" stroke="#dce5df"/>
+            <text x="120" y="70" text-anchor="middle" font-size="28">👤</text>
+            <text x="120" y="105" text-anchor="middle" font-weight="800" font-size="14">Users</text>
+            <text x="120" y="130" text-anchor="middle" fill="#5c6b63" font-size="12">hold keys</text>
+            <text x="120" y="148" text-anchor="middle" fill="#5c6b63" font-size="12">read &amp; write apps</text>
+            <text x="120" y="166" text-anchor="middle" fill="#5c6b63" font-size="12">optionally seed</text>
+          </g>
+          <g filter="url(#s8)">
+            <rect x="240" y="30" width="200" height="160" rx="16" fill="#fff" stroke="#dce5df"/>
+            <text x="340" y="70" text-anchor="middle" font-size="28">🛠️</text>
+            <text x="340" y="105" text-anchor="middle" font-weight="800" font-size="14">Builders</text>
+            <text x="340" y="130" text-anchor="middle" fill="#5c6b63" font-size="12">ship apps</text>
+            <text x="340" y="148" text-anchor="middle" fill="#5c6b63" font-size="12">publish drives</text>
+            <text x="340" y="166" text-anchor="middle" fill="#5c6b63" font-size="12">set policies</text>
+          </g>
+          <g filter="url(#s8)">
+            <rect x="460" y="30" width="200" height="160" rx="16" fill="#fff" stroke="#dce5df"/>
+            <text x="560" y="70" text-anchor="middle" font-size="28">🖥️</text>
+            <text x="560" y="105" text-anchor="middle" font-weight="800" font-size="14">Operators</text>
+            <text x="560" y="130" text-anchor="middle" fill="#5c6b63" font-size="12">run relays</text>
+            <text x="560" y="148" text-anchor="middle" fill="#5c6b63" font-size="12">uptime &amp; disk</text>
+            <text x="560" y="166" text-anchor="middle" fill="#5c6b63" font-size="12">earn reputation (later fees)</text>
+          </g>
+          <g filter="url(#s8)">
+            <rect x="680" y="30" width="180" height="160" rx="16" fill="#fff" stroke="#dce5df"/>
+            <text x="770" y="70" text-anchor="middle" font-size="28">📐</text>
+            <text x="770" y="105" text-anchor="middle" font-weight="800" font-size="14">Maintainers</text>
+            <text x="770" y="130" text-anchor="middle" fill="#5c6b63" font-size="12">protocol</text>
+            <text x="770" y="148" text-anchor="middle" fill="#5c6b63" font-size="12">releases</text>
+            <text x="770" y="166" text-anchor="middle" fill="#5c6b63" font-size="12">honest docs</text>
+          </g>
+        </svg>
+        <p class="fig-cap">Figure 12 — Four roles. Relays don’t have to be the same people as app creators.</p>
+      </div>
+      <p>For how those roles earn money, jump back to <a href="#business">Business &amp; money model</a>.</p>
+    </section>
+
+    <!-- now -->
+    <section id="now">
+      <h2><span class="step-num">14</span>What’s real today? (cheat sheet)</h2>
+      <div class="fig" role="img" aria-label="Status traffic lights for each major piece">
+        <svg viewBox="0 0 880 260" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <!-- rows -->
+          <rect x="40" y="30" width="800" height="48" rx="12" fill="#e3f6ef"/>
+          <circle cx="70" y="54" r="10" fill="#0c8a68"/>
+          <text x="100" y="50" font-size="14" font-weight="700" fill="#1c2420">HiveRelay software + bootstrap fleet</text>
+          <text x="100" y="68" font-size="12" fill="#5c6b63">Live infrastructure line (always improving)</text>
+
+          <rect x="40" y="90" width="800" height="48" rx="12" fill="#e3f6ef"/>
+          <circle cx="70" y="114" r="10" fill="#0c8a68"/>
+          <text x="100" y="110" font-size="14" font-weight="700" fill="#1c2420">Peerit on the public web</text>
+          <text x="100" y="128" font-size="12" fill="#5c6b63">Writable canary — real posts, still hardening for full “GA”</text>
+
+          <rect x="40" y="150" width="800" height="48" rx="12" fill="#fdf6e3"/>
+          <circle cx="70" y="174" r="10" fill="#d69e2e"/>
+          <text x="100" y="170" font-size="14" font-weight="700" fill="#1c2420">Public HTTPS gateway for P2P apps</text>
+          <text x="100" y="188" font-size="12" fill="#5c6b63">Built &amp; staging now — open public apps in a normal browser</text>
+
+          <rect x="40" y="210" width="800" height="48" rx="12" fill="#fdf6e3"/>
+          <circle cx="70" y="234" r="10" fill="#d69e2e"/>
+          <text x="100" y="230" font-size="14" font-weight="700" fill="#1c2420">Blind cell substrate (extra privacy path)</text>
+          <text x="100" y="248" font-size="12" fill="#5c6b63">Big draft in code — not Peerit’s main live write path yet</text>
+        </svg>
+        <p class="fig-cap">Figure 13 — Green = live in the world. Amber = serious work, not finished story.</p>
+      </div>
+
+      <div class="chips">
+        <span class="chip">Independent open source</span>
+        <span class="chip">Not a Tether/Holepunch Inc. product</span>
+        <span class="chip">Apache-2.0</span>
+        <span class="chip">15 services catalog</span>
+        <span class="chip">Phase 1: reputation only</span>
+        <span class="chip">Proof &gt; slogans</span>
+      </div>
+    </section>
+
+    <!-- words -->
+    <section id="words">
+      <h2><span class="step-num">15</span>Tiny glossary</h2>
+      <table style="width:100%; border-collapse:collapse; font-size:.92rem;">
+        <tr style="background:#f3f7f5;"><th style="text-align:left;padding:.55rem;">Word</th><th style="text-align:left;padding:.55rem;">Plain meaning</th></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>P2P</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Devices talk more directly; less “everything must hit HQ servers.”</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Key</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">A cryptographic ID — like a fingerprint for you or an app.</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Relay</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Always-on helper peer (HiveRelay node).</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Seed</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Keep a copy available so others can download it.</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Outbox</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Your personal signed stream of posts (Peerit).</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Blind</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Operator holds ciphertext they shouldn’t understand.</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Canary</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Live test in production with careful claims — not final “GA.”</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>GA</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">General availability — ready to market widely with full guarantees.</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Service / RPC</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Optional capability an app calls on a relay (randomness, outbox, push…).</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>OutboxLog</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Service that stores signed personal feeds — what Peerit uses on the web today.</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Cell</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Fixed-size locked blob on the blind substrate; app encrypts first.</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>App-agnostic</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Relay doesn’t need to know if you are a forum, shop, or game.</td></tr>
+        <tr><td style="padding:.5rem;border-top:1px solid #dce5df;"><strong>Phase 1 / 2</strong></td><td style="padding:.5rem;border-top:1px solid #dce5df;">Reputation-only economy now; paid sats marketplace only after demand gates.</td></tr>
+      </table>
+
+      <div class="tip" style="margin-top:1.25rem;">
+        <strong>Want more depth?</strong>
+        Colleague briefing (business + ops): <code>PEAR-ECOSYSTEM-COLLEAGUE-BRIEFING.html</code><br />
+        Ship / engineering detail: <code>SHIP-GUIDE-PEERIT-AND-PUBLIC-GATEWAY.html</code><br />
+        Polished PDF narrative: <code>ecosystem-report.pdf</code>
+      </div>
+    </section>
+
+    <footer>
+      Pear Ecosystem simple explainer · SVG diagrams · services · scale · business · July 2026<br />
+      Independent open-source project · Open in any browser · File → Print to save as PDF
+    </footer>
+  </div>
+</body>
+</html>

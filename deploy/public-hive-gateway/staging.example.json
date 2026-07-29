@@ -1,0 +1,31 @@
+{
+  "mode": "public-t1-gateway",
+  "productProfile": "public-t1-gateway",
+  "requirePhysicalEnforcement": true,
+  "enableAPI": true,
+  "enableSeeding": true,
+  "enableRelay": false,
+  "enableServices": false,
+  "plugins": [],
+  "apiHost": "127.0.0.1",
+  "apiPort": 9100,
+  "gatewayHost": "127.0.0.1",
+  "gatewayPort": 9200,
+  "gatewayTrustProxy": true,
+  "gatewayTrustedProxyAddresses": ["127.0.0.1", "::1", "::ffff:127.0.0.1"],
+  "gatewayRequireForwardedSNI": true,
+  "gatewayCompatibilityHosts": ["127.0.0.1", "localhost", "[::1]"],
+  "gatewayMaxInFlight": 256,
+  "gatewayMaxInFlightPerApp": 32,
+  "gatewayMaxResponseBytes": 67108864,
+  "gatewayMaxTransformBytes": 4194304,
+  "gatewayEgressBytesPerWindow": 268435456,
+  "gatewayEgressWindowMs": 60000,
+  "gatewayMaxResponseLifetimeMs": 900000,
+  "custody": { "enabled": false },
+  "hiveAppHostSuffix": "hive-canary.staging.example.com",
+  "hiveAppPublicKeys": ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+  "hiveAppPublicVersions": {
+    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": 1
+  }
+}

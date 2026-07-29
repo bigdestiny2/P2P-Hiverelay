@@ -2818,8 +2818,8 @@ if (
   relayApi.includes('const cors = buildCorsDecision(this.corsOrigins, requestOrigin, requestPath)') &&
   relayApi.includes('if (cors.varyOrigin)') &&
   relayApi.includes("appendVaryHeader(res, 'Origin')") &&
-  relayApi.includes("res.setHeader('Access-Control-Allow-Origin', cors.allowedOrigin)") &&
-  relayApi.includes('if (cors.preflightDenied)') &&
+  relayApi.includes("res.setHeader('Access-Control-Allow-Origin', publicOutboxLog ? '*' : cors.allowedOrigin)") &&
+  relayApi.includes('if (cors.preflightDenied && !publicOutboxLog)') &&
   relayApi.includes('return getAllowedOrigin(this.corsOrigins, requestOrigin)') &&
   apiResponseTest.includes('appendVaryHeader preserves wildcard and avoids duplicates') &&
   apiCorsTest.includes('origin allowlist supports deny-by-default, strings, arrays, and wildcard') &&

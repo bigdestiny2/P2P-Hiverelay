@@ -1,0 +1,35 @@
+{
+  "acceptedAtProbeStart": {
+    "ready": true,
+    "reasons": []
+  },
+  "acceptedImmediatelyBeforeAckExpiry": {
+    "ready": true,
+    "reasons": []
+  },
+  "rejectedAtAckExpiry": {
+    "ready": false,
+    "reasons": [
+      "expired"
+    ]
+  },
+  "rejectedAtDescriptorExpiry": {
+    "ready": false,
+    "reasons": [
+      "descriptor-expiry-mismatch",
+      "descriptor-expired"
+    ]
+  },
+  "rejectedAtProbeDeadline": {
+    "ready": false,
+    "reasons": [
+      "expired"
+    ]
+  },
+  "rejectedBeforeProbeStart": {
+    "ready": false,
+    "reasons": [
+      "not-yet-valid"
+    ]
+  }
+}

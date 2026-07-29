@@ -1,0 +1,5 @@
+<CommunityApplications>
+  <Profile>Blindspark by HiveRelay keeps Pear and Holepunch peer-to-peer applications available from an always-on home server. Support and source are maintained in the HiveRelay repository.</Profile>
+  <Icon>https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/unraid-app/icon.svg</Icon>
+  <WebPage>https://hiverelay.com</WebPage>
+</CommunityApplications>

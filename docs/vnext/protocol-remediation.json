@@ -1,0 +1,92 @@
+{
+  "schema": "hiverelay-vnext-protocol-remediation-v1",
+  "sourceAudit": "git/088ebb7b105fa09578d6c5dd656400d06fa755d2/docs/vnext/blind-handoff-cr-audit.json",
+  "candidateProtocolCommit": "365309174d5a7ceb726c0a18064005176f8af842",
+  "authorityPolicy": {
+    "status": "draft-only",
+    "freezeAllowed": false,
+    "finalAuthorityForbidden": true,
+    "finalAuthorityPaths": [
+      "packages/blind-protocol/hiverelay-blind-wire-authority-v1.json",
+      "packages/blind-protocol/hiverelay-blind-abi-v1.cenc",
+      "packages/blind-protocol/vector-manifest-v1.cenc",
+      "packages/blind-protocol/wire-runtime-authority.js"
+    ]
+  },
+  "requiredDecisions": ["D-6", "D-7"],
+  "controls": [
+    {
+      "id": "CR-1",
+      "implementationStatus": "partial",
+      "gateStatus": "blocked",
+      "requiredValidations": ["V-2"],
+      "evidence": ["audit/BH-CR-1"]
+    },
+    {
+      "id": "CR-2",
+      "implementationStatus": "implemented",
+      "gateStatus": "pending",
+      "requiredValidations": ["V-3"],
+      "evidence": ["audit/BH-CR-2"]
+    },
+    {
+      "id": "CR-3",
+      "implementationStatus": "missing",
+      "gateStatus": "blocked",
+      "requiredValidations": ["V-4"],
+      "evidence": ["audit/BH-CR-3"]
+    },
+    {
+      "id": "CR-4",
+      "implementationStatus": "partial",
+      "gateStatus": "blocked",
+      "requiredValidations": ["V-5"],
+      "evidence": ["audit/BH-CR-4"]
+    },
+    {
+      "id": "CR-5",
+      "implementationStatus": "missing",
+      "gateStatus": "blocked",
+      "requiredValidations": ["V-6"],
+      "evidence": [
+        "audit/BH-003",
+        "git/67ed85c088f4a6438382a2776619a9aeaa8d04c3/forward-route-scope-design"
+      ]
+    },
+    {
+      "id": "CR-6",
+      "implementationStatus": "partial",
+      "gateStatus": "blocked",
+      "requiredValidations": ["V-1", "V-7"],
+      "evidence": [
+        "audit/BH-004",
+        "audit/BH-CR-6",
+        "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/V-1-field-remediation"
+      ]
+    },
+    {
+      "id": "CR-7",
+      "implementationStatus": "partial",
+      "gateStatus": "blocked",
+      "requiredValidations": ["V-1", "claim-lint"],
+      "evidence": [
+        "audit/BH-CR-7",
+        "git/9456f12400e25e02ab0233e3dc069bdda41a8f96/V-1-field-remediation"
+      ]
+    },
+    {
+      "id": "CR-8",
+      "implementationStatus": "partial",
+      "gateStatus": "blocked",
+      "requiredValidations": ["V-8"],
+      "evidence": ["audit/BH-CR-8"]
+    }
+  ],
+  "requiredBeforeFreeze": [
+    "D-6 and D-7 have signed owner evidence",
+    "CR-1 through CR-8 have passed their applicable validation gates",
+    "PG-2 is passed with immutable canonical-registry and vector evidence",
+    "Both normative specifications and executable codecs derive from one registry",
+    "specHash, abiHash, and vectorSetHash are regenerated last"
+  ]
+}

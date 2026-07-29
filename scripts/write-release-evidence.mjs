@@ -43,6 +43,7 @@ const metadataSha = env('HIVERELAY_RELEASE_SURFACES_SHA') || gitRevParse('HEAD')
 const repository = env('GITHUB_REPOSITORY')
 const runId = env('GITHUB_RUN_ID')
 const startosRegistryStatus = status('HIVERELAY_STARTOS_REGISTRY_STATUS')
+const publicGateway = publicGatewayEvidence()
 const fleetChannelConfigPath = env('HIVERELAY_FLEET_CHANNEL_CONFIG') ||
   (env('HIVERELAY_RELEASE_CHANNEL') && env('HIVERELAY_RELEASE_CHANNEL') !== 'none' ? 'fleet/channels.json' : '')
 
@@ -57,6 +58,7 @@ const evidence = {
     candidate: env('HIVERELAY_RELEASE_CANDIDATE') === 'true',
     tagSha: releaseSha,
     metadataSha,
+    ...(publicGateway ? { publicGateway } : {}),
     workflow: {
       status: env('HIVERELAY_WORKFLOW_STATUS') || env('JOB_STATUS') || 'unknown',
       repository,
@@ -180,6 +182,27 @@ function booleanEnv (name) {
   die(`${name} must be true or false when set`)
 }
 
+function publicGatewayEvidence () {
+  const manifestStatus = env('HIVERELAY_PUBLIC_GATEWAY_MANIFEST_STATUS')
+  if (!manifestStatus) return null
+  const enabled = booleanEnv('HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED')
+  if (enabled == null) die('HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED must be true or false when gateway resolution is recorded')
+  const cohortSizeText = env('HIVERELAY_PUBLIC_GATEWAY_COHORT_SIZE')
+  if (!/^(?:0|[1-9][0-9]*)$/.test(cohortSizeText)) {
+    die('HIVERELAY_PUBLIC_GATEWAY_COHORT_SIZE must be a non-negative integer')
+  }
+  return {
+    enabled,
+    manifestStatus,
+    manifestPath: env('HIVERELAY_PUBLIC_GATEWAY_MANIFEST_PATH'),
+    manifestSha256: env('HIVERELAY_PUBLIC_GATEWAY_MANIFEST_SHA256'),
+    releaseTarget: env('HIVERELAY_PUBLIC_GATEWAY_RELEASE_TARGET'),
+    commitSha: env('HIVERELAY_PUBLIC_GATEWAY_COMMIT_SHA'),
+    admissionProfile: env('HIVERELAY_PUBLIC_GATEWAY_ADMISSION_PROFILE'),
+    cohortSize: Number(cohortSizeText)
+  }
+}
+
 function gitRevParse (ref) {
   const result = spawnSync('git', ['rev-parse', ref], {
     cwd: repoRoot,
@@ -209,6 +232,7 @@ async function validateEvidence (body) {
   if (body.release.tagSha && !/^[a-f0-9]{40}$/i.test(body.release.tagSha)) {
     die('HIVERELAY_RELEASE_SHA must be a 40-character commit SHA')
   }
+  validatePublicGatewayBinding(body)
   if (body.release.metadataSha && !/^[a-f0-9]{40}$/i.test(body.release.metadataSha)) {
     die('HIVERELAY_RELEASE_SURFACES_SHA must be a 40-character commit SHA')
   }
@@ -316,16 +340,30 @@ async function validateSuccessfulRun (body) {
     return
   }
 
-  requireOneOf('successful full release channel', body.release.channel, ['canary', 'stable', 'both'])
+  const publicGatewayRelease = isEnabledPublicGatewayRelease(body)
+  requireOneOf(
+    'successful full release channel',
+    body.release.channel,
+    publicGatewayRelease ? ['none'] : ['canary', 'stable', 'both']
+  )
   requireOneOf('successful full release distribution preflight', body.gates.distributionPreflight, ['passed'])
   requireOneOf('successful full release metadata surfaces', body.surfaces.metadataCommit, ['committed', 'current'])
   requireOneOf('successful full release npm packages', body.surfaces.npmPackages, ['published', 'current'])
-  requireOneOf('successful full release fleet rollout', body.surfaces.fleetRollout, ['verified'])
-  requireOneOf('successful full release fleet rollout channel', body.surfaces.fleetRolloutChannel, [body.release.channel])
-  requireOneOf('successful full release fleet rollout evidence path', body.surfaces.fleetRolloutEvidence.path, ['fleet-rollout-evidence.json'])
-  requirePattern('successful full release fleet rollout evidence SHA-256', body.surfaces.fleetRolloutEvidence.sha256, /^[a-f0-9]{64}$/i)
-  requireOneOf('successful full release fleet channel config path', body.surfaces.fleetChannelConfig.path, ['fleet/channels.json'])
-  requirePattern('successful full release fleet channel config SHA-256', body.surfaces.fleetChannelConfig.sha256, /^[a-f0-9]{64}$/i)
+  if (publicGatewayRelease) {
+    requireOneOf('successful public gateway release fleet rollout', body.surfaces.fleetRollout, ['deferred-gateway-canary-gated'])
+    requireOneOf('successful public gateway release fleet rollout channel', body.surfaces.fleetRolloutChannel || 'deferred', ['deferred'])
+    requireOneOf('successful public gateway release fleet rollout evidence path', body.surfaces.fleetRolloutEvidence.path || 'deferred', ['deferred'])
+    requireOneOf('successful public gateway release fleet rollout evidence hash', body.surfaces.fleetRolloutEvidence.sha256 || 'deferred', ['deferred'])
+    requireOneOf('successful public gateway release fleet channel config path', body.surfaces.fleetChannelConfig.path || 'deferred', ['deferred'])
+    requireOneOf('successful public gateway release fleet channel config hash', body.surfaces.fleetChannelConfig.sha256 || 'deferred', ['deferred'])
+  } else {
+    requireOneOf('successful full release fleet rollout', body.surfaces.fleetRollout, ['verified'])
+    requireOneOf('successful full release fleet rollout channel', body.surfaces.fleetRolloutChannel, [body.release.channel])
+    requireOneOf('successful full release fleet rollout evidence path', body.surfaces.fleetRolloutEvidence.path, ['fleet-rollout-evidence.json'])
+    requirePattern('successful full release fleet rollout evidence SHA-256', body.surfaces.fleetRolloutEvidence.sha256, /^[a-f0-9]{64}$/i)
+    requireOneOf('successful full release fleet channel config path', body.surfaces.fleetChannelConfig.path, ['fleet/channels.json'])
+    requirePattern('successful full release fleet channel config SHA-256', body.surfaces.fleetChannelConfig.sha256, /^[a-f0-9]{64}$/i)
+  }
   requireOneOf('successful full release StartOS registry publish', body.surfaces.startosRegistry, ['published'])
   requirePublicHttpsUrl('successful full release StartOS registry URL', body.surfaces.startosRegistryUrl)
   requirePattern('successful full release StartOS package id', body.surfaces.startosPackageId, /^[a-z0-9][a-z0-9-]{1,63}$/)
@@ -353,7 +391,8 @@ async function validateSuccessfulRun (body) {
   if (!OFFICIAL_UMBREL_PR_URL_PATTERN.test(prUrl)) {
     die('successful full release official Umbrel PR URL must point to getumbrel/umbrel-apps')
   }
-  await verifyPresentEvidenceFiles(body, true)
+  if (publicGatewayRelease) await verifyPresentEvidenceFiles(body, true, false)
+  else await verifyPresentEvidenceFiles(body, true)
 }
 
 function headRefFromHead (head) {
@@ -379,6 +418,68 @@ function requireEqual (label, actual, expected) {
 function requirePattern (label, value, pattern) {
   if (pattern.test(value)) return
   die(`${label} is required and malformed; got ${JSON.stringify(value)}`)
+}
+
+function validatePublicGatewayBinding (body) {
+  const gateway = body.release?.publicGateway
+  if (gateway == null) return false
+  if (!gateway || typeof gateway !== 'object' || Array.isArray(gateway)) {
+    die('release publicGateway must be an object')
+  }
+  const allowed = new Set([
+    'enabled',
+    'manifestStatus',
+    'manifestPath',
+    'manifestSha256',
+    'releaseTarget',
+    'commitSha',
+    'admissionProfile',
+    'cohortSize'
+  ])
+  const extra = Object.keys(gateway).filter(key => !allowed.has(key))
+  if (extra.length > 0) die(`release publicGateway has unsupported fields: ${extra.join(', ')}`)
+  if (typeof gateway.enabled !== 'boolean') die('release publicGateway enabled must be true or false')
+  requireOneOf('release publicGateway manifest status', gateway.manifestStatus, [
+    'enabled',
+    'disabled',
+    'missing',
+    'not-applicable'
+  ])
+  requireEqual('release publicGateway manifest path', gateway.manifestPath, 'fleet/public-hive-gateway-release.json')
+  requireEqual('release publicGateway target', gateway.releaseTarget, body.release.version)
+  requirePattern('release publicGateway commit', gateway.commitSha, /^[a-f0-9]{40}$/i)
+  if (body.release.tagSha) requireEqual('release publicGateway commit', gateway.commitSha, body.release.tagSha)
+
+  if (gateway.enabled) {
+    requireEqual('enabled release publicGateway manifest status', gateway.manifestStatus, 'enabled')
+    requirePattern('enabled release publicGateway manifest SHA-256', gateway.manifestSha256, /^[a-f0-9]{64}$/)
+    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(gateway.admissionProfile || '') ||
+        gateway.admissionProfile.startsWith('transitional-')) {
+      die('enabled release publicGateway admission profile must be bounded and frozen')
+    }
+    if (!Number.isSafeInteger(gateway.cohortSize) || gateway.cohortSize < 1 || gateway.cohortSize > 128) {
+      die('enabled release publicGateway cohort size must be between 1 and 128')
+    }
+    return true
+  }
+
+  requireOneOf('disabled release publicGateway manifest status', gateway.manifestStatus, [
+    'disabled',
+    'missing',
+    'not-applicable'
+  ])
+  if (gateway.manifestStatus === 'disabled') {
+    requirePattern('disabled release publicGateway manifest SHA-256', gateway.manifestSha256, /^[a-f0-9]{64}$/)
+  } else {
+    requireEqual('absent release publicGateway manifest SHA-256', gateway.manifestSha256, '')
+  }
+  requireEqual('disabled release publicGateway admission profile', gateway.admissionProfile, '')
+  requireEqual('disabled release publicGateway cohort size', gateway.cohortSize, 0)
+  return false
+}
+
+function isEnabledPublicGatewayRelease (body) {
+  return body.release?.publicGateway?.enabled === true
 }
 
 function requireGitHubOwnerName (label, value) {
@@ -513,17 +614,15 @@ function hasControlChars (value) {
   return false
 }
 
-async function verifyPresentEvidenceFiles (body, fullRelease) {
+async function verifyPresentEvidenceFiles (body, fullRelease, includeFleetRollout = fullRelease) {
   const sidecars = [
     ['release image manifest evidence', body.gates.imageManifestEvidence],
     ['release image smoke evidence', body.gates.pushedImageSmokeEvidence],
     ['Umbrel package smoke evidence', body.gates.umbrelPackageSmokeEvidence]
   ]
   if (fullRelease) {
-    sidecars.push(
-      ['fleet rollout evidence', body.surfaces.fleetRolloutEvidence],
-      ['StartOS registry evidence', body.surfaces.startosRegistryEvidence]
-    )
+    if (includeFleetRollout) sidecars.push(['fleet rollout evidence', body.surfaces.fleetRolloutEvidence])
+    sidecars.push(['StartOS registry evidence', body.surfaces.startosRegistryEvidence])
   }
   for (const [label, evidenceFile] of sidecars) {
     await verifyPresentEvidenceFile(label, evidenceFile.path, evidenceFile.sha256)

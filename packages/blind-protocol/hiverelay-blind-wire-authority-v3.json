@@ -1,0 +1,246 @@
+{
+  "magic": "hiverelay-blind-wire-authority-v3",
+  "formatVersion": 3,
+  "protocol": {
+    "major": 1,
+    "minor": 2,
+    "abiFormatVersion": 3
+  },
+  "baseSchemaCount": 75,
+  "compatibilityOnlySchemaIds": [
+    74,
+    75
+  ],
+  "baseWireV2AbiHash": "cc1abb0e24bd4c75e0cb99b824e114cf50ad91270362f39d8594a826e29d5053",
+  "abiHash": "c15c6a994d3bc2e54a397446b475a12d7f27e04be68e6e3eb86b28d518752881",
+  "specHash": "5ada44ba41459a9776324493d26393d8baa1b314fc76a0d83f5e261c447c22dc",
+  "vectorSetHash": "3e968dc0e5c9b0efe1933a8641e30e009321a85a3dddd629d7d3ae0b1d283cd7",
+  "additionalSchemas": [
+    {
+      "schemaId": 76,
+      "schemaName": "BlindForwardHttpsOriginForwardTurnRequestV1",
+      "fields": [
+        "magic:fixed4=HFOQ",
+        "version:u8=1",
+        "routeKind:u8=7",
+        "releaseProfileId:u8=2",
+        "requestRole:u8[ORIGIN_TEMPLATE=0|FORWARDED=1]",
+        "requestKind:u8[OPEN=1|DATA=2|WINDOW=3|CLOSE=4|POLL=5]",
+        "flags:u8=0",
+        "stableSessionId:fixed32[nonzero]",
+        "sequence:u64be",
+        "clientSessionNonce:fixed32[nonzero]",
+        "requestNonce:fixed32[nonzero]",
+        "previousTargetResultHash:fixed32",
+        "parentCapabilitySlot:fixed390[origin-zero-exporter-signature|forwarded-finalized]",
+        "turnTlsExporterBindingHash:fixed32",
+        "originRequestCommitment:fixed32",
+        "sourceTransformSignature:fixed64",
+        "innerLength:u32be",
+        "inner:closed(requestKind){OPEN:BlindForwardOpenV1|DATA:BlindForwardDataV1[maxBytes=64000]|WINDOW:BlindForwardWindowV1|CLOSE:BlindForwardCloseV1|POLL:empty}",
+        "padding:zero[65536-668-innerLength]",
+        "exactBytes:65536"
+      ]
+    },
+    {
+      "schemaId": 77,
+      "schemaName": "BlindForwardHttpsOriginForwardTurnResultV1",
+      "fields": [
+        "magic:fixed4=HFOS",
+        "version:u8=1",
+        "routeKind:u8=7",
+        "releaseProfileId:u8=2",
+        "resultRole:u8[TARGET_RESULT=1|SOURCE_PRE_FORWARD_ERROR=2|SOURCE_POST_FORWARD_AMBIGUOUS=3]",
+        "requestKind:u8[OPEN=1|DATA=2|WINDOW=3|CLOSE=4|POLL=5]",
+        "responseKind:u8[OPEN_ACCEPT=1|ACK=2|NOOP=3|DATA=4|WINDOW=5|CLOSE=6|ERROR=7|AMBIGUOUS=8]",
+        "flags:u8=0",
+        "stableSessionId:fixed32[nonzero]",
+        "sequence:u64be",
+        "previousTargetResultHash:fixed32",
+        "originRequestCommitment:fixed32[nonzero]",
+        "forwardedRequestCommitment:fixed32[nonzero]",
+        "finalizedParentCapability:fixed390",
+        "turnTlsExporterBindingHash:fixed32[nonzero]",
+        "sourceTransformSignature:fixed64[nonzero]",
+        "signerPublicKey:fixed32[nonzero]",
+        "signerDescriptorSequence:u64be[nonzero]",
+        "signerDescriptorHash:fixed32[nonzero]",
+        "resultSignature:fixed64",
+        "innerLength:u32be",
+        "inner:closed(resultRole,requestKind,responseKind)",
+        "padding:zero[65536-773-innerLength]",
+        "exactBytes:65536"
+      ]
+    }
+  ],
+  "releaseProfiles": [
+    {
+      "profileId": 1,
+      "canonicalName": "LIMITED_PUBLIC_TEST_V1",
+      "operationBits": 131071,
+      "isDefault": true
+    },
+    {
+      "profileId": 2,
+      "canonicalName": "LIMITED_PUBLIC_TEST_FORWARD_ONE_HOP_V1",
+      "operationBits": 4063231,
+      "isDefault": false
+    }
+  ],
+  "successorTransportVariants": [
+    {
+      "family": "FORWARD",
+      "operation": "OPEN",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 76,
+      "resultSchemaId": 77,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "requestKind": 1
+    },
+    {
+      "family": "FORWARD",
+      "operation": "DATA",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 76,
+      "resultSchemaId": 77,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "requestKind": 2
+    },
+    {
+      "family": "FORWARD",
+      "operation": "WINDOW",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 76,
+      "resultSchemaId": 77,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "requestKind": 3
+    },
+    {
+      "family": "FORWARD",
+      "operation": "CLOSE",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 76,
+      "resultSchemaId": 77,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "requestKind": 4
+    }
+  ],
+  "additionalDomains": [
+    {
+      "domainId": 18,
+      "purpose": "REQUEST_COMMITMENT",
+      "purposeId": 1,
+      "recipeId": 1,
+      "name": "FORWARD_HTTPS_ORIGIN_FORWARD_TURN",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-origin-forward-turn-request.v1"
+    },
+    {
+      "domainId": 113,
+      "purpose": "RESULT_SIGNATURE",
+      "purposeId": 2,
+      "recipeId": 2,
+      "name": "FORWARD_HTTPS_TARGET_TURN_RESULT",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-target-turn-result.v1"
+    },
+    {
+      "domainId": 114,
+      "purpose": "RESULT_SIGNATURE",
+      "purposeId": 2,
+      "recipeId": 2,
+      "name": "FORWARD_HTTPS_SOURCE_PRE_FORWARD_ERROR",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-source-pre-forward-error.v1"
+    },
+    {
+      "domainId": 115,
+      "purpose": "RESULT_SIGNATURE",
+      "purposeId": 2,
+      "recipeId": 2,
+      "name": "FORWARD_HTTPS_SOURCE_POST_FORWARD_AMBIGUOUS",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-source-post-forward-ambiguous.v1"
+    },
+    {
+      "domainId": 215,
+      "purpose": "AUXILIARY_SIGNATURE",
+      "purposeId": 3,
+      "recipeId": 2,
+      "name": "FORWARD_HTTPS_SOURCE_TRANSFORM",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-source-transform.v1"
+    },
+    {
+      "domainId": 216,
+      "purpose": "HASH_DOMAIN",
+      "purposeId": 4,
+      "recipeId": 4,
+      "name": "FORWARD_HTTPS_STABLE_SESSION",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-stable-session.v1"
+    },
+    {
+      "domainId": 217,
+      "purpose": "HASH_DOMAIN",
+      "purposeId": 4,
+      "recipeId": 3,
+      "name": "FORWARD_HTTPS_TARGET_RESULT_CHAIN",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-target-result-chain.v1"
+    },
+    {
+      "domainId": 218,
+      "purpose": "HASH_DOMAIN",
+      "purposeId": 4,
+      "recipeId": 3,
+      "name": "FORWARD_HTTPS_TLS_EXPORTER_CONTEXT",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-tls-exporter-context.v1"
+    },
+    {
+      "domainId": 219,
+      "purpose": "HASH_DOMAIN",
+      "purposeId": 4,
+      "recipeId": 4,
+      "name": "FORWARD_HTTPS_TLS_EXPORTER_BINDING",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-tls-exporter-binding.v1"
+    }
+  ],
+  "hashDomainPurpose": {
+    "purposeId": 4,
+    "name": "HASH_DOMAIN"
+  },
+  "hashRecipes": [
+    {
+      "recipeId": 3,
+      "name": "BLAKE2B256_ASCII_DOMAIN_PAYLOAD",
+      "canonicalPreimage": "ASCII(domain) || exact fixed-shape payload"
+    },
+    {
+      "recipeId": 4,
+      "name": "BLAKE2B256_ASCII_DOMAIN_LEN64_PAYLOAD",
+      "canonicalPreimage": "ASCII(domain) || u64be(payloadLength) || payload"
+    }
+  ],
+  "tlsExporterLabel": "EXPORTER-HiveRelay-Blind-Forward-Origin-v1",
+  "exactRequestBytes": 65536,
+  "exactResultBytes": 65536,
+  "maxDataBytes": 64000,
+  "forwardDescriptorOperationBits": 0,
+  "forwardAdvertisedOperationBits": 0,
+  "forwardReadinessOperationBits": 0,
+  "runtimeReady": false,
+  "authorizesRelease": false,
+  "compatibilityFloor": {
+    "hiverelay-blind-abi-v1.cenc": "8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6",
+    "hiverelay-blind-abi-v2.cenc": "ff86d47c480a39156e2ab0268e3da786dbac3ff8528f98f758671ed1bf2a297c",
+    "vector-manifest-v1.cenc": "e23137dc90f52a1c9c3c8ac1e6ecb98eb32b653260fe1049f078ff8cebabc522",
+    "vector-manifest-v2.cenc": "803717545ff5f51f396bf06646dda7ca4b12596c61bffc640a244360d287aa7f",
+    "hiverelay-blind-wire-authority-v1.json": "d6b757334bbec7b85d949085ce4b896a5fe960bc4c86c7f9001f81be78d0cefc",
+    "hiverelay-blind-wire-authority-v2.json": "165316d7d551afabfe6943981d80cc8ba9cbe0b2db06336a3b95eaeb17783e86",
+    "wire-v2.js": "678b417f8ca3adacb50442f46c2e8ae0500334f81d039e3552c1d8b89acd19d4",
+    "abi-registry-v2.js": "8aabef205df158f49a08c5bd7a2c7bb6318355c16b3cb1b6dea38eddd361a126",
+    "registry.js": "782075a117d9946b53fae90a90cd7cf957ba469cce522151dcc8f8b570b8f61f"
+  }
+}

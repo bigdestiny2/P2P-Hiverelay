@@ -1,0 +1,10 @@
+{
+  "hiverelay-blind-abi-v1.cenc": "8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6",
+  "hiverelay-blind-abi-v1.draft.cenc": "8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6",
+  "vector-manifest-v1.cenc": "e23137dc90f52a1c9c3c8ac1e6ecb98eb32b653260fe1049f078ff8cebabc522",
+  "vectors/draft/vector-manifest-v1.draft.cenc": "e23137dc90f52a1c9c3c8ac1e6ecb98eb32b653260fe1049f078ff8cebabc522",
+  "hiverelay-blind-wire-authority-v1.json": "d6b757334bbec7b85d949085ce4b896a5fe960bc4c86c7f9001f81be78d0cefc",
+  "schema-catalog-runtime-authority.js": "6c0c7a8be1f77709cd60edad083606fa3e3889f2f50396592bfe290db6404fcc",
+  "wire-runtime-authority.js": "3c861d390f8f6b60a390334e3320cd22cdce6071dfe3a5f42231460e73f52cea",
+  "hiverelay-blind-release-closure-v1.json": "9f82a7dbe4aee8cc4dd2c7e22864314a7489280b8ceb3fbf2dd68e71d095a663"
+}

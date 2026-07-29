@@ -1,0 +1,6 @@
+{
+  "caller-url-host-ip-dial-fields": "unrepresentable-and-rejected",
+  "non-persistent-continuity": "reject",
+  "cookies-authorization-referrer-or-redirect": "reject",
+  "forward-readiness-before-independent-acceptance": "zero"
+}

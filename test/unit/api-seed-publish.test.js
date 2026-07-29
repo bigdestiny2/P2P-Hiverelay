@@ -16,6 +16,8 @@ import {
   serializeSeedRequestForSigning
 } from '../../packages/core/core/protocol/seed-request.js'
 
+const STORAGE_BOUND = 500 * 1024 * 1024
+
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
   const secretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
@@ -100,12 +102,12 @@ test('api seed publish: route action helper dispatches seed and registry primiti
 
   const operator = await runSeedPublishRouteAction({
     route: { kind: 'operator-seed' },
-    body: { appKey: 'a'.repeat(64) },
+    body: { appKey: 'a'.repeat(64), maxStorageBytes: STORAGE_BOUND },
     node
   })
   const registry = await runSeedPublishRouteAction({
     route: { kind: 'registry-publish' },
-    body: { appKey: 'b'.repeat(64), discoveryKeys: [] },
+    body: { appKey: 'b'.repeat(64), discoveryKeys: [], maxStorageBytes: STORAGE_BOUND },
     node
   })
   const publisherOut = await runSeedPublishRouteAction({
@@ -145,6 +147,7 @@ test('api seed publish: operator seed normalizes metadata without mutating opts'
   }
   const body = {
     appKey: 'A'.repeat(64),
+    maxStorageBytes: STORAGE_BOUND,
     opts,
     type: 'drive',
     parentKey: 'b'.repeat(64),
@@ -170,7 +173,7 @@ test('api seed publish: operator seed normalizes metadata without mutating opts'
 
   t.alike(out.payload, { ok: true, discoveryKey: 'seeded' })
   t.is(calls.length, 1)
-  t.is(calls[0].appKey, 'A'.repeat(64), 'appKey is forwarded unchanged')
+  t.is(calls[0].appKey, 'a'.repeat(64), 'appKey is canonicalized before runtime ingress')
   t.alike(opts, {
     storageClass: 'persistent',
     availabilityClass: 'best-effort',
@@ -217,21 +220,21 @@ test('api seed publish: operator seed rejects malformed input before seeding', a
   t.alike(out.payload, { error: 'opts must be an object' })
 
   out = await runOperatorSeedAction({
-    body: { appKey: 'a'.repeat(64), type: 'torrent' },
+    body: { appKey: 'a'.repeat(64), type: 'torrent', maxStorageBytes: STORAGE_BOUND },
     node
   })
   t.is(out.status, 400)
   t.ok(out.payload.error.includes('type must be one of'))
 
   out = await runOperatorSeedAction({
-    body: { appKey: 'a'.repeat(64), type: 'app', parentKey: 'b'.repeat(64) },
+    body: { appKey: 'a'.repeat(64), type: 'app', parentKey: 'b'.repeat(64), maxStorageBytes: STORAGE_BOUND },
     node
   })
   t.is(out.status, 400)
   t.alike(out.payload, { error: 'parentKey and mountPath are only supported when type is "drive"' })
 
   out = await runOperatorSeedAction({
-    body: { appKey: 'a'.repeat(64), shardIds: [1, -1] },
+    body: { appKey: 'a'.repeat(64), shardIds: [1, -1], maxStorageBytes: STORAGE_BOUND },
     node
   })
   t.is(out.status, 400)
@@ -272,7 +275,7 @@ test('api seed publish: disabled custody seed fields reject before seed runtime 
 test('api seed publish: disabled profile still allows plain operator seed', async (t) => {
   const calls = []
   const out = await runOperatorSeedAction({
-    body: { appKey: 'a'.repeat(64) },
+    body: { appKey: 'a'.repeat(64), maxStorageBytes: STORAGE_BOUND },
     node: {
       async seedApp (appKey, opts) {
         calls.push({ appKey, opts })
@@ -285,7 +288,7 @@ test('api seed publish: disabled profile still allows plain operator seed', asyn
   t.alike(out.payload, { ok: true, discoveryKey: 'plain-seed-ok' })
   t.is(calls.length, 1)
   t.is(calls[0].appKey, 'a'.repeat(64))
-  t.alike(calls[0].opts, {})
+  t.alike(calls[0].opts, { maxStorage: STORAGE_BOUND })
 })
 
 test('api seed publish: registry publish builds the signed catalog request', async (t) => {
@@ -358,7 +361,8 @@ test('api seed publish: registry publish preserves readiness and validation erro
     node,
     body: {
       appKey: 'a'.repeat(64),
-      discoveryKeys: Array(MAX_DISCOVERY_KEYS + 1).fill('b'.repeat(64))
+      discoveryKeys: Array(MAX_DISCOVERY_KEYS + 1).fill('b'.repeat(64)),
+      maxStorageBytes: STORAGE_BOUND
     }
   })
   t.is(out.status, 400)
@@ -369,7 +373,8 @@ test('api seed publish: registry publish preserves readiness and validation erro
     body: {
       appKey: 'a'.repeat(64),
       type: 'app',
-      mountPath: '/docs'
+      mountPath: '/docs',
+      maxStorageBytes: STORAGE_BOUND
     }
   })
   t.is(out.status, 400)
@@ -379,7 +384,8 @@ test('api seed publish: registry publish preserves readiness and validation erro
     node,
     body: {
       appKey: 'a'.repeat(64),
-      blind: 'yes'
+      blind: 'yes',
+      maxStorageBytes: STORAGE_BOUND
     }
   })
   t.is(out.status, 400)
@@ -389,7 +395,8 @@ test('api seed publish: registry publish preserves readiness and validation erro
     node,
     body: {
       appKey: 'a'.repeat(64),
-      replicas: 0
+      replicas: 0,
+      maxStorageBytes: STORAGE_BOUND
     }
   })
   t.is(out.status, 400)
@@ -399,7 +406,8 @@ test('api seed publish: registry publish preserves readiness and validation erro
     node,
     body: {
       appKey: 'a'.repeat(64),
-      geo: { region: 'EU' }
+      geo: { region: 'EU' },
+      maxStorageBytes: STORAGE_BOUND
     }
   })
   t.is(out.status, 400)
@@ -409,7 +417,8 @@ test('api seed publish: registry publish preserves readiness and validation erro
     node,
     body: {
       appKey: 'a'.repeat(64),
-      ttlDays: '1e3'
+      ttlDays: '1e3',
+      maxStorageBytes: STORAGE_BOUND
     }
   })
   t.is(out.status, 400)
@@ -419,11 +428,22 @@ test('api seed publish: registry publish preserves readiness and validation erro
     node,
     body: {
       appKey: 'a'.repeat(64),
-      bountyRate: 4294967296
+      bountyRate: 4294967296,
+      maxStorageBytes: STORAGE_BOUND
     }
   })
   t.is(out.status, 400)
   t.alike(out.payload, { error: 'bountyRate must be between 0 and 4294967295' })
+
+  out = await runRegistryPublishAction({
+    node,
+    body: {
+      appKey: 'a'.repeat(64),
+      discoveryKeys: []
+    }
+  })
+  t.is(out.status, 400)
+  t.alike(out.payload, { error: 'maxStorageBytes must be a positive safe integer' })
 })
 
 test('api seed publish: publisher seed checks seedApp readiness before request validation', async (t) => {

@@ -104,6 +104,13 @@ import {
   resolveStatusRoute
 } from './api-status-read.js'
 import {
+  buildCreditsCompareRoutePayload,
+  buildCreditsPricingRoutePayload,
+  buildCreditsStatsRoutePayload,
+  buildCreditsWalletsRoutePayload,
+  resolveCreditsRoute
+} from './api-credits.js'
+import {
   buildUsageTelemetryRoutePayload,
   resolveUsageTelemetryRoute,
   usageTelemetryPayload
@@ -165,6 +172,10 @@ import {
   buildNetworkStateRouteContext,
   resolveNetworkStateRoute
 } from './api-network-state.js'
+import {
+  buildFleetRoutePayload,
+  resolveFleetRoute
+} from './api-fleet.js'
 import {
   buildSubsidyRoutePayload,
   resolveSubsidyRoute,
@@ -252,6 +263,10 @@ import {
   buildForkProofsRoutePayload,
   resolveForkProofReadRoute
 } from './api-fork-proofs.js'
+import {
+  buildGatewayDenylistRoutePayload,
+  resolveGatewayDenylistReadRoute
+} from './api-gateway-denylist.js'
 import {
   buildReputationLeaderboardRoutePayload,
   buildReputationRecordRoutePayload,
@@ -397,7 +412,10 @@ export class RelayAPI extends EventEmitter {
     this._witnessLogHttpState = opts.witnessLogHttpState || null
     this._repairTicketHttpState = opts.repairTicketHttpState || null
     this._shardHttpState = opts.shardHttpState || null
-    this._gateway = new HyperGateway(relayNode, { store: relayNode.store })
+    this._gateway = new HyperGateway(relayNode, {
+      store: relayNode.store,
+      requireLifecycleDriveAuthority: true
+    })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
   }
 
@@ -975,6 +993,7 @@ export class RelayAPI extends EventEmitter {
         const healthRoute = resolveHealthRoute(req.method, path)
         const statusRoute = resolveStatusRoute(req.method, path)
         const metricsRoute = resolveMetricsRoute(req.method, path)
+        const creditsRoute = resolveCreditsRoute(req.method, path)
         const wizardSnapshotRoute = resolveWizardSnapshotRoute(req.method, path)
 
         if (healthRoute && healthRoute.kind === 'health') {
@@ -1006,6 +1025,27 @@ export class RelayAPI extends EventEmitter {
           })
           if (!result.ok) return this._json(res, result.payload, result.status || 503)
           return writeText(res, result.text, result.status || 200)
+        }
+
+        if (creditsRoute) {
+          if (creditsRoute.requiresAuth && !this._requireAuth(req, res, creditsRoute.authMessage)) return
+
+          if (creditsRoute.kind === 'credits-pricing') {
+            const result = buildCreditsPricingRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
+          if (creditsRoute.kind === 'credits-pricing-compare') {
+            const result = buildCreditsCompareRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
+          if (creditsRoute.kind === 'credits-stats') {
+            const result = buildCreditsStatsRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
+          if (creditsRoute.kind === 'credits-wallets') {
+            const result = buildCreditsWalletsRoutePayload({ route: creditsRoute, node: this.node })
+            return this._json(res, result.payload, result.status || 200)
+          }
         }
 
         if (peerStateRoute && peerStateRoute.kind === 'legacy-peer-list') {
@@ -1060,6 +1100,19 @@ export class RelayAPI extends EventEmitter {
           const result = buildForkProofsRoutePayload({
             route: forkProofReadRoute,
             forkDetector: this.node.forkDetector
+          })
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
+        }
+
+        // Federated signed gateway denylist — served unauthenticated like the
+        // fork-proof list: entries are self-authenticating signed envelopes
+        // naming hashed drive keys only, and receiving relays independently
+        // verify + trust-gate before enforcing (see gateway-denylist.js).
+        const gatewayDenylistRoute = resolveGatewayDenylistReadRoute(req.method, path)
+        if (gatewayDenylistRoute && gatewayDenylistRoute.kind === 'gateway-denylist-list') {
+          const result = buildGatewayDenylistRoutePayload({
+            route: gatewayDenylistRoute,
+            denylist: this.node.gatewayDenylist
           })
           return this._json(res, result.payload, result.status || 200, result.headers || null)
         }
@@ -1261,6 +1314,17 @@ export class RelayAPI extends EventEmitter {
             route: networkStateRoute,
             context: route,
             networkDiscovery: this.node.networkDiscovery
+          })
+          return this._json(res, result.payload, result.status || 200)
+        }
+
+        // Operator fleet multi-node view (v3) — management auth; public peer scrapes only.
+        const fleetRoute = resolveFleetRoute(req.method, path)
+        if (fleetRoute && fleetRoute.kind === 'fleet') {
+          if (!this._requireAuth(req, res, fleetRoute.authMessage)) return
+          const result = await buildFleetRoutePayload({
+            route: fleetRoute,
+            node: this.node
           })
           return this._json(res, result.payload, result.status || 200)
         }
@@ -1727,9 +1791,9 @@ export class RelayAPI extends EventEmitter {
           })
           if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
           // Live-apply a storage designation: persisting maxStorageBytes alone
-          // does not re-cap the running seeder or shed to fit. Push it into the
-          // seeder + enable eviction + kick a sweep so lowering the cap frees
-          // space without a restart.
+          // does not re-cap the running seeder. The live application blocks
+          // new adoption when over cap but deliberately does not enable
+          // eviction or delete already-held data.
           if (result.ok && Array.isArray(result.payload?.applied) && result.payload.applied.includes('maxStorageBytes') &&
               typeof this.node.applyStorageDesignation === 'function') {
             try { await this.node.applyStorageDesignation(this.node.config.maxStorageBytes) } catch (_) {}
@@ -1941,7 +2005,9 @@ export class RelayAPI extends EventEmitter {
   _relayKernelProfileActive () {
     return this.node && (
       this.node.mode === 'relaykernel' ||
-      (this.node.config && this.node.config.productProfile === 'relaykernel')
+      this.node.mode === 'public-t1-gateway' ||
+      (this.node.config && (this.node.config.productProfile === 'relaykernel' ||
+        this.node.config.productProfile === 'public-t1-gateway'))
     )
   }
 

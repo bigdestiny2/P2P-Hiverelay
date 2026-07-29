@@ -1,0 +1,98 @@
+{
+  "schema": "hiverelay.blind.release-operation-profile.v1",
+  "profile": "wire-authority-v1",
+  "advertisedOperationBits": 131071,
+  "reservedOperationBits": 4063232,
+  "advertisedOperations": [
+    {
+      "familyId": 1,
+      "operationId": 1
+    },
+    {
+      "familyId": 1,
+      "operationId": 2
+    },
+    {
+      "familyId": 1,
+      "operationId": 3
+    },
+    {
+      "familyId": 2,
+      "operationId": 1
+    },
+    {
+      "familyId": 2,
+      "operationId": 2
+    },
+    {
+      "familyId": 2,
+      "operationId": 3
+    },
+    {
+      "familyId": 2,
+      "operationId": 4
+    },
+    {
+      "familyId": 2,
+      "operationId": 5
+    },
+    {
+      "familyId": 2,
+      "operationId": 6
+    },
+    {
+      "familyId": 3,
+      "operationId": 1
+    },
+    {
+      "familyId": 3,
+      "operationId": 2
+    },
+    {
+      "familyId": 3,
+      "operationId": 3
+    },
+    {
+      "familyId": 3,
+      "operationId": 4
+    },
+    {
+      "familyId": 3,
+      "operationId": 5
+    },
+    {
+      "familyId": 3,
+      "operationId": 6
+    },
+    {
+      "familyId": 4,
+      "operationId": 1
+    },
+    {
+      "familyId": 4,
+      "operationId": 2
+    }
+  ],
+  "reservedOperations": [
+    {
+      "familyId": 4,
+      "operationId": 3
+    },
+    {
+      "familyId": 5,
+      "operationId": 1
+    },
+    {
+      "familyId": 5,
+      "operationId": 2
+    },
+    {
+      "familyId": 5,
+      "operationId": 3
+    },
+    {
+      "familyId": 5,
+      "operationId": 4
+    }
+  ]
+}

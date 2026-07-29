@@ -163,6 +163,72 @@ test('updateWithTimeout: clears the active-requests array on timeout', async (t)
   t.ok(clearCalls.length >= 1, 'clearRequests was called at least once')
 })
 
+test('updateWithTimeout: an already-aborted signal never starts an update', async (t) => {
+  const controller = new AbortController()
+  controller.abort(new Error('client already gone'))
+  let updateCalls = 0
+  const drive = {
+    update () {
+      updateCalls++
+      return new Promise(() => {})
+    }
+  }
+
+  let failure = null
+  try {
+    await updateWithTimeout(drive, { timeoutMs: 1000, signal: controller.signal })
+  } catch (err) {
+    failure = err
+  }
+  t.is(failure?.name, 'AbortError')
+  t.is(updateCalls, 0, 'abort-before-start creates no replicator request')
+})
+
+test('updateWithTimeout: abort detaches only this operation and removes its listener', async (t) => {
+  const { drive, clearCalls } = mockDrive()
+  let driveCloseCalls = 0
+  drive.close = async () => { driveCloseCalls++ }
+  const controller = new AbortController()
+  let adds = 0
+  let removes = 0
+  const add = controller.signal.addEventListener.bind(controller.signal)
+  const remove = controller.signal.removeEventListener.bind(controller.signal)
+  controller.signal.addEventListener = (...args) => { adds++; return add(...args) }
+  controller.signal.removeEventListener = (...args) => { removes++; return remove(...args) }
+
+  const pending = updateWithTimeout(drive, {
+    timeoutMs: 1000,
+    signal: controller.signal
+  })
+  await new Promise(resolve => setImmediate(resolve))
+  controller.abort(new Error('client disconnected'))
+
+  let failure = null
+  try { await pending } catch (err) { failure = err }
+  t.is(failure?.name, 'AbortError')
+  t.is(clearCalls.length, 1, 'operation request set is cleared exactly once')
+  t.is(clearCalls[0].count, 1, 'only the update-owned ref was present')
+  t.is(driveCloseCalls, 0, 'cancelling an update never closes a shared drive')
+  t.is(adds, 1, 'one abort listener installed')
+  t.is(removes, 1, 'abort listener removed after settlement')
+})
+
+test('updateWithTimeout: timeout and abort race settles and clears idempotently', async (t) => {
+  const { drive, clearCalls } = mockDrive()
+  const controller = new AbortController()
+  const pending = updateWithTimeout(drive, {
+    timeoutMs: 15,
+    signal: controller.signal
+  })
+  setTimeout(() => controller.abort(), 15)
+
+  let failure = null
+  try { await pending } catch (err) { failure = err }
+  t.ok(failure?.name === 'AbortError' || failure?.message === 'update timeout', 'one bounded terminal reason wins')
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(clearCalls.length, 1, 'race cannot clear/reject the operation twice')
+})
+
 // ─── downloadWithTimeout ────────────────────────────────────────────
 
 test('downloadWithTimeout: resolves when download completes before timeout', async (t) => {
@@ -270,6 +336,7 @@ test('downloadWithTimeout: defensive destroy on rejection path', async (t) => {
 
 function mockDriveWithCores ({ metaBytes = 0, blobBytes = 0, blobsCorePresent = true }) {
   const makeCore = (byteLength) => ({
+    length: 0,
     byteLength,
     update: () => Promise.resolve(true),
     replicator: {
@@ -305,6 +372,7 @@ test('getDriveSize: best-effort under update timeout', async (t) => {
   // Core whose update hangs — getDriveSize should still return whatever
   // byteLength the core had before the update timed out, not throw.
   const hangingCore = {
+    length: 0,
     byteLength: 999,
     update: () => new Promise(() => {}), // hang forever
     replicator: {
@@ -313,7 +381,7 @@ test('getDriveSize: best-effort under update timeout', async (t) => {
   }
   const drive = {
     db: { core: hangingCore },
-    blobs: { core: { byteLength: 42, update: () => Promise.resolve(true), replicator: { clearRequests () {} } } }
+    blobs: { core: { length: 0, byteLength: 42, update: () => Promise.resolve(true), replicator: { clearRequests () {} } } }
   }
   const r = await getDriveSize(drive, { timeoutMs: 30 })
   // Returned without throwing; sizes reflect whatever was visible at call time.
@@ -327,4 +395,58 @@ test('getDriveSize: missing drive.db core returns zeros gracefully', async (t) =
   t.is(r.metaBytes, 0)
   t.is(r.blobBytes, 0)
   t.is(r.totalBytes, 0)
+})
+
+test('getDriveSize retries an append injected between length and byteLength getters', async (t) => {
+  function changingCore (firstBytes, finalBytes) {
+    const lengths = [1, 2, 2, 2, 2, 2, 2, 2, 2, 2]
+    const bytes = [firstBytes, finalBytes, finalBytes, finalBytes, finalBytes]
+    return {
+      get length () { return lengths.length > 1 ? lengths.shift() : 2 },
+      get byteLength () { return bytes.length > 1 ? bytes.shift() : finalBytes },
+      async update () { return true },
+      replicator: { clearRequests () {} }
+    }
+  }
+  const meta = changingCore(10, 100)
+  const blob = changingCore(20, 200)
+  const result = await getDriveSize({
+    db: { core: meta },
+    blobs: { core: blob },
+    version: 2
+  }, { timeoutMs: 100, requireAuthoritative: true })
+  t.is(result.metaLength, 2)
+  t.is(result.blobLength, 2)
+  t.is(result.totalBytes, 300, 'proof uses one stable signed snapshot per core')
+})
+
+test('getDriveSize rejects a drive version advance across pinned proof creation', async (t) => {
+  let versionReads = 0
+  let snapshotsClosed = 0
+  const makeCore = (bytes) => ({
+    fork: 0,
+    length: 1,
+    byteLength: bytes,
+    async update () { return true },
+    replicator: { clearRequests () {} },
+    snapshot () {
+      return {
+        fork: 0,
+        length: 1,
+        byteLength: bytes,
+        async ready () {},
+        async close () { snapshotsClosed++ }
+      }
+    }
+  })
+  const drive = {
+    db: { core: makeCore(10) },
+    blobs: { core: makeCore(20) },
+    get version () { return ++versionReads === 1 ? 1 : 2 }
+  }
+  await t.exception(
+    getDriveSize(drive, { timeoutMs: 100, requireAuthoritative: true, pinSnapshots: true }),
+    /DRIVE_VERSION_CHANGED_DURING_PROOF/
+  )
+  t.is(snapshotsClosed, 2, 'both stale proof snapshots are closed')
 })

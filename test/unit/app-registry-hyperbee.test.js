@@ -14,8 +14,12 @@ import test from 'brittle'
 import { mkdtemp, rm, readFile, writeFile, access } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
-import Corestore from 'corestore'
+// Production constructs corestores at state-bearing roots via the
+// corestore-7 migration guard (storage-root-restore) — mirror that here or
+// hypercore-storage's tmpFixStorage sweeps the pre-created JSON into db/.
+import { openCorestore } from '../../packages/core/core/persistence/storage-root-restore.js'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
+import { admitPublicHiveAppEntry } from 'p2p-hiverelay/gateway/public-app-admission.js'
 
 async function freshTmp () {
   return mkdtemp(join(tmpdir(), 'hiverelay-app-reg-bee-'))
@@ -32,7 +36,7 @@ test('bee mode: empty start, set, restart preserves entries', async (t) => {
 
     // Phase 1 — fresh registry, set one entry
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       await reg.load()
@@ -50,7 +54,7 @@ test('bee mode: empty start, set, restart preserves entries', async (t) => {
 
     // Phase 2 — fresh AppRegistry on same corestore, expect entry restored
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       const entries = await reg.load()
@@ -95,7 +99,7 @@ test('bee mode: migrates existing JSON on first load', async (t) => {
       }
     ], null, 2))
 
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
 
@@ -115,6 +119,18 @@ test('bee mode: migrates existing JSON on first load', async (t) => {
     t.is(reg.get('b'.repeat(64)).blind, true)
     t.is(entries.length, 2, 'reseed list has both')
 
+    const legacyPublic = reg.get('a'.repeat(64))
+    t.is(legacyPublic.privacyTier, 'public', 'legacy hydration retains its compatibility default')
+    t.is(legacyPublic.storageClass, 'persistent', 'legacy hydration retains its storage default')
+    t.is(legacyPublic.availabilityClass, 'always-on', 'legacy hydration retains its availability default')
+    t.alike(admitPublicHiveAppEntry(legacyPublic, {
+      appKey: 'a'.repeat(64),
+      publicAppKeys: []
+    }), {
+      allowed: false,
+      reason: 'not-operator-approved'
+    }, 'hydrated defaults cannot independently publish a legacy row')
+
     // JSON file renamed to .bak, bee now authoritative
     t.absent(await exists(jsonPath), 'app-registry.json renamed')
     t.ok(await exists(bakPath), 'app-registry.json.bak present')
@@ -133,13 +149,22 @@ test('bee mode: mutations persist across restart (set, setAnchored, delete)', as
 
     // Phase 1
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       await reg.load()
-      reg.set(keepKey, { type: 'app', appId: 'keep-me' })
+      reg.set(keepKey, { type: 'app', appId: 'keep-me', maxStorage: 4096 })
       reg.set(deleteKey, { type: 'app', appId: 'delete-me' })
-      reg.setAnchored(keepKey, 100)
+      reg.update(keepKey, {
+        anchored: true,
+        anchoredLength: 100,
+        storageProvedDriveVersion: 100,
+        storageProvedMetaLength: 1,
+        storageProvedBlobLength: 0,
+        storageProvedTotalBytes: 0,
+        storageProvedMetaFork: 0,
+        storageProvedBlobFork: 0
+      })
       await reg.flush()
       reg.delete(deleteKey)
       await reg.flush()
@@ -148,7 +173,7 @@ test('bee mode: mutations persist across restart (set, setAnchored, delete)', as
 
     // Phase 2 — restart
     {
-      const store = new Corestore(dir)
+      const store = openCorestore(dir)
       await store.ready()
       const reg = new AppRegistry(dir, { store })
       await reg.load()
@@ -190,6 +215,13 @@ test('legacy JSON mode: still works when no store is passed', async (t) => {
       await reg.load()
       t.is(reg.size, 1)
       t.is(reg.get(appKey).appId, 'legacy')
+      t.alike(admitPublicHiveAppEntry(reg.get(appKey), {
+        appKey,
+        publicAppKeys: []
+      }), {
+        allowed: false,
+        reason: 'not-operator-approved'
+      }, 'legacy JSON hydration remains private without local key approval')
     }
   } finally {
     await rm(dir, { recursive: true, force: true })
@@ -199,12 +231,12 @@ test('legacy JSON mode: still works when no store is passed', async (t) => {
 test('bee mode: setStore after load() throws', async (t) => {
   const dir = await freshTmp()
   try {
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
     await reg.load()
 
-    const store2 = new Corestore(dir + '-other')
+    const store2 = openCorestore(dir + '-other')
     await store2.ready()
     t.exception(() => reg.setStore(store2), /setStore must be called before load/)
 
@@ -223,7 +255,7 @@ test('bee mode: concurrent set + delete of different keys both persist', async (
     const keyB = 'b'.repeat(64)
     const keyC = 'c'.repeat(64)
 
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
     await reg.load()
@@ -236,7 +268,7 @@ test('bee mode: concurrent set + delete of different keys both persist', async (
     await reg.flush()
     await store.close()
 
-    const store2 = new Corestore(dir)
+    const store2 = openCorestore(dir)
     await store2.ready()
     const reg2 = new AppRegistry(dir, { store: store2 })
     await reg2.load()
@@ -252,13 +284,59 @@ test('bee mode: concurrent set + delete of different keys both persist', async (
   }
 })
 
+test('bee mode: low-debt tombstone re-add reuses history and survives restart', async (t) => {
+  const dir = await freshTmp()
+  const key = 'd'.repeat(64)
+  try {
+    let finalDebt = 0
+    let finalBytes = 0
+    {
+      const store = openCorestore(dir)
+      await store.ready()
+      const reg = new AppRegistry(dir, { store })
+      await reg.load()
+      reg.set(key, { type: 'drive', appId: 'readd-ok', maxStorage: 4096 }, { persist: false })
+      await reg.persistEntry(key, { throwOnError: true })
+      const firstDebt = reg._metadataBudgets.get(key).bytes
+
+      reg.delete(key, { persist: false })
+      await reg.persistDelete(key, { throwOnError: true })
+      const retiredDebt = reg._metadataBudgets.get(key).bytes
+      t.ok(retiredDebt > firstDebt)
+
+      reg.set(key, { type: 'drive', appId: 'readd-ok', version: '2.0.0', maxStorage: 4096 }, { persist: false })
+      await reg.persistEntry(key, { throwOnError: true })
+      finalDebt = reg._metadataBudgets.get(key).bytes
+      finalBytes = reg._bee.core.byteLength
+      t.ok(finalDebt > retiredDebt, 're-add adopts rather than resets tombstone debt')
+      t.ok(finalDebt < 48 * 1024, 'normal low-debt re-add retains retirement reserve')
+      await store.close()
+    }
+
+    {
+      const store = openCorestore(dir)
+      await store.ready()
+      const reg = new AppRegistry(dir, { store })
+      const entries = await reg.load()
+      t.is(entries.length, 1)
+      t.is(reg.get(key).version, '2.0.0')
+      t.is(reg._metadataBudgets.get(key).bytes, finalDebt)
+      t.is(reg._bee.core.byteLength, finalBytes)
+      t.ok(reg._bee.core.byteLength <= reg._registryJournal.baselineBytes + 64 * 1024)
+      await store.close()
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
 test('bee mode: empty JSON file is still migrated cleanly', async (t) => {
   const dir = await freshTmp()
   try {
     const jsonPath = join(dir, 'app-registry.json')
     await writeFile(jsonPath, '[]') // empty array
 
-    const store = new Corestore(dir)
+    const store = openCorestore(dir)
     await store.ready()
     const reg = new AppRegistry(dir, { store })
     const entries = await reg.load()

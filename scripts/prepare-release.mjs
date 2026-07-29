@@ -54,6 +54,7 @@ const version = normalizeVersion(versionInput)
 const tag = `v${version}`
 const isPrerelease = version.includes('-')
 const channel = args.channel || process.env.HIVERELAY_RELEASE_CHANNEL || defaultChannelForVersion(version)
+const publicGatewayRelease = readPublicGatewayReleaseControl()
 const imageDigest = normalizeDigest(args.imageDigest || process.env.HIVERELAY_IMAGE_DIGEST || '')
 const checkOnly = Boolean(args.check)
 const allowUnpinnedImage = Boolean(args.allowUnpinnedImage)
@@ -61,7 +62,7 @@ const releaseNotesInline = args.releaseNotes || process.env.HIVERELAY_RELEASE_NO
 const releaseNotesPath = args.releaseNotesFile || process.env.HIVERELAY_RELEASE_NOTES_FILE || ''
 const releaseNotesProvided = Boolean(releaseNotesInline || releaseNotesPath)
 const releaseNotes = loadReleaseNotes(releaseNotesInline, releaseNotesPath) ||
-  `Blindspark ${tag}: synchronized HiveRelay release for the fleet, Umbrel packages, and StartOS metadata.`
+  `Blindspark ${tag}: synchronized HiveRelay release metadata for Docker, Umbrel, StartOS, TrueNAS, Unraid, ZimaOS/CasaOS, Runtipi, and HexOS.`
 assertPublicReleaseNotes(releaseNotes)
 // The community Umbrel store syncs on EVERY release so it never lags the fleet.
 // For a full release it syncs by default; for a prerelease it syncs only when an
@@ -87,6 +88,12 @@ if (!['canary', 'stable', 'both', 'none'].includes(channel)) {
 if (isPrerelease && channel !== 'none') {
   die(`Pre-release ${tag} cannot promote fleet/app-store channel "${channel}"; use --channel none.`)
 }
+if (publicGatewayRelease.enabled && publicGatewayRelease.releaseTarget !== tag) {
+  die(`Enabled public gateway release manifest targets ${publicGatewayRelease.releaseTarget}; expected ${tag}.`)
+}
+if (publicGatewayRelease.enabled && channel !== 'none') {
+  die(`Public gateway release ${tag} cannot move fleet channel "${channel}" during release preparation; use --channel none and the evidence-gated fleet promotion tool.`)
+}
 // A prerelease MAY sync the community Umbrel store (so it never lags the fleet)
 // when an explicit --umbrel-store target is provided. It still cannot promote a
 // fleet/app-store channel (enforced above).
@@ -99,6 +106,8 @@ syncEcosystemConsumerDefaults()
 syncFleetChannel()
 syncDockerAndPackageMetadata()
 syncStartOs()
+syncTrueNas()
+syncCommunityAppliancePackages()
 if (syncUmbrelStore && fs.existsSync(umbrelStoreRoot)) syncCommunityUmbrelStore()
 else if (syncUmbrelStore) notes.push(`community Umbrel store not found at ${umbrelStoreRoot}; skipped`)
 else if (isPrerelease) notes.push('community Umbrel store skipped for pre-release')
@@ -157,6 +166,25 @@ function defaultChannelForVersion (semver) {
   return semver.includes('-') ? 'none' : 'both'
 }
 
+function readPublicGatewayReleaseControl () {
+  const file = path.join(repoRoot, 'fleet', 'public-hive-gateway-release.json')
+  if (!fs.existsSync(file)) return { enabled: false, releaseTarget: null }
+  let value
+  try {
+    value = JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch {
+    die('fleet/public-hive-gateway-release.json must contain valid JSON')
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value) ||
+      value.schema !== 'hiverelay-public-gateway-release-v1' || typeof value.enabled !== 'boolean') {
+    die('fleet/public-hive-gateway-release.json has an invalid release-control schema')
+  }
+  if (value.enabled && !/^v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value.releaseTarget || '')) {
+    die('enabled public gateway release manifest must name a valid releaseTarget')
+  }
+  return { enabled: value.enabled, releaseTarget: value.releaseTarget || null }
+}
+
 function normalizeDigest (input) {
   const value = String(input || '').trim()
   if (!value) return ''
@@ -195,6 +223,7 @@ function hasUnsafeReleaseNoteControlChars (value) {
 }
 
 function syncPackageVersions () {
+  const internalDependency = isPrerelease ? version : `^${version}`
   const packageFiles = [
     'package.json',
     'packages/core/package.json',
@@ -207,7 +236,7 @@ function syncPackageVersions () {
     updateJson(path.join(repoRoot, rel), (json) => {
       json.version = version
       if (json.dependencies && json.dependencies['p2p-hiverelay']) {
-        json.dependencies['p2p-hiverelay'] = `^${version}`
+        json.dependencies['p2p-hiverelay'] = internalDependency
       }
     })
   }
@@ -219,7 +248,7 @@ function syncPackageVersions () {
       if (!lock.packages || !lock.packages[rel]) continue
       lock.packages[rel].version = version
       const deps = lock.packages[rel].dependencies
-      if (deps && deps['p2p-hiverelay']) deps['p2p-hiverelay'] = `^${version}`
+      if (deps && deps['p2p-hiverelay']) deps['p2p-hiverelay'] = internalDependency
     }
   })
 
@@ -313,6 +342,123 @@ function syncStartOs () {
   )
 }
 
+function syncTrueNas () {
+  const appManifest = path.join(repoRoot, 'truenas-app', 'app.yaml')
+  const imageValues = path.join(repoRoot, 'truenas-app', 'ix_values.yaml')
+  const appReadme = path.join(repoRoot, 'truenas-app', 'README.md')
+  const oldAppVersion = readYamlScalar(appManifest, 'app_version')
+  const oldCatalogVersion = readYamlScalar(appManifest, 'version')
+  const oldImageVersion = readTrueNasImageVersion(imageValues)
+  const oldReadmeVersion = readTrueNasReadmeVersion(appReadme)
+  const needsCatalogRevision = oldAppVersion !== version || oldImageVersion !== version || oldReadmeVersion !== version
+
+  replaceYamlScalar(appManifest, 'app_version', version)
+  replaceTrueNasImageVersion(imageValues)
+  replaceInFile(
+    appReadme,
+    /Upstream HiveRelay release:\s*`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`/,
+    `Upstream HiveRelay release: \`${version}\``,
+    'TrueNAS app README upstream version'
+  )
+  if (needsCatalogRevision) replaceYamlScalar(appManifest, 'version', bumpPatchVersion(oldCatalogVersion))
+}
+
+function syncCommunityAppliancePackages () {
+  syncUnraid()
+  syncZimaOs()
+  syncRuntipi()
+  syncHexOs()
+}
+
+function syncUnraid () {
+  const template = path.join(repoRoot, 'unraid-app', 'templates', 'blindspark.xml')
+  const text = read(template)
+  const currentReference = readXmlValue(text, 'Repository', template)
+  const current = parseImage(currentReference)
+  const nextReference = releaseImageReference(current, 'Unraid template')
+  const runtimeChanged = currentReference !== nextReference
+
+  replaceInFile(
+    template,
+    /<Repository>ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^<]+<\/Repository>/,
+    `<Repository>${nextReference}</Repository>`,
+    'Unraid image repository'
+  )
+  replaceInFile(template, /<Changes>[^<]*<\/Changes>/, `<Changes>HiveRelay ${version}</Changes>`, 'Unraid release changes')
+  if (runtimeChanged) {
+    replaceInFile(template, /<Date>\d{4}-\d{2}-\d{2}<\/Date>/, `<Date>${new Date().toISOString().slice(0, 10)}</Date>`, 'Unraid release date')
+  }
+}
+
+function syncZimaOs () {
+  const compose = path.join(repoRoot, 'zimaos-app', 'Apps', 'Blindspark', 'docker-compose.yml')
+  const oldVersion = readIndentedYamlScalar(compose, 2, 'version')
+  const imageChanged = replaceImagePin(compose, 'ZimaOS/CasaOS package')
+  const runtimeChanged = oldVersion !== version || imageChanged
+
+  replaceInFile(compose, /^ {2}version:\s*["']?[^"'\n]+["']?\s*$/m, `  version: "${version}"`, 'ZimaOS upstream version')
+  if (runtimeChanged) {
+    replaceInFile(compose, /^ {2}update_at:\s*["']?\d{4}-\d{2}-\d{2}["']?\s*$/m, `  update_at: "${new Date().toISOString().slice(0, 10)}"`, 'ZimaOS update date')
+    replaceInFile(compose, /( {2}release_notes:\n {4}en_US:\s*)[^\n]*/, `$1HiveRelay ${version} package`, 'ZimaOS release notes')
+  }
+}
+
+function syncRuntipi () {
+  const appRoot = path.join(repoRoot, 'runtipi-app', 'apps', 'blindspark')
+  const configFile = path.join(appRoot, 'config.json')
+  const compose = path.join(appRoot, 'docker-compose.yml')
+  const config = JSON.parse(read(configFile))
+  const imageChanged = replaceImagePin(compose, 'Runtipi package')
+  const runtimeChanged = config.version !== version || imageChanged
+
+  updateJson(configFile, (json) => {
+    json.version = version
+    if (runtimeChanged) {
+      json.tipi_version = Number(json.tipi_version) + 1
+      json.updated_at = Date.now()
+    }
+  })
+}
+
+function syncHexOs () {
+  const configFile = path.join(repoRoot, 'hexos-app', 'blindspark.json')
+  const config = JSON.parse(read(configFile))
+  const changeLog = String(config.script && config.script.changeLog)
+  const runtimeChanged = !changeLog.includes(`HiveRelay ${version}`)
+
+  updateJson(configFile, (json) => {
+    if (runtimeChanged) json.script.version = bumpPatchVersion(json.script.version, 'HexOS curation')
+    json.script.changeLog = `Sync Blindspark for HiveRelay ${version}`
+  })
+}
+
+function readTrueNasImageVersion (file) {
+  const match = read(file).match(/repository:\s*ghcr\.io\/bigdestiny2\/p2p-hiverelay\s*\n\s+tag:\s*["']?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/m)
+  if (!match) die(`Could not find HiveRelay image tag in ${relative(file)}.`)
+  return match[1]
+}
+
+function readTrueNasReadmeVersion (file) {
+  const match = read(file).match(/Upstream HiveRelay release:\s*`(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`/)
+  if (!match) die(`Could not find upstream HiveRelay release in ${relative(file)}.`)
+  return match[1]
+}
+
+function replaceTrueNasImageVersion (file) {
+  replaceInFile(
+    file,
+    /(repository:\s*ghcr\.io\/bigdestiny2\/p2p-hiverelay\s*\n\s+tag:\s*)["']?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?["']?/m,
+    `$1${version}`,
+    'TrueNAS HiveRelay image tag'
+  )
+}
+
+function bumpPatchVersion (value, label = 'TrueNAS catalog') {
+  const match = String(value).match(/^(\d+)\.(\d+)\.(\d+)$/)
+  if (!match) die(`Invalid ${label} version "${value}". Expected X.Y.Z.`)
+  return `${match[1]}.${match[2]}.${Number(match[3]) + 1}`
+}
+
 function syncCommunityUmbrelStore () {
   updateJson(path.join(umbrelStoreRoot, 'package.json'), (json) => {
     json.version = version
@@ -344,19 +490,25 @@ function replaceImagePin (file, label) {
   if (!match) die(`Could not find image pin in ${label}: ${relative(file)}`)
 
   const current = parseImage(match[0])
-  let nextImage
-  if (imageDigest) {
-    nextImage = `${imageName}:${version}@${imageDigest}`
-  } else if (current.version === version && current.digest) {
-    nextImage = `${imageName}:${version}@${current.digest}`
-  } else if (allowUnpinnedImage) {
-    nextImage = `${imageName}:${version}`
-    notes.push(`${label} image left tag-only because --allow-unpinned-image was set`)
-  } else {
-    die(`--image-digest is required to update ${label} image pin to ${version}.`)
-  }
+  const currentReference = match[0].replace(/^image:\s*/, '')
+  const nextImage = releaseImageReference(current, label)
 
   write(file, text.replace(/image:\s*ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^\s]+/, `image: ${nextImage}`))
+  return currentReference !== nextImage
+}
+
+function releaseImageReference (current, label) {
+  if (imageDigest) return `${imageName}:${version}@${imageDigest}`
+  if (current.version === version && current.digest) return `${imageName}:${version}@${current.digest}`
+  if (allowUnpinnedImage) {
+    if (current.digest) {
+      notes.push(`${label} preserved at the last immutable ${current.version}@${current.digest} binding; it is not bound to ${version} and is not release-ready`)
+      return `${imageName}:${current.version}@${current.digest}`
+    }
+    notes.push(`${label} image left tag-only because --allow-unpinned-image was set`)
+    return `${imageName}:${version}`
+  }
+  die(`--image-digest is required to update ${label} image pin to ${version}.`)
 }
 
 function parseImage (line) {
@@ -375,6 +527,18 @@ function replaceYamlScalarOrBlock (file, key, value) {
 
 function readYamlScalar (file, key) {
   const match = read(file).match(new RegExp(`^${escapeRegExp(key)}:\\s*"?([^"\\n]+)"?\\s*$`, 'm'))
+  if (!match) die(`Could not find ${key} in ${relative(file)}.`)
+  return match[1].trim()
+}
+
+function readIndentedYamlScalar (file, spaces, key) {
+  const match = read(file).match(new RegExp(`^${' '.repeat(spaces)}${escapeRegExp(key)}:\\s*["']?([^"'\\n]+)["']?\\s*$`, 'm'))
+  if (!match) die(`Could not find ${key} in ${relative(file)}.`)
+  return match[1].trim()
+}
+
+function readXmlValue (text, key, file) {
+  const match = text.match(new RegExp(`<${escapeRegExp(key)}>([^<]+)</${escapeRegExp(key)}>`))
   if (!match) die(`Could not find ${key} in ${relative(file)}.`)
   return match[1].trim()
 }

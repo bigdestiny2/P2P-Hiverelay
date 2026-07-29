@@ -4,18 +4,29 @@ import {
   OutboxLogApp
 } from '../../packages/services/builtin/outboxlog/index.js'
 
-// Fake seeder that records every seedCore(key) call. Mirrors the real seeder's
-// idempotency: re-seeding an already-recorded key is a cheap no-op.
+const STORAGE_BOUND = 4 * 1024 * 1024
+
+// Fake seeder that records every authority-owned announcement. Mirrors the real
+// seeder's idempotency: re-announcing an already-recorded key is a cheap no-op.
 function createFakeSeeder () {
   const calls = []
+  const bounds = []
   const seen = new Set()
   return {
     calls,
+    bounds,
     seen,
-    async seedCore (keyHex) {
+    async announceAuthorityOwnedCore (core, opts) {
+      const keyHex = typeof core === 'string' ? core : core.key
       calls.push(keyHex)
+      bounds.push(opts && opts.maxStorageBytes)
       seen.add(keyHex)
       return { keyHex }
+    },
+    async withdrawAuthorityOwnedCore (core) {
+      const keyHex = typeof core === 'string' ? core : core.key
+      seen.delete(keyHex)
+      return true
     }
   }
 }
@@ -26,14 +37,14 @@ function createFakeJournal (keys = ['idx00', 'outbox-a', 'outbox-b']) {
   let flushed = 0
   return {
     flushed: () => flushed,
-    async seedCores (seeder) {
-      if (!seeder || typeof seeder.seedCore !== 'function') {
-        throw new Error('fake journal: seeder with seedCore() required')
+    async seedCores (seeder, opts = {}) {
+      if (!seeder || typeof seeder.announceAuthorityOwnedCore !== 'function') {
+        throw new Error('fake journal: seeder with announceAuthorityOwnedCore() required')
       }
       flushed++
       const seeded = []
       for (const key of keys) {
-        await seeder.seedCore(key)
+        await seeder.announceAuthorityOwnedCore(key, { maxStorageBytes: opts.maxStorageBytes })
         seeded.push({ role: key === keys[0] ? 'index' : 'outbox', coreKey: key })
       }
       return seeded
@@ -52,7 +63,7 @@ function createApp (opts = {}) {
     async flush () {}
   }
   const swarm = { destroy () {} }
-  const app = new OutboxLogApp({ engine, swarm, persistence: false, ...opts })
+  const app = new OutboxLogApp({ engine, swarm, persistence: false, seedMaxStorageBytes: STORAGE_BOUND, ...opts })
   // Capture log output instead of writing to the console.
   const logs = { warn: [], info: [] }
   app._logSeedWarn = (msg) => { logs.warn.push(msg) }
@@ -90,11 +101,26 @@ test('start() does an initial seed and arms an unref\'d re-affirm timer', async 
 
   // Initial one-shot seed happened.
   t.alike(seeder.calls, ['idx', 'ob-1', 'ob-2'])
+  t.alike(seeder.bounds, [STORAGE_BOUND, STORAGE_BOUND, STORAGE_BOUND])
   t.is(journal.flushed(), 1)
   t.ok(app._seedTimer, 'a re-affirm timer is armed')
   // The timer must not hold the event loop open on a long-running relay.
   t.absent(app._seedTimer.hasRef(), 'timer is unref\'d')
   t.is(app.__logs.warn.length, 0)
+})
+
+test('missing fleet seed bound keeps the journal local-only', async (t) => {
+  const journal = createFakeJournal(['idx'])
+  const app = createApp({ seedMaxStorageBytes: null, journal })
+  t.teardown(() => app.stop())
+  const seeder = createFakeSeeder()
+
+  await app.start({ config: { outboxlog: {} }, node: { seeder } })
+
+  t.alike(seeder.calls, [])
+  t.absent(app._seedTimer)
+  t.ok(app.__logs.warn.some(message => message.includes('seedMaxStorageBytes')))
+  await t.exception(app.seedPersistenceCores(), /seedMaxStorageBytes/)
 })
 
 test('re-affirm routine seeds again (idempotent) when invoked directly', async (t) => {
@@ -159,7 +185,7 @@ test('node.seeder = null: start() does not throw, warns once, seeds nothing', as
   t.is(app.journal, journal)
 })
 
-test('seeder present but lacking seedCore(): warns once, seeds nothing', async (t) => {
+test('seeder present but lacking revocable authority-owned announcer: warns once, seeds nothing', async (t) => {
   const journal = createFakeJournal()
   const app = createApp({ seedReaffirmMs: 500, journal })
   t.teardown(() => app.stop())

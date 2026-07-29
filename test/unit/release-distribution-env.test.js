@@ -166,6 +166,43 @@ test('release distribution env check requires stable releases to promote a fleet
   t.ok(body.includes('HIVERELAY_FLEET_ROLLOUT_STATUS=missing-channel'))
 })
 
+test('release distribution env check defers raw fleet rollout for validated public gateway releases', async (t) => {
+  const out = await envFile(t)
+  const env = validDistributionEnv()
+  delete env.FLEET_SSH_PRIVATE_KEY
+  const res = await runCheck([
+    '--channel', 'none',
+    '--prerelease', 'false',
+    '--public-gateway-release', 'true',
+    '--github-env', out
+  ], env)
+
+  t.is(res.status, 0)
+  t.ok(res.stdout.includes('preflight passed'))
+  t.absent(res.stderr.includes('FLEET_SSH_PRIVATE_KEY'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=passed'))
+  t.ok(body.includes('HIVERELAY_FLEET_ROLLOUT_STATUS=deferred-gateway-canary-gated'))
+})
+
+test('release distribution env check rejects a public gateway release with a generic fleet channel', async (t) => {
+  const out = await envFile(t)
+  const res = await runCheck([
+    '--channel', 'both',
+    '--prerelease', 'false',
+    '--public-gateway-release', 'true',
+    '--github-env', out
+  ], validDistributionEnv())
+
+  t.is(res.status, 1)
+  t.ok(res.stderr.includes('public gateway release channel must be none'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HIVERELAY_FLEET_ROLLOUT_STATUS=invalid-gateway-channel'))
+  t.ok(body.includes('HIVERELAY_RELEASE_SURFACES_STATUS=blocked'))
+})
+
 test('release distribution env check passes stable releases with every external credential', async (t) => {
   const out = await envFile(t)
   const res = await runCheck([

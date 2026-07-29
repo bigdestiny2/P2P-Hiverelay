@@ -305,7 +305,7 @@ export class EvictionManager extends EventEmitter {
         // forever) — same guard the sweep uses. Bail BEFORE markEvicted/purge
         // so the tombstone-before-purge ordering is preserved.
         const unseeded = await raceTimeout(
-          Promise.resolve().then(() => this.deps.unseed(s.appKey)).then(() => true),
+          Promise.resolve().then(() => this.deps.unseed(s.appKey, { evictedAt: now })).then(() => true),
           this.config.unseedTimeoutMs,
           TIMEOUT
         )
@@ -314,7 +314,7 @@ export class EvictionManager extends EventEmitter {
           continue
         }
         try {
-          this.deps.appRegistry.markEvicted(s.appKey, now)
+          await this.deps.appRegistry.markEvicted(s.appKey, now)
           await this._purgeDrive(s.appKey)
           reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
           freedBytes += (s.bytes || 0)
@@ -465,7 +465,7 @@ export class EvictionManager extends EventEmitter {
         if (!stillOverCap && !stillPressured) break
         try {
           const unseeded = await raceTimeout(
-            Promise.resolve().then(() => this.deps.unseed(cand.appKey)).then(() => true),
+            Promise.resolve().then(() => this.deps.unseed(cand.appKey, { evictedAt: now })).then(() => true),
             this.config.unseedTimeoutMs,
             TIMEOUT
           )
@@ -476,7 +476,7 @@ export class EvictionManager extends EventEmitter {
           // Tombstone as soon as the registry entry is gone — even if the
           // purge below fails (corrupt core), repair must not re-adopt a
           // drive we just established the network holds in surplus.
-          this.deps.appRegistry.markEvicted(cand.appKey, now)
+          await this.deps.appRegistry.markEvicted(cand.appKey, now)
           await this._purgeDrive(cand.appKey)
           freedBytes += cand.bytes
           this._evictedTotal++

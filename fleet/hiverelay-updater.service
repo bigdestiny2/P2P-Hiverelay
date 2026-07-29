@@ -6,13 +6,21 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
+RuntimeDirectory=hiverelay-updater
+RuntimeDirectoryMode=0700
 # Runs as root: needs `systemctl restart hiverelay`. The script itself
 # refuses to act on a dirty repo and always tries to leave the box on a
 # healthy version (rollback on failed health-gate).
-ExecStart=/usr/local/bin/hiverelay-updater
+ExecStart=/usr/bin/env -i HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin /bin/bash --noprofile --norc /usr/local/bin/hiverelay-updater
 # systemd doesn't pass a HOME to oneshot services; the updater needs it to
 # resolve the repo dir ($HOME/hiverelay). Box runs the relay as root.
 Environment=HOME=/root
+# The launcher validates and parses this fixed root-owned file as bounded data
+# using a closed key allowlist. systemd must never import it into the root
+# process environment before that trust boundary.
+# Durable replay protection for the last accepted signed channel-control head.
+StateDirectory=hiverelay-updater
+StateDirectoryMode=0700
 # Don't let a hung git/npm wedge the box.
 TimeoutStartSec=900
 Nice=10

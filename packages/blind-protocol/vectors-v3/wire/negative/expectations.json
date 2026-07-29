@@ -1,0 +1,8 @@
+{
+  "origin-bad-magic.bin": "reject-magic",
+  "origin-nonzero-padding.bin": "reject-zero-padding",
+  "forwarded-bad-transform-signature.bin": "reject-source-transform-signature",
+  "result-bad-signature.bin": "reject-role-domain-signature",
+  "result-role-confusion.bin": "reject-role-conditioned-result-matrix",
+  "wire-v2-schema-74-or-75": "compatibility-only-unselectable"
+}

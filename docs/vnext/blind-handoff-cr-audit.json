@@ -1,0 +1,545 @@
+{
+  "schema": "hiverelay-vnext-blind-handoff-cr-audit-v1",
+  "generatedAt": "2026-07-12T14:50:09Z",
+  "auditScope": {
+    "repository": "P2P-Hiverelay",
+    "reviewWorktree": "/Users/localllm/Projects/pear-ecosystem/00-core/hr-blind-review",
+    "auditedBase": "999b0afd7584bb727cef6e6a88a054f11513927a",
+    "auditedTip": "211b20d892203de89be07975c155a09c976d6bd4",
+    "protocolAndRuntimeContentCommit": "365309174d5a7ceb726c0a18064005176f8af842",
+    "packagingContentCommit": "180fc7387949f481fd0698205d7bf3cc26943430",
+    "logicalCommits": [
+      "365309174d5a7ceb726c0a18064005176f8af842",
+      "046c54e1e2e8fd7737773c2787eaccfc4d5aca51",
+      "180fc7387949f481fd0698205d7bf3cc26943430",
+      "211b20d892203de89be07975c155a09c976d6bd4"
+    ],
+    "governingDocuments": [
+      "/Users/localllm/Projects/pear-ecosystem/02-apps/peerit/docs/HIVERELAY-VNEXT-ECOSYSTEM-ORCHESTRATION-PLAN.md",
+      "/Users/localllm/Projects/pear-ecosystem/02-apps/peerit/docs/PEAR-ECOSYSTEM-VNEXT-COMPLETION-AND-LAUNCH-MASTER-PLAN.md"
+    ],
+    "mutationPolicy": "The review tree was treated as read-only. This audit writes only this JSON file.",
+    "r2Note": "The corrected preservation tip 211b20d892203de89be07975c155a09c976d6bd4 adds only browser-artifact evidence reproducibility updates plus the executable bit of packages/blind-daemon/cli.js. Protocol, CR, decision and hash-freeze findings remain bound to 365309174d5a7ceb726c0a18064005176f8af842; packaging findings remain bound through 180fc7387949f481fd0698205d7bf3cc26943430."
+  },
+  "overallDisposition": {
+    "protocolFreezeEligible": false,
+    "hashFreezeEligible": false,
+    "wholeCommitSeriesMergeEligible": false,
+    "mainnetReady": false,
+    "summary": "The preservation contains substantial candidate implementation and useful tests, but it cannot be treated as the canonical protocol or a frozen authority. CR-5 is absent, D-6 is silently resolved by implementation despite its pending owner gate, D-7 lacks the required exact rollback floor, CR-3 and CR-8 are incomplete, V-1/V-7 are not satisfied, and the branch nevertheless publishes final/frozen spec, ABI and vector hashes with empty release blockers.",
+    "safeUse": "Import only as a review source. Rebase selected implementation subtrees behind the vNext decision register and a new canonical registry; regenerate all authority artifacts and hashes last."
+  },
+  "governingRequirements": [
+    {
+      "id": "CR-1..CR-8",
+      "source": "HIVERELAY-VNEXT-ECOSYSTEM-ORCHESTRATION-PLAN.md",
+      "lines": "123-135",
+      "requirement": "Apply the verified remedies before ABI/spec freeze, including an enforceable CR-5 design and corrected CR-7/CR-8 normative claim text."
+    },
+    {
+      "id": "V-1..V-8",
+      "source": "HIVERELAY-VNEXT-ECOSYSTEM-ORCHESTRATION-PLAN.md",
+      "lines": "143-150",
+      "requirement": "Schema drift, route reset/cycles, canonical framing and G3 correlation require executable gates."
+    },
+    {
+      "id": "D-6",
+      "source": "HIVERELAY-VNEXT-ECOSYSTEM-ORCHESTRATION-PLAN.md",
+      "lines": "165-165",
+      "requirement": "Keep K_partition only after measured privacy benefit and a tested backup/rotation/recovery contract; otherwise remove it before storage layout freezes. Status is pending owner."
+    },
+    {
+      "id": "D-7",
+      "source": "HIVERELAY-VNEXT-ECOSYSTEM-ORCHESTRATION-PLAN.md",
+      "lines": "166-166",
+      "requirement": "After the first blind-only write, rollback is only to a dual-read build and never to a legacy-only binary. Status is pending owner acknowledgement."
+    },
+    {
+      "id": "PG-2 ordering",
+      "source": "HIVERELAY-VNEXT-ECOSYSTEM-ORCHESTRATION-PLAN.md",
+      "lines": "207-245",
+      "requirement": "Resolve D-6 and ratify D-7, remediate all ABI/spec-affecting CRs, pass V-1/V-7, and generate specHash, abiHash and vectorSetHash last. No profile may be called frozen while decisions are pending."
+    },
+    {
+      "id": "T02",
+      "source": "PEAR-ECOSYSTEM-VNEXT-COMPLETION-AND-LAUNCH-MASTER-PLAN.md",
+      "lines": "314-321",
+      "requirement": "Reconcile CR-1 through CR-8, resolve K_partition and exact rollback wording before specHash, generate both specification excerpts and vectors from one registry, and add V-1 through V-8 plus claim lint."
+    }
+  ],
+  "criticalFindings": [
+    {
+      "id": "BH-001",
+      "severity": "P0",
+      "title": "Final protocol authority and hashes are published before mandatory remediation and decisions",
+      "impact": "Consumers can pin a tuple that the governing plan explicitly says must not exist yet. Later CR-3/CR-5/CR-8, D-6 or D-7 changes would either silently escape specHash or force an avoidable v1 break.",
+      "evidence": [
+        {
+          "path": "docs/protocol/HIVERELAY-BLIND-WIRE-V1.md",
+          "lines": "3-13",
+          "observation": "Declares a frozen public authority and explicitly excludes the master and implementation documents from specHash."
+        },
+        {
+          "path": "packages/blind-protocol/README.md",
+          "lines": "3-14",
+          "observation": "Calls the WIRE authority final and release-ready."
+        },
+        {
+          "path": "packages/blind-protocol/registry.js",
+          "lines": "1904-1936",
+          "observation": "ABI_RELEASE_BLOCKERS is empty, wireAuthorityPublished is true, and releaseReady ignores CR and owner-decision state."
+        },
+        {
+          "path": "packages/blind-protocol/hiverelay-blind-wire-authority-v1.json",
+          "lines": "1-16",
+          "observation": "Publishes concrete specHash, abiHash and vectorSetHash."
+        },
+        {
+          "path": "test/unit/blind-protocol-vectors.test.js",
+          "lines": "139-150",
+          "observation": "Tests deliberately prove that edits to the master specification do not affect specHash. This conflicts with the governing requirement that CR-7/CR-8, D-6 and D-7 normative changes precede and are covered by specHash."
+        },
+        {
+          "path": "scripts/generate-blind-protocol-draft.mjs",
+          "lines": "1181-1209,1316-1348",
+          "observation": "Generator emits final authority paths and hard-codes generated runtime authority releaseReady=true with no blockers."
+        }
+      ],
+      "requiredDisposition": "Quarantine all non-draft authority claims and checked-in final hashes. Keep any bytes only as candidate fixtures. Build the decision-aware registry first, validate both specs, close CR gates, then regenerate new RC authorities last."
+    },
+    {
+      "id": "BH-002",
+      "severity": "P0",
+      "title": "D-6 is encoded as a storage-format default while the owner decision is pending",
+      "impact": "K_partition is now required by runtime startup, WAL bucket mapping, snapshots and runtime binding. Removing it after review would change the storage format and generated authorities the plan intended to keep unfrozen.",
+      "evidence": [
+        {
+          "path": "docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md",
+          "lines": "2759-2784",
+          "observation": "Mandates K_partition, claims a cross-relay bucket-correlation benefit, and requires backup/rebalance semantics."
+        },
+        {
+          "path": "docs/protocol/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md",
+          "lines": "1792-1814",
+          "observation": "Makes K_partition normative in the implementation contract."
+        },
+        {
+          "path": "packages/blind-daemon/transaction-store.js",
+          "lines": "570-590,949-956",
+          "observation": "Requires a nonzero partition key and derives every virtual bucket with HMAC-SHA-256."
+        },
+        {
+          "path": "packages/blind-daemon/production-runtime.js",
+          "lines": "189-208,648-674",
+          "observation": "Requires HIVERELAY_BLIND_PARTITION_KEY_FILE and binds it into production store creation."
+        },
+        {
+          "path": "packages/blind-protocol/store-format-authority.js",
+          "lines": "25-35",
+          "observation": "Binds K_partition into runtime-root MAC and all-family recovery semantics."
+        }
+      ],
+      "missingEvidence": [
+        "No measured cross-relay privacy comparison showing a useful benefit over unkeyed local sharding for randomized locators.",
+        "No executable encrypted backup/restore test that includes K_partition.",
+        "No key-rotation plus full fenced-rebalance implementation/test."
+      ],
+      "requiredDisposition": "Do not integrate the store layout until D-6 is signed. If kept, land measurement and backup/rotation/recovery tests in the same pre-freeze change. If removed, rederive the draft store format and all dependent vectors before any real data exists."
+    },
+    {
+      "id": "BH-003",
+      "severity": "P0",
+      "title": "CR-5 route-depth reset and cycle control is missing",
+      "impact": "A caller can create a fresh nested FORWARD session inside opaque traffic. Per-hop admission limits work per circuit but do not bound route depth or prevent a signed route cycle, so V-6 cannot pass.",
+      "evidence": [
+        {
+          "path": "packages/blind-protocol/schemas.js",
+          "lines": "868-935,1420-1437",
+          "observation": "BlindTransportRouteV1, BlindForwardHopOpenV1 and BlindForwardOpenV1 contain no relay-carried budget, path commitment or signed acyclic route class."
+        },
+        {
+          "path": "packages/blind-daemon/forward-stream.js",
+          "lines": "505-527",
+          "observation": "Authorization checks only the current previous relay, current next descriptor, classes and byte/stream caps. It does not reject a path cycle or reset."
+        },
+        {
+          "path": "docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md",
+          "lines": "7241-7255",
+          "observation": "The specification explicitly allows a nested encrypted open with a distinct token but supplies no enforceable aggregate route-depth rule."
+        }
+      ],
+      "requiredDisposition": "Do not integrate or expose multi-hop FORWARD. Select an enforceable relay-carried route budget or signed acyclic route class before the registry freezes, then add reset, over-depth and cycle negatives that exercise real adjacent relays."
+    },
+    {
+      "id": "BH-004",
+      "severity": "P0",
+      "title": "V-1 is not a single machine-readable registry validating both specifications",
+      "impact": "The current green checks can miss field/order drift, so releaseReady is not evidence of schema agreement.",
+      "evidence": [
+        {
+          "path": "scripts/generate-blind-protocol-draft.mjs",
+          "lines": "149-164",
+          "observation": "Parses fenced declarations from the master prose; it does not generate or structurally validate the implementation specification."
+        },
+        {
+          "path": "scripts/verify-blind-specs.mjs",
+          "lines": "37-107",
+          "observation": "Checks selected strings/routes and existing releaseReady booleans, not schema field/order equality across both specifications and executable codecs."
+        },
+        {
+          "path": "packages/blind-protocol/extended-schema-metadata.js",
+          "lines": "52-58",
+          "observation": "BlindForwardOpenResultV1 metadata still names selectedRouteId, wireClass and requestNonce and omits the current route/next-descriptor/nextHopAccept shape."
+        },
+        {
+          "path": "packages/blind-protocol/schemas.js",
+          "lines": "1439-1457",
+          "observation": "The executable BlindForwardOpenResultV1 has a materially different field list."
+        },
+        {
+          "path": "packages/blind-protocol/registry.js",
+          "lines": "1431-1436,1808-1815,1933-1936",
+          "observation": "The stale override enters IMPLEMENTED_SCHEMAS, while release readiness checks names and aggregate status rather than exact executable field equivalence."
+        }
+      ],
+      "requiredDisposition": "Replace prose extraction and parallel hand-maintained metadata with one canonical machine-readable registry. Generate both spec excerpts, executable schema bindings and vectors from it; make a deliberate one-field drift fail CI and startup."
+    },
+    {
+      "id": "BH-005",
+      "severity": "P0",
+      "title": "D-7 intent is present, but the required rollback floor is not stated exactly or owner-ratified",
+      "impact": "The text prevents reopening legacy writes but does not unambiguously reject a legacy-only reader binary after the first blind-only success. It is also excluded from the published specHash.",
+      "evidence": [
+        {
+          "path": "docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md",
+          "lines": "8248-8262,8284-8300",
+          "observation": "Defines LIVE_DUAL_READ and says rollback cannot reopen the legacy writer, but does not state that every rollback target after the first blind-only write must itself be dual-read and never legacy-only."
+        },
+        {
+          "path": "deploy/blind/legacy-retirement-policy.json",
+          "lines": "94-102",
+          "observation": "Requires dual-read comparison and no unsafe legacy writer, but still omits the exact rollback-target floor."
+        }
+      ],
+      "requiredDisposition": "Insert the exact D-7 sentence into the canonical migration/runbook authority after owner acknowledgement, bind it to the applicable spec/profile hash, and add a negative that attempts a legacy-only rollback after one blind-only success."
+    }
+  ],
+  "crDisposition": [
+    {
+      "id": "CR-1",
+      "remedyStatus": "partial",
+      "gateStatus": "blocked",
+      "implemented": [
+        "maxCircuitBytes:u64 is present in BlindForwardOpenResultV1 and the adjacent-hop schemas.",
+        "Both directions call one shared StreamScope.countBytes(), so the configured maxBytes is aggregate bidirectional.",
+        "StreamScope.close() and ForwardCircuit._teardown() are promise-idempotent and release buffered reservations/tickets/session state."
+      ],
+      "evidence": [
+        "packages/blind-protocol/schemas.js:1439-1481",
+        "packages/blind-daemon/forward-stream.js:157-309",
+        "packages/blind-daemon/stream-session.js:210-355",
+        "packages/blind-daemon/forward-stream.js:433-445,651-675"
+      ],
+      "missing": [
+        "No dedicated ForwardCircuit/ForwardStreamService test exercises the aggregate cap across both directions or asserts every socket, buffer, ticket, route count, persistence terminal and quota release exactly once under racing failures.",
+        "FORWARD remains excluded from production assembly at packages/blind-daemon/production-runtime.js:57-68."
+      ],
+      "integrationRule": "Salvage the codec and lifecycle implementation only after the canonical registry is rebuilt; keep FORWARD disabled until V-2 passes."
+    },
+    {
+      "id": "CR-2",
+      "remedyStatus": "implemented",
+      "gateStatus": "partial",
+      "implemented": [
+        "The coordinator computes authorization/state, calls the existing admission.prepare authority, and performs spend lookup before capacity reservation and operation execution.",
+        "The staged PUT source is not pulled until the operation executor runs; the focused test records admission before execute/body."
+      ],
+      "evidence": [
+        "packages/blind-daemon/coordinator.js:776-829,857-890",
+        "packages/blind-daemon/admission-coordinator.js:299-367",
+        "packages/blind-daemon/test/staged-put-coordinator.test.js:162-193"
+      ],
+      "missing": [
+        "V-3's exact max-size PUT with a valid-shaped invalid admission is not tested against a real transaction store with zero stageOpaque calls, zero staging bytes, zero WAL advancement and zero fsyncs."
+      ],
+      "integrationRule": "Good candidate for early cherry-pick-by-subtree after registry reconciliation, with V-3 added before CELL writes are enabled."
+    },
+    {
+      "id": "CR-3",
+      "remedyStatus": "missing",
+      "gateStatus": "blocked",
+      "implemented": [
+        "The prose says global/per-connection byte and operation buckets are required and avoids inventing an end-user identity for shared ingress paths."
+      ],
+      "evidence": [
+        "docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md:7674-7696",
+        "packages/blind-protocol/schemas.js:1577-1606",
+        "packages/blind-daemon/resource-budget.js:36-121"
+      ],
+      "missing": [
+        "BlindServiceDescriptorV1 has no signed uncharged-read policy or byte/operation bucket representation.",
+        "ResourceBudget is global/per-operation, not per authenticated connection plus global read fairness.",
+        "Clients cannot reject descriptor-policy mismatches because no such field exists.",
+        "No V-4 noisy-neighbor attack test exists."
+      ],
+      "integrationRule": "Do not freeze the descriptor or enable a public uncharged-read profile. Add the policy schema, enforcement and client verification first."
+    },
+    {
+      "id": "CR-4",
+      "remedyStatus": "partial",
+      "gateStatus": "blocked_for_fleet",
+      "implemented": [
+        "BlindHealthResultV1 exposes READY/UNSAFE/VERIFYING clockState and effectiveEpochFloor.",
+        "Readiness masks mutation operations while clock state is not READY.",
+        "CELL storage persists and tests unsafe forward jumps and rollback while leaving existing visible reads available.",
+        "ResourceBudget reserves 5-50 percent for DESCRIBE and lifecycle-critical renew/drop/close operations."
+      ],
+      "evidence": [
+        "packages/blind-protocol/schemas.js:1218-1255",
+        "packages/blind-daemon/readiness-coordinator.js:257-295",
+        "packages/blind-daemon/storage-engine.js:2483-2518",
+        "packages/blind-daemon/test/storage-engine.test.js:614-632",
+        "packages/blind-daemon/resource-budget.js:36-107",
+        "packages/blind-daemon/coordinator.js:211-220,869-877"
+      ],
+      "missing": [
+        "No authenticated-time source/quorum implementation or missing-authenticated-time state transition.",
+        "No GC-stall detector/alarm that fires before capacity loss.",
+        "No full V-5 matrix across sub-threshold jump, unsafe jump, backward clock, clean/crash long-offline and missing authenticated time."
+      ],
+      "integrationRule": "Clock/readiness and reserve components are salvageable; fleet readiness remains false until V-5 and GC-stall evidence exist."
+    },
+    {
+      "id": "CR-5",
+      "remedyStatus": "missing",
+      "gateStatus": "blocked",
+      "implemented": [
+        "Per-hop signed route, admission, byte, stream, idle and lifetime limits exist."
+      ],
+      "evidence": [
+        "packages/blind-protocol/schemas.js:868-935,1420-1437",
+        "packages/blind-daemon/forward-stream.js:505-527",
+        "docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md:7241-7255"
+      ],
+      "missing": [
+        "No enforceable relay-carried aggregate route budget.",
+        "No signed acyclic route class.",
+        "No reset, over-depth or route-cycle negatives."
+      ],
+      "integrationRule": "Keep all multi-hop FORWARD code experimental and disabled; no ABI/vector authority may freeze before V-6."
+    },
+    {
+      "id": "CR-6",
+      "remedyStatus": "partial",
+      "gateStatus": "blocked",
+      "implemented": [
+        "The codec correctly uses canonical compact-encoding uint framing for bounded bytes and arrays and rejects overlong forms.",
+        "Basic non-canonical length, optional-tag and trailing-byte tests exist."
+      ],
+      "evidence": [
+        "packages/blind-protocol/codec.js:133-190,271-299,428-454",
+        "test/unit/blind-protocol-codec.test.js:19-52"
+      ],
+      "missing": [
+        "V-7 does not cover minimum, single and maximum members for every variable-length/count schema.",
+        "The checked-in invalid WIRE vector set contains no explicit non-canonical array-count or cross-field length-confusion fixture.",
+        "V-1 field drift means the framing rules are not yet frozen from one authority."
+      ],
+      "integrationRule": "Keep the codec implementation, but regenerate all vector manifests after exhaustive V-7 coverage and registry unification."
+    },
+    {
+      "id": "CR-7",
+      "remedyStatus": "implemented_in_normative_text",
+      "gateStatus": "partial",
+      "implemented": [
+        "The guarantee ladder states G3 residuals including stable-lease renew/read timing and size/lease/layout/IP leakage.",
+        "The Inbox section explicitly classifies a physical inbox as G2-S, not G3, and forbids anonymous/unlinkable language.",
+        "Claim policy restricts at-rest language to evidence-qualified randomized cells."
+      ],
+      "evidence": [
+        "docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md:154-172,4970-4978,8620-8665"
+      ],
+      "missing": [
+        "No repository-wide claim linter enforces these rules across README, product metadata, dashboards and release collateral.",
+        "The published specHash intentionally excludes this normative claim text."
+      ],
+      "integrationRule": "Carry the corrected language into the canonical hash input and add claim lint before any public privacy claim."
+    },
+    {
+      "id": "CR-8",
+      "remedyStatus": "partial",
+      "gateStatus": "blocked",
+      "implemented": [
+        "The master spec recommends spreading renewals across the last 20 percent of a lease and requires size/lease distributions in a classifier report.",
+        "The proof matrix requests a 100-event G3 classifier and reports timing/size/layout residuals."
+      ],
+      "evidence": [
+        "docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md:2335-2349,8431-8435"
+      ],
+      "missing": [
+        "The jitter is SHOULD rather than a frozen required distribution.",
+        "No placement/lease-class policy defines the realistic same-relay workload.",
+        "No classifier implementation, published metric or numeric pass threshold exists.",
+        "No explicit profile/economics decision controls optional decoys."
+      ],
+      "integrationRule": "Do not advertise G3. Define and implement the thresholded V-8 experiment before claim text enters the canonical specHash."
+    }
+  ],
+  "decisionDisposition": [
+    {
+      "id": "D-6",
+      "ownerStatus": "pending",
+      "branchBehavior": "implicitly_selected_keep",
+      "compliant": false,
+      "reason": "The branch makes K_partition mandatory throughout the store and runtime before owner selection or required evidence."
+    },
+    {
+      "id": "D-7",
+      "ownerStatus": "pending_acknowledgement",
+      "branchBehavior": "partial_dual_read_intent",
+      "compliant": false,
+      "reason": "The branch prevents reopening legacy writes but omits the exact dual-read-only rollback target after first blind-only success and excludes the text from specHash."
+    }
+  ],
+  "hashFreezeAudit": {
+    "status": "reject_and_regenerate",
+    "violations": [
+      "Concrete final specHash/abiHash/vectorSetHash exist before CR-3, CR-5, CR-8, D-6, D-7, V-1 and V-7 close.",
+      "The public specHash covers only HIVERELAY-BLIND-WIRE-V1.md while the governing plan requires CR-7/CR-8/D-6/D-7 normative language to land before and be covered by specHash.",
+      "ABI_STATUS.releaseReady and WIRE_RUNTIME_AUTHORITY_STATUS.releaseReady are true with empty blockers independent of the signed decision register.",
+      "The package remains version 0.0.0-draft.1 while its docs and generated authority call the protocol final/frozen."
+    ],
+    "candidateArtifactsToQuarantine": [
+      "docs/protocol/HIVERELAY-BLIND-WIRE-V1.md",
+      "packages/blind-protocol/hiverelay-blind-abi-v1.cenc",
+      "packages/blind-protocol/vector-manifest-v1.cenc",
+      "packages/blind-protocol/hiverelay-blind-wire-authority-v1.json",
+      "packages/blind-protocol/wire-runtime-authority.js",
+      "packages/blind-ipc/hiverelay-blind-private-ipc-authority-v1.json",
+      "packages/blind-ipc/hiverelay-blind-private-ipc-v1.cenc",
+      "packages/blind-ipc/vector-manifest-v1.cenc"
+    ],
+    "requiredSequence": [
+      "Resolve and sign D-6 and acknowledge D-7.",
+      "Select CR-3, CR-4 and CR-5 schema-level remedies and CR-8 threshold policy.",
+      "Create the sole machine-readable registry and generate/validate both specifications.",
+      "Land CR-1 through CR-8 remediation and claim lint.",
+      "Pass V-1 through applicable V-8 gates across required runtimes.",
+      "Generate RC specHash, abiHash and vectorSetHash last; do not reuse the preserved tuple."
+    ]
+  },
+  "integrationDisposition": [
+    {
+      "commit": "365309174d5a7ceb726c0a18064005176f8af842",
+      "subject": "feat(blind): add app-agnostic substrate protocol and runtimes",
+      "disposition": "do_not_cherry_pick_whole",
+      "salvageFirst": [
+        "packages/blind-daemon/staged-put.js",
+        "packages/blind-daemon/admission-coordinator.js",
+        "packages/blind-daemon/coordinator.js",
+        "packages/blind-daemon/stream-session.js",
+        "packages/blind-daemon/resource-budget.js",
+        "packages/blind-daemon/descriptor-state.js",
+        "packages/blind-client runtime-neutral primitives and tests"
+      ],
+      "quarantineUntilT02": [
+        "docs/protocol/* authority/freeze language",
+        "packages/blind-protocol generated final ABI/vector/hash artifacts",
+        "packages/blind-protocol/registry.js and extended-schema-metadata.js as authority",
+        "K_partition-dependent store format",
+        "multi-hop FORWARD",
+        "G3 profile/claim material"
+      ],
+      "notes": "Split into registry-independent scaffolding, candidate protocol, candidate daemon/store and candidate clients. Rebase each against the canonical T02 registry rather than resolving a single 100k-line cherry-pick."
+    },
+    {
+      "commit": "046c54e1e2e8fd7737773c2787eaccfc4d5aca51",
+      "subject": "test(blind): add capacity fleet and retirement release gates",
+      "disposition": "review_and_cherry_pick_by_tool",
+      "salvageFirst": [
+        "deterministic capacity model with explicit model-vs-observation boundary",
+        "release lab blockers",
+        "ecosystem migration inventory",
+        "legacy retirement authorization gates"
+      ],
+      "conditions": [
+        "Rename or clearly namespace migration gate G3 so it cannot be confused with privacy guarantee G3.",
+        "Bind inputs to the vNext workspace inventory and signed programme state.",
+        "Keep modeled capacity and checksums non-authoritative.",
+        "Add D-7 exact rollback-target gate and D-6 decision dependency."
+      ]
+    },
+    {
+      "commit": "180fc7387949f481fd0698205d7bf3cc26943430",
+      "subject": "build(blind): package isolated edge and daemon products",
+      "disposition": "defer",
+      "reason": "Packaging consumes premature final authorities, while production-runtime.js explicitly excludes final build binding, manifests, descriptor refresh, INBOX, CORE, FORWARD, content streams, admission redemption and profile-2 witness support.",
+      "evidence": [
+        "packages/blind-daemon/production-runtime.js:54-91,675-720",
+        "packages/blind-daemon/test/production-runtime.test.js:247-340"
+      ],
+      "conditions": [
+        "Rebuild images only after T02/T03 authority RCs and T04 all-family assembly.",
+        "Run clean-image and exact inventory tests against the final selected subtrees.",
+        "Keep deployment and package publication disabled."
+      ]
+    },
+    {
+      "commit": "211b20d892203de89be07975c155a09c976d6bd4",
+      "subject": "fix(blind): refresh browser artifact authority",
+      "disposition": "retain_with_candidate_browser_artifact_only",
+      "reason": "This r2 preservation repair makes the candidate browser artifact evidence reproducible and does not remedy or worsen CR-1 through CR-8, D-6/D-7, V-1/V-7 or premature final protocol authority. It may accompany a reviewed blind-client candidate, but it grants no protocol-freeze or release authority."
+    }
+  ],
+  "requiredTests": [
+    {
+      "gate": "V-1",
+      "test": "Generate both spec excerpts and executable codecs from one registry; mutate one field/order/cap/domain in each consumer and require CI plus daemon startup to fail. Include the currently stale BlindForwardOpenResultV1 metadata as a regression fixture."
+    },
+    {
+      "gate": "V-2",
+      "test": "Drive caller and next-hop DATA concurrently until their aggregate exceeds maxCircuitBytes; race byte-cap, malformed frame, port failure, timeout and shutdown; assert one terminal WAL record, one route-count decrement, one abort/close per port, zero tickets/sessions/buffers and zero double release."
+    },
+    {
+      "gate": "V-3",
+      "test": "Send the maximum CELL.PUT shape with a validly encoded but invalid admission proof through the real staged ingress/coordinator/store; assert body pull count, stageOpaque count, staging bytes, WAL sequence and fsync count remain zero."
+    },
+    {
+      "gate": "V-4",
+      "test": "Saturate uncharged reads from many anonymous connections plus a shared ingress while honest clients continue; verify signed operation/byte policy, per-connection and global caps, no fabricated stable end-user identity, and client rejection of a descriptor-policy mismatch."
+    },
+    {
+      "gate": "V-5",
+      "test": "Exercise sub-threshold and unsafe forward jumps, backward clock, missing/failed authenticated time, clean and crash long-offline restart, confirmation, expiry boundary and GC stall; assert exact health/readiness masks and reserved lifecycle capacity."
+    },
+    {
+      "gate": "V-6",
+      "test": "Across real adjacent relay processes, attempt caller reset, fresh nested OPEN reset, over-depth route and A->B->A/A->B->C->A cycles; require rejection within the selected bound with no open socket, spend ambiguity or leaked session."
+    },
+    {
+      "gate": "V-7",
+      "test": "For every variable byte/count member generate minimum, single and maximum positives plus overlong compact count, truncated member, adjacent-field length confusion, declared-count mismatch, trailing bytes and allocation-before-cap negatives; run byte-identically on Node, Bare, Pear and supported browsers."
+    },
+    {
+      "gate": "V-8",
+      "test": "Publish the G3 renewal-correlation classifier, frozen jitter distribution, placement/lease-class workload and numeric threshold; test realistic multi-cell same-relay renew/migrate traffic, with decoys only in an explicitly selected economics profile."
+    },
+    {
+      "gate": "D-6",
+      "test": "If K_partition is retained, measure cross-relay bucket correlation benefit, then prove encrypted backup/restore and full fenced rotation/rebalance at every crash boundary. If removed, prove deterministic upgrade from the still-unreleased draft layout and regenerate store vectors."
+    },
+    {
+      "gate": "D-7",
+      "test": "Record one blind-only success, attempt rollback to a legacy-only reader/writer and require refusal; roll back to a previously validated dual-read build and prove blind-only success plus queued/ambiguous intents remain visible and retryable."
+    },
+    {
+      "gate": "claim-lint",
+      "test": "Scan docs, README, package metadata, dashboards, release notes and profile descriptors; reject physical-inbox G3, unqualified unlinkable/anonymous language, modeled-evidence claims and any G3 claim without V-8 evidence."
+    }
+  ],
+  "testEvidenceAssessment": {
+    "preservationClaim": "The handoff reports clean branches and npm test exit 0.",
+    "auditRerun": "No test suite was rerun for this read-only contract audit.",
+    "interpretation": "Green existing tests prove internal consistency of the preserved candidate, not compliance with PG-2. Several tests explicitly assert the premature final-authority state, and the missing V-1/V-3/V-4/V-6/V-7/V-8 cases are outside that green count."
+  }
+}

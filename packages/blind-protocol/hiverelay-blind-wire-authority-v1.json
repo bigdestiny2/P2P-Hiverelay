@@ -1,0 +1,21 @@
+{
+  "profile": "wire-authority-v1",
+  "protocolFamily": "hiverelay-blind",
+  "protocolMajor": 1,
+  "protocolMinor": 0,
+  "specArtifact": "docs/protocol/HIVERELAY-BLIND-WIRE-V1.md",
+  "abiArtifact": "packages/blind-protocol/hiverelay-blind-abi-v1.cenc",
+  "vectorManifestArtifact": "packages/blind-protocol/vector-manifest-v1.cenc",
+  "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+  "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+  "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05",
+  "wireSchemaCount": 73,
+  "operationCount": 22,
+  "advertisedOperationCount": 17,
+  "reservedOperationCount": 5,
+  "advertisedOperationBits": 131071,
+  "reservedOperationBits": 4063232,
+  "errorCount": 20,
+  "domainCount": 40,
+  "vectorCount": 237
+}

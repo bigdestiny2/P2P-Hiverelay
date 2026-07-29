@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HiveRelay app shapes · Peerit end-state · Accessibility matrix</title>
+  <style>
+    :root {
+      --bg: #f4f7f5;
+      --card: #fff;
+      --ink: #1a221e;
+      --muted: #5a6860;
+      --line: #d5e0d9;
+      --g: #0c8a68;
+      --gd: #066b50;
+      --gs: #e2f5ee;
+      --b: #2b6cb0;
+      --bs: #e7f0fa;
+      --a: #b7791f;
+      --as: #fdf6e3;
+      --p: #6b5b95;
+      --ps: #f1edf8;
+      --c: #c45c4a;
+      --cs: #fdecea;
+      --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0; font-family: var(--sans); color: var(--ink); background: var(--bg); line-height: 1.6;
+    }
+    a { color: var(--gd); }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 1.75rem 1.15rem 3.5rem; }
+    .hero {
+      background: linear-gradient(135deg, #0a5c47, #0c8a68 55%, #2b6cb0);
+      color: #fff; border-radius: 24px; padding: 1.85rem 1.6rem; margin-bottom: 1.25rem;
+    }
+    .hero .ey { font-size: .75rem; letter-spacing: .12em; text-transform: uppercase; opacity: .85; font-weight: 700; margin: 0 0 .6rem; }
+    .hero h1 { margin: 0 0 .6rem; font-size: clamp(1.55rem, 3.8vw, 2.2rem); line-height: 1.2; letter-spacing: -0.02em; }
+    .hero p { margin: 0; opacity: .93; max-width: 58ch; font-size: 1.02rem; }
+    .toc { display: flex; flex-wrap: wrap; gap: .4rem; margin: 0 0 1.25rem; }
+    .toc a {
+      text-decoration: none; font-size: .8rem; font-weight: 600; color: var(--muted);
+      background: var(--card); border: 1px solid var(--line); padding: .35rem .65rem; border-radius: 999px;
+    }
+    .toc a:hover { color: var(--gd); border-color: var(--g); }
+    section {
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      padding: 1.35rem 1.25rem 1.5rem; margin-bottom: 1rem;
+    }
+    h2 { margin: 0 0 .45rem; font-size: 1.35rem; letter-spacing: -0.02em; }
+    h2 .n {
+      display: inline-flex; width: 1.65rem; height: 1.65rem; align-items: center; justify-content: center;
+      background: var(--gs); color: var(--gd); border-radius: 8px; font-size: .82rem; font-weight: 800; margin-right: .4rem;
+    }
+    h3 { margin: 1.15rem 0 .4rem; font-size: 1.05rem; }
+    .lede { color: var(--muted); margin: 0 0 1rem; max-width: 62ch; font-size: 1.02rem; }
+    p { margin: .5rem 0; max-width: 64ch; }
+    ul, ol { max-width: 64ch; margin: .4rem 0 1rem; padding-left: 1.2rem; }
+    li { margin: .28rem 0; }
+    .callout {
+      border-radius: 12px; padding: .85rem 1rem; margin: .9rem 0; max-width: 64ch; font-size: .95rem;
+    }
+    .callout.g { background: var(--gs); border: 1px solid #b7e6d3; }
+    .callout.a { background: var(--as); border: 1px solid #f0d89a; }
+    .callout.b { background: var(--bs); border: 1px solid #c5daf3; }
+    .callout strong { display: block; margin-bottom: .2rem; }
+    .fig {
+      margin: 1rem 0 1.15rem; background: linear-gradient(180deg, #fbfcfb, #f0f5f2);
+      border: 1px solid var(--line); border-radius: 14px; padding: .85rem .6rem .7rem; overflow-x: auto;
+    }
+    .fig svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+    .fig-cap { text-align: center; font-size: .78rem; color: var(--muted); margin: .45rem 0 0; }
+    table.mx {
+      width: 100%; border-collapse: collapse; font-size: .82rem; margin: .85rem 0 1rem;
+      border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: #fafcfb;
+    }
+    table.mx th, table.mx td {
+      text-align: left; padding: .55rem .55rem; border-bottom: 1px solid var(--line); vertical-align: top;
+    }
+    table.mx th { background: #eef4f0; font-size: .74rem; color: var(--muted); font-weight: 700; }
+    table.mx tr:last-child td { border-bottom: 0; }
+    table.mx td.feat { font-weight: 700; white-space: nowrap; }
+    .tag {
+      display: inline-block; font-size: .68rem; font-weight: 700; padding: .1rem .4rem;
+      border-radius: 999px; letter-spacing: .03em;
+    }
+    .tag.hi { background: var(--gs); color: var(--gd); }
+    .tag.mid { background: var(--as); color: var(--a); }
+    .tag.lo { background: var(--cs); color: var(--c); }
+    .tag.pub { background: var(--bs); color: var(--b); }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; margin: .85rem 0; }
+    @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } table.mx { font-size: .75rem; } }
+    .card {
+      border: 1px solid var(--line); border-radius: 12px; padding: .9rem .95rem; background: #fafcfb;
+    }
+    .card h4 { margin: 0 0 .35rem; font-size: .95rem; }
+    .card p { margin: 0; font-size: .88rem; color: var(--muted); max-width: none; }
+    .card.g { border-top: 3px solid var(--g); }
+    .card.b { border-top: 3px solid var(--b); }
+    .card.p { border-top: 3px solid var(--p); }
+    .card.a { border-top: 3px solid var(--a); }
+    code { font-family: var(--mono); font-size: .86em; background: #eef2ef; padding: .08em .3em; border-radius: 4px; }
+    footer { text-align: center; color: var(--muted); font-size: .8rem; margin-top: 1.25rem; padding: .75rem; }
+    .shape {
+      border: 1px solid var(--line); border-radius: 14px; padding: 1rem; margin: .75rem 0; background: #fafcfb;
+    }
+    .shape h4 { margin: 0 0 .4rem; }
+    .shape .meta { font-size: .8rem; color: var(--muted); margin-bottom: .5rem; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <p class="ey">Design brief · Holepunch + full HiveRelay · Peerit end-state</p>
+      <h1>What apps look like when every HiveRelay piece is in place</h1>
+      <p>
+        Final Peerit shape, a greenfield app design using Holepunch + public HTTPS gateway + blind substrate,
+        a feature matrix (what each piece enables and costs), and accessibility-first shapes for different app kinds.
+      </p>
+    </header>
+
+    <nav class="toc">
+      <a href="#endstate">Peerit end-state</a>
+      <a href="#greenfield">Greenfield design</a>
+      <a href="#stack">Full stack map</a>
+      <a href="#matrix">Feature matrix</a>
+      <a href="#access">Accessibility ladder</a>
+      <a href="#shapes">App shapes</a>
+      <a href="#recipes">Recipes</a>
+      <a href="#honest">Honest limits</a>
+    </nav>
+
+    <!-- 1 PEERIT END STATE -->
+    <section id="endstate">
+      <h2><span class="n">1</span>Peerit end-state — when all pieces are in place</h2>
+      <p class="lede">
+        Today Peerit is a <strong>writable canary</strong>: signed web UI + OutboxLog over HTTPS.
+        With a fully built HiveRelay (public T1 gateway + blind substrate + multi-operator fleet),
+        Peerit becomes a <strong>multi-path social app</strong>: same posts, different doors for different users.
+      </p>
+
+      <div class="fig" role="img" aria-label="Peerit end-state: three access paths into one social graph">
+        <svg viewBox="0 0 920 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <filter id="sh" x="-15%" y="-15%" width="130%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-opacity="0.12"/>
+            </filter>
+          </defs>
+          <text x="460" y="26" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Peerit end-state: one social product · three client paths</text>
+
+          <!-- three clients -->
+          <g filter="url(#sh)">
+            <rect x="30" y="50" width="200" height="88" rx="14" fill="#2b6cb0"/>
+            <text x="130" y="85" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">Normal browser</text>
+            <text x="130" y="108" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="11">max accessibility</text>
+          </g>
+          <g filter="url(#sh)">
+            <rect x="360" y="50" width="200" height="88" rx="14" fill="#0c8a68"/>
+            <text x="460" y="85" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">PearBrowser / Bare</text>
+            <text x="460" y="108" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="11">full P2P when possible</text>
+          </g>
+          <g filter="url(#sh)">
+            <rect x="690" y="50" width="200" height="88" rx="14" fill="#6b5b95"/>
+            <text x="790" y="85" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">Mobile / offline</text>
+            <text x="790" y="108" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="11">local commit + sync</text>
+          </g>
+
+          <!-- paths -->
+          <path d="M130 138 V170 H200" stroke="#2b6cb0" stroke-width="2.5" fill="none"/>
+          <path d="M460 138 V155" stroke="#0c8a68" stroke-width="2.5" fill="none"/>
+          <path d="M790 138 V170 H720" stroke="#6b5b95" stroke-width="2.5" fill="none"/>
+
+          <!-- middle layer services -->
+          <g filter="url(#sh)">
+            <rect x="80" y="175" width="220" height="70" rx="12" fill="#e7f0fa" stroke="#c5daf3"/>
+            <text x="190" y="205" text-anchor="middle" font-size="12" font-weight="800" fill="#2b6cb0">T1 public gateway</text>
+            <text x="190" y="225" text-anchor="middle" font-size="10" fill="#5a6860">serve UI / public package</text>
+          </g>
+          <g filter="url(#sh)">
+            <rect x="340" y="175" width="240" height="70" rx="12" fill="#e2f5ee" stroke="#b7e6d3"/>
+            <text x="460" y="205" text-anchor="middle" font-size="12" font-weight="800" fill="#0c8a68">Blind substrate</text>
+            <text x="460" y="225" text-anchor="middle" font-size="10" fill="#5a6860">cells / mailbox (opaque posts)</text>
+          </g>
+          <g filter="url(#sh)">
+            <rect x="620" y="175" width="220" height="70" rx="12" fill="#f1edf8" stroke="#d4cce8"/>
+            <text x="730" y="205" text-anchor="middle" font-size="12" font-weight="800" fill="#6b5b95">Optional: dual-read</text>
+            <text x="730" y="225" text-anchor="middle" font-size="10" fill="#5a6860">OutboxLog during migration</text>
+          </g>
+
+          <!-- core peerit -->
+          <g filter="url(#sh)">
+            <rect x="200" y="270" width="520" height="70" rx="14" fill="#1a221e"/>
+            <text x="460" y="300" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Peerit client core</text>
+            <text x="460" y="320" text-anchor="middle" fill="#a8b8b0" font-size="11">author keys · inner signed events · merge · moderation · privacy-status UI</text>
+          </g>
+          <path d="M190 245 V270 H460" stroke="#94a39b" stroke-width="1.5" fill="none"/>
+          <path d="M460 245 V270" stroke="#94a39b" stroke-width="1.5" fill="none"/>
+          <path d="M730 245 V270 H460" stroke="#94a39b" stroke-width="1.5" fill="none"/>
+        </svg>
+        <p class="fig-cap">Figure 1 — End-state Peerit: UI may ride T1 gateway; social truth rides blind cells (after dual-read cutover); PearBrowser can still go direct P2P.</p>
+      </div>
+
+      <h3>What “done Peerit” means (product shape)</h3>
+      <table class="mx">
+        <thead>
+          <tr><th>Concern</th><th>End-state design</th><th>Honest label</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="feat">Content authority</td>
+            <td>Author Ed25519 on <em>inner</em> events; clients re-verify always</td>
+            <td><span class="tag hi">unchanged principle</span></td>
+          </tr>
+          <tr>
+            <td class="feat">Storage on relays</td>
+            <td>Blind cells / mailbox chains — relay sees opaque slots, not post schema</td>
+            <td><span class="tag mid">G2-S first; G3 later if gates pass</span></td>
+          </tr>
+          <tr>
+            <td class="feat">Web UI delivery</td>
+            <td>Signed assets via T1 public gateway and/or publisher HTTPS origin</td>
+            <td><span class="tag pub">public distribution</span></td>
+          </tr>
+          <tr>
+            <td class="feat">Browser writes</td>
+            <td><code>@hiverelay/blind-client</code> → edge → daemon; dual-read OutboxLog only in migration window</td>
+            <td><span class="tag mid">after protocol freeze + soak</span></td>
+          </tr>
+          <tr>
+            <td class="feat">PearBrowser users</td>
+            <td>Prefer direct P2P + optional relay backup for availability</td>
+            <td><span class="tag hi">best sovereignty</span></td>
+          </tr>
+          <tr>
+            <td class="feat">Operators</td>
+            <td>Multi-region T1 seeders + blind capacity sellers; can refuse opaque ids (evident)</td>
+            <td><span class="tag mid">not global erase</span></td>
+          </tr>
+          <tr>
+            <td class="feat">Recovery</td>
+            <td>Three separate domains: author identity · local cores · cell capability roots</td>
+            <td><span class="tag lo">restore one ≠ restore all</span></td>
+          </tr>
+          <tr>
+            <td class="feat">Today vs end-state</td>
+            <td>Today = OutboxLog canary. End-state = dual-read then blind-first, T1 for shell, multi-ingress</td>
+            <td><span class="tag a">migration required</span></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout g">
+        <strong>One-line end-state</strong>
+        Peerit stays “everyone writes only their own signed notebook” — but the notebooks are sealed into
+        blind cells for ordinary browsers, the shell can load via public HTTPS gateway, and PearBrowser
+        users can still skip relays when the mesh is awake.
+      </div>
+    </section>
+
+    <!-- 2 GREENFIELD -->
+    <section id="greenfield">
+      <h2><span class="n">2</span>Greenfield: design an app from the Holepunch stack + full HiveRelay</h2>
+      <p class="lede">
+        If you started today with a fully built HiveRelay (T1 gateway + blind substrate + services + fleet),
+        you would <em>not</em> invent a custom server per app. You pick a <strong>shape</strong> on the accessibility ladder.
+      </p>
+
+      <h3>Design checklist (start of every app)</h3>
+      <ol>
+        <li><strong>What is public vs private?</strong> Public bytes can ride T1 gateway. Private/social truth should be client-encrypted (blind) or local-only.</li>
+        <li><strong>Who is the writer?</strong> Single author core, multi-writer Autobase, or per-user outboxes/mailboxes.</li>
+        <li><strong>Who must use a normal browser?</strong> That forces HTTPS ingress (T1 and/or service HTTP like OutboxLog).</li>
+        <li><strong>What must work offline?</strong> Local commit + later sync; never block UI on relay RTT for local truth.</li>
+        <li><strong>What do operators learn?</strong> Write the privacy label (public / G2-S / stronger) into the UI from day one.</li>
+        <li><strong>How do you ship the shell?</strong> T1 gateway, publisher domain, PearDesktop drive, or all three.</li>
+      </ol>
+
+      <div class="fig" role="img" aria-label="Greenfield architecture template">
+        <svg viewBox="0 0 920 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <rect x="30" y="30" width="860" height="50" rx="12" fill="#2b6cb0"/>
+          <text x="460" y="60" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Your app (UI + domain logic + keys) — never lives inside the relay process</text>
+
+          <rect x="30" y="100" width="270" height="80" rx="12" fill="#e7f0fa" stroke="#c5daf3"/>
+          <text x="165" y="130" text-anchor="middle" font-size="12" font-weight="800" fill="#2b6cb0">Holepunch primitives</text>
+          <text x="165" y="150" text-anchor="middle" font-size="10" fill="#5a6860">Hypercore · Swarm · Drive · Autobase</text>
+
+          <rect x="325" y="100" width="270" height="80" rx="12" fill="#e2f5ee" stroke="#b7e6d3"/>
+          <text x="460" y="130" text-anchor="middle" font-size="12" font-weight="800" fill="#0c8a68">HiveRelay blind + services</text>
+          <text x="460" y="150" text-anchor="middle" font-size="10" fill="#5a6860">cells · outbox · vrf · notify · …</text>
+
+          <rect x="620" y="100" width="270" height="80" rx="12" fill="#f1edf8" stroke="#d4cce8"/>
+          <text x="755" y="130" text-anchor="middle" font-size="12" font-weight="800" fill="#6b5b95">T1 public gateway</text>
+          <text x="755" y="150" text-anchor="middle" font-size="10" fill="#5a6860">https shell / public assets</text>
+
+          <rect x="30" y="210" width="860" height="70" rx="12" fill="#1a221e"/>
+          <text x="460" y="240" text-anchor="middle" fill="#fff" font-size="13" font-weight="800">Operator fleet · home appliances · multi-region seeders</text>
+          <text x="460" y="260" text-anchor="middle" fill="#a8b8b0" font-size="11">capacity, not product ownership — app key / author key remain identity</text>
+        </svg>
+        <p class="fig-cap">Figure 2 — Greenfield template: app owns meaning; HiveRelay owns uptime doors and opaque capacity.</p>
+      </div>
+    </section>
+
+    <!-- 3 STACK -->
+    <section id="stack">
+      <h2><span class="n">3</span>Full stack map (all pieces named)</h2>
+      <table class="mx">
+        <thead><tr><th>Layer</th><th>Piece</th><th>Job in one sentence</th></tr></thead>
+        <tbody>
+          <tr><td class="feat">Client</td><td>Pear / Bare / browser</td><td>Run app code; hold keys; verify signatures</td></tr>
+          <tr><td class="feat">Data</td><td>Hypercore / Hyperdrive / Autobase / Hyperbee</td><td>Append-only truth, files, multi-writer, indexes</td></tr>
+          <tr><td class="feat">Mesh</td><td>Hyperswarm / HyperDHT</td><td>Find peers; encrypt links; holepunch</td></tr>
+          <tr><td class="feat">Always-on</td><td>HiveRelay seeder / AutoHeal</td><td>Keep public data alive when creators sleep</td></tr>
+          <tr><td class="feat">Public web door</td><td>T1 public HTTPS gateway</td><td>Serve public app bytes at normal URLs</td></tr>
+          <tr><td class="feat">Opaque store</td><td>Blind daemon (CELL/INBOX/CORE/FORWARD)</td><td>Hold ciphertext without app schema</td></tr>
+          <tr><td class="feat">Services</td><td>15 opt-in RPCs (OutboxLog, VRF, notify…)</td><td>Shared capabilities apps call without custom servers</td></tr>
+          <tr><td class="feat">Ops</td><td>Fleet / Umbrel / StartOS / evidence</td><td>Upgrade, capacity, home operators</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 4 MATRIX -->
+    <section id="matrix">
+      <h2><span class="n">4</span>Feature matrix — what each HiveRelay capability enables (and costs)</h2>
+      <p class="lede">Use this when choosing architecture. “Accessibility” = how many normal-browser users can participate.</p>
+
+      <table class="mx">
+        <thead>
+          <tr>
+            <th>HiveRelay feature</th>
+            <th>Enables</th>
+            <th>Trade-offs / costs</th>
+            <th>Max accessibility when…</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="feat">Seeding / public drives</td>
+            <td>App stays online after publisher offline; multi-region replicas</td>
+            <td>Public data is public; disk/bandwidth cost; need replica policy</td>
+            <td>Combined with T1 gateway or path gateway for browsers</td>
+          </tr>
+          <tr>
+            <td class="feat">Catalog / discovery HTTP</td>
+            <td>Bootstrap “what apps exist” for mobile/desktop clients</td>
+            <td>Catalog is untrusted until normalized; can be censored per operator</td>
+            <td>Multiple catalogs + signed app releases</td>
+          </tr>
+          <tr>
+            <td class="feat">Path content gateway<br/><code>/v1/hyper/:key/…</code></td>
+            <td>Fetch drive files over HTTP without host-key DNS</td>
+            <td>Ugly URLs; weaker “website” UX; easier to confuse with API</td>
+            <td>Devtools, PearBrowser bridges, internal tools</td>
+          </tr>
+          <tr>
+            <td class="feat">T1 public HTTPS gateway<br/><code>*.hive.domain</code></td>
+            <td>Real website UX for public P2P apps; replaceable doors; exact-byte serve</td>
+            <td>DNS/TLS ops; Phase‑1 one-app canary; no privacy; PSL issues multi-app</td>
+            <td><strong>Best public read path</strong> for non-P2P browsers</td>
+          </tr>
+          <tr>
+            <td class="feat">OutboxLog service</td>
+            <td>Browser-friendly signed personal feeds (Peerit launch path)</td>
+            <td>Relay may see structure depending on sealing; not full storage-role blindness</td>
+            <td>Fastest path to <strong>writable</strong> social in Chrome today</td>
+          </tr>
+          <tr>
+            <td class="feat">Blind cells / mailbox</td>
+            <td>Multi-app opaque storage; thousands of users without per-app relay code</td>
+            <td>Harder recovery; dual-read migration; privacy labels must be honest (G2-S≠G3)</td>
+            <td>Writable web + privacy story; scales app count without fleet forks</td>
+          </tr>
+          <tr>
+            <td class="feat">Blind CORE</td>
+            <td>Encrypted hypercore availability via relays</td>
+            <td>Stable core keys may be linkable; different profile than randomized cells</td>
+            <td>Large media / logs that still need core semantics</td>
+          </tr>
+          <tr>
+            <td class="feat">Circuit / FORWARD</td>
+            <td>Help peers when holepunch fails; opaque forwarding</td>
+            <td>Bandwidth cost; route-budget complexity; not a privacy silver bullet alone</td>
+            <td>Mobile / hard NAT users staying in the mesh</td>
+          </tr>
+          <tr>
+            <td class="feat">Custody protocol (atomic blind custody)</td>
+            <td>Time-bounded encrypted handoff with receipts &amp; non-serving proofs</td>
+            <td>Operational complexity; not “delete from earth”; distinct from T1 public serve</td>
+            <td>Escrow, expiring secrets, dead-drop style apps</td>
+          </tr>
+          <tr>
+            <td class="feat">VRF service</td>
+            <td>Unbiasable public randomness for games, lotteries, fair committees</td>
+            <td>Must not be the only security layer for money</td>
+            <td>Fair multiplayer / governance UX in open apps</td>
+          </tr>
+          <tr>
+            <td class="feat">Notify service</td>
+            <td>Wake devices without giving provider message plaintext (design intent)</td>
+            <td>Provider adapters; metadata leakage residual</td>
+            <td>Mobile re-engagement without central chat server</td>
+          </tr>
+          <tr>
+            <td class="feat">Identity / schema / storage services</td>
+            <td>Shared device checks, schema registry, attachment plumbing</td>
+            <td>Optional; wrong config can re-centralize</td>
+            <td>Faster multi-app portfolio consistency</td>
+          </tr>
+          <tr>
+            <td class="feat">Home appliances (Umbrel/StartOS)</td>
+            <td>Non-datacenter operators; geographic diversity</td>
+            <td>Home uptime variance; support burden</td>
+            <td>Long-term decentralization of capacity</td>
+          </tr>
+          <tr>
+            <td class="feat">Fleet canary/stable + evidence</td>
+            <td>Safe upgrades without big-bang death</td>
+            <td>Process heavy; not “move fast break production”</td>
+            <td>Reliability users feel as “it just works”</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 5 ACCESS LADDER -->
+    <section id="access">
+      <h2><span class="n">5</span>Accessibility ladder — maximum users, minimum friction</h2>
+      <p class="lede">
+        “Maximum accessibility” almost always means: <strong>works in an ordinary browser with a link</strong>.
+        Each step up buys sovereignty or privacy and costs install friction.
+      </p>
+
+      <div class="fig" role="img" aria-label="Accessibility ladder from link to full P2P">
+        <svg viewBox="0 0 920 280" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <defs>
+            <linearGradient id="lg" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%" stop-color="#2b6cb0"/><stop offset="100%" stop-color="#0c8a68"/>
+            </linearGradient>
+          </defs>
+          <text x="460" y="28" text-anchor="middle" fill="#5a6860" font-size="12" font-weight="700">← more users / less install &nbsp;&nbsp;|&nbsp;&nbsp; more sovereignty / more install →</text>
+
+          <rect x="40" y="55" width="160" height="160" rx="14" fill="#2b6cb0"/>
+          <text x="120" y="100" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">L0 Link</text>
+          <text x="120" y="125" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="10">T1 HTTPS</text>
+          <text x="120" y="145" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">read public app</text>
+          <text x="120" y="175" text-anchor="middle" fill="#8fd4ff" font-size="10">max reach</text>
+
+          <rect x="220" y="55" width="160" height="160" rx="14" fill="#3d7ec0"/>
+          <text x="300" y="100" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">L1 Web app</text>
+          <text x="300" y="125" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="10">HTTPS UI +</text>
+          <text x="300" y="145" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">relay service</text>
+          <text x="300" y="175" text-anchor="middle" fill="#8fd4ff" font-size="10">read + write</text>
+
+          <rect x="400" y="55" width="160" height="160" rx="14" fill="#0c8a68"/>
+          <text x="480" y="100" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">L2 Blind web</text>
+          <text x="480" y="125" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="10">encrypt in browser</text>
+          <text x="480" y="145" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">cells / mailbox</text>
+          <text x="480" y="175" text-anchor="middle" fill="#8ad4b8" font-size="10">privacy path</text>
+
+          <rect x="580" y="55" width="160" height="160" rx="14" fill="#6b5b95"/>
+          <text x="660" y="100" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">L3 Pear app</text>
+          <text x="660" y="125" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="10">desktop/mobile</text>
+          <text x="660" y="145" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">direct swarm</text>
+          <text x="660" y="175" text-anchor="middle" fill="#d4cce8" font-size="10">install cost</text>
+
+          <rect x="760" y="55" width="130" height="160" rx="14" fill="#1a221e"/>
+          <text x="825" y="100" text-anchor="middle" fill="#fff" font-size="12" font-weight="800">L4 Local</text>
+          <text x="825" y="125" text-anchor="middle" fill="rgba(255,255,255,.9)" font-size="10">LAN / offline</text>
+          <text x="825" y="145" text-anchor="middle" fill="rgba(255,255,255,.85)" font-size="10">first</text>
+          <text x="825" y="175" text-anchor="middle" fill="#8ad4b8" font-size="10">sovereign</text>
+
+          <rect x="40" y="235" width="850" height="8" rx="4" fill="url(#lg)"/>
+        </svg>
+        <p class="fig-cap">Figure 3 — Ship multiple levels of the same app when you can; don’t force everyone to L3.</p>
+      </div>
+
+      <div class="callout b">
+        <strong>Rule of thumb for maximum accessibility</strong>
+        Always ship <strong>L0 or L1</strong> for newcomers. Offer L2 for privacy-sensitive web users.
+        Offer L3 for power users. Never require L3 to read public content if T1 can serve it.
+      </div>
+    </section>
+
+    <!-- 6 APP SHAPES -->
+    <section id="shapes">
+      <h2><span class="n">6</span>App shapes — kinds of products and recommended architecture</h2>
+
+      <div class="shape">
+        <h4>A. Public brochure / docs / marketing site for a P2P product</h4>
+        <div class="meta">Goal: anyone with a link · no accounts</div>
+        <ul>
+          <li><strong>Shape:</strong> Hyperdrive (or static build published as drive) + <strong>T1 gateway</strong></li>
+          <li><strong>HiveRelay:</strong> seeder + public-t1-gateway only</li>
+          <li><strong>Avoid:</strong> OutboxLog, blind cells (overkill)</li>
+          <li><strong>Accessibility:</strong> L0 max</li>
+        </ul>
+      </div>
+
+      <div class="shape">
+        <h4>B. Public social / forum (Peerit-class)</h4>
+        <div class="meta">Goal: many writers, many readers, browsers first</div>
+        <ul>
+          <li><strong>Shape:</strong> per-user signed inner events → <strong>blind mailbox/cells</strong> (end-state); dual-read OutboxLog during migration</li>
+          <li><strong>UI shell:</strong> T1 gateway or publisher origin (signed assets)</li>
+          <li><strong>Optional:</strong> notify for mobile; multi-relay selection</li>
+          <li><strong>Accessibility:</strong> L1 today (OutboxLog), L2 end-state (blind web), L3 PearBrowser</li>
+          <li><strong>Trade-off:</strong> public content is still public to readers by design; storage-role blindness ≠ secrecy from the world</li>
+        </ul>
+      </div>
+
+      <div class="shape">
+        <h4>C. Marketplace / tickets / POS (transactional)</h4>
+        <div class="meta">Goal: listings public, checkout/private state careful</div>
+        <ul>
+          <li><strong>Public catalog:</strong> drive + T1 gateway (browse without install)</li>
+          <li><strong>Orders / inventory:</strong> writer cores or blind cells; receipts for custody if escrow</li>
+          <li><strong>Fairness:</strong> VRF for draws / assignment</li>
+          <li><strong>Accessibility:</strong> L0 browse + L1/L2 purchase flows</li>
+        </ul>
+      </div>
+
+      <div class="shape">
+        <h4>D. Private notes / vault (Paste-class private)</h4>
+        <div class="meta">Goal: operator learns nothing useful</div>
+        <ul>
+          <li><strong>Shape:</strong> client encrypt → blind cells or custody protocol; never T1 for plaintext</li>
+          <li><strong>UI:</strong> can still be HTTPS app shell (T1) that only handles ciphertext</li>
+          <li><strong>Accessibility:</strong> L2 web vault or L3 desktop; L0 only for marketing</li>
+          <li><strong>Trade-off:</strong> recovery UX is hard (capability roots)</li>
+        </ul>
+      </div>
+
+      <div class="shape">
+        <h4>E. Media / video (Tube-class)</h4>
+        <div class="meta">Goal: large bytes, many readers</div>
+        <ul>
+          <li><strong>Shape:</strong> Hyperdrive/Hypercore media + aggressive seeding; range GETs on gateway if public</li>
+          <li><strong>HiveRelay:</strong> seeder density, bandwidth economics, finite gateway budgets</li>
+          <li><strong>Accessibility:</strong> L0/L1 progressive streams via gateway; L3 for pure P2P swarm</li>
+          <li><strong>Trade-off:</strong> bandwidth cost dominates; privacy weak if content is public</li>
+        </ul>
+      </div>
+
+      <div class="shape">
+        <h4>F. Multiplayer / games / fair matchmaking</h4>
+        <div class="meta">Goal: low trust between players</div>
+        <ul>
+          <li><strong>Shape:</strong> Autobase or round cores + <strong>VRF</strong> + optional poker-style commit-reveal services</li>
+          <li><strong>Relay:</strong> presence, circuits for NAT, not authoritative game DB</li>
+          <li><strong>Accessibility:</strong> L3 often required for realtime; L1 lobby pages via T1</li>
+        </ul>
+      </div>
+
+      <div class="shape">
+        <h4>G. Org / deal room / membership</h4>
+        <div class="meta">Goal: invite-only, audit trail</div>
+        <ul>
+          <li><strong>Shape:</strong> capability-gated cores + blind cells for documents; signed moderation chain</li>
+          <li><strong>Access:</strong> L2 invite links; not open T1 content for private docs</li>
+          <li><strong>Trade-off:</strong> onboarding friction vs confidentiality</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- 7 RECIPES -->
+    <section id="recipes">
+      <h2><span class="n">7</span>Recipes — “maximum accessibility” combinations</h2>
+      <div class="grid2">
+        <div class="card g">
+          <h4>Recipe 1 — Widest public reach</h4>
+          <p>Publish Hyperdrive → seed on multi-region T1 relays → public HTTPS gateway → optional publisher CNAME. No account. Read-only link works in any browser.</p>
+        </div>
+        <div class="card b">
+          <h4>Recipe 2 — Peerit-like social (end-state)</h4>
+          <p>L0/L1 shell via T1 or CDN · L2 writes via blind-client · multi-relay · privacy-status UI · PearBrowser L3 optional · dual-read only during cutover.</p>
+        </div>
+        <div class="card p">
+          <h4>Recipe 3 — Commerce with window shopping</h4>
+          <p>Public catalog on T1 · cart/checkout as L1/L2 · inventory writer single-key core · VRF for fair drops · seeder SLA for media.</p>
+        </div>
+        <div class="card a">
+          <h4>Recipe 4 — Private-by-default utility</h4>
+          <p>Marketing L0 on T1 · app shell HTTPS · all user data blind cells · recovery kit UX · never put plaintext on gateway.</p>
+        </div>
+      </div>
+
+      <h3>Anti-patterns (accessibility or trust fails)</h3>
+      <ul>
+        <li>Putting private posts on T1 gateway and calling it “encrypted enough.”</li>
+        <li>Requiring PearBrowser install just to read a public landing page.</li>
+        <li>One relay, one region, claiming “decentralized.”</li>
+        <li>Building a new custom HTTP API per app when OutboxLog/cells/services already fit.</li>
+        <li>Marketing G3/OHTTP before independent operators and evidence exist.</li>
+      </ul>
+    </section>
+
+    <!-- 8 HONEST -->
+    <section id="honest">
+      <h2><span class="n">8</span>Honest limits (so design stays real)</h2>
+      <table class="mx">
+        <thead><tr><th>Claim you might want</th><th>What full HiveRelay actually gives</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Works when creator sleeps</td>
+            <td>Yes, if seeded and funded/replicated</td>
+          </tr>
+          <tr>
+            <td>Works in Chrome with a link</td>
+            <td>Yes for public T1; writes need service/blind path</td>
+          </tr>
+          <tr>
+            <td>Operator can’t forge my posts</td>
+            <td>Yes if clients verify author signatures</td>
+          </tr>
+          <tr>
+            <td>Operator can’t read my posts</td>
+            <td>Only if you encrypt client-side (blind path) and content isn’t meant to be world-readable</td>
+          </tr>
+          <tr>
+            <td>Operator can’t censor</td>
+            <td>No global guarantee — they can drop opaque ids; multi-operator + evident refusal is the mitigation</td>
+          </tr>
+          <tr>
+            <td>One stack for 1000 apps</td>
+            <td>Yes by design for blind + seeding; ops capacity still real</td>
+          </tr>
+          <tr>
+            <td>We’re there today</td>
+            <td>No — Peerit live = OutboxLog canary; T1 staging track; blind draft</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout a">
+        <strong>Design for the end-state, ship the ladder</strong>
+        Architect Peerit (and new apps) as if T1 + blind + multi-operator exist —
+        but ship L0/L1 paths first so real humans can use something next week.
+      </div>
+    </section>
+
+    <footer>
+      HiveRelay app shapes &amp; Peerit end-state · July 2026 · Independent open-source ecosystem<br />
+      Path: <code>docs/vnext/HIVERELAY-APP-SHAPES-AND-PEERIT-ENDSTATE.html</code> · Print to PDF from the browser
+    </footer>
+  </div>
+</body>
+</html>

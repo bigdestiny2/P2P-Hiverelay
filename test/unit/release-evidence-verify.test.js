@@ -455,6 +455,64 @@ test('release evidence verifier validates full-release sidecars and hashes', asy
   t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
 })
 
+test('release evidence verifier accepts only a bound public gateway release for deferred fleet rollout', async (t) => {
+  const dir = await fixtureDir(t)
+  const releaseFile = path.join(dir, 'release-evidence.json')
+  const releaseImageSmokeFile = path.join(dir, 'release-image-smoke-evidence.json')
+  const umbrelSmokeFile = path.join(dir, 'umbrel-package-smoke-evidence.json')
+  const s9pkFile = path.join(dir, 'blindspark.s9pk')
+
+  await writeFile(s9pkFile, 'fake-s9pk')
+  await writeJson(releaseImageSmokeFile, releaseImageSmokeEvidence())
+  await writeJson(umbrelSmokeFile, umbrelSmokeEvidence())
+  const release = releaseEvidence({
+    startosSha: await sha256File(s9pkFile),
+    imageSmokeSha: await sha256File(releaseImageSmokeFile),
+    umbrelSmokeSha: await sha256File(umbrelSmokeFile),
+    rolloutSha: ''
+  })
+  release.release.channel = 'none'
+  release.release.publicGateway = {
+    enabled: true,
+    manifestStatus: 'enabled',
+    manifestPath: 'fleet/public-hive-gateway-release.json',
+    manifestSha256: '4'.repeat(64),
+    releaseTarget: release.release.version,
+    commitSha: release.release.tagSha,
+    admissionProfile: 'blind-substrate-public-v1',
+    cohortSize: 3
+  }
+  release.surfaces.fleetRollout = 'deferred-gateway-canary-gated'
+  release.surfaces.fleetRolloutChannel = ''
+  release.surfaces.fleetRolloutEvidence = { path: '', sha256: '' }
+  release.surfaces.fleetChannelConfig = { path: '', sha256: '' }
+  await writeJson(releaseFile, release)
+
+  const res = await runVerify([
+    '--release', releaseFile,
+    '--release-image-smoke', releaseImageSmokeFile,
+    '--umbrel-package-smoke', umbrelSmokeFile,
+    '--startos-package', s9pkFile
+  ])
+  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+
+  delete release.release.publicGateway
+  await writeJson(releaseFile, release)
+  let err = null
+  try {
+    await runVerify([
+      '--release', releaseFile,
+      '--release-image-smoke', releaseImageSmokeFile,
+      '--umbrel-package-smoke', umbrelSmokeFile,
+      '--startos-package', s9pkFile
+    ])
+  } catch (e) {
+    err = e
+  }
+  t.ok(err)
+  t.ok(err.stderr.includes('release.channel'))
+})
+
 test('release evidence verifier rejects unsupported release certificate fields', async (t) => {
   const cases = [
     ['top-level', release => { release.marketplacePublished = true }, 'release evidence has unsupported fields: marketplacePublished'],

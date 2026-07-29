@@ -1,0 +1,93 @@
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
+#
+# HiveRelay Blind Edge — split public-test image.
+# Reproducibility contract (RELOCK_SPLIT_BLIND_PUBLIC_TEST_ARTIFACTS_AFTER_INTEGRATION):
+#  - builder/toolchain pinned by digest (node:22-bookworm full, no apt-get anywhere:
+#    Debian package inputs are exactly the pinned base-image contents, nothing moves)
+#  - runtime base pinned by digest (node:22-bookworm-slim)
+#  - exact source-revision / build-identity / component / bundle labels
+#  - usable public-CA roots for relay-to-relay verification: the pinned slim base
+#    ships no CA bundle, so the pinned toolchain stage's Debian ca-certificates
+#    store is copied in (verified by build-gate + smoke evidence)
+#  - browser artifact bytes are never copied into this image
+
+ARG NODE_TOOLCHAIN_IMAGE=node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37
+ARG NODE_RUNTIME_IMAGE=node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf
+
+# Native addons are compiled only in the target-platform toolchain stage. The
+# edge install-links closure receives no daemon source.
+FROM --platform=$TARGETPLATFORM ${NODE_TOOLCHAIN_IMAGE} AS blind-edge-toolchain
+ARG TARGETARCH
+WORKDIR /opt/hiverelay/deploy/blind/edge
+COPY deploy/blind/edge/package.json ./package.json
+COPY deploy/blind/edge/package-lock.json ./package-lock.json
+COPY packages/blind-protocol /opt/hiverelay/packages/blind-protocol
+COPY packages/blind-ipc /opt/hiverelay/packages/blind-ipc
+COPY packages/blind-peercred /opt/hiverelay/packages/blind-peercred
+COPY packages/blind-edge /opt/hiverelay/packages/blind-edge
+# The npm-pack filtered install closes correctly on its own: the accepted-source
+# packaging fix (ba710dc) includes private-ipc v3/v4 contract/status/authority +
+# vectors and forward-https-vnext.js in the package files[] whitelists. The
+# test -f gates below pin that closure; the module-graph import gate proves the
+# packed install loads (this previously caught the files[] omission).
+RUN printf '%s\n' "$TARGETARCH" > /opt/hiverelay/peercred-target-architecture && \
+    npm_config_build_from_source=true npm ci --omit=dev --install-links --no-audit --no-fund && \
+    npm cache clean --force && \
+    test ! -e node_modules/@hiverelay/blind-daemon && \
+    test -f node_modules/@hiverelay/blind-peercred/build/Release/blind_peercred.node && \
+    test -f node_modules/@hiverelay/blind-ipc/private-ipc-v3-contract.js && \
+    test -f node_modules/@hiverelay/blind-ipc/private-ipc-v4-contract.js && \
+    test -f node_modules/@hiverelay/blind-ipc/hiverelay-blind-private-ipc-authority-v3.json && \
+    test -f node_modules/@hiverelay/blind-edge/forward-https-vnext.js && \
+    node -e "import('@hiverelay/blind-peercred').then(m => { if (typeof m.socketPeerCredentials !== 'function') process.exit(1) })" && \
+    node --input-type=module -e "await import('@hiverelay/blind-ipc'); await import('/opt/hiverelay/deploy/blind/edge/node_modules/@hiverelay/blind-edge/server.js'); await import('/opt/hiverelay/deploy/blind/edge/node_modules/@hiverelay/blind-edge/forward-https-vnext.js'); console.log('edge closure module graph ok')"
+
+FROM --platform=$TARGETPLATFORM ${NODE_RUNTIME_IMAGE} AS blind-edge
+ARG HIVERELAY_BLIND_BUNDLE_ID=1.0.0-rc.1.public-test.1
+ARG HIVERELAY_BLIND_BUILD_ID=1.0.0-rc.1.public-test.1
+ARG HIVERELAY_BLIND_SOURCE_REVISION=973f25c212553653b65811eacd28ed35b1b54124
+ARG HIVERELAY_BLIND_SOURCE_TREE=ebd504fa318a90f34fc52e9febb9385db606330d
+LABEL org.opencontainers.image.title="HiveRelay Blind Edge" \
+      org.opencontainers.image.description="Public metadata-stripping transport edge for the blind app substrate" \
+      org.opencontainers.image.licenses="Apache-2.0" \
+      org.opencontainers.image.version="1.0.0-rc.1.public-test.1" \
+      org.opencontainers.image.revision="${HIVERELAY_BLIND_SOURCE_REVISION}" \
+      org.opencontainers.image.source="https://github.com/bigdestiny2/p2p-hiverelay" \
+      org.opencontainers.image.hiverelay.product-mode="BLIND_APPLICATION_SUBSTRATE_V1" \
+      org.opencontainers.image.hiverelay.component="edge" \
+      org.opencontainers.image.hiverelay.bundle-id="${HIVERELAY_BLIND_BUNDLE_ID}" \
+      org.opencontainers.image.hiverelay.build-id="${HIVERELAY_BLIND_BUILD_ID}" \
+      org.opencontainers.image.hiverelay.source-tree="${HIVERELAY_BLIND_SOURCE_TREE}" \
+      org.opencontainers.image.hiverelay.claim-boundary="LIVE_PUBLIC_TEST_ONLY"
+
+RUN groupadd --system --gid 997 hiverelay-blind && \
+    useradd --system --uid 998 --gid hiverelay-blind --home-dir /nonexistent --shell /usr/sbin/nologin hiverelay-edge && \
+    install -d -o 999 -g 997 -m 0750 /run/hiverelay-blind && \
+    install -d -o 998 -g 997 -m 0550 /opt/hiverelay/edge
+WORKDIR /opt/hiverelay/edge
+COPY --from=blind-edge-toolchain /opt/hiverelay/deploy/blind/edge/node_modules ./node_modules
+COPY --from=blind-edge-toolchain --chown=0:0 --chmod=0444 /opt/hiverelay/peercred-target-architecture ./peercred-target-architecture
+# Public-CA roots from the digest-pinned toolchain stage: the pinned slim base
+# ships no ca-certificates bundle and Edge must verify public-CA relay peers.
+COPY --from=blind-edge-toolchain --chown=0:0 /etc/ssl/certs /etc/ssl/certs
+COPY --chown=0:0 --chmod=0444 deploy/blind/edge/healthcheck.mjs ./healthcheck.mjs
+
+ENV NODE_ENV=production \
+    HIVERELAY_BLIND_RUNTIME_DIR=/run/hiverelay-blind \
+    HIVERELAY_BLIND_UNARY_SOCKET=/run/hiverelay-blind/unary.sock \
+    HIVERELAY_BLIND_STREAM_SOCKET=/run/hiverelay-blind/stream.sock \
+    HIVERELAY_BLIND_HOST=0.0.0.0 \
+    HIVERELAY_BLIND_PORT=9100 \
+    HIVERELAY_BLIND_DAEMON_UID=999 \
+    HIVERELAY_BLIND_DAEMON_GID=997 \
+    HIVERELAY_BLIND_SHARED_GID=997 \
+    HIVERELAY_BLIND_TLS_KEY=/run/secrets/hiverelay-blind-tls.key \
+    HIVERELAY_BLIND_TLS_CERT=/run/secrets/hiverelay-blind-tls.crt \
+    SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
+
+VOLUME ["/run/hiverelay-blind"]
+EXPOSE 9100
+USER 998:997
+HEALTHCHECK --interval=5s --timeout=2s --start-period=5s --retries=12 \
+  CMD ["node", "/opt/hiverelay/edge/healthcheck.mjs"]
+ENTRYPOINT ["node", "/opt/hiverelay/edge/node_modules/@hiverelay/blind-edge/cli.js"]

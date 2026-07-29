@@ -1,0 +1,44 @@
+{
+  "schema": "hiverelay-main-salvage-followup-v1",
+  "at": "2026-07-13",
+  "priorAudit": "docs/vnext/hiverelay-main-salvage.json",
+  "actionsTaken": [
+    {
+      "id": "immutable-bundle",
+      "path": "docs/vnext/salvage-bundles/2026-07-13-main-dirty",
+      "result": "tracked.patch + untracked-source.tgz + SHA256SUMS written"
+    },
+    {
+      "id": "snapshot-branch",
+      "repository": "00-core/hiverelay",
+      "branch": "salvage/main-dirty-snapshot-2026-07-13",
+      "commit": "c360ff7bf884602c9ae4ad7562d3c5e7de9e0369",
+      "result": "WIP snapshot of dirty source; DO NOT INTEGRATE AS-IS"
+    },
+    {
+      "id": "canonical-main-cleaned",
+      "branch": "main",
+      "head": "999b0afd7584bb727cef6e6a88a054f11513927a",
+      "remainingUntracked": [
+        "HiveRelay-0.24.1-Announcement.pdf",
+        "HiveRelay-0.24.1-Explainer.pdf",
+        "startos-0.4/",
+        "tmp-test-relay2/"
+      ],
+      "result": "P1-bearing dirty patches no longer sit uncommitted on main working tree"
+    }
+  ],
+  "p1Disposition": {
+    "HR-SALVAGE-P1-CREDITS-AUTH": {
+      "mainSnapshot": "still present in c360ff7b (unsafe)",
+      "preferredSource": "feat/vnext-integration ee4b1a6b auth-gate"
+    },
+    "HR-SALVAGE-P1-STORAGE-CAP": {
+      "mainSnapshot": "still present in c360ff7b (unsafe inline resolveStorageCap)",
+      "preferredSource": "feat/public-https-hive-gateway / fix/vnext-inherited-baseline storage redesign"
+    }
+  },
+  "authorizesIntegrationOfSnapshot": false,
+  "authorizesDeploy": false,
+  "authorizesPublish": false
+}

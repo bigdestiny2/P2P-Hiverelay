@@ -1,0 +1,11 @@
+{
+  "profile": "private-ipc-authority-v1",
+  "registryArtifact": "packages/blind-ipc/hiverelay-blind-private-ipc-v1.cenc",
+  "vectorManifestArtifact": "packages/blind-ipc/vector-manifest-v1.cenc",
+  "importedWireAbiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+  "privateIpcFormatHash": "dd895c7a849609d647134216499cbbf9344ba06fc181413db6f1e27dc26da561",
+  "privateIpcVectorSetHash": "fa58b38f6edf4a9d0390c7af7f454150ccfe2d1398b105686ff8e0f2883893cb",
+  "registryBytes": 7475,
+  "schemaCount": 7,
+  "vectorCount": 79
+}

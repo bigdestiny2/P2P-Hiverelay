@@ -1,0 +1,445 @@
+{
+  "policyVersion": 1,
+  "policyId": "hiverelay.blind.legacy-retirement.v1",
+  "decisionAuthority": "computed-production-blockers-only",
+  "authorizationRule": {
+    "computedBy": "scripts/verify-blind-legacy-retirement-policy.mjs",
+    "rule": "Retirement is blocked unless every code-owned production blocker source and every code-owned retirement-evidence blocker source is empty.",
+    "editableDecisionFields": "forbidden",
+    "blockerSources": [
+      "blind-protocol.ABI_RELEASE_BLOCKERS",
+      "blind-ipc.PRIVATE_IPC_STATUS.releaseBlockers",
+      "blind-client.BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.releaseBlockers",
+      "blind-daemon.PRODUCTION_RUNTIME_EXCLUSIONS",
+      "blind-daemon.BLIND_CELL_RUNTIME_BLOCKERS",
+      "blind-daemon.BLIND_CELL_STORAGE_PRODUCTION_BLOCKERS",
+      "blind-daemon.BLIND_INBOX_RUNTIME_BLOCKERS",
+      "blind-daemon.BLIND_INBOX_STORAGE_BLOCKERS",
+      "blind-daemon.BLIND_CORE_RUNTIME_BLOCKERS",
+      "blind-daemon.BLIND_CORE_STORAGE_BLOCKERS"
+    ],
+    "retirementEvidenceSource": "blind-legacy-retirement.LEGACY_RETIREMENT_EVIDENCE_BLOCKERS"
+  },
+  "gates": [
+    {
+      "id": "G0",
+      "title": "Authority freeze",
+      "requirement": "Final non-draft wire, store-format, private-IPC, client-composition, schema and signed production release authorities are mutually bound.",
+      "evidence": [
+        "Final authority artifacts reproduce their pinned hashes.",
+        "Two-slot manifest selection and rollback floors are executable.",
+        "No candidate uses a draft or caller-selected authority."
+      ]
+    },
+    {
+      "id": "G1",
+      "title": "All-family runtime",
+      "requirement": "One production daemon and store compose DESCRIBE, CELL, INBOX, CORE and FORWARD through the real edge and private-IPC boundary.",
+      "evidence": [
+        "Production runtime exclusions are empty.",
+        "Family runtime and storage blocker arrays are empty.",
+        "A signed descriptor advertises only operations the running daemon executes."
+      ]
+    },
+    {
+      "id": "G2",
+      "title": "Blindness",
+      "requirement": "Relay-visible bytes, persistence, logs, metrics and recovery artifacts contain no application namespace, plaintext, secret, destination or payload-derived label.",
+      "evidence": [
+        "Sentinel scans cover disk, WAL, snapshots, logs and metrics.",
+        "Client-side encryption and fixed size-class padding pass adversarial tests.",
+        "Private IPC authenticates the exact local peer and role."
+      ]
+    },
+    {
+      "id": "G3",
+      "title": "Semantic parity",
+      "requirement": "Every replacement operation preserves required authorization, ordering, idempotency, retry, fork, replay, lease and proof semantics.",
+      "evidence": [
+        "Lost-response and retry tests are deterministic.",
+        "Invalid capabilities, signatures, relations and replays fail closed.",
+        "Application reducers reproduce the same accepted logical state."
+      ]
+    },
+    {
+      "id": "G4",
+      "title": "Durability and scale",
+      "requirement": "The replacement survives power loss, torn writes, restart, repair, capacity exhaustion, rebalance and sustained load.",
+      "evidence": [
+        "WAL recovery, scrub, backup and restore drills pass.",
+        "Capacity and backpressure fail closed without corrupting committed state.",
+        "Soak evidence includes restart, partition and recovery cycles."
+      ]
+    },
+    {
+      "id": "G5",
+      "title": "Independent operators",
+      "requirement": "Availability and failover are proven across independently administered signing, control and infrastructure failure domains.",
+      "evidence": [
+        "At least three independent operators participate.",
+        "Cross-operator replication, proof and partition recovery pass.",
+        "Distinct URLs or public keys are not accepted as independence evidence by themselves."
+      ]
+    },
+    {
+      "id": "G6",
+      "title": "Consumer parity",
+      "requirement": "Node, Bare, browser, Pear and React Native consumers use the blind client while application business logic remains client-side.",
+      "evidence": [
+        "Cross-runtime canonical bytes and result verification match.",
+        "Offline authoring remains writable during relay failure.",
+        "Direct legacy package and route consumers are absent from release builds."
+      ]
+    },
+    {
+      "id": "G7",
+      "title": "Migration and recovery",
+      "requirement": "Legacy state has a deterministic cutoff, migration or explicitly approved clean genesis, plus tested export, restore and rollback.",
+      "evidence": [
+        "Dual-read comparison or clean-genesis approval is recorded.",
+        "Acknowledged legacy content is migrated, archived or explicitly discarded.",
+        "Rollback never requires reopening an unsafe legacy write path."
+      ]
+    },
+    {
+      "id": "G8",
+      "title": "Drain and removal",
+      "requirement": "Legacy traffic is zero for the chosen deprecation window before routes, packages, data or documentation are removed.",
+      "evidence": [
+        "Observed production traffic is zero for the declared window.",
+        "Removed routes return the documented terminal response.",
+        "Dependency, import, configuration and documentation scans find no live legacy consumer."
+      ]
+    }
+  ],
+  "components": [
+    {
+      "id": "legacy-service-plane",
+      "legacyPaths": [
+        "packages/core/core/plugin-loader.js",
+        "packages/core/core/services/",
+        "packages/core/core/relay-node/api-service-config.js",
+        "packages/core/core/relay-node/api-service-management.js",
+        "packages/services/index.js"
+      ],
+      "disposition": "externalize-from-base",
+      "replacement": ["FORWARD", "application-owned service endpoints"],
+      "extract": ["bounded provider lifecycle", "message limits", "separate service SDK helpers"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G6", "G8"]
+    },
+    {
+      "id": "outboxlog",
+      "legacyPaths": [
+        "packages/services/builtin/outboxlog/",
+        "packages/core/core/relay-node/api-route-mounts.js:/api/sync/*",
+        "packages/core/core/relay-node/api-route-mounts.js:/api/swarm/*",
+        "packages/core/core/relay-node/api-route-mounts.js:/api/directory"
+      ],
+      "disposition": "migrate-then-retire",
+      "replacement": ["CORE", "CELL", "INBOX"],
+      "extract": ["canonical signature verification", "journal recovery", "bounded CAS and pagination", "client-side sealing helpers"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"]
+    },
+    {
+      "id": "witness-repair",
+      "legacyPaths": [
+        "packages/services/builtin/witnesslog/",
+        "packages/services/builtin/repairticket/",
+        "packages/core/core/relay-node/api-route-mounts.js:/api/witness*",
+        "packages/core/core/relay-node/api-route-mounts.js:/api/repair*"
+      ],
+      "disposition": "migrate-then-retire",
+      "replacement": ["CORE", "CELL", "INBOX", "profile-2 external witness journal"],
+      "extract": ["signed record codecs", "TTL validation", "repair ticket state reducer"],
+      "deletionGates": ["G0", "G1", "G3", "G4", "G5", "G7", "G8"]
+    },
+    {
+      "id": "shard-custody",
+      "legacyPaths": [
+        "packages/services/builtin/shard-store/",
+        "packages/core/core/custody-signing.js",
+        "packages/core/core/relay-node/api-custody-management.js",
+        "packages/core/core/relay-node/api-route-mounts.js:/api/v1/shard*"
+      ],
+      "disposition": "migrate-then-retire",
+      "replacement": ["CELL", "CELL.PROVE", "client-owned custody policy"],
+      "extract": ["content addressing", "retrieval proof and tombstone domains", "capacity and dedup bounds"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G7", "G8"]
+    },
+    {
+      "id": "seed-storage-gateway",
+      "legacyPaths": [
+        "packages/core/core/relay-node/seeder.js",
+        "packages/core/core/relay-node/app-lifecycle.js",
+        "packages/core/core/relay-node/gateway-server.js",
+        "packages/core/core/protocol/seed-request.js",
+        "packages/core/core/protocol/proof-of-storage.js",
+        "packages/services/builtin/storage-service.js",
+        "packages/services/builtin/storage-proof-service.js"
+      ],
+      "disposition": "migrate-then-retire",
+      "replacement": ["CORE.MIRROR", "CORE.OPEN_REPLICATION", "CORE.PROVE", "CELL"],
+      "extract": ["Hypercore interoperability", "full metadata and blob replication checks", "proof sampling", "lease and capacity bounds"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"]
+    },
+    {
+      "id": "catalog-federation-index",
+      "legacyPaths": [
+        "packages/core/core/app-registry.js",
+        "packages/core/core/federation.js",
+        "packages/core/core/services/signed-directory.js",
+        "packages/core/core/relay-node/api-catalog-read.js",
+        "services/index-sidecar/"
+      ],
+      "disposition": "externalize-from-base",
+      "replacement": ["DESCRIBE for relay capabilities only", "application-owned signed CORE catalogs", "client-side derived indexes"],
+      "extract": ["signed manifest verification", "deterministic version selection", "redaction and change-debounce tests"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G5", "G6", "G7", "G8"]
+    },
+    {
+      "id": "notify",
+      "legacyPaths": ["packages/services/builtin/notify-service.js"],
+      "disposition": "externalize-from-base",
+      "replacement": ["INBOX", "separately disclosed native push bridge"],
+      "extract": ["signature domains", "quotas", "TTL and revocation", "provider accounting"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G4", "G6", "G8"]
+    },
+    {
+      "id": "poker",
+      "legacyPaths": [
+        "packages/services/builtin/poker/",
+        "packages/core/core/relay-node/api-route-mounts.js:/api/poker*"
+      ],
+      "disposition": "externalize-from-base",
+      "replacement": ["CORE", "INBOX", "FORWARD", "poker application SDK"],
+      "extract": ["SignedLog sequence and replay checks", "hand-seed and game crypto"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G6", "G7", "G8"]
+    },
+    {
+      "id": "compute-trust-services",
+      "legacyPaths": [
+        "packages/services/builtin/ai-service.js",
+        "packages/services/builtin/identity-service.js",
+        "packages/services/builtin/schema-service.js",
+        "packages/services/builtin/sla-service.js",
+        "packages/services/builtin/zk-service.js",
+        "packages/services/builtin/arbitration-service.js",
+        "packages/services/builtin/vrf-service.js"
+      ],
+      "disposition": "externalize-from-base",
+      "replacement": ["FORWARD", "application SDKs", "client-side identity and verification"],
+      "extract": ["domain-specific signature and proof helpers that do not expose application data to the relay"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G6", "G8"]
+    },
+    {
+      "id": "legacy-circuit-forward",
+      "legacyPaths": [
+        "packages/core/core/protocol/forward-relay.js",
+        "packages/core/core/protocol/relay-circuit.js"
+      ],
+      "disposition": "migrate-then-retire",
+      "replacement": ["FORWARD"],
+      "extract": ["frame limits", "duration, byte and rate caps", "channel authentication", "teardown and backpressure"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G8"]
+    },
+    {
+      "id": "edge-transports",
+      "legacyPaths": [
+        "packages/core/transports/websocket/",
+        "packages/core/transports/dht-relay-ws/",
+        "packages/core/transports/holesail/",
+        "packages/core/transports/tor/"
+      ],
+      "disposition": "adapt-and-retain",
+      "replacement": ["blind-edge transport adapters"],
+      "extract": ["stream adapters", "backpressure", "rate limits", "error scrubbing", "Tor control and SOCKS lifecycle"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G4", "G8"]
+    },
+    {
+      "id": "legacy-client-verifier",
+      "legacyPaths": ["packages/client/", "packages/verifier/"],
+      "disposition": "migrate-then-retire",
+      "replacement": ["packages/blind-client", "DESCRIBE and operation-result verification"],
+      "extract": ["cross-runtime byte helpers", "proof verification independent of legacy schemas"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G6", "G7", "G8"]
+    },
+    {
+      "id": "operator-control-economics",
+      "legacyPaths": [
+        "packages/core/core/relay-node/api-management-snapshots.js",
+        "packages/core/core/relay-node/api-lifecycle-actions.js",
+        "packages/core/incentive/"
+      ],
+      "disposition": "retain-isolated",
+      "replacement": ["loopback or private authenticated operator plane", "generic family and resource-class accounting"],
+      "extract": ["constant-time authentication", "rollback on persistence failure", "resource accounting", "safe process lifecycle"],
+      "deletionGates": ["G0", "G2", "G3", "G4", "G8"]
+    },
+    {
+      "id": "peerit-legacy-consumer-plane",
+      "legacyPaths": [
+        "../peerit/js/pear-api.js",
+        "../peerit/js/sync.js",
+        "../peerit/js/gossip.js",
+        "../peerit/js/relay-pool.js",
+        "../peerit/js/relay-roster.js",
+        "../peerit-relay/"
+      ],
+      "disposition": "migrate-then-retire",
+      "replacement": ["DESCRIBE", "CELL", "INBOX", "CORE", "FORWARD", "Peerit substrate profile"],
+      "extract": ["application signature verification", "offline authoring behavior", "deterministic legacy cutoff and restore evidence"],
+      "deletionGates": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"]
+    }
+  ],
+  "forbiddenClaims": [
+    {
+      "id": "self-description-proves-runtime",
+      "claim": "A signed capability document proves that the advertised runtime is executing correctly.",
+      "whyInvalid": "A signature authenticates an operator statement, not executable behavior, storage or health.",
+      "requiredEvidence": ["signed descriptor", "fresh challenge", "operation proof", "external witness where required"]
+    },
+    {
+      "id": "signed-roster-proves-independence",
+      "claim": "A signed roster proves relay decentralization or independent operators.",
+      "whyInvalid": "A roster proves selected keys and endpoints but not control or infrastructure failure domains.",
+      "requiredEvidence": ["independent administration evidence", "failure-domain evidence", "partition and failover test"]
+    },
+    {
+      "id": "ciphertext-label-proves-blindness",
+      "claim": "A blind, encrypted or ciphertext label, field blacklist or namespace proves relay blindness.",
+      "whyInvalid": "Allowed fields can still contain plaintext and visible namespaces still disclose application semantics.",
+      "requiredEvidence": ["client-held encryption key", "wire and persistence sentinel scan", "fixed size-class padding"]
+    },
+    {
+      "id": "multiple-keys-prove-operators",
+      "claim": "Multiple URLs, receipts or public keys prove independent operators.",
+      "whyInvalid": "One controller can operate many endpoints and keys.",
+      "requiredEvidence": ["independent control evidence", "independent signing custody", "correlated failure test"]
+    },
+    {
+      "id": "attestation-proves-retrieval",
+      "claim": "A relay-signed possession attestation proves that requested bytes are retrievable.",
+      "whyInvalid": "An attestation is a claim unless bound to fresh requested bytes and independently verified.",
+      "requiredEvidence": ["fresh nonce", "retrieved bytes", "content hash", "verified relay result signature"]
+    },
+    {
+      "id": "tor-advertisement-proves-anonymity",
+      "claim": "Advertising Tor or an onion endpoint proves user anonymity.",
+      "whyInvalid": "It does not prove path use or prevent application, timing and volume correlation.",
+      "requiredEvidence": ["verified selected route", "accurate metadata threat model", "traffic-analysis test"]
+    },
+    {
+      "id": "client-verification-proves-availability",
+      "claim": "Client signature verification or a read-only UI proves availability and write durability.",
+      "whyInvalid": "Integrity verification is distinct from confidentiality, retrievability and durable acknowledgement.",
+      "requiredEvidence": ["verified acknowledgement", "readback or proof", "independent replica evidence"]
+    },
+    {
+      "id": "unseed-proves-erasure",
+      "claim": "An unseed request proves cryptographic erasure or access revocation.",
+      "whyInvalid": "A broadcast withdrawal cannot erase remote copies or revoke already-held keys.",
+      "requiredEvidence": ["capability expiry", "key rotation", "client replication firewall", "explicit retention policy"]
+    },
+    {
+      "id": "opaque-poker-proves-generic",
+      "claim": "Opaque card payloads make a table-aware poker relay a generic blind service.",
+      "whyInvalid": "Table keys, lifecycle and topics still expose and implement poker semantics.",
+      "requiredEvidence": ["generic primitive wire", "no application sentinel", "application logic outside the relay"]
+    },
+    {
+      "id": "hand-edited-authorization",
+      "claim": "A deployment-policy boolean can authorize deletion.",
+      "whyInvalid": "Retirement authority is derived only from code-owned blocker sources and executable evidence authorities.",
+      "requiredEvidence": ["empty production blocker sources", "empty retirement evidence blocker source", "valid policy structure"]
+    }
+  ],
+  "realEvidence": [
+    {
+      "id": "executable-production-composition",
+      "evidence": "The production assembler executes every advertised family through the real edge and private-IPC boundary.",
+      "proves": ["operation availability", "descriptor and runtime agreement"],
+      "codeAnchors": ["packages/blind-daemon/production-runtime.js", "packages/blind-edge/server.js"]
+    },
+    {
+      "id": "plaintext-sentinel-absence",
+      "evidence": "Known application and plaintext sentinels are absent from wire, disk, WAL, snapshots, logs and metrics.",
+      "proves": ["tested blindness for the selected sentinel corpus"],
+      "codeAnchors": ["packages/blind-client/cells.js", "packages/blind-client/wire.js", "packages/blind-daemon/transaction-store.js"]
+    },
+    {
+      "id": "canonical-capability-result",
+      "evidence": "Canonical capabilities, request commitments and signed results verify against the qualified endpoint context.",
+      "proves": ["authorization", "request-result binding", "relay attribution"],
+      "codeAnchors": ["packages/blind-client/results.js", "packages/blind-daemon/operation-catalog.js"]
+    },
+    {
+      "id": "transactional-wal-recovery",
+      "evidence": "Committed state survives torn-tail recovery and deterministic replay without resurrecting terminal state.",
+      "proves": ["crash consistency", "bounded recovery semantics"],
+      "codeAnchors": ["packages/blind-daemon/transaction-store.js", "packages/blind-daemon/wal-recovery-scan.js"]
+    },
+    {
+      "id": "private-ipc-peer-credentials",
+      "evidence": "The daemon authenticates the exact local peer and permits only registered role and operation combinations.",
+      "proves": ["local privilege boundary", "edge-daemon separation"],
+      "codeAnchors": ["packages/blind-peercred/", "packages/blind-ipc/policy.js"]
+    },
+    {
+      "id": "retrieval-proof",
+      "evidence": "Fresh challenge results bind requested bytes, content hash, request commitment and relay identity.",
+      "proves": ["sampled retrievability at the challenge time"],
+      "codeAnchors": ["packages/blind-daemon/storage-engine.js", "packages/blind-daemon/core-runtime-adapter.js"]
+    },
+    {
+      "id": "independent-operator-failure-domain",
+      "evidence": "Cross-operator tests survive loss and partition of one independently administered failure domain.",
+      "proves": ["tested replica independence", "failover"],
+      "codeAnchors": ["scripts/simulate-blind-fleet.mjs"]
+    },
+    {
+      "id": "cross-runtime-client-parity",
+      "evidence": "Node, Bare and browser clients emit equal canonical bytes and reach equal verified results.",
+      "proves": ["consumer interoperability"],
+      "codeAnchors": ["packages/blind-client/", "scripts/check-blind-wire-cross-runtime.mjs"]
+    },
+    {
+      "id": "migration-restore-drill",
+      "evidence": "A deterministic legacy cutoff, migrated or archived state, clean restore and rollback are exercised.",
+      "proves": ["recoverable retirement", "bounded content-loss decision"],
+      "codeAnchors": ["deploy/blind/legacy-retirement-policy.json"]
+    },
+    {
+      "id": "observed-zero-traffic",
+      "evidence": "Production observations show no legacy route or protocol use for the declared deprecation window.",
+      "proves": ["consumer drain before removal"],
+      "codeAnchors": ["deploy/blind/legacy-retirement-policy.json"]
+    }
+  ],
+  "retirementSequence": [
+    {
+      "id": "freeze",
+      "requires": ["G0"],
+      "action": "Freeze final authorities and bind the production release."
+    },
+    {
+      "id": "compose",
+      "requires": ["G1", "G2", "G3", "G4"],
+      "action": "Compose and qualify the all-family production runtime."
+    },
+    {
+      "id": "migrate",
+      "requires": ["G5", "G6", "G7"],
+      "action": "Migrate consumers and state across independent operators."
+    },
+    {
+      "id": "drain",
+      "requires": ["G8"],
+      "action": "Disable legacy writes and observe the deprecation window."
+    },
+    {
+      "id": "remove",
+      "requires": ["G0", "G1", "G2", "G3", "G4", "G5", "G6", "G7", "G8"],
+      "action": "Remove retired routes and packages while retaining tested export and rollback evidence."
+    }
+  ]
+}

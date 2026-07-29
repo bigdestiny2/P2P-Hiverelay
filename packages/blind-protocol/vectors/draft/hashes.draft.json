@@ -1,0 +1,12 @@
+{
+  "profile": "wire-authority-v1",
+  "releaseReady": true,
+  "missingSchemaCount": 0,
+  "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+  "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+  "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05",
+  "evidenceFormatHash": "f250ca2b30827f57ebf563b1236c26b3269fd63f4a9291521dcd2aa5b0336f86",
+  "evidenceVectorSetHash": "69a6a567e0dab153816facda60fcaf908bb6831edec199701e2eb2ae978a326a",
+  "storeFormatHash": "d590838a91655dc1cf8d04f277416caacaf1b73ddbddd9f6f19b104dfb92234c",
+  "storeVectorSetHash": "5005229ae8876b5cf7c56405ee1ca7585c054e531e48615cb47edcd32f5e3f75"
+}

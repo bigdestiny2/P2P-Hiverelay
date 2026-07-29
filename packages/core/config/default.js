@@ -27,7 +27,10 @@ export default {
 
   // Seeding
   enableSeeding: true,
-  maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
+  // Legacy ceiling for an unset cap. CLI startup resolves an unset value
+  // against exact-filesystem available bytes + reserve; explicit values keep
+  // their exact operator designation even when equal to 50 GiB.
+  maxStorageBytes: 50 * 1024 * 1024 * 1024,
   announceInterval: 15 * 60 * 1000, // 15 minutes
 
   // Circuit relay
@@ -57,6 +60,18 @@ export default {
   corsOrigins: [],
   strictSeedingPrivacy: true,
   enableDistributedDriveBridge: false,
+
+  // Operator fleet multi-node view (dashboard data-layer v3).
+  // Read-only HTTP scrape of public /health + /status on peer base URLs.
+  // Never pulls management/Tor-private detail. Empty peers → self card only.
+  fleet: {
+    includeSelf: true,
+    timeoutMs: 4000,
+    maxPeers: 32,
+    peers: [
+      // { id: 'bern', baseUrl: 'http://45.59.123.112:9100', region: 'EU', label: 'bern' }
+    ]
+  },
 
   // Management UI authentication.
   //
@@ -170,6 +185,35 @@ export default {
 
   // Catalog and gateway trust policy
   gatewayPublicOnlyPrivacyTier: true,
+  gatewayPort: null,
+  // A public HTTPS edge terminates TLS and talks to this loopback-only data
+  // plane. Never expose the plaintext compatibility listener directly.
+  gatewayHost: '127.0.0.1',
+  gatewayTrustProxy: false,
+  gatewayTrustedProxyAddresses: ['127.0.0.1', '::1', '::ffff:127.0.0.1'],
+  gatewayRequireForwardedSNI: false,
+  gatewayCompatibilityHosts: ['127.0.0.1', 'localhost', '[::1]'],
+  gatewayMaxInFlight: 256,
+  gatewayMaxInFlightPerApp: 32,
+  // V-GW1 finite production policy. Public HTTPS preflight additionally
+  // requires these exact values to be present explicitly in config.json so a
+  // deployment never relies on constructor fallback behavior.
+  gatewayMaxResponseBytes: 64 * 1024 * 1024,
+  gatewayMaxTransformBytes: 4 * 1024 * 1024,
+  gatewayEgressBytesPerWindow: 256 * 1024 * 1024,
+  gatewayEgressWindowMs: 60 * 1000,
+  gatewayMaxResponseLifetimeMs: 15 * 60 * 1000,
+  // Optional DNS suffix for origin-isolated public app hosts on the dedicated
+  // data-plane gateway, e.g. `hive.relay.example`. A 52-char z-base-32 app key
+  // becomes `<key>.hive.relay.example`. Disabled until explicitly configured.
+  hiveAppHostSuffix: null,
+  // Transitional local T1 provenance gate. Only exact 64-hex app keys listed
+  // here can use key-derived HTTPS hosts; registry defaults never grant access.
+  // The blind-substrate role predicate replaces this scaffold allowlist.
+  hiveAppPublicKeys: [],
+  // Optional immutable Hyperdrive version per admitted app key. Production
+  // public-gateway preflight requires an exact pin for every public origin.
+  hiveAppPublicVersions: {},
   requireSignedCatalog: false,
   catalogSignatureMaxAgeMs: 5 * 60 * 1000,
   catalogMaxAppAgeMs: 30 * 24 * 60 * 60 * 1000,
@@ -254,7 +298,38 @@ export default {
     controlHost: '127.0.0.1',
     controlPort: 9051,
     controlPassword: null,
-    cookieAuthFile: '/var/lib/tor/control_auth_cookie'
+    cookieAuthFile: '/var/lib/tor/control_auth_cookie',
+    // hiverelay.onion/1 (RA-01b) — all default to legacy ephemeral behavior.
+    // keyFile enables a persistent v3 identity (e.g. '<storage>/tor/hs-key.blob',
+    // chmod 0600, include in the encrypted operator backup).
+    keyFile: null,
+    // Fail-closed daemon floor, e.g. '0.4.9.5' (0.4.8 leaves the network 2026-09-01).
+    minDaemonVersion: null,
+    // Multi-port forwarding, e.g. [{ vport: 80, targetHost: '127.0.0.1', targetPort: 9100 }].
+    // When null, localPort (apiPort) is exposed on vport 80 as before.
+    vports: null,
+    // Peer protocol plane (Noise/Protomux: custody, replication, RPC): a
+    // loopback-bound listener the onion peer vport forwards to, next to the
+    // read plane. host MUST stay loopback — the onion service is the only
+    // ingress (location hiding). An explicit `vports` entry for the same
+    // vport overrides this mapping.
+    peer: { enabled: true, vport: 19737, host: '127.0.0.1', port: 19737 },
+    // Restricted discovery: base32 x25519 client pubkeys bound at service
+    // creation (Flags=V3Auth). Roster changes rebuild the service in place
+    // (same address). Empty = open service. rosterFile persists the roster
+    // across restarts (operator-private; never publish or log its contents).
+    clientAuthKeys: [],
+    rosterFile: null,
+    // Signed-advertisement key id for the onion endpoint (rotation overlaps
+    // use fresh ids). exposure: 'dual' (public + onion) | 'hidden-only'.
+    endpointKeyId: null,
+    exposure: 'dual',
+    maxStreams: null,
+    // PoW defense is daemon-wide SETCONF and requires a pow-enabled tor build
+    // plus a HiddenServiceDir-configured service (M0 finding, 2026-07-17).
+    pow: { enabled: false, queueRate: 250, queueBurst: 1000 },
+    // Health-gated advertisement: descriptor uploads + optional SOCKS self-probe.
+    health: { probeIntervalMs: 900000, probeFailLimit: 3, minDescriptorUploads: 2, probeVport: null }
   },
 
   // Lightning payments

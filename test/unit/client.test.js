@@ -213,7 +213,7 @@ test('HiveRelayClient - advanced mode: getSeedStatus null for unknown', (t) => {
 test('HiveRelayClient - advanced mode: destroy cleans up', async (t) => {
   const swarm = mockSwarm()
   let leftTopic = false
-  swarm.leave = async () => { leftTopic = true }
+  swarm.join = () => ({ async destroy () { leftTopic = true } })
 
   const client = new HiveRelayClient({ swarm })
   await client.start()
@@ -463,14 +463,16 @@ test('HiveRelayClient - open() does NOT seed-as-reader by default', async (t) =>
   // care that swarm.join was called with server=false for a reader.
   client.store = {
     get: () => ({ ready: async () => {} }),
-    namespace: () => ({})
+    namespace: () => ({}),
+    close: async () => {}
   }
 
   // Inject a fake opened drive so we can call enableReaderReplica/disable later
   const fakeDrive = {
     discoveryKey: Buffer.alloc(32, 0xee),
     core: { writable: false },
-    update: async () => {}
+    update: async () => {},
+    close: async () => {}
   }
   client.drives.set('a'.repeat(64), fakeDrive)
 
@@ -490,7 +492,8 @@ test('HiveRelayClient - enableReaderReplica adds the drive to the served set', a
 
   const fakeDrive = {
     discoveryKey: Buffer.alloc(32, 0xee),
-    core: { writable: false }
+    core: { writable: false },
+    close: async () => {}
   }
   const keyHex = 'b'.repeat(64)
   client.drives.set(keyHex, fakeDrive)
@@ -523,7 +526,8 @@ test('HiveRelayClient - enableReaderReplica is a no-op for authored drives', asy
 
   const authorDrive = {
     discoveryKey: Buffer.alloc(32, 0xff),
-    core: { writable: true } // we authored this
+    core: { writable: true }, // we authored this
+    close: async () => {}
   }
   client.drives.set('c'.repeat(64), authorDrive)
 
@@ -543,7 +547,8 @@ test('HiveRelayClient - disableReaderReplica removes from set and re-joins as cl
 
   const fakeDrive = {
     discoveryKey: Buffer.alloc(32, 0xee),
-    core: { writable: false }
+    core: { writable: false },
+    close: async () => {}
   }
   const keyHex = 'd'.repeat(64)
   client.drives.set(keyHex, fakeDrive)

@@ -156,6 +156,25 @@ test('service config api: relaykernel profile rejects services opt-in', async (t
   t.is(persisted(), null)
 })
 
+test('service config api: public-t1 profile rejects services opt-in', async (t) => {
+  const { node, port, auth, persisted } = await makeServer(t)
+  node.mode = 'public-t1-gateway'
+  node._operatingMode = 'public-t1-gateway'
+  node.config.productProfile = 'public-t1-gateway'
+  node.config.enableServices = false
+  node.config.plugins = []
+
+  const res = await request(port, 'POST', '/api/manage/services/config', {
+    enabled: true,
+    plugins: ['ai']
+  }, auth)
+  t.is(res.statusCode, 409)
+  t.is(res.body.errorCode, 'public-t1-gateway-services-locked')
+  t.is(node.config.enableServices, false)
+  t.alike(node.config.plugins, [])
+  t.is(persisted(), null)
+})
+
 test('poker service http api is delegated when poker provider is running', async (t) => {
   const { node, port } = await makeServer(t)
   node.serviceRegistry.services.set('poker', {

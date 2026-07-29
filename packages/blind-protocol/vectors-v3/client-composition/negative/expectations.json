@@ -1,0 +1,10 @@
+{
+  "caller-url-host-ip-dial-or-credential-fields": "unrepresentable-and-rejected",
+  "source-target-relay-key-equality": "reject",
+  "non-persistent-continuity": "reject",
+  "cookies-authorization-referrer-or-redirect": "reject",
+  "outstanding-request-not-exactly-65536": "reject",
+  "outstanding-state-or-zero-invariant": "reject",
+  "target-result-sequence-or-chain-invariant": "reject",
+  "forward-readiness-before-independent-acceptance": "zero"
+}

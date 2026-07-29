@@ -1,0 +1,18 @@
+{
+  "callerPeerCredentialAssertionAccepted": false,
+  "contractValidationIsAuthoritative": false,
+  "https": {
+    "authorityKind": 1,
+    "supportBit": 1,
+    "transportId": 1
+  },
+  "nativeNoise": {
+    "authorityKind": 2,
+    "supportBit": 2,
+    "transportId": 2
+  },
+  "rule": "the pure contract validates binding bytes only; the runtime must observe native peer credentials before minting process-private authority",
+  "runtimeMustObserveNativePeerCredentials": true,
+  "tlsExporterBytes": 32,
+  "tlsExporterLabel": "EXPORTER-HiveRelay-Blind-Staged-Cell-Put-v2"
+}

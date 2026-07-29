@@ -1,0 +1,62 @@
+{
+  "schema": "HiveRelayBlindImageInventoryPolicyV1",
+  "productMode": "BLIND_APPLICATION_SUBSTRATE_V1",
+  "bundleLabel": "org.opencontainers.image.hiverelay.bundle-id",
+  "components": {
+    "edge": {
+      "image": "hiverelay/blind-edge:local",
+      "user": "998:997",
+      "root": "/opt/hiverelay/edge",
+      "entrypoint": [
+        "node",
+        "/opt/hiverelay/edge/node_modules/@hiverelay/blind-edge/cli.js"
+      ],
+      "hiverelayPackages": [
+        "blind-edge",
+        "blind-ipc",
+        "blind-peercred",
+        "blind-protocol"
+      ]
+    },
+    "daemon": {
+      "image": "hiverelay/blind-daemon:local",
+      "user": "999:997",
+      "root": "/opt/hiverelay/daemon",
+      "entrypoint": [
+        "node",
+        "/opt/hiverelay/daemon/node_modules/@hiverelay/blind-daemon/cli.js"
+      ],
+      "hiverelayPackages": [
+        "blind-daemon",
+        "blind-ipc",
+        "blind-peercred",
+        "blind-protocol"
+      ]
+    }
+  },
+  "forbiddenHiverelayPackages": [
+    "core",
+    "services",
+    "client",
+    "verifier"
+  ],
+  "forbiddenRoots": [
+    "/app",
+    "/opt/hiverelay/packages",
+    "/opt/hiverelay/core",
+    "/opt/hiverelay/services",
+    "/opt/hiverelay/client",
+    "/opt/hiverelay/verifier",
+    "/opt/hiverelay/plugins",
+    "/opt/hiverelay/legacy-compat"
+  ],
+  "forbiddenCompilerCommands": [
+    "cc",
+    "c++",
+    "gcc",
+    "g++",
+    "clang",
+    "clang++",
+    "make"
+  ]
+}

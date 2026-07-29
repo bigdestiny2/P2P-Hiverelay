@@ -1,0 +1,35 @@
+{
+  "$schema": "../app-info-schema.json",
+  "name": "Blindspark",
+  "id": "blindspark",
+  "available": true,
+  "short_desc": "Keep peer-to-peer apps online from an always-on blind relay.",
+  "author": "HiveRelay",
+  "port": 30452,
+  "categories": [
+    "network"
+  ],
+  "description": "Blindspark runs HiveRelay as a home-server appliance for the Pear and Holepunch peer-to-peer ecosystem. It stores and serves encrypted Hyperdrive data that the relay can verify but cannot read.",
+  "tipi_version": 2,
+  "version": "1.0.0-rc.1",
+  "source": "https://github.com/bigdestiny2/P2P-Hiverelay",
+  "website": "https://hiverelay.com",
+  "form_fields": [
+    {
+      "type": "random",
+      "label": "Management API Key",
+      "min": 48,
+      "required": true,
+      "env_variable": "HIVERELAY_API_KEY"
+    }
+  ],
+  "exposable": true,
+  "dynamic_config": true,
+  "supported_architectures": [
+    "arm64",
+    "amd64"
+  ],
+  "created_at": 1784246400000,
+  "updated_at": 1784648666741,
+  "min_tipi_version": "4.7.0"
+}

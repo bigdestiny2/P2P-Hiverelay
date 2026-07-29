@@ -42,6 +42,16 @@ const SKIP_DIRS = new Set([
   'out'
 ])
 
+// The sibling workspace also contains a read-only research corpus under
+// 00-brain. That corpus mirrors upstream repositories, including deliberate
+// malformed-package fixtures, and is not an installable ecosystem consumer.
+// Skip it at the workspace root before parsing package.json files; otherwise a
+// fixture intended to test another project can crash the release audit before
+// the actual consumer inventory is examined.
+const SKIP_WORKSPACE_ROOT_DIRS = new Set([
+  '00-brain'
+])
+
 const IGNORED_PREFIXES = [
   '00-core/hiverelay/',
   '00-core/hr-acct/',
@@ -353,7 +363,7 @@ export const EXPECTED_CURRENT_CONSUMERS = [
         term: "const HIVERELAY_CLIENT_PACKAGE = 'p2p-hiverelay-client'",
         rejectTerms: [
           'p2p-hiverelay/client',
-          "from '/Users/"
+          "from '~/pear-ecosystem/00-core/hiverelay/packages/client/index.js'"
         ]
       },
       {
@@ -1319,11 +1329,11 @@ function checkSnapshotPackageEntry ({ rootPath, role, file, label, entry, spec, 
 
 function findPackageFiles (root) {
   const out = []
-  walk(root, out)
+  walk(root, root, out, true)
   return out
 }
 
-function walk (dir, out) {
+function walk (root, dir, out, workspaceRoot = false) {
   let entries
   try {
     entries = fs.readdirSync(dir, { withFileTypes: true })
@@ -1338,12 +1348,31 @@ function walk (dir, out) {
     }
     if (!entry.isDirectory()) continue
     if (SKIP_DIRS.has(entry.name)) continue
-    walk(path.join(dir, entry.name), out)
+    if (workspaceRoot && SKIP_WORKSPACE_ROOT_DIRS.has(entry.name)) continue
+    const child = path.join(dir, entry.name)
+    const childRelative = slash(path.relative(root, child))
+    if (!isDeclaredIgnoredRoot(childRelative) && isHiveRelayMonorepoRoot(child)) continue
+    walk(root, child, out, false)
   }
 }
 
+function isDeclaredIgnoredRoot (relativePath) {
+  const prefix = `${relativePath}/`
+  return IGNORED_PREFIXES.some(ignored => ignored === prefix)
+}
+
+function isHiveRelayMonorepoRoot (directory) {
+  const packageFile = path.join(directory, 'package.json')
+  if (!fs.existsSync(packageFile)) return false
+  return readJson(packageFile).name === 'p2p-hiverelay-monorepo'
+}
+
 function readJson (file) {
-  return JSON.parse(fs.readFileSync(file, 'utf8'))
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch (err) {
+    throw new Error(`Cannot parse JSON file ${file}: ${err.message}`)
+  }
 }
 
 function formatDeps (deps) {

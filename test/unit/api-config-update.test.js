@@ -3,6 +3,7 @@ import {
   resolveConfigUpdateRoute,
   runConfigUpdateAction
 } from '../../packages/core/core/relay-node/api-config-update.js'
+import { getStorageCapProvenance } from '../../packages/core/config/storage-cap.js'
 
 test('api config update: route helper maps exact config update route', (t) => {
   t.alike(resolveConfigUpdateRoute('POST', '/api/manage/config'), {
@@ -210,4 +211,22 @@ test('api config update: persistence failure rolls back all applied fields', asy
   t.is(config.maxConnections, 7)
   t.absent(config.registryAutoAccept)
   t.is(config.discovery, previousDiscovery)
+})
+
+test('api config update: maxStorageBytes equal to 50 GiB is marked explicit before persistence', async (t) => {
+  const config = { maxStorageBytes: 10 * 1024 ** 3 }
+  let persistedProvenance = null
+
+  const result = await runConfigUpdateAction({
+    body: { maxStorageBytes: 50 * 1024 ** 3 },
+    config,
+    persistConfig: async () => {
+      persistedProvenance = getStorageCapProvenance(config)
+    }
+  })
+
+  t.is(result.ok, true)
+  t.is(config.maxStorageBytes, 50 * 1024 ** 3)
+  t.is(persistedProvenance.explicit, true)
+  t.is(persistedProvenance.source, 'management-api')
 })

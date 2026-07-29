@@ -5,15 +5,25 @@ import {
   buildOverviewRoutePayload,
   buildOverviewRouteResponse,
   formatOverviewUptime,
+  overviewCompliance,
+  overviewDisk,
+  overviewGatewayDetail,
+  overviewNamespaces,
+  overviewPrivacyTransports,
   overviewRelay,
+  overviewRoles,
   overviewSeeder,
   overviewServed,
   overviewHealth,
+  overviewShardStore,
   overviewStorage,
   overviewTorInfo,
+  overviewWal,
   registryOverview,
   reputationOverview,
-  resolveOverviewRoute
+  resolveOverviewRoute,
+  sanitizeWalStats,
+  walFromJournalInfo
 } from 'p2p-hiverelay/core/relay-node/api-overview.js'
 
 test('api overview: uptime formatter keeps hours and compact human text', (t) => {
@@ -297,8 +307,37 @@ test('api overview: build payload preserves dashboard contract', (t) => {
 
 test('api overview: route helper assembles public and authenticated payloads', (t) => {
   const calls = []
+  const outboxProvider = {
+    operatorStats () {
+      return {
+        groups: 2,
+        totalBytes: 4096,
+        suppressedCount: 3,
+        namespaces: [
+          { name: 'peerit', blind: false, writers: 2, bytes24h: 100, capBytes24h: 1000, caps: {} }
+        ]
+      }
+    },
+    takedowns () {
+      return { count: 3, takedowns: [] }
+    },
+    journalInfo () {
+      return { mode: 'hypercore-outboxes', length: 42, buffered: 0, errors: 0 }
+    }
+  }
+  const shardProvider = {
+    _metrics: { put: 10, get: 20, proof: 5, rejected: 1, evicted: 0, sweep: 0 },
+    _cachedBytes: 8192
+  }
   const node = {
-    config: { regions: ['NA'], maxStorageBytes: 1000, registryAutoAccept: false },
+    config: {
+      regions: ['NA'],
+      maxStorageBytes: 1000,
+      registryAutoAccept: false,
+      enableSeeding: true,
+      enableRelay: true,
+      outboxlog: { adminKey: 'a'.repeat(32) }
+    },
     metrics: { startedAt: 1000, _errorCount: 2 },
     getStats (opts) {
       calls.push(opts)
@@ -319,7 +358,7 @@ test('api overview: route helper assembles public and authenticated payloads', (
         checks: {
           memory: { ok: true, heapPct: 12.5, raw: 'should-not-leak' },
           connections: { ok: false, zeroFor: 2000, suggestion: 'should-not-leak' },
-          disk: { ok: true, freeGB: 8.25, error: 'should-not-leak' },
+          disk: { ok: true, freeGB: 8.25, usedPct: 22, error: 'should-not-leak' },
           custom: { ok: true, token: 'should-not-leak' }
         }
       }
@@ -331,24 +370,36 @@ test('api overview: route helper assembles public and authenticated payloads', (
       }
     },
     seedingRegistry: { running: true },
+    serviceRegistry: {
+      services: new Map([
+        ['outboxlog', { provider: outboxProvider }],
+        ['shard-store', { provider: shardProvider }]
+      ])
+    },
+    _shardStoreProvider () { return shardProvider },
     torTransport: {
       getInfo () {
         return {
           running: true,
+          health: 'ready',
           onionAddress: 'relay.onion',
           socksProxy: 'should-not-leak',
-          activeConnections: 2
+          activeConnections: 2,
+          negativeProbe: true
         }
       }
     },
     holesailTransport: { connectionKey: 'hole-key' }
   }
   const gateway = {
+    port: 9200,
+    host: '0.0.0.0',
     getStats () {
       return {
         cachedDrives: 2.9,
         totalRequests: 7,
         totalBytesServed: 11,
+        verifyFails: 0,
         rawKeys: ['should-not-leak']
       }
     }
@@ -367,16 +418,168 @@ test('api overview: route helper assembles public and authenticated payloads', (
     checks: {
       memory: { ok: true, heapPct: 12.5 },
       connections: { ok: false, zeroFor: 2000 },
-      disk: { ok: true, freeGB: 8.25 }
+      disk: { ok: true, usedPct: 22, freeGB: 8.25 }
     }
   })
   t.is(pub.tor, null, 'public overview omits transport details')
   t.is(pub.holesailKey, null, 'public overview omits holesail key')
+  t.ok(pub.roles)
+  t.is(pub.roles.t1, true)
+  t.is(pub.roles.t2, true)
+  t.is(pub.roles.outboxlog, true)
+  t.ok(pub.disk)
+  t.is(pub.disk.usedPct, 22)
+  t.ok(Array.isArray(pub.privacyTransports))
+  t.is(pub.privacyTransports[0].id, 'tor-v3-onion-v1')
+  t.is(pub.privacyTransports[0].health, 'ready')
+  t.is(pub.privacyTransports[0].negativeProbe, true)
+  t.absent(JSON.stringify(pub.privacyTransports).includes('relay.onion'))
+  t.is(pub.namespaces, null, 'namespaces are management-only')
+  t.is(pub.compliance, null, 'compliance is management-only')
+  t.is(pub.shardStore, null, 'shardStore is management-only')
+  t.is(pub.wal, null, 'wal is management-only')
+  t.ok(pub.gatewayDetail)
+  t.is(pub.gatewayDetail.enabled, true)
+  t.is(pub.gatewayDetail.port, 9200)
+  t.is(pub.gatewayDetail.roleConflict, true, 't2 + gateway → roleConflict')
   t.absent(JSON.stringify(pub).includes('should-not-leak'))
 
   const authed = buildOverviewRoutePayload({ node, authed: true, gateway: null, memory: {}, now: 7000 })
   t.alike(calls[1], { includeSecrets: true })
-  t.alike(authed.tor, { running: true, onionAddress: 'relay.onion', activeConnections: 2 })
+  t.alike(authed.tor, {
+    running: true,
+    onionAddress: 'relay.onion',
+    activeConnections: 2,
+    health: 'ready'
+  })
   t.is(authed.holesailKey, 'hole-key')
   t.is(authed.gateway, null)
+  t.ok(authed.namespaces)
+  t.is(authed.namespaces.groups, 2)
+  t.is(authed.namespaces.namespaces[0].name, 'peerit')
+  t.ok(authed.compliance)
+  t.is(authed.compliance.adminArmed, true)
+  t.is(authed.compliance.suppressedKeys, 3)
+  t.ok(authed.shardStore)
+  t.is(authed.shardStore.rejected, 1)
+  t.is(authed.shardStore.bytes, 8192)
+  t.ok(authed.wal)
+  t.is(authed.wal.source, 'outboxlog-journal')
+  t.is(authed.wal.length, 42)
+  t.is(authed.wal.healthy, true)
+  t.absent(JSON.stringify(authed.wal).includes('coreKey'))
+})
+
+test('api overview: roles / disk / privacyTransports helpers', (t) => {
+  const roles = overviewRoles(
+    { enableSeeding: true, enableRelay: true, gatewayPort: 9200 },
+    {
+      serviceRegistry: {
+        services: new Map([
+          ['outboxlog', { provider: {} }],
+          ['shard-store', { provider: {} }]
+        ])
+      }
+    },
+    null
+  )
+  t.alike(roles, {
+    t1: true,
+    t2: true,
+    gateway: true,
+    outboxlog: true,
+    witness: false
+  })
+
+  t.alike(overviewDisk({
+    checks: { disk: { ok: true, usedPct: 22.2, freeGB: 10, status: 'ok' } }
+  }), {
+    ok: true,
+    usedPct: 22.2,
+    freeGB: 10,
+    status: 'ok'
+  })
+
+  t.is(overviewNamespaces({}, true), null)
+  t.is(overviewCompliance({}, {}, false), null)
+  t.is(overviewShardStore({}, true), null)
+
+  const pt = overviewPrivacyTransports({
+    torTransport: {
+      getInfo () {
+        return {
+          running: true,
+          health: 'ready',
+          onionAddress: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.onion',
+          activeConnections: 1,
+          negativeProbe: false
+        }
+      }
+    }
+  })
+  t.is(pt.length, 1)
+  t.is(pt[0].health, 'ready')
+  t.is(pt[0].negativeProbe, false)
+  t.absent(JSON.stringify(pt).includes('.onion'))
+})
+
+test('api overview: v2 wal / gatewayDetail helpers', (t) => {
+  t.alike(sanitizeWalStats({
+    pruningSupported: true,
+    framesPerSec: 42.2,
+    fsyncP99Ms: 9,
+    spendReplay24h: 0,
+    healthy: true,
+    secret: 'should-not-leak'
+  }, 'blind-daemon'), {
+    source: 'blind-daemon',
+    pruningSupported: true,
+    healthy: true,
+    framesPerSec: 42.2,
+    fsyncP99Ms: 9,
+    spendReplay24h: 0
+  })
+
+  t.alike(walFromJournalInfo({
+    mode: 'hypercore-outboxes',
+    length: 10,
+    buffered: 1,
+    errors: 2,
+    coreKey: 'should-not-leak'
+  }), {
+    source: 'outboxlog-journal',
+    mode: 'hypercore-outboxes',
+    length: 10,
+    buffered: 1,
+    errors: 2,
+    healthy: false,
+    pruningSupported: false
+  })
+  t.absent(JSON.stringify(walFromJournalInfo({ coreKey: 'abc', length: 1, errors: 0 })).includes('coreKey'))
+
+  const wal = overviewWal({
+    getWalStats () {
+      return { framesPerSec: 5, fsyncP99Ms: 12, pruningSupported: true, healthy: true }
+    }
+  }, true)
+  t.is(wal.source, 'node')
+  t.is(wal.framesPerSec, 5)
+  t.is(overviewWal({}, false), null)
+
+  const gd = overviewGatewayDetail(
+    {
+      port: 9200,
+      host: '127.0.0.1',
+      getStats () {
+        return { cachedDrives: 1, totalRequests: 2, totalBytesServed: 3, verifyFails: 4, keys: ['nope'] }
+      }
+    },
+    {},
+    { t2: true, gateway: true }
+  )
+  t.is(gd.enabled, true)
+  t.is(gd.port, 9200)
+  t.is(gd.verifyFails, 4)
+  t.is(gd.roleConflict, true)
+  t.absent(JSON.stringify(gd).includes('nope'))
 })

@@ -1,0 +1,1355 @@
+{
+  "schema": "hiverelay.blind.local-multiprocess-relay-lab.v1",
+  "generatedAt": "2026-07-16T20:01:30.232Z",
+  "evidenceClass": "MEASURED_LOCAL_MULTI_PROCESS_REAL_HTTP_IPC_FILESYSTEM",
+  "evidenceBinding": {
+    "algorithm": "sha256",
+    "canonicalization": "HIVERELAY_SORTED_JSON_V1",
+    "checksumOnly": true,
+    "signed": false,
+    "authenticityProven": false
+  },
+  "releaseReady": false,
+  "sourceCommit": "e971374f03dd0f9cca01fd95947dbaa7b0359213",
+  "scope": {
+    "childProcessCount": 3,
+    "logicalOperatorScopeProcesses": 3,
+    "crossChildProcessIsolationMeasured": true,
+    "sameHost": true,
+    "sameUid": true,
+    "hostIsolationMeasured": false,
+    "claimedIndependentOperators": false,
+    "realIndependentOwnershipMeasured": false,
+    "multiHostNetworkMeasured": false,
+    "publicCaTlsValidationMeasured": false,
+    "syntheticAdmissionAdapter": true,
+    "economicSettlementMeasured": false,
+    "soakMeasured": false,
+    "transport": "ephemeral self-signed loopback TLS plus authenticated same-UID Unix IPC"
+  },
+  "workload": {
+    "processCount": 3,
+    "relaysPerProcess": 2,
+    "recordsPerRelay": 16,
+    "concurrencyPerProcess": 8,
+    "contentBytes": 256,
+    "totalRelayInstances": 6,
+    "expectedCellWrites": 96
+  },
+  "processExecution": {
+    "supervisorPid": 18289,
+    "supervisorUid": 501,
+    "supervisorGid": 20,
+    "uniqueChildPids": 3,
+    "observedWallMillis": 33019,
+    "concurrentOverlapObserved": true,
+    "concurrentOverlapMillis": 32965
+  },
+  "summary": {
+    "childLabEvidenceDigests": [
+      "1168d42f1fe076bc59dfeb26909127746a1f5a1e7d3260147bfa0026b6dda384",
+      "bd3ff05c27a7a17f4877013974550b4c261d732fe22fb53b3124bccc34391640",
+      "3cc1adf973b2590f523c066226dad5c243afb0f64ccc0638d5f94eff4906cb35"
+    ],
+    "childEnvelopeEvidenceDigests": [
+      "97cdad8d0262cf8850faa74f09532f31bc91a7842ab9e90edd756d4c1c9163a1",
+      "a9a7712f381fc567d15e8842935ebcef9fe68838ae81efe8d56f79cbf532583b",
+      "3a0005efc617e9bacc97f5b07223dae6eff3c9f742d4da3321ee746a2f75de7f"
+    ],
+    "sourceCommits": [
+      "e971374f03dd0f9cca01fd95947dbaa7b0359213",
+      "e971374f03dd0f9cca01fd95947dbaa7b0359213",
+      "e971374f03dd0f9cca01fd95947dbaa7b0359213"
+    ],
+    "totalRelayInstances": 6,
+    "totalAttemptedCellWrites": 96,
+    "totalPublicReadChecks": 96,
+    "totalRecoveredReadChecks": 96,
+    "totalRelaysStopped": 6,
+    "totalRelaysRestarted": 6,
+    "totalExpectedStoreRecordsBeforeRestart": 96,
+    "totalActualStoreRecordsBeforeRestart": 96,
+    "totalExpectedStoreRecordsAfterRestart": 96,
+    "totalActualStoreRecordsAfterRestart": 96,
+    "allStoreCountsExact": true,
+    "globalUniqueRelaySigningKeys": 6,
+    "globalUniqueStoreIds": 6,
+    "latencies": {
+      "stagedCellPut": {
+        "count": 96,
+        "weightedMeanMs": 431.955,
+        "maximumChildP99Ms": 709.493,
+        "maximumObservedMs": 709.493,
+        "minimumChildOperationsPerSecond": 16.149
+      },
+      "publicCellGet": {
+        "count": 96,
+        "weightedMeanMs": 30.874,
+        "maximumChildP99Ms": 40.308,
+        "maximumObservedMs": 40.308,
+        "minimumChildOperationsPerSecond": 246.893
+      },
+      "recoveredPublicCellGet": {
+        "count": 96,
+        "weightedMeanMs": 29.227,
+        "maximumChildP99Ms": 37.895,
+        "maximumObservedMs": 37.895,
+        "minimumChildOperationsPerSecond": 253.831
+      }
+    },
+    "childBlockers": [
+      "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+      "CRASH_KILL_DURING_COMMIT_UNMEASURED",
+      "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+      "DISK_FULL_AND_CORRUPTION_INJECTION_UNMEASURED",
+      "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+      "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+      "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+      "INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL",
+      "INDEPENDENT_OPERATOR_FAILURE_DOMAINS_UNMEASURED",
+      "INTERNET_LATENCY_AND_PACKET_LOSS_UNMEASURED",
+      "LONG_DURATION_SOAK_UNMEASURED",
+      "MULTI_HOST_NETWORK_UNMEASURED",
+      "MULTI_RELAY_REPLICATION_REPAIR_PROTOCOL_UNMEASURED",
+      "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+      "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+      "PRODUCTION_RELEASE_GATE_BYPASSED",
+      "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+      "PUBLIC_CA_TLS_VALIDATION_UNMEASURED",
+      "RELAY_CHURN_AND_PARTITION_UNMEASURED",
+      "RESOURCE_SATURATION_UNMEASURED",
+      "SAME_UID_TEST_TOPOLOGY",
+      "SIGNED_RELEASE_AND_ROLLBACK_UNMEASURED",
+      "SINGLE_HOST_RELAY_ISOLATION_UNMEASURED",
+      "SINGLE_PROCESS_RELAY_ISOLATION_UNMEASURED",
+      "SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT",
+      "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+    ]
+  },
+  "children": [
+    {
+      "processIndex": 0,
+      "observedPid": 18294,
+      "observedSpawnUnixMillis": 1784232057213,
+      "observedExitUnixMillis": 1784232090232,
+      "exitCode": 0,
+      "signal": null,
+      "stdoutSha256": "35d8f4c3aef4489819dc47afb24213238a05bb8a49f6a8ebf786917d260edb70",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrBytes": 0,
+      "envelope": {
+        "schema": "hiverelay.blind.local-multiprocess-child.v1",
+        "generatedAt": "2026-07-16T20:01:30.227Z",
+        "source": {
+          "gitCommit": "e971374f03dd0f9cca01fd95947dbaa7b0359213",
+          "trackedWorktreeClean": true
+        },
+        "process": {
+          "pid": 18294,
+          "parentPid": 18289,
+          "uid": 501,
+          "gid": 20,
+          "logicalOperatorScope": "local-operator-scope-00",
+          "identityScope": "local-process-identity-00",
+          "rootPathSha256": "5d45cf755141216cb03365fe60ac9aa3fc99df0c91c83e1a6d4965083073ad77",
+          "startedAt": "2026-07-16T20:00:57.338Z",
+          "finishedAt": "2026-07-16T20:01:30.227Z",
+          "wallMs": 32889
+        },
+        "identity": {
+          "identityScope": "local-process-identity-00",
+          "relayCount": 2,
+          "relayPublicKeys": [
+            "ca53d69e555cd5e3584bb55d1fc60b3c5d0e637bbc4d602da53f2b8ac6109745",
+            "a892f29dc1b68b5a82f21addea6627a241f63433170acf2c17d02b0400878c76"
+          ],
+          "storeIds": [
+            "091948a60d9c330fa519a230b10aa02deae7c859409c796ce10fcdaee1aea232",
+            "437fd71d44c5faac98a953336de8036a03949537869f1b7b668412519cce4d2e"
+          ],
+          "uniqueRelayPublicKeys": 2,
+          "uniqueStoreIds": 2
+        },
+        "labReport": {
+          "schema": "hiverelay.blind.real-relay-lab.v6",
+          "generatedAt": "2026-07-16T20:01:30.219Z",
+          "evidenceClass": "MEASURED_LOCAL_REAL_HTTP_IPC_FILESYSTEM",
+          "evidenceBinding": {
+            "algorithm": "sha256",
+            "canonicalization": "HIVERELAY_SORTED_JSON_V1",
+            "checksumOnly": true,
+            "signed": false,
+            "authenticityProven": false
+          },
+          "releaseReady": false,
+          "localGateReady": true,
+          "correctnessGateReady": true,
+          "performanceGateReady": true,
+          "gates": {
+            "correctness": {
+              "ready": true,
+              "claimClass": "LOCAL_CORRECTNESS_ONLY",
+              "checks": {
+                "exactStoreCounts": true,
+                "stableDiskBytesAcrossRestart": true,
+                "noRuntimeErrors": true,
+                "allStagedWritesCompleted": true,
+                "allPublicReadsCompleted": true,
+                "allRecoveredReadsCompleted": true,
+                "restartV2WriteRecoveryObserved": true,
+                "ordinaryClientQualificationSucceeded": true,
+                "independentRelayIdentitiesObserved": true,
+                "independentStoreIdsObserved": true,
+                "independentCopiesObserved": true
+              }
+            },
+            "performance": {
+              "ready": true,
+              "claimClass": "LOCAL_LOOPBACK_SMOKE_NOT_CAPACITY_OR_SLO",
+              "capacityClaim": false,
+              "serviceLevelObjectiveClaim": false,
+              "thresholds": {
+                "minimumOperationsPerPath": 32,
+                "stagedPutMinimumOperationsPerSecond": 5,
+                "stagedPutMaximumP99Millis": 5000,
+                "publicGetMinimumOperationsPerSecond": 20,
+                "publicGetMaximumP99Millis": 2000,
+                "recoveredGetMinimumOperationsPerSecond": 20,
+                "recoveredGetMaximumP99Millis": 2000,
+                "restartPostQuarantineRecoveryMaximumWallMillis": 15000
+              },
+              "checks": {
+                "sufficientOperationSample": true,
+                "stagedPutThroughput": true,
+                "stagedPutP99": true,
+                "publicGetThroughput": true,
+                "publicGetP99": true,
+                "recoveredGetThroughput": true,
+                "recoveredGetP99": true,
+                "restartPostQuarantineRecoveryWall": true
+              }
+            }
+          },
+          "scope": {
+            "realImplementationsOnly": false,
+            "realHttpIpcWalFilesystemDataPlane": true,
+            "modelDataPlane": false,
+            "syntheticAdmissionAdapter": true,
+            "economicSettlementMeasured": false,
+            "relayInstances": 2,
+            "independentStoreRoots": 2,
+            "independentRelaySigningKeys": 2,
+            "independentlyEncryptedCellCopies": true,
+            "networkReplicaProtocolMeasured": false,
+            "processIsolation": false,
+            "hostIsolation": false,
+            "transport": "ephemeral self-signed loopback TLS plus authenticated Unix IPC",
+            "testFetchCertificateValidation": false,
+            "productionReleaseGateBypassed": true,
+            "sameUidTestTopology": true
+          },
+          "load": {
+            "logicalRecords": 16,
+            "independentCellCopiesPerLogicalRecord": 2,
+            "replicaProtocolMeasured": false,
+            "attemptedCellWrites": 32,
+            "contentBytesPerRecord": 256,
+            "concurrency": 8
+          },
+          "families": {
+            "DESCRIBE": {
+              "measured": true,
+              "path": "BlindRelayQualifier -> public HTTP BlindEdge -> private unary IPC -> BlindDaemon",
+              "operations": [
+                "GET",
+                "CHALLENGE"
+              ]
+            },
+            "CELL": {
+              "measured": true,
+              "putPath": "public HTTPS BlindEdge -> V2 full outer-envelope staged private IPC with TLS-exporter binding -> BlindDaemon -> filesystem store",
+              "getPath": "qualified BlindDirectHttpClient -> public HTTPS BlindEdge -> private unary IPC -> BlindDaemon -> filesystem store -> authenticated result verifier and cell open",
+              "ordinaryClientQualified": true,
+              "unqualifiedWireTestSeam": false,
+              "publicHttpPutMeasured": true,
+              "publicHttpPutAdmissionEvidence": "synthetic split adapter only; no packaged production-admission or economic-settlement claim"
+            },
+            "INBOX": {
+              "measured": false,
+              "blocker": "INBOX_PUBLIC_EXECUTION_UNASSEMBLED"
+            },
+            "CORE": {
+              "measured": false,
+              "blocker": "CORE_PUBLIC_EXECUTION_UNASSEMBLED"
+            },
+            "FORWARD": {
+              "measured": false,
+              "blocker": "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED"
+            }
+          },
+          "metrics": {
+            "qualification": {
+              "count": 6,
+              "meanMs": 20.737,
+              "p50Ms": 14.541,
+              "p95Ms": 51.219,
+              "p99Ms": 51.219,
+              "maxMs": 51.219
+            },
+            "stagedCellPut": {
+              "count": 32,
+              "meanMs": 450.022,
+              "p50Ms": 456.488,
+              "p95Ms": 673.786,
+              "p99Ms": 702.625,
+              "maxMs": 702.625,
+              "wallMs": 1981.549,
+              "operationsPerSecond": 16.149
+            },
+            "publicCellGet": {
+              "count": 32,
+              "meanMs": 30.524,
+              "p50Ms": 32.052,
+              "p95Ms": 36.758,
+              "p99Ms": 38.503,
+              "maxMs": 38.503,
+              "wallMs": 126.16,
+              "operationsPerSecond": 253.646
+            },
+            "recoveredPublicCellGet": {
+              "count": 32,
+              "meanMs": 30.122,
+              "p50Ms": 30.078,
+              "p95Ms": 35.15,
+              "p99Ms": 36.436,
+              "maxMs": 36.436,
+              "wallMs": 126.068,
+              "operationsPerSecond": 253.831
+            }
+          },
+          "integrity": {
+            "contentChecksBeforeRestart": 32,
+            "contentChecksAfterRestart": 32,
+            "exactStoreCountsBeforeRestart": [
+              {
+                "relayIndex": 0,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              },
+              {
+                "relayIndex": 1,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              }
+            ],
+            "exactStoreCountsAfterRestart": [
+              {
+                "relayIndex": 0,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              },
+              {
+                "relayIndex": 1,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              }
+            ],
+            "allCountsExact": true,
+            "uniqueRelaySigningKeys": 2,
+            "uniqueStoreIds": 2,
+            "deterministicLogicalCorpus": true,
+            "independentlyAllocatedLogicalRecords": 16,
+            "allCopiesIndependentlyAllocatedAndEncrypted": true,
+            "replicaProtocolMeasured": false,
+            "ordinaryClientQualificationSucceeded": true,
+            "qualificationAttempts": [
+              {
+                "relayIndex": 0,
+                "phase": "initial-put",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 0,
+                "phase": "initial-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "initial-put",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "initial-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 0,
+                "phase": "recovered-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "recovered-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              }
+            ]
+          },
+          "recovery": {
+            "relaysStopped": 2,
+            "relaysRestarted": 2,
+            "cleanStopWallMs": 1.752,
+            "restartAndRecoveryWallMs": 15280.55,
+            "restartMandatoryQuarantineAndLaunchWallMs": 15073.96,
+            "restartPostQuarantineRecoveryWallMs": 206.591,
+            "retainedStateReadChecks": 32,
+            "diskBytesStableAcrossRestart": true,
+            "initialV2WriteStartupQuarantineObserved": true,
+            "initialV2WritePathReadyBeforeWrites": true,
+            "initialV2WriteReadinessWaitMs": 14969.849,
+            "restartV2WriteStartupQuarantineObserved": true,
+            "restartV2WriteStartupQuarantineMillis": 15000,
+            "restartV2WritePathReadyBeforeWrites": true,
+            "restartV2WriteReadinessWaitMs": 15041.403,
+            "restartV2PublicHttpsExactPutAttempts": 2,
+            "restartV2RetainedReadChecks": 2
+          },
+          "resources": {
+            "processRssBytesBefore": 78708736,
+            "processRssBytesAfterWrite": 117915648,
+            "processRssBytesAfterRestart": 137068544,
+            "processRssDeltaBytes": 58359808,
+            "perRelayRssUnavailableReason": "RELAYS_SHARE_ONE_NODE_PROCESS",
+            "storesBeforeRestart": [
+              {
+                "relayIndex": 0,
+                "files": 19,
+                "bytes": 81518
+              },
+              {
+                "relayIndex": 1,
+                "files": 19,
+                "bytes": 81518
+              }
+            ],
+            "storesAfterRestart": [
+              {
+                "relayIndex": 0,
+                "files": 19,
+                "bytes": 81518
+              },
+              {
+                "relayIndex": 1,
+                "files": 19,
+                "bytes": 81518
+              }
+            ],
+            "aggregateStoredPayloadBytes": 131072
+          },
+          "runtimeErrors": [],
+          "runtimeExclusions": [
+            "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+            "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+            "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+            "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+            "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+            "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+            "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+            "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+            "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+          ],
+          "blockers": [
+            "SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT",
+            "PRODUCTION_RELEASE_GATE_BYPASSED",
+            "INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL",
+            "SINGLE_PROCESS_RELAY_ISOLATION_UNMEASURED",
+            "SINGLE_HOST_RELAY_ISOLATION_UNMEASURED",
+            "SAME_UID_TEST_TOPOLOGY",
+            "MULTI_HOST_NETWORK_UNMEASURED",
+            "PUBLIC_CA_TLS_VALIDATION_UNMEASURED",
+            "INDEPENDENT_OPERATOR_FAILURE_DOMAINS_UNMEASURED",
+            "INTERNET_LATENCY_AND_PACKET_LOSS_UNMEASURED",
+            "MULTI_RELAY_REPLICATION_REPAIR_PROTOCOL_UNMEASURED",
+            "RELAY_CHURN_AND_PARTITION_UNMEASURED",
+            "LONG_DURATION_SOAK_UNMEASURED",
+            "CRASH_KILL_DURING_COMMIT_UNMEASURED",
+            "DISK_FULL_AND_CORRUPTION_INJECTION_UNMEASURED",
+            "RESOURCE_SATURATION_UNMEASURED",
+            "SIGNED_RELEASE_AND_ROLLBACK_UNMEASURED",
+            "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+            "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+            "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+            "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+            "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+            "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+            "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+            "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+            "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+          ],
+          "evidenceDigest": "1168d42f1fe076bc59dfeb26909127746a1f5a1e7d3260147bfa0026b6dda384"
+        },
+        "evidenceDigest": "97cdad8d0262cf8850faa74f09532f31bc91a7842ab9e90edd756d4c1c9163a1"
+      }
+    },
+    {
+      "processIndex": 1,
+      "observedPid": 18295,
+      "observedSpawnUnixMillis": 1784232057214,
+      "observedExitUnixMillis": 1784232090179,
+      "exitCode": 0,
+      "signal": null,
+      "stdoutSha256": "65c1c5b312d3ef2824f4a0a736781d252982eabc66d5155c2b92084d0546d907",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrBytes": 0,
+      "envelope": {
+        "schema": "hiverelay.blind.local-multiprocess-child.v1",
+        "generatedAt": "2026-07-16T20:01:30.172Z",
+        "source": {
+          "gitCommit": "e971374f03dd0f9cca01fd95947dbaa7b0359213",
+          "trackedWorktreeClean": true
+        },
+        "process": {
+          "pid": 18295,
+          "parentPid": 18289,
+          "uid": 501,
+          "gid": 20,
+          "logicalOperatorScope": "local-operator-scope-01",
+          "identityScope": "local-process-identity-01",
+          "rootPathSha256": "dfe1c03de5654cfafaabc470cc89182e86e349b9903084df40307e1959f8d088",
+          "startedAt": "2026-07-16T20:00:57.337Z",
+          "finishedAt": "2026-07-16T20:01:30.172Z",
+          "wallMs": 32835
+        },
+        "identity": {
+          "identityScope": "local-process-identity-01",
+          "relayCount": 2,
+          "relayPublicKeys": [
+            "3a9f582825f88a6c9da79f16722568b6954d42c90f7c40356664abed4bc4164a",
+            "8b73a83d8a4e9a2e8f5847bd1843fc30f178b0757aa8af4322af4909b50def3b"
+          ],
+          "storeIds": [
+            "6908d566baed3ff1fe5d3ec270085db4dccb50e1b8f7f728db00c1c995ace68e",
+            "5504a0d974a8e77214a54cbaad80efefa6a717f42ca8ec832d7989c232a1e394"
+          ],
+          "uniqueRelayPublicKeys": 2,
+          "uniqueStoreIds": 2
+        },
+        "labReport": {
+          "schema": "hiverelay.blind.real-relay-lab.v6",
+          "generatedAt": "2026-07-16T20:01:30.165Z",
+          "evidenceClass": "MEASURED_LOCAL_REAL_HTTP_IPC_FILESYSTEM",
+          "evidenceBinding": {
+            "algorithm": "sha256",
+            "canonicalization": "HIVERELAY_SORTED_JSON_V1",
+            "checksumOnly": true,
+            "signed": false,
+            "authenticityProven": false
+          },
+          "releaseReady": false,
+          "localGateReady": true,
+          "correctnessGateReady": true,
+          "performanceGateReady": true,
+          "gates": {
+            "correctness": {
+              "ready": true,
+              "claimClass": "LOCAL_CORRECTNESS_ONLY",
+              "checks": {
+                "exactStoreCounts": true,
+                "stableDiskBytesAcrossRestart": true,
+                "noRuntimeErrors": true,
+                "allStagedWritesCompleted": true,
+                "allPublicReadsCompleted": true,
+                "allRecoveredReadsCompleted": true,
+                "restartV2WriteRecoveryObserved": true,
+                "ordinaryClientQualificationSucceeded": true,
+                "independentRelayIdentitiesObserved": true,
+                "independentStoreIdsObserved": true,
+                "independentCopiesObserved": true
+              }
+            },
+            "performance": {
+              "ready": true,
+              "claimClass": "LOCAL_LOOPBACK_SMOKE_NOT_CAPACITY_OR_SLO",
+              "capacityClaim": false,
+              "serviceLevelObjectiveClaim": false,
+              "thresholds": {
+                "minimumOperationsPerPath": 32,
+                "stagedPutMinimumOperationsPerSecond": 5,
+                "stagedPutMaximumP99Millis": 5000,
+                "publicGetMinimumOperationsPerSecond": 20,
+                "publicGetMaximumP99Millis": 2000,
+                "recoveredGetMinimumOperationsPerSecond": 20,
+                "recoveredGetMaximumP99Millis": 2000,
+                "restartPostQuarantineRecoveryMaximumWallMillis": 15000
+              },
+              "checks": {
+                "sufficientOperationSample": true,
+                "stagedPutThroughput": true,
+                "stagedPutP99": true,
+                "publicGetThroughput": true,
+                "publicGetP99": true,
+                "recoveredGetThroughput": true,
+                "recoveredGetP99": true,
+                "restartPostQuarantineRecoveryWall": true
+              }
+            }
+          },
+          "scope": {
+            "realImplementationsOnly": false,
+            "realHttpIpcWalFilesystemDataPlane": true,
+            "modelDataPlane": false,
+            "syntheticAdmissionAdapter": true,
+            "economicSettlementMeasured": false,
+            "relayInstances": 2,
+            "independentStoreRoots": 2,
+            "independentRelaySigningKeys": 2,
+            "independentlyEncryptedCellCopies": true,
+            "networkReplicaProtocolMeasured": false,
+            "processIsolation": false,
+            "hostIsolation": false,
+            "transport": "ephemeral self-signed loopback TLS plus authenticated Unix IPC",
+            "testFetchCertificateValidation": false,
+            "productionReleaseGateBypassed": true,
+            "sameUidTestTopology": true
+          },
+          "load": {
+            "logicalRecords": 16,
+            "independentCellCopiesPerLogicalRecord": 2,
+            "replicaProtocolMeasured": false,
+            "attemptedCellWrites": 32,
+            "contentBytesPerRecord": 256,
+            "concurrency": 8
+          },
+          "families": {
+            "DESCRIBE": {
+              "measured": true,
+              "path": "BlindRelayQualifier -> public HTTP BlindEdge -> private unary IPC -> BlindDaemon",
+              "operations": [
+                "GET",
+                "CHALLENGE"
+              ]
+            },
+            "CELL": {
+              "measured": true,
+              "putPath": "public HTTPS BlindEdge -> V2 full outer-envelope staged private IPC with TLS-exporter binding -> BlindDaemon -> filesystem store",
+              "getPath": "qualified BlindDirectHttpClient -> public HTTPS BlindEdge -> private unary IPC -> BlindDaemon -> filesystem store -> authenticated result verifier and cell open",
+              "ordinaryClientQualified": true,
+              "unqualifiedWireTestSeam": false,
+              "publicHttpPutMeasured": true,
+              "publicHttpPutAdmissionEvidence": "synthetic split adapter only; no packaged production-admission or economic-settlement claim"
+            },
+            "INBOX": {
+              "measured": false,
+              "blocker": "INBOX_PUBLIC_EXECUTION_UNASSEMBLED"
+            },
+            "CORE": {
+              "measured": false,
+              "blocker": "CORE_PUBLIC_EXECUTION_UNASSEMBLED"
+            },
+            "FORWARD": {
+              "measured": false,
+              "blocker": "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED"
+            }
+          },
+          "metrics": {
+            "qualification": {
+              "count": 6,
+              "meanMs": 20.734,
+              "p50Ms": 15.37,
+              "p95Ms": 34.702,
+              "p99Ms": 34.702,
+              "maxMs": 34.702
+            },
+            "stagedCellPut": {
+              "count": 32,
+              "meanMs": 410.578,
+              "p50Ms": 423.58,
+              "p95Ms": 573.974,
+              "p99Ms": 617.228,
+              "maxMs": 617.228,
+              "wallMs": 1863.514,
+              "operationsPerSecond": 17.172
+            },
+            "publicCellGet": {
+              "count": 32,
+              "meanMs": 31.387,
+              "p50Ms": 31.176,
+              "p95Ms": 37.698,
+              "p99Ms": 39.157,
+              "maxMs": 39.157,
+              "wallMs": 129.611,
+              "operationsPerSecond": 246.893
+            },
+            "recoveredPublicCellGet": {
+              "count": 32,
+              "meanMs": 29.194,
+              "p50Ms": 29.847,
+              "p95Ms": 36.443,
+              "p99Ms": 37.895,
+              "maxMs": 37.895,
+              "wallMs": 121.005,
+              "operationsPerSecond": 264.451
+            }
+          },
+          "integrity": {
+            "contentChecksBeforeRestart": 32,
+            "contentChecksAfterRestart": 32,
+            "exactStoreCountsBeforeRestart": [
+              {
+                "relayIndex": 0,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              },
+              {
+                "relayIndex": 1,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              }
+            ],
+            "exactStoreCountsAfterRestart": [
+              {
+                "relayIndex": 0,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              },
+              {
+                "relayIndex": 1,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              }
+            ],
+            "allCountsExact": true,
+            "uniqueRelaySigningKeys": 2,
+            "uniqueStoreIds": 2,
+            "deterministicLogicalCorpus": true,
+            "independentlyAllocatedLogicalRecords": 16,
+            "allCopiesIndependentlyAllocatedAndEncrypted": true,
+            "replicaProtocolMeasured": false,
+            "ordinaryClientQualificationSucceeded": true,
+            "qualificationAttempts": [
+              {
+                "relayIndex": 0,
+                "phase": "initial-put",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 0,
+                "phase": "initial-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "initial-put",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "initial-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 0,
+                "phase": "recovered-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "recovered-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              }
+            ]
+          },
+          "recovery": {
+            "relaysStopped": 2,
+            "relaysRestarted": 2,
+            "cleanStopWallMs": 1.715,
+            "restartAndRecoveryWallMs": 15303.593,
+            "restartMandatoryQuarantineAndLaunchWallMs": 15071.399,
+            "restartPostQuarantineRecoveryWallMs": 232.194,
+            "retainedStateReadChecks": 32,
+            "diskBytesStableAcrossRestart": true,
+            "initialV2WriteStartupQuarantineObserved": true,
+            "initialV2WritePathReadyBeforeWrites": true,
+            "initialV2WriteReadinessWaitMs": 15024.387,
+            "restartV2WriteStartupQuarantineObserved": true,
+            "restartV2WriteStartupQuarantineMillis": 15000,
+            "restartV2WritePathReadyBeforeWrites": true,
+            "restartV2WriteReadinessWaitMs": 15040.236,
+            "restartV2PublicHttpsExactPutAttempts": 2,
+            "restartV2RetainedReadChecks": 2
+          },
+          "resources": {
+            "processRssBytesBefore": 80396288,
+            "processRssBytesAfterWrite": 117653504,
+            "processRssBytesAfterRestart": 138690560,
+            "processRssDeltaBytes": 58294272,
+            "perRelayRssUnavailableReason": "RELAYS_SHARE_ONE_NODE_PROCESS",
+            "storesBeforeRestart": [
+              {
+                "relayIndex": 0,
+                "files": 19,
+                "bytes": 81518
+              },
+              {
+                "relayIndex": 1,
+                "files": 19,
+                "bytes": 81518
+              }
+            ],
+            "storesAfterRestart": [
+              {
+                "relayIndex": 0,
+                "files": 19,
+                "bytes": 81518
+              },
+              {
+                "relayIndex": 1,
+                "files": 19,
+                "bytes": 81518
+              }
+            ],
+            "aggregateStoredPayloadBytes": 131072
+          },
+          "runtimeErrors": [],
+          "runtimeExclusions": [
+            "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+            "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+            "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+            "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+            "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+            "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+            "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+            "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+            "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+          ],
+          "blockers": [
+            "SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT",
+            "PRODUCTION_RELEASE_GATE_BYPASSED",
+            "INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL",
+            "SINGLE_PROCESS_RELAY_ISOLATION_UNMEASURED",
+            "SINGLE_HOST_RELAY_ISOLATION_UNMEASURED",
+            "SAME_UID_TEST_TOPOLOGY",
+            "MULTI_HOST_NETWORK_UNMEASURED",
+            "PUBLIC_CA_TLS_VALIDATION_UNMEASURED",
+            "INDEPENDENT_OPERATOR_FAILURE_DOMAINS_UNMEASURED",
+            "INTERNET_LATENCY_AND_PACKET_LOSS_UNMEASURED",
+            "MULTI_RELAY_REPLICATION_REPAIR_PROTOCOL_UNMEASURED",
+            "RELAY_CHURN_AND_PARTITION_UNMEASURED",
+            "LONG_DURATION_SOAK_UNMEASURED",
+            "CRASH_KILL_DURING_COMMIT_UNMEASURED",
+            "DISK_FULL_AND_CORRUPTION_INJECTION_UNMEASURED",
+            "RESOURCE_SATURATION_UNMEASURED",
+            "SIGNED_RELEASE_AND_ROLLBACK_UNMEASURED",
+            "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+            "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+            "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+            "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+            "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+            "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+            "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+            "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+            "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+          ],
+          "evidenceDigest": "bd3ff05c27a7a17f4877013974550b4c261d732fe22fb53b3124bccc34391640"
+        },
+        "evidenceDigest": "a9a7712f381fc567d15e8842935ebcef9fe68838ae81efe8d56f79cbf532583b"
+      }
+    },
+    {
+      "processIndex": 2,
+      "observedPid": 18296,
+      "observedSpawnUnixMillis": 1784232057214,
+      "observedExitUnixMillis": 1784232090199,
+      "exitCode": 0,
+      "signal": null,
+      "stdoutSha256": "573c8c151fa0da0425da083ea1486cbf1786d4ea69583e09e6f46db069d92064",
+      "stderrSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stderrBytes": 0,
+      "envelope": {
+        "schema": "hiverelay.blind.local-multiprocess-child.v1",
+        "generatedAt": "2026-07-16T20:01:30.193Z",
+        "source": {
+          "gitCommit": "e971374f03dd0f9cca01fd95947dbaa7b0359213",
+          "trackedWorktreeClean": true
+        },
+        "process": {
+          "pid": 18296,
+          "parentPid": 18289,
+          "uid": 501,
+          "gid": 20,
+          "logicalOperatorScope": "local-operator-scope-02",
+          "identityScope": "local-process-identity-02",
+          "rootPathSha256": "2a2790df83b31dda3008182214f74ef7af51949ab08c3131fc8537b080e1eb36",
+          "startedAt": "2026-07-16T20:00:57.338Z",
+          "finishedAt": "2026-07-16T20:01:30.193Z",
+          "wallMs": 32855
+        },
+        "identity": {
+          "identityScope": "local-process-identity-02",
+          "relayCount": 2,
+          "relayPublicKeys": [
+            "27386c01d5692723921bd78f42149b513d30b0214b77d09a3b08d05e49d12ecf",
+            "0089d6fa4cb5f5dd8b1a6422e775b44667fb6db950783befdbbf466976bcce70"
+          ],
+          "storeIds": [
+            "e00502bcb66733f816efcaa3a9b23f6d6d960a04c024cf3af7453e06a1fa9e38",
+            "2e3620ad2f0d2c27e4ca5e69d71b155a8d691dd49f8097ebb167f2e1a62c2def"
+          ],
+          "uniqueRelayPublicKeys": 2,
+          "uniqueStoreIds": 2
+        },
+        "labReport": {
+          "schema": "hiverelay.blind.real-relay-lab.v6",
+          "generatedAt": "2026-07-16T20:01:30.185Z",
+          "evidenceClass": "MEASURED_LOCAL_REAL_HTTP_IPC_FILESYSTEM",
+          "evidenceBinding": {
+            "algorithm": "sha256",
+            "canonicalization": "HIVERELAY_SORTED_JSON_V1",
+            "checksumOnly": true,
+            "signed": false,
+            "authenticityProven": false
+          },
+          "releaseReady": false,
+          "localGateReady": true,
+          "correctnessGateReady": true,
+          "performanceGateReady": true,
+          "gates": {
+            "correctness": {
+              "ready": true,
+              "claimClass": "LOCAL_CORRECTNESS_ONLY",
+              "checks": {
+                "exactStoreCounts": true,
+                "stableDiskBytesAcrossRestart": true,
+                "noRuntimeErrors": true,
+                "allStagedWritesCompleted": true,
+                "allPublicReadsCompleted": true,
+                "allRecoveredReadsCompleted": true,
+                "restartV2WriteRecoveryObserved": true,
+                "ordinaryClientQualificationSucceeded": true,
+                "independentRelayIdentitiesObserved": true,
+                "independentStoreIdsObserved": true,
+                "independentCopiesObserved": true
+              }
+            },
+            "performance": {
+              "ready": true,
+              "claimClass": "LOCAL_LOOPBACK_SMOKE_NOT_CAPACITY_OR_SLO",
+              "capacityClaim": false,
+              "serviceLevelObjectiveClaim": false,
+              "thresholds": {
+                "minimumOperationsPerPath": 32,
+                "stagedPutMinimumOperationsPerSecond": 5,
+                "stagedPutMaximumP99Millis": 5000,
+                "publicGetMinimumOperationsPerSecond": 20,
+                "publicGetMaximumP99Millis": 2000,
+                "recoveredGetMinimumOperationsPerSecond": 20,
+                "recoveredGetMaximumP99Millis": 2000,
+                "restartPostQuarantineRecoveryMaximumWallMillis": 15000
+              },
+              "checks": {
+                "sufficientOperationSample": true,
+                "stagedPutThroughput": true,
+                "stagedPutP99": true,
+                "publicGetThroughput": true,
+                "publicGetP99": true,
+                "recoveredGetThroughput": true,
+                "recoveredGetP99": true,
+                "restartPostQuarantineRecoveryWall": true
+              }
+            }
+          },
+          "scope": {
+            "realImplementationsOnly": false,
+            "realHttpIpcWalFilesystemDataPlane": true,
+            "modelDataPlane": false,
+            "syntheticAdmissionAdapter": true,
+            "economicSettlementMeasured": false,
+            "relayInstances": 2,
+            "independentStoreRoots": 2,
+            "independentRelaySigningKeys": 2,
+            "independentlyEncryptedCellCopies": true,
+            "networkReplicaProtocolMeasured": false,
+            "processIsolation": false,
+            "hostIsolation": false,
+            "transport": "ephemeral self-signed loopback TLS plus authenticated Unix IPC",
+            "testFetchCertificateValidation": false,
+            "productionReleaseGateBypassed": true,
+            "sameUidTestTopology": true
+          },
+          "load": {
+            "logicalRecords": 16,
+            "independentCellCopiesPerLogicalRecord": 2,
+            "replicaProtocolMeasured": false,
+            "attemptedCellWrites": 32,
+            "contentBytesPerRecord": 256,
+            "concurrency": 8
+          },
+          "families": {
+            "DESCRIBE": {
+              "measured": true,
+              "path": "BlindRelayQualifier -> public HTTP BlindEdge -> private unary IPC -> BlindDaemon",
+              "operations": [
+                "GET",
+                "CHALLENGE"
+              ]
+            },
+            "CELL": {
+              "measured": true,
+              "putPath": "public HTTPS BlindEdge -> V2 full outer-envelope staged private IPC with TLS-exporter binding -> BlindDaemon -> filesystem store",
+              "getPath": "qualified BlindDirectHttpClient -> public HTTPS BlindEdge -> private unary IPC -> BlindDaemon -> filesystem store -> authenticated result verifier and cell open",
+              "ordinaryClientQualified": true,
+              "unqualifiedWireTestSeam": false,
+              "publicHttpPutMeasured": true,
+              "publicHttpPutAdmissionEvidence": "synthetic split adapter only; no packaged production-admission or economic-settlement claim"
+            },
+            "INBOX": {
+              "measured": false,
+              "blocker": "INBOX_PUBLIC_EXECUTION_UNASSEMBLED"
+            },
+            "CORE": {
+              "measured": false,
+              "blocker": "CORE_PUBLIC_EXECUTION_UNASSEMBLED"
+            },
+            "FORWARD": {
+              "measured": false,
+              "blocker": "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED"
+            }
+          },
+          "metrics": {
+            "qualification": {
+              "count": 6,
+              "meanMs": 20.384,
+              "p50Ms": 14.421,
+              "p95Ms": 48.463,
+              "p99Ms": 48.463,
+              "maxMs": 48.463
+            },
+            "stagedCellPut": {
+              "count": 32,
+              "meanMs": 435.266,
+              "p50Ms": 458.746,
+              "p95Ms": 639.696,
+              "p99Ms": 709.493,
+              "maxMs": 709.493,
+              "wallMs": 1950.527,
+              "operationsPerSecond": 16.406
+            },
+            "publicCellGet": {
+              "count": 32,
+              "meanMs": 30.712,
+              "p50Ms": 31.525,
+              "p95Ms": 38.679,
+              "p99Ms": 40.308,
+              "maxMs": 40.308,
+              "wallMs": 127.075,
+              "operationsPerSecond": 251.819
+            },
+            "recoveredPublicCellGet": {
+              "count": 32,
+              "meanMs": 28.364,
+              "p50Ms": 28.408,
+              "p95Ms": 33.323,
+              "p99Ms": 34.859,
+              "maxMs": 34.859,
+              "wallMs": 117.481,
+              "operationsPerSecond": 272.386
+            }
+          },
+          "integrity": {
+            "contentChecksBeforeRestart": 32,
+            "contentChecksAfterRestart": 32,
+            "exactStoreCountsBeforeRestart": [
+              {
+                "relayIndex": 0,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              },
+              {
+                "relayIndex": 1,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              }
+            ],
+            "exactStoreCountsAfterRestart": [
+              {
+                "relayIndex": 0,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              },
+              {
+                "relayIndex": 1,
+                "expectedCellRecords": 16,
+                "actualCellRecords": 16,
+                "storedBytes": 65536,
+                "exact": true
+              }
+            ],
+            "allCountsExact": true,
+            "uniqueRelaySigningKeys": 2,
+            "uniqueStoreIds": 2,
+            "deterministicLogicalCorpus": true,
+            "independentlyAllocatedLogicalRecords": 16,
+            "allCopiesIndependentlyAllocatedAndEncrypted": true,
+            "replicaProtocolMeasured": false,
+            "ordinaryClientQualificationSucceeded": true,
+            "qualificationAttempts": [
+              {
+                "relayIndex": 0,
+                "phase": "initial-put",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 0,
+                "phase": "initial-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "initial-put",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "initial-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 0,
+                "phase": "recovered-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              },
+              {
+                "relayIndex": 1,
+                "phase": "recovered-get",
+                "qualified": true,
+                "code": null,
+                "message": null
+              }
+            ]
+          },
+          "recovery": {
+            "relaysStopped": 2,
+            "relaysRestarted": 2,
+            "cleanStopWallMs": 1.601,
+            "restartAndRecoveryWallMs": 15273.805,
+            "restartMandatoryQuarantineAndLaunchWallMs": 15065.844,
+            "restartPostQuarantineRecoveryWallMs": 207.96,
+            "retainedStateReadChecks": 32,
+            "diskBytesStableAcrossRestart": true,
+            "initialV2WriteStartupQuarantineObserved": true,
+            "initialV2WritePathReadyBeforeWrites": true,
+            "initialV2WriteReadinessWaitMs": 14976.429,
+            "restartV2WriteStartupQuarantineObserved": true,
+            "restartV2WriteStartupQuarantineMillis": 15000,
+            "restartV2WritePathReadyBeforeWrites": true,
+            "restartV2WriteReadinessWaitMs": 15036.069,
+            "restartV2PublicHttpsExactPutAttempts": 2,
+            "restartV2RetainedReadChecks": 2
+          },
+          "resources": {
+            "processRssBytesBefore": 78102528,
+            "processRssBytesAfterWrite": 117882880,
+            "processRssBytesAfterRestart": 150175744,
+            "processRssDeltaBytes": 72073216,
+            "perRelayRssUnavailableReason": "RELAYS_SHARE_ONE_NODE_PROCESS",
+            "storesBeforeRestart": [
+              {
+                "relayIndex": 0,
+                "files": 19,
+                "bytes": 81518
+              },
+              {
+                "relayIndex": 1,
+                "files": 19,
+                "bytes": 81518
+              }
+            ],
+            "storesAfterRestart": [
+              {
+                "relayIndex": 0,
+                "files": 19,
+                "bytes": 81518
+              },
+              {
+                "relayIndex": 1,
+                "files": 19,
+                "bytes": 81518
+              }
+            ],
+            "aggregateStoredPayloadBytes": 131072
+          },
+          "runtimeErrors": [],
+          "runtimeExclusions": [
+            "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+            "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+            "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+            "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+            "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+            "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+            "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+            "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+            "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+          ],
+          "blockers": [
+            "SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT",
+            "PRODUCTION_RELEASE_GATE_BYPASSED",
+            "INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL",
+            "SINGLE_PROCESS_RELAY_ISOLATION_UNMEASURED",
+            "SINGLE_HOST_RELAY_ISOLATION_UNMEASURED",
+            "SAME_UID_TEST_TOPOLOGY",
+            "MULTI_HOST_NETWORK_UNMEASURED",
+            "PUBLIC_CA_TLS_VALIDATION_UNMEASURED",
+            "INDEPENDENT_OPERATOR_FAILURE_DOMAINS_UNMEASURED",
+            "INTERNET_LATENCY_AND_PACKET_LOSS_UNMEASURED",
+            "MULTI_RELAY_REPLICATION_REPAIR_PROTOCOL_UNMEASURED",
+            "RELAY_CHURN_AND_PARTITION_UNMEASURED",
+            "LONG_DURATION_SOAK_UNMEASURED",
+            "CRASH_KILL_DURING_COMMIT_UNMEASURED",
+            "DISK_FULL_AND_CORRUPTION_INJECTION_UNMEASURED",
+            "RESOURCE_SATURATION_UNMEASURED",
+            "SIGNED_RELEASE_AND_ROLLBACK_UNMEASURED",
+            "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+            "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+            "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+            "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+            "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+            "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+            "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+            "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+            "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+          ],
+          "evidenceDigest": "3cc1adf973b2590f523c066226dad5c243afb0f64ccc0638d5f94eff4906cb35"
+        },
+        "evidenceDigest": "3a0005efc617e9bacc97f5b07223dae6eff3c9f742d4da3321ee746a2f75de7f"
+      }
+    }
+  ],
+  "gates": {
+    "correctness": {
+      "ready": true,
+      "claimClass": "LOCAL_MULTI_PROCESS_CORRECTNESS_ONLY",
+      "checks": {
+        "allChildEnvelopesVerified": true,
+        "allChildCorrectnessGatesReady": true,
+        "allChildrenExitedZero": true,
+        "noChildSignals": true,
+        "uniqueChildPids": true,
+        "parentPidIsolationObserved": true,
+        "sameUidAndGidObserved": true,
+        "concurrentExecutionObserved": true,
+        "uniqueLogicalOperatorScopes": true,
+        "uniqueIdentityScopes": true,
+        "globalRelaySigningKeysUnique": true,
+        "globalStoreIdsUnique": true,
+        "exactWrites": true,
+        "exactReadsBeforeRestart": true,
+        "exactReadsAfterRestart": true,
+        "exactRestarts": true,
+        "exactStoreCounts": true,
+        "noChildRuntimeErrors": true,
+        "sourceCommitConsistent": true
+      }
+    },
+    "reproducibility": {
+      "ready": true,
+      "claimClass": "COMMIT_BOUND_CHECKSUM_ONLY",
+      "checks": {
+        "allTrackedSourceClean": true,
+        "childStdoutDigestsExact": true,
+        "childStderrEmpty": true,
+        "exactChildCommitRecorded": true,
+        "exactChildEvidenceDigestsRecorded": true
+      }
+    }
+  },
+  "correctnessGateReady": true,
+  "localGateReady": true,
+  "blockers": [
+    "CHECKSUM_ONLY_NOT_AUTHENTICATED_EVIDENCE",
+    "SAME_HOST_LOCAL_PROCESSES",
+    "SAME_UID_TEST_TOPOLOGY",
+    "LOGICAL_OPERATOR_SCOPES_NOT_INDEPENDENT_OWNERSHIP",
+    "SYNTHETIC_ADMISSION_NO_ECONOMIC_SETTLEMENT",
+    "PRODUCTION_RELEASE_GATE_BYPASSED",
+    "INDEPENDENT_OPERATOR_FAILURE_DOMAINS_UNMEASURED",
+    "MULTI_HOST_NETWORK_UNMEASURED",
+    "PUBLIC_CA_TLS_VALIDATION_UNMEASURED",
+    "INTERNET_LATENCY_AND_PACKET_LOSS_UNMEASURED",
+    "MULTI_RELAY_REPLICATION_REPAIR_PROTOCOL_UNMEASURED",
+    "RELAY_CHURN_AND_PARTITION_UNMEASURED",
+    "LONG_DURATION_SOAK_UNMEASURED",
+    "CRASH_KILL_DURING_COMMIT_UNMEASURED",
+    "DISK_FULL_AND_CORRUPTION_INJECTION_UNMEASURED",
+    "RESOURCE_SATURATION_UNMEASURED",
+    "SIGNED_RELEASE_AND_ROLLBACK_UNMEASURED",
+    "CORE_PUBLIC_EXECUTION_UNASSEMBLED",
+    "DESCRIPTOR_REFRESH_PERSISTED_FLOOR_UNASSEMBLED",
+    "FINAL_BUILD_PROFILE_LOCAL_BINDING_UNASSEMBLED",
+    "FORWARD_PUBLIC_EXECUTION_UNASSEMBLED",
+    "INBOX_PUBLIC_EXECUTION_UNASSEMBLED",
+    "INDEPENDENT_CELL_COPIES_NOT_REPLICA_PROTOCOL",
+    "PRODUCTION_ADMISSION_ADAPTER_CAPTURE_REQUIRED",
+    "PRODUCTION_DURABLE_REPLAY_AUTHORITY_REQUIRED",
+    "PROFILE2_EXTERNAL_JOURNAL_WITNESS_UNASSEMBLED",
+    "SINGLE_HOST_RELAY_ISOLATION_UNMEASURED",
+    "SINGLE_PROCESS_RELAY_ISOLATION_UNMEASURED",
+    "TWO_SLOT_MANIFEST_RUNTIME_INTEGRATION_UNASSEMBLED"
+  ],
+  "evidenceDigest": "4c30bd7a0040cd823b2b1436f9b178d923d6c36965a716fedfd49d077c1dac95"
+}

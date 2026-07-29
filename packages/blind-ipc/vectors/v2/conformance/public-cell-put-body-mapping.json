@@ -1,0 +1,18 @@
+{
+  "error": {
+    "canonicalBodyBytes": 4,
+    "frameKind": 3,
+    "schema": "BlindErrorV1"
+  },
+  "request": {
+    "canonicalBodyBytes": 4399,
+    "frameKind": 1,
+    "schema": "PutCellV1"
+  },
+  "response": {
+    "canonicalBodyBytes": 482,
+    "frameKind": 2,
+    "schema": "BlindReceiptV1"
+  },
+  "rule": "each body is strict canonical closed-schema bytes; decode failures normalize to BAD_PRIVATE_IPC_V2_CONTRACT"
+}

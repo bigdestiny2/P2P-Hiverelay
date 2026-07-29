@@ -1,0 +1,22 @@
+{
+  "class2AuthorizedForInitialStagedCellPut": false,
+  "class2Bytes": 16384,
+  "class2Fits": false,
+  "class3Bytes": 65536,
+  "class3Fits": true,
+  "dispatchHeaderBytes": 45,
+  "fixedMaximumResultBodyBytes": 16384,
+  "fixedRequiredResultEnvelopeBytes": 16435,
+  "initialAuthorizedOuterClasses": [
+    3,
+    4,
+    5,
+    6
+  ],
+  "minimumWorstCaseOuterClass": 3,
+  "outerHeaderBytes": 6,
+  "resultBodyBytes": 16384,
+  "resultSizingAuthority": "fixed-generated-worst-case-only",
+  "rule": "private IPC v2 uses only the generated 16384-byte maximum result body and 16435-byte required envelope; classes 3..6 are authorized and no predicted-result input exists",
+  "worstCaseEnvelopeBytes": 16435
+}

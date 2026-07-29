@@ -1,5 +1,6 @@
 const FULL_DASHBOARD_ROUTES = new Map([
   ['/network', { cacheKey: '_networkHtml', filename: 'network.html' }],
+  ['/fleet', { cacheKey: '_fleetHtml', filename: 'fleet.html' }],
   ['/docs', { cacheKey: '_docsHtml', filename: 'docs.html' }],
   ['/payments', { cacheKey: '_paymentsHtml', filename: 'payments.html' }],
   ['/calculator', { cacheKey: '_calculatorHtml', filename: 'calculator.html' }],

@@ -11,6 +11,7 @@ import { tmpdir } from 'os'
 import { hashHex } from '../packages/core/core/custody-signing.js'
 
 const sleep = (ms) => new Promise(resolve => setTimeout(resolve, ms))
+const TEST_MAX_STORAGE_BYTES = 64 * 1024 * 1024
 
 async function waitFor (label, fn, timeoutMs = 30_000) {
   const start = Date.now()
@@ -49,6 +50,8 @@ async function main () {
   let publisher = null
 
   await mkdir(baseDir, { recursive: true })
+  await mkdir(join(baseDir, 'publisher'), { recursive: true })
+  for (let i = 0; i < 3; i++) await mkdir(join(baseDir, `relay-${i}`), { recursive: true })
 
   try {
     publisher = new RelayNode({
@@ -141,6 +144,7 @@ async function main () {
         blindContentId,
         ciphertextRoot: ciphertextHash,
         contentVersion: blindMode ? 1 : null,
+        maxStorage: TEST_MAX_STORAGE_BYTES,
         retainUntil,
         shardIds: blindMode ? [i] : null
       })

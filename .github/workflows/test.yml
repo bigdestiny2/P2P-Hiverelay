@@ -29,6 +29,22 @@ jobs:
       - run: npm ci
       - run: npm run test:unit
 
+  blind-sdk-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: >-
+          ./node_modules/.bin/brittle-node --timeout 120000
+          packages/blind-client/test/policy.test.js
+          packages/blind-client/test/cells.test.js
+      - run: ./node_modules/.bin/brittle-node --timeout 120000 test/simulation/blind-capacity-lab.test.js
+      - run: npm run verify:blind-client:browser-artifact:release
+
   integration-tests:
     runs-on: ubuntu-latest
     steps:

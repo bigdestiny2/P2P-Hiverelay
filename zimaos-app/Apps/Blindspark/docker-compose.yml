@@ -1,0 +1,88 @@
+name: blindspark
+
+services:
+  blindspark:
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:1.0.0-rc.1
+    container_name: blindspark
+    restart: unless-stopped
+    entrypoint:
+      - /bin/sh
+      - -ec
+    command:
+      - |
+        key_file=/data/.management-key
+        if [ ! -s "$$key_file" ]; then
+          umask 077
+          node -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' > "$$key_file"
+        fi
+        export HIVERELAY_API_KEY="$$(cat "$$key_file")"
+        exec /usr/bin/tini -- /usr/local/bin/docker-entrypoint.sh node /app/packages/core/cli/index.js start --storage /data --port 9100
+    environment:
+      HOME: /data
+      TZ: $TZ
+      HIVERELAY_ACCEPT_MODE: review
+      HIVERELAY_MAX_STORAGE: 10GB
+      HIVERELAY_LOG_LEVEL: info
+      HIVERELAY_UI_SIMPLE: "true"
+      HIVERELAY_UI_EXPOSE_TOKEN: "true"
+    ports:
+      - target: 9100
+        published: "30452"
+        protocol: tcp
+    volumes:
+      - type: bind
+        source: /DATA/AppData/$AppID/data
+        target: /data
+    x-casaos:
+      envs:
+        - container: TZ
+          description:
+            en_US: Container timezone
+        - container: HIVERELAY_ACCEPT_MODE
+          description:
+            en_US: Incoming request mode (review, open, allowlist, or closed)
+        - container: HIVERELAY_MAX_STORAGE
+          description:
+            en_US: First-boot storage cap
+        - container: HIVERELAY_LOG_LEVEL
+          description:
+            en_US: Log level (error, warn, info, or debug)
+      ports:
+        - container: "9100"
+          description:
+            en_US: Blindspark dashboard and management API
+      volumes:
+        - container: /data
+          description:
+            en_US: Persistent identity, configuration, Hypercores, and seeded content
+
+x-casaos:
+  id: com.hiverelay.blindspark
+  main: blindspark
+  index: /
+  port_map: "30452"
+  scheme: http
+  icon: https://cdn.jsdelivr.net/gh/IceWhaleTech/CasaOS-AppStore@main/Apps/Blindspark/icon.svg
+  title:
+    en_US: Blindspark
+  tagline:
+    en_US: Keep peer-to-peer apps online from an always-on blind relay
+  description:
+    en_US: |
+      Blindspark runs HiveRelay as a home-server appliance for the Pear and
+      Holepunch peer-to-peer ecosystem. It stores and serves encrypted
+      Hyperdrive data that the relay can verify but cannot read, helping apps
+      remain reachable while publishers and users are offline.
+  author: HiveRelay
+  developer: HiveRelay
+  category: Networking
+  architectures:
+    - amd64
+    - arm64
+  version: "1.0.0-rc.1"
+  update_at: "2026-07-21"
+  release_notes:
+    en_US: HiveRelay 1.0.0-rc.1 package
+  website: https://hiverelay.com
+  repo: https://github.com/bigdestiny2/P2P-Hiverelay
+  support: https://github.com/bigdestiny2/P2P-Hiverelay/issues

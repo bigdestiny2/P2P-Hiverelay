@@ -1,0 +1,75 @@
+[
+  {
+    "schemaId": 16,
+    "schemaName": "LocalForwardHttpsOriginAuthorityV4",
+    "fields": [
+      "0:4 magic=LFA4",
+      "4 version=4",
+      "5 authorityKind=1[TLS_EXPORTER_BINDING_HASH_BY_PEERCRED_EDGE]",
+      "6 transportId=1[HTTPS_DIRECT]",
+      "7 endpointId:1..255",
+      "8:10 flags=0",
+      "10:12 reserved=0",
+      "12:44 wireV3AbiHash",
+      "44:76 signedLaunchTopologyHash",
+      "76:108 edgeProcessNonce",
+      "108:140 localChannelNonce",
+      "140:172 tlsExporterBindingHash",
+      "172:204 originRequestCommitment",
+      "204:236 stableSessionId",
+      "236:244 sequence:u64be",
+      "244:252 acceptedMonotonicMillis:u64be",
+      "252:260 absoluteDeadlineMonotonicMillis:u64be",
+      "260:292 localExchangeId"
+    ]
+  },
+  {
+    "schemaId": 17,
+    "schemaName": "LocalForwardHttpsTurnV4",
+    "fields": [
+      "0:4 magic=LFT4",
+      "4 version=4",
+      "5 direction[ORIGIN_REQUEST=1|RESULT=2]",
+      "6 wireRole[ORIGIN_REQUEST:ORIGIN_TEMPLATE=0|RESULT:TARGET_RESULT=1|SOURCE_PRE_FORWARD_ERROR=2|SOURCE_POST_FORWARD_AMBIGUOUS=3]",
+      "7 flags=0",
+      "8:40 wireV3AbiHash",
+      "40:72 localExchangeId",
+      "72:104 originRequestCommitment",
+      "104:136 stableSessionId",
+      "136:144 sequence:u64be",
+      "144:148 bodyLength=65536",
+      "148:65684 canonical WIRE v3 body[ORIGIN_REQUEST:ID76 role ORIGIN_TEMPLATE|RESULT:ID77 resultRole equals wireRole]"
+    ]
+  },
+  {
+    "schemaId": 18,
+    "schemaName": "LocalForwardHttpsTargetIngressV4",
+    "fields": [
+      "0:4 magic=LTI4",
+      "4 version=4",
+      "5 authorityKind=2[TARGET_TLS_EXPORTER_BINDING_HASH_BY_PEERCRED_EDGE]",
+      "6 transportId=1[HTTPS_DIRECT]",
+      "7 endpointId:1..255",
+      "8:10 flags=0",
+      "10:12 reserved=0",
+      "12:44 wireV3AbiHash[nonzero]",
+      "44:76 signedLaunchTopologyHash[nonzero]",
+      "76:108 edgeProcessNonce[nonzero]",
+      "108:140 localChannelNonce[nonzero;single-use]",
+      "140:172 targetTlsExporterBindingHash[nonzero]",
+      "172:204 forwardedRequestCommitment[nonzero]",
+      "204:236 stableSessionId[nonzero]",
+      "236:244 sequence:u64be",
+      "244:252 acceptedMonotonicMillis:u64be",
+      "252:260 absoluteDeadlineMonotonicMillis:u64be",
+      "260:292 targetLocalExchangeId[nonzero]",
+      "292:65828 exact canonical WIRE ID76 role FORWARDED body",
+      "targetTlsExporterLabel:ASCII(EXPORTER-HiveRelay-Blind-Forward-Target-v1)",
+      "targetTlsExporterContext:BLAKE2b256(ASCII(hiverelay.blind.private-ipc-forward-target-tls-context.v4)||stableSessionId32||u64be(sequence)||forwardedRequestCommitment32)",
+      "targetTlsExporterBindingHash:BLAKE2b256(ASCII(hiverelay.blind.private-ipc-forward-target-tls-binding.v4)||u64be(64)||targetTlsExporterSecret32||targetTlsExporterContext32)",
+      "targetLocalExchangeId:BLAKE2b256(ASCII(hiverelay.blind.private-ipc-forward-target-exchange.v4)||u64be(260)||bytes[0:260])",
+      "body:exact canonical WIRE ID76 requestRole FORWARDED; commitment/session/sequence match header; no origin/outer-envelope/native-stream/fallback form",
+      "raw target TLS exporter, source address, URL, host, IP, cookies, authorization, credentials, and app metadata are unrepresentable"
+    ]
+  }
+]

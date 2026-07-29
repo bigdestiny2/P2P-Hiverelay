@@ -1,0 +1,56 @@
+{
+  "schema": "hiverelay-vnext-credits-auth-remediation-v1",
+  "verifiedAt": "2026-07-12T15:20:31Z",
+  "sourceFinding": {
+    "id": "HR-SALVAGE-P1-CREDITS-AUTH",
+    "report": "git/5a7af14a1e16ee79bc91a5c663b2406498029106/docs/vnext/hiverelay-main-salvage.json"
+  },
+  "base": "999b0afd7584bb727cef6e6a88a054f11513927a",
+  "sourceBranch": "fix/vnext-credits-auth",
+  "sourceCommit": "aa7b576727d03e0a59bca7ea97597f2e6f52f944",
+  "integrationCommit": "ee4b1a6b07be8424bcbfc6e117e3e7a5dae6188d",
+  "disposition": "p1-http-disclosure-boundary-remediated",
+  "behavior": {
+    "publicRoutes": [
+      "/api/v1/credits/pricing",
+      "/api/v1/credits/pricing/compare"
+    ],
+    "managementRoutes": [
+      "/api/v1/credits/stats",
+      "/api/v1/credits/wallets"
+    ],
+    "configuredKeyAuth": "exact-authorization-bearer",
+    "unconfiguredAuth": "direct-loopback-only",
+    "trustProxyWithoutKey": "fail-closed",
+    "unauthorizedStateReads": 0,
+    "missingLifecycleState": "503-credits-unavailable-without-mutation",
+    "walletLimit": 100,
+    "dashboardCredentialTransport": "embedded-ui-token-bearer-header"
+  },
+  "verification": {
+    "cleanInstall": "pass",
+    "focused": {
+      "tests": "10/10",
+      "assertions": "84/84",
+      "independentlyRerunAfterIntegrationReview": true
+    },
+    "adjacentRegression": {
+      "tests": "151/151",
+      "assertions": "820/820"
+    },
+    "fullUnit": {
+      "tests": 3045,
+      "exitCode": 0
+    },
+    "standard": "pass",
+    "diffCheck": "pass"
+  },
+  "residualBoundaries": [
+    "RelayNode lifecycle and persistence must own creditManager before stock runtime returns authoritative private financial state",
+    "Configured pricing lifecycle ownership remains required before pricing is a production authority",
+    "The three inherited workspace-audit blockers remain outside this remediation",
+    "No release, deployment, fleet mutation, or publication is authorized"
+  ],
+  "authorizesRelease": false,
+  "authorizesDeployment": false
+}

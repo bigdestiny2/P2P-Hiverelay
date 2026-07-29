@@ -1,0 +1,1077 @@
+{
+  "_type": "https://in-toto.io/Statement/v0.1",
+  "predicateType": "https://slsa.dev/provenance/v0.2",
+  "subject": [
+    {
+      "name": "pkg:docker/hiverelay/blind-edge@1.0.0-rc.1.public-test.1?platform=linux%2Farm64",
+      "digest": {
+        "sha256": "291f1e01d181d3159c95bae5c461c33e8e71ec0967f6c6efe2868fd1f66743dc"
+      }
+    }
+  ],
+  "predicate": {
+    "builder": {
+      "id": ""
+    },
+    "buildType": "https://mobyproject.org/buildkit@v1",
+    "materials": [
+      {
+        "uri": "pkg:docker/docker/dockerfile@1.7?digest=sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e&platform=linux%2Farm64",
+        "digest": {
+          "sha256": "a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
+        }
+      },
+      {
+        "uri": "pkg:docker/docker/dockerfile@1.7?digest=sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
+        "digest": {
+          "sha256": "a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
+        }
+      },
+      {
+        "uri": "pkg:docker/node@22-bookworm-slim?digest=sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf&platform=linux%2Farm64",
+        "digest": {
+          "sha256": "53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf"
+        }
+      },
+      {
+        "uri": "pkg:docker/node@22-bookworm?digest=sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37&platform=linux%2Farm64",
+        "digest": {
+          "sha256": "5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37"
+        }
+      }
+    ],
+    "invocation": {
+      "configSource": {
+        "entryPoint": "Dockerfile.blind-edge"
+      },
+      "parameters": {
+        "frontend": "gateway.v0",
+        "args": {
+          "build-arg:HIVERELAY_BLIND_BUILD_ID": "1.0.0-rc.1.public-test.1",
+          "build-arg:HIVERELAY_BLIND_BUNDLE_ID": "1.0.0-rc.1.public-test.1",
+          "build-arg:HIVERELAY_BLIND_SOURCE_REVISION": "973f25c212553653b65811eacd28ed35b1b54124",
+          "build-arg:HIVERELAY_BLIND_SOURCE_TREE": "ebd504fa318a90f34fc52e9febb9385db606330d",
+          "build-arg:SOURCE_DATE_EPOCH": "1785072458",
+          "cmdline": "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e",
+          "no-cache": "",
+          "source": "docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e"
+        },
+        "locals": [
+          {
+            "name": "context"
+          },
+          {
+            "name": "dockerfile"
+          }
+        ]
+      },
+      "environment": {
+        "platform": "linux/arm64"
+      }
+    },
+    "buildConfig": {
+      "llbDefinition": [
+        {
+          "id": "step0",
+          "op": {
+            "Op": {
+              "source": {
+                "identifier": "docker-image://docker.io/library/node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf",
+                "attrs": {
+                  "image.resolvemode": "local"
+                }
+              }
+            },
+            "platform": {
+              "Architecture": "arm64",
+              "OS": "linux"
+            },
+            "constraints": {}
+          }
+        },
+        {
+          "id": "step1",
+          "op": {
+            "Op": {
+              "exec": {
+                "meta": {
+                  "args": [
+                    "/bin/sh",
+                    "-c",
+                    "groupadd --system --gid 997 hiverelay-blind &&     useradd --system --uid 998 --gid hiverelay-blind --home-dir /nonexistent --shell /usr/sbin/nologin hiverelay-edge &&     install -d -o 999 -g 997 -m 0750 /run/hiverelay-blind &&     install -d -o 998 -g 997 -m 0550 /opt/hiverelay/edge"
+                  ],
+                  "env": [
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "NODE_VERSION=22.23.1",
+                    "YARN_VERSION=1.22.22",
+                    "HIVERELAY_BLIND_BUNDLE_ID=1.0.0-rc.1.public-test.1",
+                    "HIVERELAY_BLIND_BUILD_ID=1.0.0-rc.1.public-test.1",
+                    "HIVERELAY_BLIND_SOURCE_REVISION=973f25c212553653b65811eacd28ed35b1b54124",
+                    "HIVERELAY_BLIND_SOURCE_TREE=ebd504fa318a90f34fc52e9febb9385db606330d"
+                  ],
+                  "cwd": "/",
+                  "removeMountStubsRecursive": true
+                },
+                "mounts": [
+                  {
+                    "dest": "/"
+                  }
+                ]
+              }
+            },
+            "platform": {
+              "Architecture": "arm64",
+              "OS": "linux"
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step0:0"
+          ]
+        },
+        {
+          "id": "step2",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": -1,
+                    "output": 0,
+                    "Action": {
+                      "mkdir": {
+                        "path": "/opt/hiverelay/edge",
+                        "mode": 493,
+                        "makeParents": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step1:0"
+          ]
+        },
+        {
+          "id": "step3",
+          "op": {
+            "Op": {
+              "source": {
+                "identifier": "docker-image://docker.io/library/node:22-bookworm@sha256:5647be709086c696ff32edaaf1c70cd26d1da6ab2b39c32f3c7b4c4a31957e37",
+                "attrs": {
+                  "image.resolvemode": "local"
+                }
+              }
+            },
+            "platform": {
+              "Architecture": "arm64",
+              "OS": "linux"
+            },
+            "constraints": {}
+          }
+        },
+        {
+          "id": "step4",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": -1,
+                    "output": 0,
+                    "Action": {
+                      "mkdir": {
+                        "path": "/opt/hiverelay/deploy/blind/edge",
+                        "mode": 493,
+                        "makeParents": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step3:0"
+          ]
+        },
+        {
+          "id": "step5",
+          "op": {
+            "Op": {
+              "source": {
+                "identifier": "local://context",
+                "attrs": {
+                  "local.excludepatterns": "[\"node_modules\",\"**/node_modules\",\".git\",\".github\",\".gitignore\",\"test\",\"**/test\",\"**/test/**\",\"scripts\",\"examples\",\"docs\",\"services\",\"storage\",\"startos/image\",\"startos/*.s9pk\",\"startos/*.tar\",\".planning\",\".publisher-storage\",\".pos-publisher-storage\",\".nyc_output\",\"coverage\",\"test-zk-storage\",\"ghost-seed-demo.mjs\",\"Dockerfile\",\"docker-compose.yml\",\".dockerignore\",\"README.md\",\"*.log\",\"*.pid\",\".DS_Store\",\".env*\",\"!package.json\"]",
+                  "local.followpaths": "[\"deploy/blind/edge/healthcheck.mjs\",\"deploy/blind/edge/package-lock.json\",\"deploy/blind/edge/package.json\",\"packages/blind-edge\",\"packages/blind-ipc\",\"packages/blind-peercred\",\"packages/blind-protocol\"]",
+                  "local.sharedkeyhint": "context"
+                }
+              }
+            },
+            "constraints": {}
+          }
+        },
+        {
+          "id": "step6",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/deploy/blind/edge/package.json",
+                        "dest": "/opt/hiverelay/deploy/blind/edge/package.json",
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step4:0",
+            "step5:0"
+          ]
+        },
+        {
+          "id": "step7",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/deploy/blind/edge/package-lock.json",
+                        "dest": "/opt/hiverelay/deploy/blind/edge/package-lock.json",
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step6:0",
+            "step5:0"
+          ]
+        },
+        {
+          "id": "step8",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/packages/blind-protocol",
+                        "dest": "/opt/hiverelay/packages/blind-protocol",
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step7:0",
+            "step5:0"
+          ]
+        },
+        {
+          "id": "step9",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/packages/blind-ipc",
+                        "dest": "/opt/hiverelay/packages/blind-ipc",
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step8:0",
+            "step5:0"
+          ]
+        },
+        {
+          "id": "step10",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/packages/blind-peercred",
+                        "dest": "/opt/hiverelay/packages/blind-peercred",
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step9:0",
+            "step5:0"
+          ]
+        },
+        {
+          "id": "step11",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/packages/blind-edge",
+                        "dest": "/opt/hiverelay/packages/blind-edge",
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step10:0",
+            "step5:0"
+          ]
+        },
+        {
+          "id": "step12",
+          "op": {
+            "Op": {
+              "exec": {
+                "meta": {
+                  "args": [
+                    "/bin/sh",
+                    "-c",
+                    "printf '%s\\n' \"$TARGETARCH\" > /opt/hiverelay/peercred-target-architecture &&     npm_config_build_from_source=true npm ci --omit=dev --install-links --no-audit --no-fund &&     npm cache clean --force &&     test ! -e node_modules/@hiverelay/blind-daemon &&     test -f node_modules/@hiverelay/blind-peercred/build/Release/blind_peercred.node &&     test -f node_modules/@hiverelay/blind-ipc/private-ipc-v3-contract.js &&     test -f node_modules/@hiverelay/blind-ipc/private-ipc-v4-contract.js &&     test -f node_modules/@hiverelay/blind-ipc/hiverelay-blind-private-ipc-authority-v3.json &&     test -f node_modules/@hiverelay/blind-edge/forward-https-vnext.js &&     node -e \"import('@hiverelay/blind-peercred').then(m => { if (typeof m.socketPeerCredentials !== 'function') process.exit(1) })\" &&     node --input-type=module -e \"await import('@hiverelay/blind-ipc'); await import('/opt/hiverelay/deploy/blind/edge/node_modules/@hiverelay/blind-edge/server.js'); await import('/opt/hiverelay/deploy/blind/edge/node_modules/@hiverelay/blind-edge/forward-https-vnext.js'); console.log('edge closure module graph ok')\""
+                  ],
+                  "env": [
+                    "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+                    "NODE_VERSION=22.23.1",
+                    "YARN_VERSION=1.22.22",
+                    "TARGETARCH=arm64"
+                  ],
+                  "cwd": "/opt/hiverelay/deploy/blind/edge",
+                  "removeMountStubsRecursive": true
+                },
+                "mounts": [
+                  {
+                    "dest": "/"
+                  }
+                ]
+              }
+            },
+            "platform": {
+              "Architecture": "arm64",
+              "OS": "linux"
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step11:0"
+          ]
+        },
+        {
+          "id": "step13",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/opt/hiverelay/deploy/blind/edge/node_modules",
+                        "dest": "/opt/hiverelay/edge/node_modules",
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step2:0",
+            "step12:0"
+          ]
+        },
+        {
+          "id": "step14",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/opt/hiverelay/peercred-target-architecture",
+                        "dest": "/opt/hiverelay/edge/peercred-target-architecture",
+                        "owner": {
+                          "user": {
+                            "User": {}
+                          },
+                          "group": {
+                            "User": {}
+                          }
+                        },
+                        "mode": 292,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step13:0",
+            "step12:0"
+          ]
+        },
+        {
+          "id": "step15",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/etc/ssl/certs",
+                        "dest": "/etc/ssl/certs",
+                        "owner": {
+                          "user": {
+                            "User": {}
+                          },
+                          "group": {
+                            "User": {}
+                          }
+                        },
+                        "mode": -1,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step14:0",
+            "step12:0"
+          ]
+        },
+        {
+          "id": "step16",
+          "op": {
+            "Op": {
+              "file": {
+                "actions": [
+                  {
+                    "input": 0,
+                    "secondaryInput": 1,
+                    "output": 0,
+                    "Action": {
+                      "copy": {
+                        "src": "/deploy/blind/edge/healthcheck.mjs",
+                        "dest": "/opt/hiverelay/edge/healthcheck.mjs",
+                        "owner": {
+                          "user": {
+                            "User": {}
+                          },
+                          "group": {
+                            "User": {}
+                          }
+                        },
+                        "mode": 292,
+                        "followSymlink": true,
+                        "dirCopyContents": true,
+                        "createDestPath": true,
+                        "allowWildcard": true,
+                        "allowEmptyWildcard": true,
+                        "timestamp": -1
+                      }
+                    }
+                  }
+                ]
+              }
+            },
+            "constraints": {}
+          },
+          "inputs": [
+            "step15:0",
+            "step5:0"
+          ]
+        },
+        {
+          "id": "step17",
+          "op": {
+            "Op": {}
+          },
+          "inputs": [
+            "step16:0"
+          ]
+        }
+      ],
+      "digestMapping": {
+        "sha256:1922ef554a9a2e247eb06538d0370dbf1cc4dc61d4193d08f286728e8d7c5b09": "step0",
+        "sha256:209ef29e587228fc427b53c0b4009b284e14c9b6c3c35d109b84d297f76025a4": "step8",
+        "sha256:21f29dcc0c6afee5f4fb60a0ef10542ab219c7bd8d26bdc81ea69da98d006008": "step2",
+        "sha256:3a8066ec6e5ddd351cef23f752732e113325f43413beeac045c717a5af6779f2": "step14",
+        "sha256:42106e60f23e242742d5ef52b228390b4b91ae3d3fa243d3a628afab2dc8861e": "step15",
+        "sha256:5349c20f1549711c83c250aefc31532021774d67bcaeb671a3ff74df7af6f823": "step7",
+        "sha256:5455d3d086db3b5f52a686f358b050b4199f55bbe36e2a06e2a102c70093bea4": "step9",
+        "sha256:7069ff1bf3489ef3cb27195a3cbf65dbbbce2c3f2f5e06849592c233d8b0244b": "step12",
+        "sha256:74d30c55e703e696e42843633c46ecd085c750b6264586bbb8b8d60693cfc140": "step11",
+        "sha256:75278a68561ed1ece7be62079ab93d3cb4f2b2b72416ab42e9180541963f8a8f": "step13",
+        "sha256:8f3a65ed71aa539ae5c1e55b3c9bf7f2bdf613f7142e6dc35e7bde7aabf8a7d5": "step10",
+        "sha256:a598becbcdcf2f88e3b271db447c91baaadfdab5ff0d7c0b12e7ae5bbc0c6b3b": "step1",
+        "sha256:ad2c33679f17621b0549772ecd362f1249cb5cfc9498a2318fa554db2f2a3b4f": "step16",
+        "sha256:b0c53d052fb4d2363596bcf5d6dbc3b9a794e164007bb17ec648a5a5fd4f5402": "step17",
+        "sha256:b83f037a61240d9b9e87b3a7b3d7791a95838167e038018759917d15c4b1f95a": "step5",
+        "sha256:c621530b11b82e42dfe6a557e705158fd8bed1dd0319e79076731caca0d81154": "step4",
+        "sha256:ce8b72ad92095a3ff825ea8cf8921cc9f5a87eaaefa6ad548730c69e1cf144fd": "step6",
+        "sha256:d15c1ecf60a9c1205b83994eaacb0a45c1de783bd612422657d5208d57e72716": "step3"
+      }
+    },
+    "metadata": {
+      "buildInvocationID": "yakru7poz8otofnt3sheyyv6m",
+      "buildStartedOn": "2026-07-26T13:34:53.913350337Z",
+      "buildFinishedOn": "2026-07-26T13:35:07.081472885Z",
+      "completeness": {
+        "parameters": true,
+        "environment": true,
+        "materials": false
+      },
+      "reproducible": false,
+      "https://mobyproject.org/buildkit@v1#metadata": {
+        "vcs": {
+          "localdir:context": ".",
+          "localdir:dockerfile": ".",
+          "revision": "973f25c212553653b65811eacd28ed35b1b54124",
+          "source": "https://github.com/bigdestiny2/P2P-Hiverelay.git"
+        },
+        "source": {
+          "locations": {
+            "step0": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 45
+                      },
+                      "end": {
+                        "line": 45
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step1": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 63
+                      },
+                      "end": {
+                        "line": 63
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 64
+                      },
+                      "end": {
+                        "line": 64
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 65
+                      },
+                      "end": {
+                        "line": 65
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 66
+                      },
+                      "end": {
+                        "line": 66
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step10": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 26
+                      },
+                      "end": {
+                        "line": 26
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step11": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 27
+                      },
+                      "end": {
+                        "line": 27
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step12": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 33
+                      },
+                      "end": {
+                        "line": 33
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 34
+                      },
+                      "end": {
+                        "line": 34
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 35
+                      },
+                      "end": {
+                        "line": 35
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 36
+                      },
+                      "end": {
+                        "line": 36
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 37
+                      },
+                      "end": {
+                        "line": 37
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 38
+                      },
+                      "end": {
+                        "line": 38
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 39
+                      },
+                      "end": {
+                        "line": 39
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 40
+                      },
+                      "end": {
+                        "line": 40
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 41
+                      },
+                      "end": {
+                        "line": 41
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 42
+                      },
+                      "end": {
+                        "line": 42
+                      }
+                    },
+                    {
+                      "start": {
+                        "line": 43
+                      },
+                      "end": {
+                        "line": 43
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step13": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 68
+                      },
+                      "end": {
+                        "line": 68
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step14": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 69
+                      },
+                      "end": {
+                        "line": 69
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step15": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 72
+                      },
+                      "end": {
+                        "line": 72
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step16": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 73
+                      },
+                      "end": {
+                        "line": 73
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step2": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 67
+                      },
+                      "end": {
+                        "line": 67
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step3": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 19
+                      },
+                      "end": {
+                        "line": 19
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step4": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 21
+                      },
+                      "end": {
+                        "line": 21
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step5": {},
+            "step6": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 22
+                      },
+                      "end": {
+                        "line": 22
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step7": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 23
+                      },
+                      "end": {
+                        "line": 23
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step8": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 24
+                      },
+                      "end": {
+                        "line": 24
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "step9": {
+              "locations": [
+                {
+                  "ranges": [
+                    {
+                      "start": {
+                        "line": 25
+                      },
+                      "end": {
+                        "line": 25
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          },
+          "infos": [
+            {
+              "filename": "Dockerfile.blind-edge",
+              "language": "Dockerfile",
+              "data": "IyBzeW50YXg9ZG9ja2VyL2RvY2tlcmZpbGU6MS43QHNoYTI1NjphNTdkZjY5ZDBlYTgyN2ZiNzI2NjQ5MWYyODEzNjM1ZGU2ZjE3MjY5YmU4ODFmNjk2ZmJmZGYyZDgzZGRhMzNlCiMKIyBIaXZlUmVsYXkgQmxpbmQgRWRnZSDigJQgc3BsaXQgcHVibGljLXRlc3QgaW1hZ2UuCiMgUmVwcm9kdWNpYmlsaXR5IGNvbnRyYWN0IChSRUxPQ0tfU1BMSVRfQkxJTkRfUFVCTElDX1RFU1RfQVJUSUZBQ1RTX0FGVEVSX0lOVEVHUkFUSU9OKToKIyAgLSBidWlsZGVyL3Rvb2xjaGFpbiBwaW5uZWQgYnkgZGlnZXN0IChub2RlOjIyLWJvb2t3b3JtIGZ1bGwsIG5vIGFwdC1nZXQgYW55d2hlcmU6CiMgICAgRGViaWFuIHBhY2thZ2UgaW5wdXRzIGFyZSBleGFjdGx5IHRoZSBwaW5uZWQgYmFzZS1pbWFnZSBjb250ZW50cywgbm90aGluZyBtb3ZlcykKIyAgLSBydW50aW1lIGJhc2UgcGlubmVkIGJ5IGRpZ2VzdCAobm9kZToyMi1ib29rd29ybS1zbGltKQojICAtIGV4YWN0IHNvdXJjZS1yZXZpc2lvbiAvIGJ1aWxkLWlkZW50aXR5IC8gY29tcG9uZW50IC8gYnVuZGxlIGxhYmVscwojICAtIHVzYWJsZSBwdWJsaWMtQ0Egcm9vdHMgZm9yIHJlbGF5LXRvLXJlbGF5IHZlcmlmaWNhdGlvbjogdGhlIHBpbm5lZCBzbGltIGJhc2UKIyAgICBzaGlwcyBubyBDQSBidW5kbGUsIHNvIHRoZSBwaW5uZWQgdG9vbGNoYWluIHN0YWdlJ3MgRGViaWFuIGNhLWNlcnRpZmljYXRlcwojICAgIHN0b3JlIGlzIGNvcGllZCBpbiAodmVyaWZpZWQgYnkgYnVpbGQtZ2F0ZSArIHNtb2tlIGV2aWRlbmNlKQojICAtIGJyb3dzZXIgYXJ0aWZhY3QgYnl0ZXMgYXJlIG5ldmVyIGNvcGllZCBpbnRvIHRoaXMgaW1hZ2UKCkFSRyBOT0RFX1RPT0xDSEFJTl9JTUFHRT1ub2RlOjIyLWJvb2t3b3JtQHNoYTI1Njo1NjQ3YmU3MDkwODZjNjk2ZmYzMmVkYWFmMWM3MGNkMjZkMWRhNmFiMmIzOWMzMmYzYzdiNGM0YTMxOTU3ZTM3CkFSRyBOT0RFX1JVTlRJTUVfSU1BR0U9bm9kZToyMi1ib29rd29ybS1zbGltQHNoYTI1Njo1M2FkYTE0OWQ0MzVjMzhiMTQ0NzZjYjU3ZTRhN2RhNzNjMTU1OTVhYmE3OWJkNjk3MWI1NDdjZWI2ZDAxOGJmCgojIE5hdGl2ZSBhZGRvbnMgYXJlIGNvbXBpbGVkIG9ubHkgaW4gdGhlIHRhcmdldC1wbGF0Zm9ybSB0b29sY2hhaW4gc3RhZ2UuIFRoZQojIGVkZ2UgaW5zdGFsbC1saW5rcyBjbG9zdXJlIHJlY2VpdmVzIG5vIGRhZW1vbiBzb3VyY2UuCkZST00gLS1wbGF0Zm9ybT0kVEFSR0VUUExBVEZPUk0gJHtOT0RFX1RPT0xDSEFJTl9JTUFHRX0gQVMgYmxpbmQtZWRnZS10b29sY2hhaW4KQVJHIFRBUkdFVEFSQ0gKV09SS0RJUiAvb3B0L2hpdmVyZWxheS9kZXBsb3kvYmxpbmQvZWRnZQpDT1BZIGRlcGxveS9ibGluZC9lZGdlL3BhY2thZ2UuanNvbiAuL3BhY2thZ2UuanNvbgpDT1BZIGRlcGxveS9ibGluZC9lZGdlL3BhY2thZ2UtbG9jay5qc29uIC4vcGFja2FnZS1sb2NrLmpzb24KQ09QWSBwYWNrYWdlcy9ibGluZC1wcm90b2NvbCAvb3B0L2hpdmVyZWxheS9wYWNrYWdlcy9ibGluZC1wcm90b2NvbApDT1BZIHBhY2thZ2VzL2JsaW5kLWlwYyAvb3B0L2hpdmVyZWxheS9wYWNrYWdlcy9ibGluZC1pcGMKQ09QWSBwYWNrYWdlcy9ibGluZC1wZWVyY3JlZCAvb3B0L2hpdmVyZWxheS9wYWNrYWdlcy9ibGluZC1wZWVyY3JlZApDT1BZIHBhY2thZ2VzL2JsaW5kLWVkZ2UgL29wdC9oaXZlcmVsYXkvcGFja2FnZXMvYmxpbmQtZWRnZQojIFRoZSBucG0tcGFjayBmaWx0ZXJlZCBpbnN0YWxsIGNsb3NlcyBjb3JyZWN0bHkgb24gaXRzIG93bjogdGhlIGFjY2VwdGVkLXNvdXJjZQojIHBhY2thZ2luZyBmaXggKGJhNzEwZGMpIGluY2x1ZGVzIHByaXZhdGUtaXBjIHYzL3Y0IGNvbnRyYWN0L3N0YXR1cy9hdXRob3JpdHkgKwojIHZlY3RvcnMgYW5kIGZvcndhcmQtaHR0cHMtdm5leHQuanMgaW4gdGhlIHBhY2thZ2UgZmlsZXNbXSB3aGl0ZWxpc3RzLiBUaGUKIyB0ZXN0IC1mIGdhdGVzIGJlbG93IHBpbiB0aGF0IGNsb3N1cmU7IHRoZSBtb2R1bGUtZ3JhcGggaW1wb3J0IGdhdGUgcHJvdmVzIHRoZQojIHBhY2tlZCBpbnN0YWxsIGxvYWRzICh0aGlzIHByZXZpb3VzbHkgY2F1Z2h0IHRoZSBmaWxlc1tdIG9taXNzaW9uKS4KUlVOIHByaW50ZiAnJXNcbicgIiRUQVJHRVRBUkNIIiA+IC9vcHQvaGl2ZXJlbGF5L3BlZXJjcmVkLXRhcmdldC1hcmNoaXRlY3R1cmUgJiYgXAogICAgbnBtX2NvbmZpZ19idWlsZF9mcm9tX3NvdXJjZT10cnVlIG5wbSBjaSAtLW9taXQ9ZGV2IC0taW5zdGFsbC1saW5rcyAtLW5vLWF1ZGl0IC0tbm8tZnVuZCAmJiBcCiAgICBucG0gY2FjaGUgY2xlYW4gLS1mb3JjZSAmJiBcCiAgICB0ZXN0ICEgLWUgbm9kZV9tb2R1bGVzL0BoaXZlcmVsYXkvYmxpbmQtZGFlbW9uICYmIFwKICAgIHRlc3QgLWYgbm9kZV9tb2R1bGVzL0BoaXZlcmVsYXkvYmxpbmQtcGVlcmNyZWQvYnVpbGQvUmVsZWFzZS9ibGluZF9wZWVyY3JlZC5ub2RlICYmIFwKICAgIHRlc3QgLWYgbm9kZV9tb2R1bGVzL0BoaXZlcmVsYXkvYmxpbmQtaXBjL3ByaXZhdGUtaXBjLXYzLWNvbnRyYWN0LmpzICYmIFwKICAgIHRlc3QgLWYgbm9kZV9tb2R1bGVzL0BoaXZlcmVsYXkvYmxpbmQtaXBjL3ByaXZhdGUtaXBjLXY0LWNvbnRyYWN0LmpzICYmIFwKICAgIHRlc3QgLWYgbm9kZV9tb2R1bGVzL0BoaXZlcmVsYXkvYmxpbmQtaXBjL2hpdmVyZWxheS1ibGluZC1wcml2YXRlLWlwYy1hdXRob3JpdHktdjMuanNvbiAmJiBcCiAgICB0ZXN0IC1mIG5vZGVfbW9kdWxlcy9AaGl2ZXJlbGF5L2JsaW5kLWVkZ2UvZm9yd2FyZC1odHRwcy12bmV4dC5qcyAmJiBcCiAgICBub2RlIC1lICJpbXBvcnQoJ0BoaXZlcmVsYXkvYmxpbmQtcGVlcmNyZWQnKS50aGVuKG0gPT4geyBpZiAodHlwZW9mIG0uc29ja2V0UGVlckNyZWRlbnRpYWxzICE9PSAnZnVuY3Rpb24nKSBwcm9jZXNzLmV4aXQoMSkgfSkiICYmIFwKICAgIG5vZGUgLS1pbnB1dC10eXBlPW1vZHVsZSAtZSAiYXdhaXQgaW1wb3J0KCdAaGl2ZXJlbGF5L2JsaW5kLWlwYycpOyBhd2FpdCBpbXBvcnQoJy9vcHQvaGl2ZXJlbGF5L2RlcGxveS9ibGluZC9lZGdlL25vZGVfbW9kdWxlcy9AaGl2ZXJlbGF5L2JsaW5kLWVkZ2Uvc2VydmVyLmpzJyk7IGF3YWl0IGltcG9ydCgnL29wdC9oaXZlcmVsYXkvZGVwbG95L2JsaW5kL2VkZ2Uvbm9kZV9tb2R1bGVzL0BoaXZlcmVsYXkvYmxpbmQtZWRnZS9mb3J3YXJkLWh0dHBzLXZuZXh0LmpzJyk7IGNvbnNvbGUubG9nKCdlZGdlIGNsb3N1cmUgbW9kdWxlIGdyYXBoIG9rJykiCgpGUk9NIC0tcGxhdGZvcm09JFRBUkdFVFBMQVRGT1JNICR7Tk9ERV9SVU5USU1FX0lNQUdFfSBBUyBibGluZC1lZGdlCkFSRyBISVZFUkVMQVlfQkxJTkRfQlVORExFX0lEPTEuMC4wLXJjLjEucHVibGljLXRlc3QuMQpBUkcgSElWRVJFTEFZX0JMSU5EX0JVSUxEX0lEPTEuMC4wLXJjLjEucHVibGljLXRlc3QuMQpBUkcgSElWRVJFTEFZX0JMSU5EX1NPVVJDRV9SRVZJU0lPTj05NzNmMjVjMjEyNTUzNjUzYjY1ODExZWFjZDI4ZWQzNWIxYjU0MTI0CkFSRyBISVZFUkVMQVlfQkxJTkRfU09VUkNFX1RSRUU9ZWJkNTA0ZmEzMThhOTBmMzRmYzUyZTlmZWJiOTM4NWRiNjA2MzMwZApMQUJFTCBvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UudGl0bGU9IkhpdmVSZWxheSBCbGluZCBFZGdlIiBcCiAgICAgIG9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5kZXNjcmlwdGlvbj0iUHVibGljIG1ldGFkYXRhLXN0cmlwcGluZyB0cmFuc3BvcnQgZWRnZSBmb3IgdGhlIGJsaW5kIGFwcCBzdWJzdHJhdGUiIFwKICAgICAgb3JnLm9wZW5jb250YWluZXJzLmltYWdlLmxpY2Vuc2VzPSJBcGFjaGUtMi4wIiBcCiAgICAgIG9yZy5vcGVuY29udGFpbmVycy5pbWFnZS52ZXJzaW9uPSIxLjAuMC1yYy4xLnB1YmxpYy10ZXN0LjEiIFwKICAgICAgb3JnLm9wZW5jb250YWluZXJzLmltYWdlLnJldmlzaW9uPSIke0hJVkVSRUxBWV9CTElORF9TT1VSQ0VfUkVWSVNJT059IiBcCiAgICAgIG9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5zb3VyY2U9Imh0dHBzOi8vZ2l0aHViLmNvbS9iaWdkZXN0aW55Mi9wMnAtaGl2ZXJlbGF5IiBcCiAgICAgIG9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5oaXZlcmVsYXkucHJvZHVjdC1tb2RlPSJCTElORF9BUFBMSUNBVElPTl9TVUJTVFJBVEVfVjEiIFwKICAgICAgb3JnLm9wZW5jb250YWluZXJzLmltYWdlLmhpdmVyZWxheS5jb21wb25lbnQ9ImVkZ2UiIFwKICAgICAgb3JnLm9wZW5jb250YWluZXJzLmltYWdlLmhpdmVyZWxheS5idW5kbGUtaWQ9IiR7SElWRVJFTEFZX0JMSU5EX0JVTkRMRV9JRH0iIFwKICAgICAgb3JnLm9wZW5jb250YWluZXJzLmltYWdlLmhpdmVyZWxheS5idWlsZC1pZD0iJHtISVZFUkVMQVlfQkxJTkRfQlVJTERfSUR9IiBcCiAgICAgIG9yZy5vcGVuY29udGFpbmVycy5pbWFnZS5oaXZlcmVsYXkuc291cmNlLXRyZWU9IiR7SElWRVJFTEFZX0JMSU5EX1NPVVJDRV9UUkVFfSIgXAogICAgICBvcmcub3BlbmNvbnRhaW5lcnMuaW1hZ2UuaGl2ZXJlbGF5LmNsYWltLWJvdW5kYXJ5PSJMSVZFX1BVQkxJQ19URVNUX09OTFkiCgpSVU4gZ3JvdXBhZGQgLS1zeXN0ZW0gLS1naWQgOTk3IGhpdmVyZWxheS1ibGluZCAmJiBcCiAgICB1c2VyYWRkIC0tc3lzdGVtIC0tdWlkIDk5OCAtLWdpZCBoaXZlcmVsYXktYmxpbmQgLS1ob21lLWRpciAvbm9uZXhpc3RlbnQgLS1zaGVsbCAvdXNyL3NiaW4vbm9sb2dpbiBoaXZlcmVsYXktZWRnZSAmJiBcCiAgICBpbnN0YWxsIC1kIC1vIDk5OSAtZyA5OTcgLW0gMDc1MCAvcnVuL2hpdmVyZWxheS1ibGluZCAmJiBcCiAgICBpbnN0YWxsIC1kIC1vIDk5OCAtZyA5OTcgLW0gMDU1MCAvb3B0L2hpdmVyZWxheS9lZGdlCldPUktESVIgL29wdC9oaXZlcmVsYXkvZWRnZQpDT1BZIC0tZnJvbT1ibGluZC1lZGdlLXRvb2xjaGFpbiAvb3B0L2hpdmVyZWxheS9kZXBsb3kvYmxpbmQvZWRnZS9ub2RlX21vZHVsZXMgLi9ub2RlX21vZHVsZXMKQ09QWSAtLWZyb209YmxpbmQtZWRnZS10b29sY2hhaW4gLS1jaG93bj0wOjAgLS1jaG1vZD0wNDQ0IC9vcHQvaGl2ZXJlbGF5L3BlZXJjcmVkLXRhcmdldC1hcmNoaXRlY3R1cmUgLi9wZWVyY3JlZC10YXJnZXQtYXJjaGl0ZWN0dXJlCiMgUHVibGljLUNBIHJvb3RzIGZyb20gdGhlIGRpZ2VzdC1waW5uZWQgdG9vbGNoYWluIHN0YWdlOiB0aGUgcGlubmVkIHNsaW0gYmFzZQojIHNoaXBzIG5vIGNhLWNlcnRpZmljYXRlcyBidW5kbGUgYW5kIEVkZ2UgbXVzdCB2ZXJpZnkgcHVibGljLUNBIHJlbGF5IHBlZXJzLgpDT1BZIC0tZnJvbT1ibGluZC1lZGdlLXRvb2xjaGFpbiAtLWNob3duPTA6MCAvZXRjL3NzbC9jZXJ0cyAvZXRjL3NzbC9jZXJ0cwpDT1BZIC0tY2hvd249MDowIC0tY2htb2Q9MDQ0NCBkZXBsb3kvYmxpbmQvZWRnZS9oZWFsdGhjaGVjay5tanMgLi9oZWFsdGhjaGVjay5tanMKCkVOViBOT0RFX0VOVj1wcm9kdWN0aW9uIFwKICAgIEhJVkVSRUxBWV9CTElORF9SVU5USU1FX0RJUj0vcnVuL2hpdmVyZWxheS1ibGluZCBcCiAgICBISVZFUkVMQVlfQkxJTkRfVU5BUllfU09DS0VUPS9ydW4vaGl2ZXJlbGF5LWJsaW5kL3VuYXJ5LnNvY2sgXAogICAgSElWRVJFTEFZX0JMSU5EX1NUUkVBTV9TT0NLRVQ9L3J1bi9oaXZlcmVsYXktYmxpbmQvc3RyZWFtLnNvY2sgXAogICAgSElWRVJFTEFZX0JMSU5EX0hPU1Q9MC4wLjAuMCBcCiAgICBISVZFUkVMQVlfQkxJTkRfUE9SVD05MTAwIFwKICAgIEhJVkVSRUxBWV9CTElORF9EQUVNT05fVUlEPTk5OSBcCiAgICBISVZFUkVMQVlfQkxJTkRfREFFTU9OX0dJRD05OTcgXAogICAgSElWRVJFTEFZX0JMSU5EX1NIQVJFRF9HSUQ9OTk3IFwKICAgIEhJVkVSRUxBWV9CTElORF9UTFNfS0VZPS9ydW4vc2VjcmV0cy9oaXZlcmVsYXktYmxpbmQtdGxzLmtleSBcCiAgICBISVZFUkVMQVlfQkxJTkRfVExTX0NFUlQ9L3J1bi9zZWNyZXRzL2hpdmVyZWxheS1ibGluZC10bHMuY3J0IFwKICAgIFNTTF9DRVJUX0ZJTEU9L2V0Yy9zc2wvY2VydHMvY2EtY2VydGlmaWNhdGVzLmNydAoKVk9MVU1FIFsiL3J1bi9oaXZlcmVsYXktYmxpbmQiXQpFWFBPU0UgOTEwMApVU0VSIDk5ODo5OTcKSEVBTFRIQ0hFQ0sgLS1pbnRlcnZhbD01cyAtLXRpbWVvdXQ9MnMgLS1zdGFydC1wZXJpb2Q9NXMgLS1yZXRyaWVzPTEyIFwKICBDTUQgWyJub2RlIiwgIi9vcHQvaGl2ZXJlbGF5L2VkZ2UvaGVhbHRoY2hlY2subWpzIl0KRU5UUllQT0lOVCBbIm5vZGUiLCAiL29wdC9oaXZlcmVsYXkvZWRnZS9ub2RlX21vZHVsZXMvQGhpdmVyZWxheS9ibGluZC1lZGdlL2NsaS5qcyJdCg==",
+              "llbDefinition": [
+                {
+                  "id": "step0",
+                  "op": {
+                    "Op": {
+                      "source": {
+                        "identifier": "local://dockerfile",
+                        "attrs": {
+                          "local.differ": "none",
+                          "local.followpaths": "[\"Dockerfile.blind-edge\",\"Dockerfile.blind-edge.dockerignore\"]",
+                          "local.sharedkeyhint": "dockerfile"
+                        }
+                      }
+                    },
+                    "constraints": {}
+                  }
+                },
+                {
+                  "id": "step1",
+                  "op": {
+                    "Op": {}
+                  },
+                  "inputs": [
+                    "step0:0"
+                  ]
+                }
+              ],
+              "digestMapping": {
+                "sha256:458655eb927e081cc76583f34e8e20e32ec73556b6fead7a84849cdf98d8f7ee": "step0",
+                "sha256:796d871466ec90437219d88780105a0d766dc510e9988e25390daeaf857a4f23": "step1"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

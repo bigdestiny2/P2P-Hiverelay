@@ -1,0 +1,17 @@
+{
+  "name": "hiverelay-blind-daemon-image",
+  "version": "0.0.0-draft.1",
+  "private": true,
+  "type": "module",
+  "description": "Selective dependency closure for the private HiveRelay blind daemon image",
+  "dependencies": {
+    "@hiverelay/blind-daemon": "file:../../../packages/blind-daemon",
+    "@hiverelay/blind-ipc": "file:../../../packages/blind-ipc",
+    "@hiverelay/blind-peercred": "file:../../../packages/blind-peercred",
+    "@hiverelay/blind-protocol": "file:../../../packages/blind-protocol"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0"
+}

@@ -1,0 +1,6 @@
+{
+  "decoder": "decodePrivateIpcV2Registry",
+  "errorCode": "PRIVATE_IPC_V2_NO_FALLBACK",
+  "outcome": "reject",
+  "rule": "V1 and V2 never fall back or downgrade"
+}

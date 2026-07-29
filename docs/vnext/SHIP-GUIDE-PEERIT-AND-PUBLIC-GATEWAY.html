@@ -1,0 +1,1639 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Ship Guide — Peerit + Public HTTPS Gateway + HiveRelay Story</title>
+  <style>
+    :root {
+      --bg: #0b1020;
+      --bg2: #121a2f;
+      --panel: #161f38;
+      --panel2: #1c2744;
+      --line: #2a3658;
+      --text: #e8eefc;
+      --muted: #9aabc9;
+      --faint: #6d7f9e;
+      --accent: #5b9dff;
+      --accent2: #7c6cff;
+      --good: #3dd68c;
+      --warn: #f0b429;
+      --bad: #ff6b7a;
+      --info: #56cfe1;
+      --peerit: #ff8c42;
+      --gateway: #4cc9f0;
+      --relay: #b8f2e6;
+      --radius: 14px;
+      --shadow: 0 18px 50px rgba(0,0,0,.35);
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: var(--sans);
+      color: var(--text);
+      background:
+        radial-gradient(1200px 600px at 10% -10%, rgba(91,157,255,.18), transparent 60%),
+        radial-gradient(900px 500px at 100% 0%, rgba(124,108,255,.14), transparent 55%),
+        radial-gradient(800px 400px at 50% 100%, rgba(76,201,240,.08), transparent 50%),
+        var(--bg);
+      line-height: 1.55;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .wrap { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+    nav {
+      position: sticky; top: 0; height: 100vh; overflow: auto;
+      padding: 1.4rem 1rem 2rem;
+      border-right: 1px solid var(--line);
+      background: rgba(11,16,32,.85);
+      backdrop-filter: blur(10px);
+    }
+    nav .brand { font-weight: 700; font-size: 1.05rem; letter-spacing: .02em; margin-bottom: .25rem; }
+    nav .sub { color: var(--muted); font-size: .78rem; margin-bottom: 1.2rem; line-height: 1.4; }
+    nav a {
+      display: block; color: var(--muted); padding: .42rem .55rem; border-radius: 8px;
+      font-size: .88rem; text-decoration: none;
+    }
+    nav a:hover { background: var(--panel); color: var(--text); text-decoration: none; }
+    nav .sec { margin-top: 1rem; color: var(--faint); font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; padding: 0 .55rem; }
+    main { padding: 2rem 2.4rem 4rem; max-width: 1100px; }
+    header.hero {
+      background: linear-gradient(135deg, rgba(91,157,255,.12), rgba(124,108,255,.1) 50%, rgba(76,201,240,.08));
+      border: 1px solid var(--line);
+      border-radius: calc(var(--radius) + 4px);
+      padding: 1.8rem 1.9rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1.6rem;
+    }
+    header.hero h1 { margin: 0 0 .5rem; font-size: clamp(1.6rem, 3vw, 2.25rem); line-height: 1.2; }
+    header.hero p { margin: 0; color: var(--muted); max-width: 70ch; }
+    .meta {
+      display: flex; flex-wrap: wrap; gap: .5rem; margin-top: 1rem;
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: .35rem;
+      padding: .28rem .65rem; border-radius: 999px; font-size: .78rem; font-weight: 600;
+      border: 1px solid var(--line); background: var(--panel);
+    }
+    .pill.good { color: var(--good); border-color: rgba(61,214,140,.35); background: rgba(61,214,140,.08); }
+    .pill.warn { color: var(--warn); border-color: rgba(240,180,41,.35); background: rgba(240,180,41,.08); }
+    .pill.bad { color: var(--bad); border-color: rgba(255,107,122,.35); background: rgba(255,107,122,.08); }
+    .pill.info { color: var(--info); border-color: rgba(86,207,225,.35); background: rgba(86,207,225,.08); }
+    .pill.peerit { color: var(--peerit); border-color: rgba(255,140,66,.35); background: rgba(255,140,66,.08); }
+    .pill.gateway { color: var(--gateway); border-color: rgba(76,201,240,.35); background: rgba(76,201,240,.08); }
+    h2 {
+      margin: 2.4rem 0 .8rem; font-size: 1.45rem;
+      padding-bottom: .45rem; border-bottom: 1px solid var(--line);
+    }
+    h3 { margin: 1.6rem 0 .55rem; font-size: 1.1rem; color: #d7e3ff; }
+    h4 { margin: 1.1rem 0 .4rem; font-size: .98rem; color: #c5d4f3; }
+    p { margin: .55rem 0; color: #d5def2; }
+    .lead { font-size: 1.05rem; color: var(--muted); max-width: 75ch; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1rem; }
+    @media (max-width: 980px) {
+      .wrap { grid-template-columns: 1fr; }
+      nav { position: relative; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      .grid2, .grid3 { grid-template-columns: 1fr; }
+      main { padding: 1.2rem; }
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      padding: 1rem 1.1rem;
+    }
+    .card h3 { margin-top: .1rem; }
+    .card.peerit { border-top: 3px solid var(--peerit); }
+    .card.gateway { border-top: 3px solid var(--gateway); }
+    .card.relay { border-top: 3px solid var(--relay); }
+    .card.warn { border-top: 3px solid var(--warn); }
+    .card.good { border-top: 3px solid var(--good); }
+    ul, ol { margin: .4rem 0 .8rem; padding-left: 1.25rem; color: #d5def2; }
+    li { margin: .28rem 0; }
+    table {
+      width: 100%; border-collapse: collapse; margin: .8rem 0 1.2rem;
+      font-size: .9rem; background: var(--panel); border-radius: var(--radius); overflow: hidden;
+      border: 1px solid var(--line);
+    }
+    th, td { text-align: left; padding: .65rem .75rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { background: var(--panel2); color: #cfe0ff; font-weight: 600; }
+    tr:last-child td { border-bottom: 0; }
+    code, kbd {
+      font-family: var(--mono); font-size: .84em;
+      background: rgba(255,255,255,.06); padding: .12em .35em; border-radius: 5px;
+    }
+    pre {
+      background: #0a0f1c; border: 1px solid var(--line); border-radius: 12px;
+      padding: 1rem 1.1rem; overflow: auto; font-family: var(--mono); font-size: .82rem;
+      line-height: 1.45; color: #d9e6ff; margin: .7rem 0 1rem;
+    }
+    pre .c { color: #6d7f9e; }
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: rgba(91,157,255,.08);
+      padding: .85rem 1rem; border-radius: 0 10px 10px 0; margin: 1rem 0;
+    }
+    .callout.warn { border-left-color: var(--warn); background: rgba(240,180,41,.08); }
+    .callout.bad { border-left-color: var(--bad); background: rgba(255,107,122,.08); }
+    .callout.good { border-left-color: var(--good); background: rgba(61,214,140,.08); }
+    .callout strong { display: block; margin-bottom: .25rem; }
+    .diagram {
+      background: #0a0f1c; border: 1px solid var(--line); border-radius: 12px;
+      padding: 1rem; overflow-x: auto; margin: .8rem 0 1.1rem;
+    }
+    .diagram pre { border: 0; margin: 0; background: transparent; padding: 0; }
+    .checklist li { list-style: none; margin-left: -1rem; padding-left: 0; }
+    .checklist li::before { content: "☐ "; color: var(--accent); font-weight: 700; }
+    .checklist li.done::before { content: "☑ "; color: var(--good); }
+    .timeline { border-left: 2px solid var(--line); margin: 1rem 0 1rem 0.5rem; padding-left: 1.1rem; }
+    .timeline .step { position: relative; margin: 0 0 1.1rem; }
+    .timeline .step::before {
+      content: ""; position: absolute; left: -1.42rem; top: .35rem;
+      width: .65rem; height: .65rem; border-radius: 50%;
+      background: var(--accent); box-shadow: 0 0 0 4px rgba(91,157,255,.15);
+    }
+    .timeline .step.warn::before { background: var(--warn); }
+    .timeline .step.good::before { background: var(--good); }
+    .timeline .step.bad::before { background: var(--bad); }
+    footer {
+      margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--line);
+      color: var(--faint); font-size: .82rem;
+    }
+    .toc-mini { display: flex; flex-wrap: wrap; gap: .4rem; margin: 1rem 0; }
+    .toc-mini a {
+      font-size: .8rem; padding: .3rem .55rem; border-radius: 8px;
+      background: var(--panel); border: 1px solid var(--line); color: var(--muted);
+      text-decoration: none;
+    }
+    .toc-mini a:hover { color: var(--text); border-color: var(--accent); }
+    .status-dot { width: .55rem; height: .55rem; border-radius: 50%; display: inline-block; }
+    .status-dot.g { background: var(--good); }
+    .status-dot.w { background: var(--warn); }
+    .status-dot.b { background: var(--bad); }
+    .status-dot.i { background: var(--info); }
+    .kbd-row { display: flex; flex-wrap: wrap; gap: .4rem; margin: .4rem 0; }
+    .figure-cap { color: var(--faint); font-size: .8rem; margin-top: -.4rem; margin-bottom: 1rem; }
+    .two-col-list { columns: 2; column-gap: 2rem; }
+    @media (max-width: 700px) { .two-col-list { columns: 1; } }
+    .big-num {
+      font-size: 1.8rem; font-weight: 800; color: var(--accent); line-height: 1;
+      margin-bottom: .35rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <nav>
+      <div class="brand">Ship Guide</div>
+      <div class="sub">Peerit · Public HTTPS Gateway · HiveRelay story<br />Snapshot 2026-07-13</div>
+      <div class="sec">Overview</div>
+      <a href="#story">1. The story</a>
+      <a href="#state">2. Current state</a>
+      <a href="#tracks">3. Two ship tracks</a>
+      <a href="#decisions">4. Owner decisions</a>
+      <div class="sec">Relay</div>
+      <a href="#relay-story">5. What a relay is</a>
+      <a href="#architecture">6. Architecture map</a>
+      <a href="#roles">7. T1 / T2 / T3 roles</a>
+      <div class="sec">Gateway</div>
+      <a href="#gateway-what">8. Public gateway explained</a>
+      <a href="#gateway-use">9. How to use it</a>
+      <a href="#gateway-test">10. How to test it</a>
+      <a href="#gateway-ship">11. Ship checklist (gateway)</a>
+      <div class="sec">Peerit</div>
+      <a href="#peerit-story">12. Peerit on the relays</a>
+      <a href="#peerit-ship">13. Ship checklist (Peerit)</a>
+      <div class="sec">Blind substrate</div>
+      <a href="#blind-now">14. Where blind is now</a>
+      <a href="#blind-packages">15. Packages &amp; gates</a>
+      <a href="#blind-peerit-use">16. How Peerit will use it</a>
+      <a href="#blind-track">17. Track to go online</a>
+      <a href="#blind-checklist">18. Blind online checklist</a>
+      <div class="sec">Together</div>
+      <a href="#combined">19. Combined order of work</a>
+      <a href="#commands">20. Command cookbook</a>
+      <a href="#claims">21. Honest claims board</a>
+      <a href="#glossary">22. Glossary</a>
+      <a href="#paths">23. Paths &amp; branches</a>
+    </nav>
+
+    <main>
+      <header class="hero" id="top">
+        <h1>How to ship Peerit and the Public HTTPS Gateway</h1>
+        <p class="lead">
+          A single operator-facing guide to the overall HiveRelay story, what is live today,
+          how to ship Peerit on OutboxLog relays, how to stand up and <em>use</em> the public HTTPS
+          gateway, <strong>where the blind cell substrate actually is in development</strong>, how Peerit
+          will adopt it, and the staged track to get that online — without confusing public
+          distribution with privacy claims.
+        </p>
+        <div class="meta">
+          <span class="pill info">Guide date: 2026-07-13 (blind sections expanded)</span>
+          <span class="pill gateway">Active public focus: public-t1-gateway</span>
+          <span class="pill peerit">Peerit live: OutboxLog canary (not GA)</span>
+          <span class="pill warn">Blind: large draft packages, not public ship</span>
+          <span class="pill bad">Peerit→blind: not wired yet (T09)</span>
+          <span class="pill good">Local T1 canary preflight: pass</span>
+        </div>
+      </header>
+
+      <div class="callout warn">
+        <strong>Read this first</strong>
+        This document is a planning and operations guide. It does <em>not</em> by itself authorize
+        production fleet promotion, package publish, marketplace submission, or a general-availability claim.
+        Green unit tests and local preflight are evidence for staging readiness — not for marketing-scale GA.
+      </div>
+
+      <!-- ========== 1 STORY ========== -->
+      <h2 id="story">1. The story (in plain language)</h2>
+      <p>
+        Imagine the Pear world has <strong>apps that live as P2P data</strong> (Hypercore / Hyperdrive keys),
+        not as “a server we own forever.” A <strong>HiveRelay</strong> is a machine that helps those apps
+        stay online when the original publisher is asleep: it seeds public content, offers browser-friendly
+        access, and (in a future track) can hold <em>opaque encrypted boxes</em> without knowing what’s inside.
+      </p>
+      <div class="grid3">
+        <div class="card relay">
+          <div class="big-num">1</div>
+          <h3>The relay estate</h3>
+          <p>Fleet of HiveRelay nodes (today on <code>v0.24.3</code>) that seed apps, run OutboxLog for Peerit writes, health, updates, packaging.</p>
+        </div>
+        <div class="card peerit">
+          <div class="big-num">2</div>
+          <h3>Peerit the app</h3>
+          <p>Social app already live as a <strong>writable canary</strong> on the public web, talking HTTP/SSE to OutboxLog on relays — not yet full GA, not yet blind cells.</p>
+        </div>
+        <div class="card gateway">
+          <div class="big-num">3</div>
+          <h3>Public HTTPS gateway</h3>
+          <p>New T1 product: ordinary browsers open a public Pear/Hive app by HTTPS URL. Exact bytes. <strong>No privacy claim.</strong></p>
+        </div>
+      </div>
+      <p>
+        “Shipping both updates” therefore means two <em>different</em> products that share the same relay family:
+      </p>
+      <ol>
+        <li><strong>Peerit production closure</strong> — make the live canary honest, durable, and GA-ready on OutboxLog relays (CSP, capacity, second operator, content, devices).</li>
+        <li><strong>Public T1 gateway</strong> — stage and prove one-app HTTPS distribution; later fleet only after frozen admission.</li>
+      </ol>
+      <div class="callout">
+        <strong>Blind cells are a third story</strong>
+        App-agnostic encrypted cells/inbox (<code>hiverelay-blind/1</code>) are being built on the vNext train,
+        but owner decision <strong>D-1</strong> parks an early public blind canary. Do not block the public gateway
+        or current Peerit canary on blind G3/OHTTP.
+      </div>
+
+      <!-- ========== 2 STATE ========== -->
+      <h2 id="state">2. Current state (evidence-backed snapshot)</h2>
+      <table>
+        <thead>
+          <tr><th>Surface</th><th>Status</th><th>What “done” would look like</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="status-dot g"></span> HiveRelay fleet line</td>
+            <td><span class="pill good">v0.24.3 live / main</span></td>
+            <td>Nodes healthy on promoted channel; no dirty deploy from laptop</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot g"></span> Peerit public web</td>
+            <td><span class="pill peerit">Writable canary seq 6</span></td>
+            <td>GA only after capacity, second ingress, headers, devices, content</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot w"></span> Peerit Outbox ingress</td>
+            <td><span class="pill warn">Single signed ingress</span></td>
+            <td><code>outbox.peerit.site</code> + independent second operator</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot g"></span> Gateway code train</td>
+            <td><span class="pill gateway">Merged on feat/vnext-gateway-merge</span></td>
+            <td>Gateway + storage redesign + blind packages co-exist in one branch</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot g"></span> Local gateway canary preflight</td>
+            <td><span class="pill good">pass</span></td>
+            <td>Config + nginx render with expected transitional warnings</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot b"></span> Fleet gateway (<code>--mode fleet</code>)</td>
+            <td><span class="pill bad">blocked</span></td>
+            <td>Frozen non-transitional T1 admission (not transitional allowlist)</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot w"></span> Blind substrate packages</td>
+            <td><span class="pill warn">0.0.0-draft.1 · large code</span></td>
+            <td>WIRE ready; daemon/client draft; production fail-closed — see §14–18</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot b"></span> Peerit → blind-client wiring</td>
+            <td><span class="pill bad">not in app code</span></td>
+            <td>Specs + refactor map only; live path still OutboxLog</td>
+          </tr>
+          <tr>
+            <td><span class="status-dot b"></span> Public Peerit-on-blind canary</td>
+            <td><span class="pill bad">parked (D-1)</span></td>
+            <td>Needs freeze + soak + D-1-scope; G3/OHTTP later</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>Key live endpoints (Peerit today)</h3>
+      <ul>
+        <li><strong>App:</strong> <code>https://peerit.site</code> — signed web release sequence 6 (writable canary)</li>
+        <li><strong>Outbox ingress:</strong> <code>https://outbox.peerit.site</code> — single signed HiveRelay-compatible OutboxLog path</li>
+      </ul>
+
+      <h3>Key code locations</h3>
+      <table>
+        <thead><tr><th>What</th><th>Path / branch</th></tr></thead>
+        <tbody>
+          <tr><td>Combined gateway + vNext train</td><td><code>00-core/hr-vnext-gateway-merge</code> · <code>feat/vnext-gateway-merge</code></td></tr>
+          <tr><td>Gateway-only history</td><td><code>00-core/hr-https-gateway</code> · <code>feat/public-https-hive-gateway</code></td></tr>
+          <tr><td>Blind integration history</td><td><code>00-core/hr-vnext-integration</code> · <code>feat/vnext-integration</code></td></tr>
+          <tr><td>Fleet main (v0.24.3)</td><td><code>00-core/hiverelay</code> · <code>main</code></td></tr>
+          <tr><td>Peerit app</td><td><code>02-apps/peerit</code> (parallel agent may be dirty)</td></tr>
+          <tr><td>This guide</td><td><code>docs/vnext/SHIP-GUIDE-PEERIT-AND-PUBLIC-GATEWAY.html</code></td></tr>
+        </tbody>
+      </table>
+
+      <!-- ========== 3 TRACKS ========== -->
+      <h2 id="tracks">3. Two ship tracks (do not mash them together)</h2>
+      <div class="grid2">
+        <div class="card peerit">
+          <h3>Track P — Peerit live product</h3>
+          <p><strong>Job:</strong> Ordinary browsers use Peerit with signed assets and durable OutboxLog writes/reads.</p>
+          <ul>
+            <li>Protocol today: signed HTTP + SSE gossip via OutboxLog</li>
+            <li>Relays: HiveRelay (or compatible) OutboxLog service</li>
+            <li>Release unit: signed web sequence + roster + deploy</li>
+            <li>Success: honest GA (or keep calling it canary forever)</li>
+          </ul>
+        </div>
+        <div class="card gateway">
+          <h3>Track G — Public T1 HTTPS gateway</h3>
+          <p><strong>Job:</strong> Ordinary browsers load a <em>public</em> Pear/Hive app by HTTPS URL with exact bytes.</p>
+          <ul>
+            <li>Protocol: host-key routing, finite response budgets, nginx edge</li>
+            <li>Relays: T1 availability role only; custody off for Phase 1 canary</li>
+            <li>Release unit: gateway config + evidence + (later) fleet channel</li>
+            <li>Success: staging canary → later fleet after frozen admission</li>
+          </ul>
+        </div>
+      </div>
+      <div class="callout good">
+        <strong>Active focus (owner, 2026-07-13)</strong>
+        Get the <em>public HTTPS gateway</em> going first for staging. Peerit continues in parallel (other agent).
+        Blind public canary is not the current ship goal.
+      </div>
+
+      <!-- ========== 4 DECISIONS ========== -->
+      <h2 id="decisions">4. Owner decisions that shape the work</h2>
+      <p>These are locked product choices (interview 2026-07-13). They prevent “accidental” privacy marketing.</p>
+      <table>
+        <thead><tr><th>ID</th><th>Decision</th><th>Effect on shipping</th></tr></thead>
+        <tbody>
+          <tr><td><strong>D-1</strong></td><td>No early G2-S blind canary — wait for “advanced” blind</td><td>Peerit blind migration not the current public ship</td></tr>
+          <tr><td><strong>D-2</strong></td><td>OHTTP privacy only with independent ingress operator</td><td>Same-operator OHTTP ≠ privacy claim</td></tr>
+          <tr><td><strong>D-3</strong></td><td>Defer G3 until repair/pay contract</td><td>No unlinkable-cells product yet</td></tr>
+          <tr><td><strong>D-4</strong></td><td>Self-operated relays only for now</td><td>No third-party operator recruitment yet</td></tr>
+          <tr><td><strong>D-5</strong></td><td>Gateway is separate public product</td><td><strong>Ship gateway without privacy language</strong></td></tr>
+          <tr><td><strong>D-6</strong></td><td>Remove K_partition unless measured benefit</td><td>Simpler store freeze for blind later</td></tr>
+          <tr><td><strong>D-7</strong></td><td>After blind-only write → dual-read rollback only</td><td>Migration wording when blind ships later</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ========== 5 RELAY STORY ========== -->
+      <h2 id="relay-story">5. What a HiveRelay actually is</h2>
+      <p>
+        A HiveRelay is not “the app.” It is infrastructure that keeps P2P applications
+        <strong>available</strong> and, when configured, provides
+        <strong>browser-compatible entrances</strong>.
+      </p>
+      <h3>Jobs a relay can do</h3>
+      <ul>
+        <li><strong>Seed public app drives</strong> so peers can fetch blocks after the publisher goes offline.</li>
+        <li><strong>Expose HTTP APIs</strong> for management, status, catalogues, and (for Peerit) OutboxLog.</li>
+        <li><strong>Run optional services</strong> (OutboxLog, poker, identity helpers, etc.) as plugins — application-aware legacy path.</li>
+        <li><strong>Serve a public HTTPS app gateway</strong> (new T1 product) for exact-byte public content.</li>
+        <li><strong>Eventually run a blind daemon</strong> (separate process, separate claims) for opaque cells — not mixed into T1.</li>
+      </ul>
+      <h3>What a relay is not</h3>
+      <ul>
+        <li>Not the identity of the app (the app key / drive key is canonical).</li>
+        <li>Not a promise of anonymity just because encryption exists somewhere in the monorepo.</li>
+        <li>Not allowed to mount custody/blind data on the public gateway.</li>
+      </ul>
+
+      <!-- ========== 6 ARCH ========== -->
+      <h2 id="architecture">6. Architecture map</h2>
+      <div class="diagram">
+        <pre>
+┌──────────────────────────────────────────────────────────────────────────┐
+│                        Pear / Holepunch world                            │
+│   Hypercore · Hyperdrive · Hyperswarm · Corestore · Bare / Node          │
+└──────────────────────────────────────────────────────────────────────────┘
+                 │ publish / seed                         │ write social events
+                 ▼                                        ▼
+┌────────────────────────────┐             ┌─────────────────────────────────┐
+│  Public app content (T1)   │             │  Peerit client (browser / Pear) │
+│  app key = identity        │             │  signed posts, outbox, UI       │
+└─────────────┬──────────────┘             └───────────────┬─────────────────┘
+              │ seed                                        │ HTTP / SSE
+              ▼                                             ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                         HiveRelay node (v0.24.3 estate)                    │
+│  ┌─────────────────────┐  ┌─────────────────────┐  ┌────────────────────┐ │
+│  │ Seeding / AppRegistry│  │ OutboxLog service   │  │ Management API     │ │
+│  │ (public availability)│  │ (Peerit writes)     │  │ :9100 loopback     │ │
+│  └──────────┬──────────┘  └─────────────────────┘  └────────────────────┘ │
+│             │                                                              │
+│             ▼  NEW PRODUCT (public-t1-gateway)                             │
+│  ┌─────────────────────────────────────────────────────────────────────┐  │
+│  │ Public HTTPS app gateway :9200 (loopback)                           │  │
+│  │ exact-byte GET/HEAD · host-key routing · finite budgets             │  │
+│  │ allowlist of PUBLIC apps only · custody MUST be off for Phase 1     │  │
+│  └─────────────────────────────────────────────────────────────────────┘  │
+└──────────────────────────────────────────────────────────────────────────┘
+              ▲
+              │ TLS terminate, path isolation
+┌─────────────┴──────────────┐
+│ nginx :443                  │
+│  relay-api.example → :9100  │
+│  *.hive-canary…   → :9200   │
+└─────────────────────────────┘
+              ▲
+              │ ordinary browser
+         https://…
+
+LATER (parked for public ship): isolated blind daemon (cells/inbox) — separate
+process, keys, storage root, claims. Never share public gateway listener with T2.
+        </pre>
+      </div>
+      <p class="figure-cap">Figure: one node can host both Peerit OutboxLog (app backend) and T1 public gateway (content distribution). They are different products.</p>
+
+      <!-- ========== 7 ROLES ========== -->
+      <h2 id="roles">7. T1 / T2 / T3 — the security boundary that makes gateway safe</h2>
+      <table>
+        <thead><tr><th>Role</th><th>Purpose</th><th>Public HTTPS gateway?</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>T1 — Availability</strong></td>
+            <td>Public application bytes, seeding, retrieval proofs, distribution</td>
+            <td><span class="pill good">MAY run gateway</span></td>
+          </tr>
+          <tr>
+            <td><strong>T2 — Custody / blind</strong></td>
+            <td>Time-bounded opaque storage; no public content mount</td>
+            <td><span class="pill bad">MUST NOT run app gateway</span></td>
+          </tr>
+          <tr>
+            <td><strong>T3 — Witness</strong></td>
+            <td>Independent observation / statements</td>
+            <td><span class="pill bad">MUST NOT serve app content</span></td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout bad">
+        <strong>Hard rule</strong>
+        If custody/blind is enabled on a node, Phase 1 canary config requires <code>custody.enabled: false</code>
+        for the public gateway path. Mixed-role mistakes are security bugs, not “config preferences.”
+      </div>
+
+      <!-- ========== 8 GATEWAY WHAT ========== -->
+      <h2 id="gateway-what">8. Public HTTPS gateway — what it is (and how to think about it)</h2>
+      <p>
+        The gateway is a <strong>replaceable front door</strong> for public apps. The app’s real identity
+        is still the cryptographic app key. HTTPS hostnames are conveniences that can move between operators.
+      </p>
+      <h3>URL shapes</h3>
+      <pre><span class="c"># Canonical P2P identity (not what Chrome opens by default)</span>
+hive://&lt;app-key&gt;/&lt;path&gt;
+
+<span class="c"># Gateway-specific HTTPS (operator domain + key label)</span>
+https://&lt;z32-app-key&gt;.hive.&lt;gateway-domain&gt;/&lt;path&gt;
+
+<span class="c"># Publisher-owned HTTPS (your domain in front; still same app key underneath)</span>
+https://app.publisher.example/&lt;path&gt;</pre>
+      <h3>What “usable” means for an end user</h3>
+      <ol>
+        <li>Someone publishes a public Hyperdrive/app and seeds it to a T1 relay.</li>
+        <li>The relay allowlists that app key for HTTP serving (Phase 1: exactly one key on canary).</li>
+        <li>DNS + TLS point a hostname at the gateway edge.</li>
+        <li>User opens the HTTPS URL in a normal browser and receives <strong>exact bytes</strong> of public files.</li>
+        <li>If the gateway operator disappears, another operator can serve the <em>same app key</em> under a different hostname.</li>
+      </ol>
+      <h3>What users must not be told</h3>
+      <ul>
+        <li>“This HTTPS link is private / anonymous / blind.”</li>
+        <li>“The gateway is your identity.”</li>
+        <li>“Any app on this suffix is isolated like a full Public Suffix.” (Phase 1: one app only.)</li>
+      </ul>
+
+      <!-- ========== 9 GATEWAY USE ========== -->
+      <h2 id="gateway-use">9. How to use the public gateway (operator playbook)</h2>
+
+      <h3>9.1 Mental model of ports</h3>
+      <div class="diagram">
+        <pre>
+Internet users
+      │
+      │ 443 TLS
+      ▼
+┌──────────────── nginx ────────────────┐
+│  Host: relay-api.example              │──► 127.0.0.1:9100  management API / WSS
+│  Host: *.hive-canary.example          │──► 127.0.0.1:9200  public app gateway ONLY
+└───────────────────────────────────────┘
+         ▲ never cross-proxy these backends
+         │ firewall: 9100/9200 not public
+        </pre>
+      </div>
+
+      <h3>9.2 Minimal config (Phase 1 canary)</h3>
+      <p>Start from <code>deploy/public-hive-gateway/hiverelay-config.example.json</code> and replace placeholders:</p>
+      <pre>{
+  "productProfile": "public-t1-gateway",
+  "requirePhysicalEnforcement": true,
+  "enableAPI": true,
+  "enableSeeding": true,
+  "apiHost": "127.0.0.1",
+  "apiPort": 9100,
+  "gatewayHost": "127.0.0.1",
+  "gatewayPort": 9200,
+  "gatewayTrustProxy": true,
+  "gatewayTrustedProxyAddresses": ["127.0.0.1", "::1", "::ffff:127.0.0.1"],
+  "gatewayRequireForwardedSNI": true,
+  "gatewayMaxResponseBytes": 67108864,
+  "gatewayMaxTransformBytes": 4194304,
+  "gatewayEgressBytesPerWindow": 268435456,
+  "gatewayEgressWindowMs": 60000,
+  "gatewayMaxResponseLifetimeMs": 900000,
+  "custody": { "enabled": false },
+  "hiveAppHostSuffix": "hive-canary.YOURDOMAIN",
+  "hiveAppPublicKeys": ["YOUR_64_HEX_APP_KEY"],
+  "hiveAppPublicVersions": {
+    "YOUR_64_HEX_APP_KEY": 1
+  }
+}</pre>
+      <div class="callout warn">
+        <strong>Phase 1 constraints</strong>
+        Exactly <em>one</em> public app key. No second untrusted app on the same suffix without Public Suffix
+        or separate registrable domains. Cookie-free gateway and app auth.
+      </div>
+
+      <h3>9.3 End-to-end operator flow</h3>
+      <div class="timeline">
+        <div class="step good">
+          <h4>A. Prepare an isolated staging host</h4>
+          <p>Prefer a fresh VPS, not a production fleet stable node, while admission is transitional.</p>
+        </div>
+        <div class="step">
+          <h4>B. Install HiveRelay from the gateway train</h4>
+          <p>Worktree/branch: <code>feat/vnext-gateway-merge</code> (or a release cut from it later). Install systemd unit; keep data dir backed up.</p>
+        </div>
+        <div class="step">
+          <h4>C. DNS</h4>
+          <ul>
+            <li><code>relay-api.staging…</code> A/AAAA → node</li>
+            <li><code>*.hive-canary.staging…</code> wildcard A/AAAA → same node</li>
+          </ul>
+        </div>
+        <div class="step">
+          <h4>D. TLS certificates</h4>
+          <p>Let’s Encrypt (or equivalent) for API host + wildcard app host. Private keys stay node-local; never commit.</p>
+        </div>
+        <div class="step">
+          <h4>E. Write config + set <code>HIVERELAY_API_KEY</code></h4>
+          <p>Management token for API; never log it into evidence files (preflight is designed not to print it).</p>
+        </div>
+        <div class="step">
+          <h4>F. Seed / register the one public app</h4>
+          <p>Ensure the app key is present as a public, seedable entry. Version pin in <code>hiveAppPublicVersions</code> matches what you intend to serve.</p>
+        </div>
+        <div class="step">
+          <h4>G. Render &amp; install nginx include</h4>
+          <p>Use the strict template under <code>deploy/public-hive-gateway/nginx.conf.template</code> via preflight <code>--nginx-output</code>.</p>
+        </div>
+        <div class="step good">
+          <h4>H. Start services &amp; run canary preflight with live probe</h4>
+          <p>See §10. Expect transitional admission warnings. Status must be <code>pass</code> with probe evidence.</p>
+        </div>
+        <div class="step warn">
+          <h4>I. Observe ≥ 24 hours</h4>
+          <p>Watch error rates, disk, latency, cert renewal, and that only the allowlisted app answers.</p>
+        </div>
+        <div class="step bad">
+          <h4>J. Do not promote to fleet yet</h4>
+          <p><code>--mode fleet</code> remains blocked until admission is non-transitional and substrate role gates pass.</p>
+        </div>
+      </div>
+
+      <h3>9.4 How a developer / publisher uses it</h3>
+      <ol>
+        <li>Build a static or Pear public app with a stable Hyperdrive/app key.</li>
+        <li>Publish and ensure a T1 relay is seeding that key.</li>
+        <li>Ask the gateway operator to allowlist the key (Phase 1: only one app per canary).</li>
+        <li>Share the HTTPS URL with users (gateway host or your publisher domain that points at the gateway).</li>
+        <li>Optional: expose <code>Link: &lt;hive://…&gt;; rel="canonical"</code> so advanced clients can skip the gateway later.</li>
+      </ol>
+
+      <h3>9.5 How an end user uses it</h3>
+      <ol>
+        <li>Open the HTTPS link in Chrome/Safari/Firefox — no special extension required for public bytes.</li>
+        <li>If the page needs full P2P write powers, that is a different product surface (Peerit/PearBrowser), not the T1 gateway’s job.</li>
+      </ol>
+
+      <!-- ========== 10 GATEWAY TEST ========== -->
+      <h2 id="gateway-test">10. How to test the public gateway</h2>
+
+      <h3>10.1 Automated suites (already green on merge train)</h3>
+      <p>From <code>00-core/hr-vnext-gateway-merge</code>:</p>
+      <pre><span class="c"># Storage / physical enforcement / lifecycle (gateway prerequisites)</span>
+./node_modules/.bin/brittle --timeout 180000 \
+  test/unit/storage-cap-resolve.test.js \
+  test/unit/storage-admission-authority.test.js \
+  test/unit/hyper-gateway-hardening.test.js \
+  test/unit/app-registry-physical-enforcement.test.js
+
+<span class="c"># Public gateway unit surface</span>
+./node_modules/.bin/brittle --timeout 180000 \
+  test/unit/public-hive-gateway-*.test.js \
+  test/unit/hive-gateway-host.test.js \
+  test/unit/fleet-gateway-quarantine.test.js \
+  test/unit/fleet-updater-gateway.test.js
+
+<span class="c"># Signed deploy rehearsal (local, not live fleet)</span>
+./node_modules/.bin/brittle --timeout 180000 \
+  test/integration/public-hive-gateway-deploy-rehearsal.test.js
+
+<span class="c"># Optional live integration harness (needs environment)</span>
+npm run test:public-hive-gateway:live
+npm run test:public-hive-gateway:soak   <span class="c"># 1000 requests if env set</span></pre>
+
+      <h3>10.2 Canary preflight (config + nginx) — local</h3>
+      <pre>export HIVERELAY_API_KEY='staging-secret-not-for-git'
+mkdir -p /tmp/hr-gateway-rehearsal
+
+node scripts/preflight-public-hive-gateway.mjs \
+  --mode canary \
+  --config deploy/public-hive-gateway/hiverelay-config.example.json \
+  --evidence /tmp/hr-gateway-rehearsal/preflight-canary-config.json
+
+<span class="c"># With nginx render (cert paths required by the tool)</span>
+node scripts/preflight-public-hive-gateway.mjs \
+  --mode canary \
+  --config deploy/public-hive-gateway/hiverelay-config.example.json \
+  --nginx-template deploy/public-hive-gateway/nginx.conf.template \
+  --certificate /path/to/fullchain.pem \
+  --certificate-key /path/to/privkey.pem \
+  --nginx-output /tmp/hr-gateway-rehearsal/nginx-canary.conf \
+  --evidence /tmp/hr-gateway-rehearsal/preflight-canary-nginx.json</pre>
+      <p><strong>Expected warnings on pass:</strong> transitional admission; no Public Suffix evidence; shared cache disabled.</p>
+
+      <h3>10.3 Staging preflight with live TLS probe</h3>
+      <pre>node scripts/preflight-public-hive-gateway.mjs \
+  --mode canary \
+  --config /etc/hiverelay/public-gateway.json \
+  --nginx-template deploy/public-hive-gateway/nginx.conf.template \
+  --certificate /etc/letsencrypt/live/.../fullchain.pem \
+  --certificate-key /etc/letsencrypt/live/.../privkey.pem \
+  --nginx-binary /usr/sbin/nginx \
+  --nginx-config /etc/nginx/...include... \
+  --probe-origin "https://&lt;app-label&gt;.hive-canary.YOURDOMAIN" \
+  --connect-address &lt;node-public-ip&gt; \
+  --app-key &lt;64-hex&gt; \
+  --path /index.html \
+  --expected-sha256 &lt;body-sha256&gt; \
+  --evidence ./public-gateway-canary-preflight.json</pre>
+
+      <h3>10.4 Manual browser / curl checks</h3>
+      <pre><span class="c"># Exact body digest</span>
+curl -fsS "https://&lt;host&gt;/index.html" | shasum -a 256
+
+<span class="c"># Headers: no Set-Cookie surprises; sensible cache policy for Phase 1</span>
+curl -sI "https://&lt;host&gt;/index.html"
+
+<span class="c"># Isolation: API host must not serve app; app host must not serve management</span>
+curl -sI "https://relay-api…/index.html"   <span class="c"># should not be the app</span>
+curl -sI "https://&lt;app&gt;.hive-canary…/api/…"  <span class="c"># should not be management</span>
+
+<span class="c"># Oversized / abusive paths should hit finite policy (413/416 etc.), not hang the node</span></pre>
+
+      <h3>10.5 What “pass” means for staging vs fleet</h3>
+      <table>
+        <thead><tr><th>Mode</th><th>Purpose</th><th>Admission</th><th>Promotion?</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>canary</code></td>
+            <td>Staging rehearsal, one app</td>
+            <td>Transitional allowlist OK (warn)</td>
+            <td>Staging only; not fleet evidence</td>
+          </tr>
+          <tr>
+            <td><code>fleet</code></td>
+            <td>Production posture</td>
+            <td>Must be frozen non-transitional</td>
+            <td>Only after substrate + release tag + observation</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- ========== 11 GATEWAY SHIP ========== -->
+      <h2 id="gateway-ship">11. Ship checklist — Public T1 gateway</h2>
+      <ul class="checklist">
+        <li class="done">Gateway implementation merged with vNext train (<code>feat/vnext-gateway-merge</code>)</li>
+        <li class="done">Focused unit + deploy-rehearsal tests green</li>
+        <li class="done">Local canary preflight pass (config + nginx render)</li>
+        <li class="done">Owner D-5: separate public product (no privacy marketing)</li>
+        <li>Isolated staging VPS provisioned</li>
+        <li>DNS: API host + wildcard app host</li>
+        <li>Real TLS certificates installed</li>
+        <li>Real config with exactly one public app key + version pin</li>
+        <li><code>custody.enabled: false</code> verified</li>
+        <li>App seeded / publicly available on the node</li>
+        <li>nginx installed from rendered template; ports 9100/9200 loopback-only</li>
+        <li>Live canary preflight with probe + expected SHA-256 pass</li>
+        <li>Ops/rehearsal contract evidence recorded</li>
+        <li>24h observation window complete</li>
+        <li class="done">Do <em>not</em> treat transitional canary as fleet promotion evidence</li>
+        <li>Later: frozen T1 admission → <code>--mode fleet</code> canary → stable</li>
+      </ul>
+
+      <!-- ========== 12 PEERIT STORY ========== -->
+      <h2 id="peerit-story">12. Peerit live on the relays — overall story</h2>
+      <p>
+        Peerit is the first ordinary-browser social app in this estate. Today it does <strong>not</strong>
+        depend on the public T1 gateway for its main product loop. It depends on:
+      </p>
+      <ul>
+        <li><strong>Signed static web assets</strong> (sequence-numbered release on <code>peerit.site</code>)</li>
+        <li><strong>OutboxLog</strong> on HiveRelay-compatible relays for durable signed writes and reads</li>
+        <li><strong>SSE / gossip</strong> for live updates</li>
+        <li>Optional PearBrowser paths for richer P2P behavior</li>
+      </ul>
+      <div class="diagram">
+        <pre>
+  Browser (peerit.site)
+       │  GET signed assets (CDN/static host)
+       │  POST/GET OutboxLog over HTTPS
+       ▼
+  outbox.peerit.site  ──►  HiveRelay OutboxLog  ──►  disk journals / heads
+       │
+       └── SSE notifications / directory pagination / CAS writes
+
+  Public T1 gateway is a *different door* (for hosting public app bundles),
+  not the Peerit Outbox write path.
+        </pre>
+      </div>
+
+      <h3>Current production posture (2026-07-10 matrix; still the canary frame)</h3>
+      <table>
+        <thead><tr><th>Requirement</th><th>State</th><th>Still needed for GA</th></tr></thead>
+        <tbody>
+          <tr><td>Signed writable release</td><td><span class="pill good">Pass (seq 6)</span></td><td>Keep signing discipline</td></tr>
+          <tr><td>Durable writer (one ingress)</td><td><span class="pill good">Pass (canary-grade)</span></td><td>Second failure domain</td></tr>
+          <tr><td>CSP / security headers on live</td><td><span class="pill bad">Fail</span></td><td>Apply Render header rules + proof</td></tr>
+          <tr><td>Second independent Outbox operator</td><td><span class="pill bad">Fail</span></td><td>New operator + multi-origin roster</td></tr>
+          <tr><td>2,000-client staging capacity</td><td><span class="pill bad">Fail (hard GA gate)</span></td><td>Isolated staging sweeps + reports</td></tr>
+          <tr><td>Two real PearBrowser devices</td><td><span class="pill bad">Fail</span></td><td>Operator device evidence</td></tr>
+          <tr><td>Launch content cleanup</td><td><span class="pill warn">Editorial</span></td><td>Approve v3 communities / archive test junk</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Language you may use today: <strong>“public writable canary.”</strong><br />
+        Language you may not use yet: “independently durable multi-operator production” or “marketing-scale GA.”
+      </p>
+
+      <!-- ========== 13 PEERIT SHIP ========== -->
+      <h2 id="peerit-ship">13. Ship checklist — Peerit on relays (current product)</h2>
+      <p>This is the path to ship Peerit updates <em>without</em> waiting on blind cells or the T1 gateway fleet.</p>
+
+      <h3>13.1 Relay side</h3>
+      <ul class="checklist">
+        <li>Confirm production image/config is HiveRelay OutboxLog line you intend (attest version/SHA)</li>
+        <li>Writer ownership / CAS / namespace rules enforced (reject cross-owner, stale CAS, unsigned garbage)</li>
+        <li>Rate limits and health endpoints documented and monitored</li>
+        <li>Backup: off-host or clean-host restore proof (not only same-disk timer)</li>
+        <li>Second independent writable operator OR keep single-ingress canary language forever</li>
+        <li>Disk pressure / storage cap safety on Outbox hosts (fleet lessons from 50 GiB default incident)</li>
+      </ul>
+
+      <h3>13.2 Web client / release side</h3>
+      <ul class="checklist">
+        <li><code>npm test</code> / <code>npm run test:ci</code> green on the release commit</li>
+        <li>Signed asset manifest + sig; pinned release key</li>
+        <li>Ship only via release tooling that blocks unsigned / incomplete subsets</li>
+        <li>Apply live CSP + security headers (<code>deploy/render-security-headers.json</code>) and re-run header proof</li>
+        <li>Link/validate Render blueprint carefully (no duplicate service accidents)</li>
+        <li>Service worker / sequence upgrades tested (atomic update path)</li>
+        <li>Rollback floor: signed version + root; fail closed on mismatch</li>
+      </ul>
+
+      <h3>13.3 Capacity &amp; devices</h3>
+      <ul class="checklist">
+        <li>Staging sweeps: 100 → 500 → 1,000 → 2,000 clients with labeled reports</li>
+        <li>Shared-NAT and distributed profiles; induced relay failure</li>
+        <li>p99 / error / 429 / RSS budgets per <code>deploy/CAPACITY.md</code></li>
+        <li>Two PearBrowser profiles: convergence + restart proof</li>
+        <li>Real iOS persistence/reload; accessibility review notes</li>
+      </ul>
+
+      <h3>13.4 Product / editorial</h3>
+      <ul class="checklist">
+        <li>Curated launch communities; archive or label test-era boards</li>
+        <li>About/Verify copy matches actual topology (one ingress vs two, privacy ceilings)</li>
+      </ul>
+
+      <h3>13.5 Suggested Peerit release commands</h3>
+      <pre>cd 02-apps/peerit
+npm test
+npm audit
+npm run launch:readiness    <span class="c"># must stay honest / blocked until evidence exists</span>
+npm run ship:check
+npm run web:verify
+npm run proof:http-headers -- --url https://peerit.site
+npm run proof:writable-candidate -- --json
+npm run proof:web-deploy -- --url https://peerit.site</pre>
+
+      <!-- ========== 14 BLIND NOW ========== -->
+      <h2 id="blind-now">14. Blind cell substrate — where development is now</h2>
+      <p class="lead">
+        The blind substrate is a <strong>real, large implementation</strong> on the vNext merge train — not
+        vaporware — but it is still <strong>draft product</strong>. Public wire formats are largely frozen;
+        daemon/edge/client packages exist and pass large test suites; production start is intentionally
+        <em>fail-closed</em> until more gates pass. Peerit does not import it yet.
+      </p>
+
+      <div class="grid3">
+        <div class="card good">
+          <h3>Built</h3>
+          <ul>
+            <li>Six <code>@hiverelay/blind-*</code> packages</li>
+            <li>Canonical specs under <code>docs/protocol/</code></li>
+            <li>Public WIRE authority <code>releaseReady: true</code></li>
+            <li>Daemon: CELL / INBOX / CORE / FORWARD pieces</li>
+            <li>Staged PUT admission (V-3 style)</li>
+            <li>CR-5 draft forward route scope</li>
+            <li>Browser control artifact path (Chromium exercised)</li>
+            <li>291+ blind-boundary tests green on merge train</li>
+          </ul>
+        </div>
+        <div class="card warn">
+          <h3>In progress / draft</h3>
+          <ul>
+            <li>All packages still <code>0.0.0-draft.1</code></li>
+            <li>Browser artifact static <code>releaseReady: false</code> until evidence verifier</li>
+            <li>Full CR-1…CR-8 + V-1…V-8 closure on one freeze</li>
+            <li>Production runtime assembler gates</li>
+            <li>Seven-day soak / disposable cohort</li>
+            <li>Store format + signed topology + migration catalog</li>
+            <li>K_partition removal per D-6 before final freeze</li>
+          </ul>
+        </div>
+        <div class="card bad">
+          <h3>Not shipping publicly yet</h3>
+          <ul>
+            <li>No npm RC/stable publish of blind packages</li>
+            <li>No fleet blind role keys / channels</li>
+            <li>No Peerit production write path on cells</li>
+            <li>No G3 claim (D-3 deferred)</li>
+            <li>No OHTTP privacy claim (D-2 needs independent operator)</li>
+            <li>Owner D-1 parks early public G2-S canary</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>14.1 What “blind substrate” means</h3>
+      <p>
+        Think of two layers. The <strong>relay</strong> only stores fixed-size encrypted blobs, opaque inboxes,
+        encrypted cores, admission tokens, and signed receipts. The <strong>app</strong> (Peerit) encrypts,
+        signs, merges, indexes, and moderates on the client. The relay never sees post text, author graph,
+        community names, or Peerit schema.
+      </p>
+      <div class="diagram">
+        <pre>
+ Protocol family:  hiverelay-blind/1
+
+ Five public families (generic — no Peerit types):
+   DESCRIBE  →  “who am I, what profiles, health”
+   CELL      →  fixed-size ciphertext slots (PUT / GET / renew / drop)
+   INBOX     →  opaque append mailboxes (G2-S at rest for physical inbox)
+   CORE      →  encrypted hypercore-like availability
+   FORWARD   →  opaque circuit forwarding (route budget still hardening)
+
+ Product split:
+   @hiverelay/blind-protocol   pure codecs, domains, vectors, hashes
+   @hiverelay/blind-client     encrypt/pad/capabilities/selection/repair
+   @hiverelay/blind-ipc        private daemon↔edge IPC
+   @hiverelay/blind-peercred   peer credentials
+   @hiverelay/blind-edge       least-privilege network edge
+   @hiverelay/blind-daemon     storage process (WAL, buckets, readiness)
+
+ NOT in the blind daemon:
+   AppRegistry · OutboxLog rows · Peerit posts · semantic logs · catalogue
+        </pre>
+      </div>
+
+      <h3>14.2 Branch / worktree map (development estate)</h3>
+      <table>
+        <thead><tr><th>Location</th><th>Branch / tip role</th><th>What it holds</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>hr-vnext-gateway-merge</code></td>
+            <td><code>feat/vnext-gateway-merge</code> (current combined train)</td>
+            <td>Blind packages + public gateway + programme docs</td>
+          </tr>
+          <tr>
+            <td><code>hr-vnext-integration</code></td>
+            <td><code>feat/vnext-integration</code></td>
+            <td>Blind-first history before gateway merge</td>
+          </tr>
+          <tr>
+            <td><code>hr-blind-protocol-remediation</code> etc.</td>
+            <td>Satellite fix branches (often clean, content re-landed)</td>
+            <td>CR remediation, staged PUT, CR-5 route scope slices</td>
+          </tr>
+          <tr>
+            <td><code>hiverelay</code> <code>main</code></td>
+            <td><code>v0.24.3</code> fleet line</td>
+            <td><strong>No</strong> production blind product — legacy app-aware relay</td>
+          </tr>
+          <tr>
+            <td><code>02-apps/peerit</code></td>
+            <td>live canary / opt-in-writer work</td>
+            <td>Specs in <code>docs/</code>; <strong>no</strong> <code>@hiverelay/blind-client</code> wiring yet</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>14.3 Maturity by surface (honest scorecard)</h3>
+      <table>
+        <thead><tr><th>Surface</th><th>Maturity</th><th>Evidence / notes</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Master + implementation specs</td>
+            <td><span class="pill good">Strong / build-ready prose</span></td>
+            <td><code>docs/protocol/BLIND-*.md</code>, WIRE, IPC, client-composition docs</td>
+          </tr>
+          <tr>
+            <td>Public WIRE ABI + vectors</td>
+            <td><span class="pill good">Executable freeze for WIRE</span></td>
+            <td>71 schemas, 22 ops, 20 errors, 39 domains; <code>WIRE_RUNTIME_AUTHORITY_STATUS.releaseReady: true</code></td>
+          </tr>
+          <tr>
+            <td>Client composition authority</td>
+            <td><span class="pill good">Independent final authority</span></td>
+            <td>Six client-side records relays never decode; 18-vector set</td>
+          </tr>
+          <tr>
+            <td>blind-client library</td>
+            <td><span class="pill warn">Advanced draft</span></td>
+            <td>Cell composition, qualifier, control surface; browser artifact needs evidence gate</td>
+          </tr>
+          <tr>
+            <td>blind-daemon / blind-edge</td>
+            <td><span class="pill warn">Large draft runtime</span></td>
+            <td>CELL/INBOX/CORE/FORWARD adapters, staged PUT, readiness, production-runtime fail-closed</td>
+          </tr>
+          <tr>
+            <td>Adversarial remediation (CR/V)</td>
+            <td><span class="pill warn">Partial — still open freeze work</span></td>
+            <td>V-3 staged PUT, CR-5 design/candidate, partial V-1; full freeze not declared</td>
+          </tr>
+          <tr>
+            <td>Published package versions</td>
+            <td><span class="pill bad">Not release versions</span></td>
+            <td>All <code>0.0.0-draft.1</code></td>
+          </tr>
+          <tr>
+            <td>Production listeners / fleet</td>
+            <td><span class="pill bad">Fail-closed / absent</span></td>
+            <td>Must not describe v0.24.3 fleet as the blind substrate</td>
+          </tr>
+          <tr>
+            <td>Peerit production integration</td>
+            <td><span class="pill bad">Not started in app code</span></td>
+            <td>Refactor map exists in specs; OutboxLog still the live path</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>14.4 Privacy profiles (so “online” has a label)</h3>
+      <table>
+        <thead><tr><th>Profile</th><th>Plain meaning</th><th>Ship stance</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>G0 / G1</strong></td>
+            <td>Baseline integrity / no plaintext app fields in storage role</td>
+            <td>Required of every blind storage build</td>
+          </tr>
+          <tr>
+            <td><strong>G2-S</strong> (direct-blind)</td>
+            <td>Relay disk has no Peerit schema; operator may still see access metadata / stable opaque IDs</td>
+            <td>Natural first technical profile; owner <strong>D-1</strong> currently refuses early <em>public</em> canary</td>
+          </tr>
+          <tr>
+            <td><strong>G2-W</strong></td>
+            <td>Web origin separation / oblivious-style web ingress properties</td>
+            <td>Needs real OHTTP + independent ingress (D-2)</td>
+          </tr>
+          <tr>
+            <td><strong>G3</strong></td>
+            <td>At-rest unlinkability for randomized cells (with residuals)</td>
+            <td><strong>Deferred</strong> until repair/pay contract (D-3)</td>
+          </tr>
+          <tr>
+            <td><strong>G4-T / G4-I</strong></td>
+            <td>Stronger transport / identity unlinkability</td>
+            <td>Not a near-term public claim</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="callout warn">
+        <strong>Owner tension to remember</strong>
+        D-1 says wait for “advanced” blind before a public canary; D-3 defers G3; D-4 is self-ops only;
+        D-2 requires an independent OHTTP operator for real OHTTP claims. Until D-1-scope is refined,
+        <em>engineering</em> continues on self-ops G2-S stacks, but <em>public Peerit-on-blind</em> marketing stays off.
+      </div>
+
+      <!-- ========== 15 PACKAGES ========== -->
+      <h2 id="blind-packages">15. Packages, processes, and verification gates</h2>
+
+      <h3>15.1 Package roles</h3>
+      <table>
+        <thead><tr><th>Package</th><th>Version now</th><th>Role</th><th>Release claim scope</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>@hiverelay/blind-protocol</code></td>
+            <td><code>0.0.0-draft.1</code></td>
+            <td>Codecs, domains, errors, ABI/vectors, hash floors</td>
+            <td>WIRE <code>releaseReady</code> ≠ whole product ready</td>
+          </tr>
+          <tr>
+            <td><code>@hiverelay/blind-client</code></td>
+            <td><code>0.0.0-draft.1</code></td>
+            <td>Cell seal, capabilities, relay qualify, intents, durability labels</td>
+            <td>Browser artifact fail-closed until evidence match</td>
+          </tr>
+          <tr>
+            <td><code>@hiverelay/blind-daemon</code></td>
+            <td><code>0.0.0-draft.1</code></td>
+            <td>Storage process: WAL, buckets, CELL/INBOX/CORE/FORWARD, readiness</td>
+            <td><code>assertReleaseReady()</code> before production listeners</td>
+          </tr>
+          <tr>
+            <td><code>@hiverelay/blind-edge</code></td>
+            <td><code>0.0.0-draft.1</code></td>
+            <td>Least-privilege network edge in front of daemon</td>
+            <td>Same product gates as daemon packaging</td>
+          </tr>
+          <tr>
+            <td><code>@hiverelay/blind-ipc</code></td>
+            <td><code>0.0.0-draft.1</code></td>
+            <td>Private IPC authority between edge and daemon</td>
+            <td>Independent private-IPC freeze docs</td>
+          </tr>
+          <tr>
+            <td><code>@hiverelay/blind-peercred</code></td>
+            <td><code>0.0.0-draft.1</code></td>
+            <td>Peer credential helpers</td>
+            <td>Supporting library</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>15.2 Process topology (when it runs)</h3>
+      <div class="diagram">
+        <pre>
+  Peerit browser / Pear client
+       │  uses @hiverelay/blind-client (+ /control)
+       │  only VerifiedEndpoint after DESCRIBE + health
+       ▼
+  ┌──────────────────── blind-edge ────────────────────┐
+  │  network-facing, least privilege, no app schema    │
+  └───────────────────────┬────────────────────────────┘
+                          │ private IPC (blind-ipc)
+                          ▼
+  ┌──────────────────── blind-daemon ──────────────────┐
+  │  unprivileged OS user · own storage root · own key │
+  │  DESCRIBE / CELL / INBOX / CORE / FORWARD          │
+  │  no OutboxLog · no AppRegistry · no Peerit logs    │
+  └────────────────────────────────────────────────────┘
+
+  Separate from:
+    legacy RelayNode + OutboxLog (Peerit canary today)
+    public-t1-gateway :9200 (public app bytes only)
+        </pre>
+      </div>
+
+      <h3>15.3 Verification gates that still matter (from adversarial review)</h3>
+      <table>
+        <thead><tr><th>Gate</th><th>What it proves</th><th>Blocks</th></tr></thead>
+        <tbody>
+          <tr><td>V-1</td><td>One machine-readable schema registry; drift fails CI</td><td>ABI freeze</td></tr>
+          <tr><td>V-2</td><td>Circuit over max bytes closes once; releases all resources</td><td>FORWARD profile</td></tr>
+          <tr><td>V-3</td><td>Invalid admission → zero staging bytes / fsyncs (staged PUT)</td><td>CELL writes</td></tr>
+          <tr><td>V-4</td><td>Uncharged-read fairness within advertised policy</td><td>Public read profile</td></tr>
+          <tr><td>V-5</td><td>Clock-trust readiness / GC stall behavior</td><td>Open admission + fleet</td></tr>
+          <tr><td>V-6</td><td>Enforceable route-depth (not resettable hop toys)</td><td>Multi-hop FORWARD</td></tr>
+          <tr><td>V-7</td><td>Canonical commitment vectors + non-canonical negatives</td><td>ABI/vector freeze</td></tr>
+          <tr><td>V-8</td><td>Renewal-correlation classifier under G3 threshold</td><td>G3 claim only</td></tr>
+        </tbody>
+      </table>
+      <p>
+        Programme docs already record partial evidence for staged PUT (V-3), CR-5 route-scope design,
+        and partial V-1 work under <code>docs/vnext/</code>. Treat that as progress, not freeze complete.
+      </p>
+
+      <h3>15.4 How to run the blind tests (today)</h3>
+      <pre>cd /Users/localllm/Projects/pear-ecosystem/00-core/hr-vnext-gateway-merge
+
+npm run test:blind-protocol      <span class="c"># codecs / vectors — recently 30/30</span>
+npm run test:blind-boundary      <span class="c"># ipc/edge/daemon — recently 291/291</span>
+npm run test:blind-client        <span class="c"># client composition</span>
+npm run verify:blind-wire-authority
+npm run verify:blind-specs       <span class="c"># multi-check generator consistency</span></pre>
+
+      <!-- ========== 16 PEERIT USE ========== -->
+      <h2 id="blind-peerit-use">16. How Peerit will use the blind substrate</h2>
+      <p class="lead">
+        Peerit remains the <strong>application</strong>. HiveRelay blind remains the
+        <strong>dumb encrypted warehouse</strong>. Peerit never teaches the daemon about posts, authors, or communities.
+      </p>
+
+      <h3>16.1 Today vs target data path</h3>
+      <div class="grid2">
+        <div class="card peerit">
+          <h3>Today (live canary)</h3>
+          <ul>
+            <li>Browser loads signed assets from <code>peerit.site</code></li>
+            <li>Writes go to OutboxLog over HTTPS (<code>outbox.peerit.site</code>)</li>
+            <li>Relay-visible structure still exists in the OutboxLog/v2 world (even when some fields are sealed)</li>
+            <li><code>js/seal.js</code> uses app-level sealing patterns; not capability-root cells</li>
+            <li><code>js/blind-dealer.mjs</code> experimental custody — <strong>must leave public write path</strong></li>
+          </ul>
+        </div>
+        <div class="card good">
+          <h3>Target (blind online)</h3>
+          <ul>
+            <li>Peerit signs <em>inner</em> events (author authority unchanged)</li>
+            <li>Client encrypts into fixed cells / mailbox chains via <code>@hiverelay/blind-client</code></li>
+            <li>Daemon stores only opaque slots + receipts</li>
+            <li>Readers reconstruct via capabilities + client indexes</li>
+            <li>Honest label: start as <strong>G2-S</strong> unless/until G3/OHTTP gates pass</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>16.2 Client-side composition (the important mental model)</h3>
+      <div class="diagram">
+        <pre>
+  User writes a post
+       │
+       ▼
+  Peerit inner record  ── Ed25519 author signature (content authority)
+       │
+       ▼
+  seal / cell crypto   ── capability-root keys, size classes, padding
+       │
+       ▼
+  mailbox composition  ── encrypted next-pointers (relay cannot parse)
+       │
+       ▼
+  blind-client transport
+       │  qualify relay (descriptor + health) → VerifiedEndpoint only
+       │  CELL.PUT / INBOX.append / receipts
+       ▼
+  blind-edge → blind-daemon
+       │
+       ▼
+  opaque disk slots + signed receipts
+       │
+       ▼
+  Other Peerit clients
+       follow mailbox / fetch cells → decrypt → verify author → UI index
+        </pre>
+      </div>
+      <p>
+        The relay can know “some ciphertext slot was written.” It must not know “Alice replied in community X.”
+        That is the G2-S storage-schema opacity bar.
+      </p>
+
+      <h3>16.3 Peerit file-level refactor map (from master spec)</h3>
+      <p>
+        These are the application seams the integration owner must control. Until they land, Peerit stays on OutboxLog.
+      </p>
+      <table>
+        <thead><tr><th>Peerit module</th><th>Blind-era job</th></tr></thead>
+        <tbody>
+          <tr><td><code>js/sync.js</code></td><td>Production transport becomes blind mailbox client; old gossip becomes migration/archive reader only</td></tr>
+          <tr><td><code>js/data.js</code></td><td>Inner-event encoding stays application-owned; not sent as relay schema</td></tr>
+          <tr><td><code>js/seal.js</code></td><td>Replace fixed app-wide outer seal with capability-root cell crypto; keep v2 decrypt for migration only</td></tr>
+          <tr><td><code>js/app.js</code> / <code>gossip.js</code></td><td>Shared transport/receipt contract seams — single integration owner</td></tr>
+          <tr><td>new <code>private-transport.js</code></td><td>Profile selection (direct-blind vs later OHTTP), fail-closed downgrade UI</td></tr>
+          <tr><td>new <code>privacy-status.js</code></td><td>Honest effective profile in UI (G2-S vs claimed stronger)</td></tr>
+          <tr><td><code>js/blind-dealer.mjs</code></td><td><strong>Remove</strong> from public write path; experimental custody only</td></tr>
+        </tbody>
+      </table>
+
+      <h3>16.4 Transport / receipt contract (must land before adapter chaos)</h3>
+      <p>Before multiple agents touch adapters, one integration-owned contract must define:</p>
+      <ul>
+        <li>Local atom / local commit receipt (application-level — not OutboxLog’s old <code>_atomicCommit</code> flag)</li>
+        <li>Signed core/head advancement (if cores used)</li>
+        <li>Remote custody / relay receipt</li>
+        <li>Descriptor / supersession sequence</li>
+        <li>Effective privacy profile string</li>
+        <li>Read stream + cutover floor + rollback rules (D-7 dual-read)</li>
+      </ul>
+      <div class="callout">
+        <strong>Early HTTPS blind pilot does not wait on rocksdb-idb</strong>
+        Cell/inbox capabilities, leases, pointers, and receipts can live in a small transactional store
+        owned by the blind client. Hypercore 11 / <code>rocksdb-idb</code> (T06) plugs in later via the same receipt contract.
+      </div>
+
+      <h3>16.5 Three recovery domains (must not be conflated)</h3>
+      <table>
+        <thead><tr><th>Domain</th><th>What restore brings back</th><th>What it does <em>not</em> restore</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Peerit Ed25519 author identity</td>
+            <td>Ability to sign as that author</td>
+            <td>Cell capability roots / Corestore seeds</td>
+          </tr>
+          <tr>
+            <td>Corestore primary seed / cutover floor</td>
+            <td>Local core aliases &amp; migration floor</td>
+            <td>Author key or blind lease authority</td>
+          </tr>
+          <tr>
+            <td>Blind Cell/Inbox capabilities</td>
+            <td>Create/renew/drop + read caps, leases</td>
+            <td>Author identity or old OutboxLog heads alone</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <h3>16.6 Dual-read cutover (how Peerit stays safe)</h3>
+      <ol>
+        <li><strong>Phase A — dual-read:</strong> client can read OutboxLog legacy + blind cells; writes still legacy or dual.</li>
+        <li><strong>Phase B — dual-write / shadow:</strong> optional; prove receipts match policy.</li>
+        <li><strong>Phase C — blind-first write:</strong> new posts only on blind path; legacy read-only.</li>
+        <li><strong>Phase D — freeze floor:</strong> signed cutover floor; old SW/tab must not append after first blind-only success.</li>
+        <li><strong>Rollback:</strong> only to dual-read builds (D-7), never legacy-only after blind-only writes.</li>
+      </ol>
+
+      <h3>16.7 What Peerit must not put on the public T1 gateway</h3>
+      <ul>
+        <li>Writable identity cookies that break across gateway hostnames</li>
+        <li>Blind capability material in public gateway logs</li>
+        <li>Claims that opening a T1 HTTPS app URL equals private messaging</li>
+      </ul>
+      <p>
+        Stable <strong>publisher-owned origin</strong> still matters for writable browser apps even when public
+        static assets are gateway-distributed.
+      </p>
+
+      <!-- ========== 17 TRACK ONLINE ========== -->
+      <h2 id="blind-track">17. Track to get blind online (end-to-end)</h2>
+      <p>
+        Programme tracks from the vNext master plan, updated with live reality and owner decisions.
+        “Online” here means: a self-operated G2-S stack that Peerit can dual-read against in a closed pilot —
+        <em>not</em> G3 marketing and not fleet-wide privacy claims.
+      </p>
+
+      <div class="timeline">
+        <div class="step good">
+          <h4>Stage 0 — Already largely done</h4>
+          <ul>
+            <li>Specs + protocol docs in <code>docs/protocol/</code></li>
+            <li>Package scaffolding: protocol, client, daemon, edge, ipc, peercred</li>
+            <li>WIRE + client-composition authorities executable</li>
+            <li>Large unit suites green on merge train</li>
+            <li>Gateway merge coexists without deleting blind packages</li>
+          </ul>
+        </div>
+        <div class="step">
+          <h4>Stage 1 — Protocol freeze (T02) — <em>in progress</em></h4>
+          <ul>
+            <li>Finish CR-1…CR-8 disposition in registry + both specs</li>
+            <li>Enforce D-6: no K_partition in frozen store layout unless measured benefit returns</li>
+            <li>Generate <code>specHash</code> / <code>abiHash</code> / <code>vectorSetHash</code> <strong>last</strong></li>
+            <li>V-1 and V-7 green on CI</li>
+          </ul>
+          <p><strong>Exit:</strong> PG-2 style freeze; pins consumers can depend on.</p>
+        </div>
+        <div class="step">
+          <h4>Stage 2 — Portable client RC (T03)</h4>
+          <ul>
+            <li>Publish non-draft RC versions of protocol + client (still may be prerelease tags)</li>
+            <li>Byte-identical vectors on Node / Bare / browser engines you claim</li>
+            <li>Browser artifact evidence verifier can flip releaseReady for that slice only</li>
+            <li>Two fixture apps (not Peerit-as-protocol-authority)</li>
+          </ul>
+          <p><strong>Exit:</strong> consumers can pin exact RC hashes.</p>
+        </div>
+        <div class="step">
+          <h4>Stage 3 — Daemon vertical slice (T04)</h4>
+          <ul>
+            <li>Isolated process + storage root + role key + edge</li>
+            <li>Advertise only implemented families</li>
+            <li>Staged PUT, read fairness, crash consistency, readiness</li>
+            <li>Unrelated-app + sentinel suites</li>
+            <li>Seven-day soak on disposable cohort (self-ops, D-4)</li>
+          </ul>
+          <p><strong>Exit:</strong> production-runtime may start under signed evidence (still not Peerit GA).</p>
+        </div>
+        <div class="step warn">
+          <h4>Stage 4 — Owner unlock for public Peerit pilot</h4>
+          <p>
+            Today D-1 blocks early G2-S public canary. To go online publicly you need either:
+          </p>
+          <ul>
+            <li><strong>Revise D-1-scope</strong> to allow labelled self-ops G2-S pilot after Stage 3, or</li>
+            <li><strong>Meet “advanced”</strong> as defined later (e.g. OHTTP + independent ingress per D-2) — longer path; G3 still deferred</li>
+          </ul>
+        </div>
+        <div class="step">
+          <h4>Stage 5 — Peerit integration (T09) on a dual-read branch</h4>
+          <ul>
+            <li>Land transport/receipt contract</li>
+            <li>Execute refactor map (<code>sync.js</code>, <code>seal.js</code>, …)</li>
+            <li>Capability store + recovery v2 (three domains)</li>
+            <li>Dual-read canary against self-ops blind daemon + keep OutboxLog readable</li>
+            <li>Mixed SW/tab tests; cutover floor; D-7 rollback drills</li>
+          </ul>
+          <p><strong>Exit:</strong> invitation / dual-read canary with honest G2-S UI (if D-1 allows).</p>
+        </div>
+        <div class="step">
+          <h4>Stage 6 — Parallel enablers (do not block Stage 5 pilot)</h4>
+          <ul>
+            <li>T06 rocksdb-idb / HC11 browser storage — long pole; pilot can use smaller client store</li>
+            <li>T07 server HC11/CS7 — separate from blind daemon process model</li>
+            <li>T08 Peerit current OutboxLog GA — can finish without blind</li>
+            <li>Public T1 gateway — orthogonal distribution door</li>
+          </ul>
+        </div>
+        <div class="step bad">
+          <h4>Stage 7 — Explicitly later</h4>
+          <ul>
+            <li>G3 randomized cells (needs D-3 repair contract + V-8)</li>
+            <li>OHTTP split-web claims (needs D-2 independent operator)</li>
+            <li>Third-party storage operators (needs D-4 policy pack)</li>
+            <li>Fleet-wide blind role channels + PG-7 reprovision</li>
+          </ul>
+        </div>
+      </div>
+
+      <h3>17.1 Dependency graph (simplified)</h3>
+      <div class="diagram">
+        <pre>
+  T02 protocol freeze ──► T03 client RC ──► T04 daemon soak ──► T09 Peerit dual-read
+         │                      │                 │                    │
+         │                      │                 │                    ├─► dual-read canary
+         │                      │                 │                    └─► (later) blind-only + PG-10
+         │                      │                 │
+         └────────────── D-6/D-7 wording ─────────┘
+                              │
+                    D-1 unlock for public pilot
+                              │
+              optional stronger: D-2 OHTTP · D-3 G3 · D-4 multi-op
+
+  Independent (can parallel):
+    T05 public-t1-gateway staging
+    T08 Peerit OutboxLog GA hardening
+    T06/T07 storage generation work
+        </pre>
+      </div>
+
+      <h3>17.2 Suggested “first online” definition (engineering)</h3>
+      <p>A minimal honest definition of <em>blind online for Peerit</em>:</p>
+      <ol>
+        <li>Self-operated <code>blind-edge</code> + <code>blind-daemon</code> with signed descriptor and health.</li>
+        <li>Pinned client RC with verified browser artifact evidence for the control slice you ship.</li>
+        <li>Peerit build that dual-reads OutboxLog + cells; new invite cohort can write cells.</li>
+        <li>UI shows effective profile <strong>G2-S / direct-blind</strong> — not “private forever.”</li>
+        <li>Cutover floor + dual-read rollback drill recorded.</li>
+        <li>Still no G3/OHTTP/fleet-wide claims unless those gates pass.</li>
+      </ol>
+
+      <!-- ========== 18 BLIND CHECKLIST ========== -->
+      <h2 id="blind-checklist">18. Checklist — get blind substrate online</h2>
+
+      <h3>18.1 Substrate engineering</h3>
+      <ul class="checklist">
+        <li class="done">Land blind packages on combined train with gateway</li>
+        <li class="done">WIRE + client-composition authorities executable</li>
+        <li class="done">Daemon/edge/client test mass green (protocol + boundary)</li>
+        <li>Close remaining CR/V items; freeze registry</li>
+        <li>Remove/omit K_partition per D-6</li>
+        <li>Generate final specHash / abiHash / vectorSetHash</li>
+        <li>Production-runtime evidence catalog complete (store, topology, readiness, migration)</li>
+        <li>Disposable multi-node soak (self-ops)</li>
+        <li>Cut non-draft RC package versions + provenance</li>
+      </ul>
+
+      <h3>18.2 Peerit integration</h3>
+      <ul class="checklist">
+        <li>Write transport/receipt contract ADR and pin owner</li>
+        <li>Vendor/pin blind-client RC (no Peerit forks of wire codecs)</li>
+        <li>Implement seal/mailbox/sync refactor behind feature flag</li>
+        <li>Capability + lease store; recovery v2 for three domains</li>
+        <li>privacy-status UI (honest G2-S)</li>
+        <li>Retire blind-dealer from public writes</li>
+        <li>Dual-read tests: legacy + blind, offline, reopen, repair</li>
+        <li>Mixed service-worker / multi-tab cutover tests</li>
+        <li>D-7 rollback drill documented and rehearsed</li>
+      </ul>
+
+      <h3>18.3 Go-live controls</h3>
+      <ul class="checklist">
+        <li>Resolve D-1-scope (what unlocks public pilot)</li>
+        <li>Invitation-only cohort first (if public web still single-origin)</li>
+        <li>Keep OutboxLog readable through dual-read window</li>
+        <li>Claim lint: no G3/OHTTP/independence language</li>
+        <li>Incident runbook: daemon crash, lease expiry, relay replace</li>
+      </ul>
+
+      <!-- ========== 19 COMBINED ========== -->
+      <h2 id="combined">19. Combined order of work (all tracks)</h2>
+      <p>Recommended sequencing so the two tracks do not trip each other:</p>
+      <div class="timeline">
+        <div class="step good">
+          <h4>Now — Gateway staging (Track G)</h4>
+          <p>Host, DNS, TLS, one app, canary preflight, 24h soak. Active owner focus for public distribution.</p>
+        </div>
+        <div class="step good">
+          <h4>Parallel — Peerit OutboxLog hardening (Track P)</h4>
+          <p>CSP headers, capacity staging, second operator plan, device proofs, content cleanup. Can GA without blind.</p>
+        </div>
+        <div class="step">
+          <h4>Parallel — Blind Stage 1–3 engineering (Track B)</h4>
+          <p>Protocol freeze, client RC, daemon soak on self-ops. Does not need public marketing yet.</p>
+        </div>
+        <div class="step warn">
+          <h4>D-1-scope decision — unlock public Peerit-on-blind pilot</h4>
+          <p>Without this, dual-read stays lab/invite-only at most.</p>
+        </div>
+        <div class="step">
+          <h4>Peerit dual-read canary (T09)</h4>
+          <p>Refactor map + honest G2-S UI + cutover floor. OutboxLog remains readable.</p>
+        </div>
+        <div class="step">
+          <h4>When T1 admission freezes — fleet gateway canary</h4>
+          <p><code>--mode fleet</code>, signed release, one-node-at-a-time. Separate from blind and Outbox upgrades.</p>
+        </div>
+        <div class="step bad">
+          <h4>Later — OHTTP / G3 / multi-operator (only with D-2/D-3/D-4)</h4>
+          <p>Stronger privacy labels; not required for first engineering online.</p>
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div class="card good">
+          <h3>Safe to do in parallel</h3>
+          <ul>
+            <li>Gateway staging host work</li>
+            <li>Peerit web hardening &amp; capacity tests</li>
+            <li>Relay Outbox monitoring / backups</li>
+            <li>Docs &amp; claim lint</li>
+          </ul>
+        </div>
+        <div class="card warn">
+          <h3>Do not couple</h3>
+          <ul>
+            <li>Don’t wait for blind to ship T1 gateway</li>
+            <li>Don’t wait for T1 fleet to ship Peerit canary fixes</li>
+            <li>Don’t put OutboxLog on the app gateway port</li>
+            <li>Don’t use canary gateway evidence as fleet evidence</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- ========== 16 COMMANDS ========== -->
+      <h2 id="commands">20. Command cookbook (quick reference)</h2>
+      <h3>Gateway train root</h3>
+      <pre>cd /Users/localllm/Projects/pear-ecosystem/00-core/hr-vnext-gateway-merge</pre>
+      <h3>Gateway scripts</h3>
+      <pre>npm run gateway:preflight
+npm run gateway:preflight-ops
+npm run gateway:verify-evidence
+npm run gateway:rehearse-deploy
+npm run test:public-hive-gateway:live</pre>
+      <h3>Blind packages (merged, draft — not public Peerit ship)</h3>
+      <pre>npm run test:blind-protocol
+npm run test:blind-boundary
+npm run test:blind-client
+npm run verify:blind-wire-authority
+npm run verify:blind-client-composition-authority
+npm run verify:blind-specs
+npm run start:blind:edge      <span class="c"># only after local evidence config — still draft</span>
+npm run start:blind:daemon</pre>
+      <h3>Peerit</h3>
+      <pre>cd /Users/localllm/Projects/pear-ecosystem/02-apps/peerit
+npm test
+npm run proof:http-headers -- --url https://peerit.site
+npm run launch:readiness</pre>
+      <h3>Maintenance fabric (ecosystem-wide, when authorized)</h3>
+      <pre>node 00-core/pear-agent-system/bin/pear-agents.mjs doctor
+node 00-core/pear-agent-system/bin/pear-agents.mjs after-change \
+  --repo /path/to/repo --base origin/main --title "…"
+<span class="c"># Execute lanes only when user says run/execute/dispatch</span></pre>
+
+      <!-- ========== 17 CLAIMS ========== -->
+      <h2 id="claims">21. Honest claims board</h2>
+      <table>
+        <thead><tr><th>Claim</th><th>OK today?</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Peerit is a public writable canary</td><td><span class="pill good">Yes</span></td><td>seq 6, single ingress</td></tr>
+          <tr><td>Peerit is GA / multi-operator durable</td><td><span class="pill bad">No</span></td><td>Capacity + second operator missing</td></tr>
+          <tr><td>Public HTTPS gateway code exists and locally preflights</td><td><span class="pill good">Yes</span></td><td>canary mode</td></tr>
+          <tr><td>Public HTTPS gateway is on the live fleet</td><td><span class="pill bad">No</span></td><td>Transitional admission blocks fleet mode</td></tr>
+          <tr><td>Gateway provides privacy / blindness</td><td><span class="pill bad">Never this product</span></td><td>D-5</td></tr>
+          <tr><td>Blind packages exist with large green suites</td><td><span class="pill good">Yes (draft)</span></td><td><code>0.0.0-draft.1</code> on merge train</td></tr>
+          <tr><td>Blind WIRE authority ready</td><td><span class="pill good">Yes (WIRE only)</span></td><td>Not whole product / fleet / Peerit</td></tr>
+          <tr><td>Blind daemon production listeners</td><td><span class="pill bad">Fail-closed</span></td><td>Evidence catalog incomplete</td></tr>
+          <tr><td>Peerit uses blind-client in production</td><td><span class="pill bad">No</span></td><td>Still OutboxLog; refactor map only</td></tr>
+          <tr><td>Public Peerit-on-blind canary</td><td><span class="pill bad">Parked (D-1)</span></td><td>Needs D-1-scope + Stages 1–5</td></tr>
+          <tr><td>G3 / OHTTP privacy product</td><td><span class="pill bad">No</span></td><td>D-3 deferred; D-2 independent operator</td></tr>
+          <tr><td>Fleet is on HiveRelay 0.24.3</td><td><span class="pill good">Yes (line)</span></td><td>Still need per-node evidence for any new claim</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ========== 18 GLOSSARY ========== -->
+      <h2 id="glossary">22. Glossary</h2>
+      <table>
+        <thead><tr><th>Term</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>HiveRelay</td><td>Relay software that seeds P2P apps and offers browser-facing services</td></tr>
+          <tr><td>OutboxLog</td><td>Append-friendly signed log service Peerit uses for public social writes</td></tr>
+          <tr><td>public-t1-gateway</td><td>Product profile for exact-byte public HTTPS app distribution</td></tr>
+          <tr><td>T1 / T2 / T3</td><td>Availability / custody / witness roles — security boundary</td></tr>
+          <tr><td>G2-S</td><td>Direct blind storage with disclosed stable access metadata (honest mid privacy)</td></tr>
+          <tr><td>G3</td><td>Stronger at-rest unlinkability profile — deferred</td></tr>
+          <tr><td>Cell</td><td>Fixed-size encrypted blob slot on the blind daemon; app encrypts before upload</td></tr>
+          <tr><td>Mailbox</td><td>Client-side chain of cells with encrypted pointers; relay cannot parse mailbox semantics</td></tr>
+          <tr><td>VerifiedEndpoint</td><td>Only transport target blind-client accepts after descriptor + health qualification</td></tr>
+          <tr><td>specHash / abiHash / vectorSetHash</td><td>Freeze fingerprints for protocol prose, ABI registry, and vectors</td></tr>
+          <tr><td>OHTTP</td><td>Oblivious HTTP ingress separation — needs independent operator for real claims</td></tr>
+          <tr><td>Dual-read</td><td>Client can read legacy OutboxLog and blind cells during migration</td></tr>
+          <tr><td>Cutover floor</td><td>Signed migration watermark; old writers must stop after blind-only success</td></tr>
+          <tr><td>Canary mode</td><td>Staging posture; transitional admission allowed with warnings</td></tr>
+          <tr><td>Fleet mode</td><td>Production posture; fails until frozen admission</td></tr>
+          <tr><td>App key</td><td>32-byte cryptographic identity of a public app/drive</td></tr>
+          <tr><td>Sequence (Peerit)</td><td>Signed web release counter for assets</td></tr>
+          <tr><td>PG-0…PG-10</td><td>Programme gates from source preservation through GA</td></tr>
+        </tbody>
+      </table>
+
+      <!-- ========== 19 PATHS ========== -->
+      <h2 id="paths">23. Paths, branches, and further reading</h2>
+      <table>
+        <thead><tr><th>Document / artifact</th><th>Location</th></tr></thead>
+        <tbody>
+          <tr><td>This HTML guide</td><td><code>docs/vnext/SHIP-GUIDE-PEERIT-AND-PUBLIC-GATEWAY.html</code></td></tr>
+          <tr><td>Gateway go-now</td><td><code>docs/vnext/PUBLIC-T1-GATEWAY-GO-NOW-2026-07-13.md</code></td></tr>
+          <tr><td>Owner decisions</td><td><code>docs/vnext/owner-decisions-2026-07-13.json</code></td></tr>
+          <tr><td>Merge evidence</td><td><code>docs/vnext/vnext-gateway-merge-2026-07-13.json</code></td></tr>
+          <tr><td>Gateway canary runbook</td><td><code>docs/PUBLIC-HIVE-GATEWAY-CANARY-RUNBOOK.md</code></td></tr>
+          <tr><td>Gateway specification</td><td><code>docs/PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md</code></td></tr>
+          <tr><td>Example config</td><td><code>deploy/public-hive-gateway/hiverelay-config.example.json</code></td></tr>
+          <tr><td>Blind master protocol</td><td><code>docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md</code></td></tr>
+          <tr><td>Blind implementation spec</td><td><code>docs/protocol/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md</code></td></tr>
+          <tr><td>Application adoption contract</td><td><code>docs/protocol/BLIND-SUBSTRATE-APPLICATION-ADOPTION.md</code></td></tr>
+          <tr><td>WIRE / IPC / composition</td><td><code>docs/protocol/HIVERELAY-BLIND-WIRE-V1.md</code> etc.</td></tr>
+          <tr><td>CR / V evidence JSON</td><td><code>docs/vnext/blind-*.json</code>, <code>protocol-remediation.json</code></td></tr>
+          <tr><td>Peerit readiness matrix</td><td><code>02-apps/peerit/reports/2026-07-10-PRODUCTION-READINESS-MATRIX.md</code></td></tr>
+          <tr><td>vNext master plan (T02–T09)</td><td><code>02-apps/peerit/docs/PEAR-ECOSYSTEM-VNEXT-COMPLETION-AND-LAUNCH-MASTER-PLAN.md</code></td></tr>
+          <tr><td>Ecosystem agent constitution</td><td><code>HERMES.md</code> at ecosystem root</td></tr>
+        </tbody>
+      </table>
+
+      <div class="callout">
+        <strong>Also update the intro badges</strong>
+        Blind is “large draft online in git,” not “spec-only.” Peerit still ships social writes on OutboxLog until T09 lands.
+      </div>
+
+      <div class="callout good">
+        <strong>What to do in the next 48 hours if you only do three things</strong>
+        <ol>
+          <li><strong>Gateway:</strong> provision staging host + DNS + pick one public app key.</li>
+          <li><strong>Peerit:</strong> apply live CSP headers and re-run <code>proof:http-headers</code>.</li>
+          <li><strong>Claims:</strong> keep public language at “canary / staging” until capacity and fleet gates actually pass.</li>
+        </ol>
+      </div>
+
+      <footer>
+        Generated for the Pear ecosystem conductor session · 2026-07-13 ·
+        Branch <code>feat/vnext-gateway-merge</code> ·
+        Not a release authorization ·
+        Open this file in any browser (double-click or <code>open …html</code>).
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

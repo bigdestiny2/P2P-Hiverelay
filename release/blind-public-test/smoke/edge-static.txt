@@ -1,0 +1,9 @@
+--- CA roots ---
+bundle exists: true bytes: 216591
+default CA count: 145
+system CA count: 284
+SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+--- browser bytes (expect 0) ---
+0
+--- peercred native load ---
+peercred ok: function

@@ -1,0 +1,155 @@
+{
+  "magic": "hiverelay-blind-wire-authority-v2",
+  "formatVersion": 2,
+  "protocol": {
+    "major": 1,
+    "minor": 1,
+    "abiFormatVersion": 2
+  },
+  "baseSchemaCount": 73,
+  "baseAbiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+  "abiHash": "cc1abb0e24bd4c75e0cb99b824e114cf50ad91270362f39d8594a826e29d5053",
+  "specHash": "958121c4dc701a7068b392a91cdba9319d080947f21c3c40a128529dc8a57732",
+  "vectorSetHash": "d928d286d7e84ca083e200042371d788bc06b5db779a4430f76615eaba857034",
+  "additionalSchemas": [
+    {
+      "schemaId": 74,
+      "schemaName": "BlindForwardHttpsTurnRequestV1",
+      "fields": [
+        "magic:fixed4=HFQR",
+        "version:u8=1",
+        "routeKind:u8=7",
+        "releaseProfileId:u8=2",
+        "turnKind:u8[OPEN=1|DATA=2|WINDOW=3|CLOSE=4]",
+        "flags:u8=0",
+        "sessionId:fixed32[nonzero]",
+        "sequence:u64be",
+        "requestNonce:fixed32[nonzero]",
+        "parentCapability:BlindForwardHttpsParentCapabilityV1[exact390;catalog-id+relay-key+descriptor-pinned;no-url-host-ip]",
+        "innerLength:u32be",
+        "inner:closed(turnKind){OPEN:BlindForwardOpenV1|DATA:BlindForwardDataV1|WINDOW:BlindForwardWindowV1|CLOSE:BlindForwardCloseV1}",
+        "padding:bytes[65536-475-innerLength]",
+        "exactBytes:65536"
+      ]
+    },
+    {
+      "schemaId": 75,
+      "schemaName": "BlindForwardHttpsTurnResultV1",
+      "fields": [
+        "magic:fixed4=HFQS",
+        "version:u8=1",
+        "routeKind:u8=7",
+        "releaseProfileId:u8=2",
+        "turnKind:u8[OPEN=1|DATA=2|WINDOW=3|CLOSE=4]",
+        "outcome:u8[SUCCESS=1|ERROR=2]",
+        "sessionId:fixed32[nonzero]",
+        "sequence:u64be",
+        "requestCommitment:fixed32[nonzero]",
+        "relayPublicKey:fixed32[nonzero]",
+        "descriptorSequence:u64be",
+        "descriptorHash:fixed32[nonzero]",
+        "signature:fixed64",
+        "innerLength:u32be",
+        "inner:closed(outcome,turnKind){ERROR:BlindErrorV1|SUCCESS.OPEN:BlindForwardOpenResultV1|SUCCESS.DATA:BlindForwardDataV1|SUCCESS.WINDOW:BlindForwardWindowV1|SUCCESS.CLOSE:BlindForwardCloseV1}",
+        "padding:bytes[65536-221-innerLength]",
+        "exactBytes:65536",
+        "no-ACK-schema"
+      ]
+    }
+  ],
+  "releaseProfiles": [
+    {
+      "profileId": 1,
+      "canonicalName": "LIMITED_PUBLIC_TEST_V1",
+      "operationBits": 131071,
+      "isDefault": true
+    },
+    {
+      "profileId": 2,
+      "canonicalName": "LIMITED_PUBLIC_TEST_FORWARD_ONE_HOP_V1",
+      "operationBits": 4063231,
+      "isDefault": false
+    }
+  ],
+  "transportVariants": [
+    {
+      "family": "FORWARD",
+      "operation": "OPEN",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 74,
+      "resultSchemaId": 75,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "turnKind": 1
+    },
+    {
+      "family": "FORWARD",
+      "operation": "DATA",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 74,
+      "resultSchemaId": 75,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "turnKind": 2
+    },
+    {
+      "family": "FORWARD",
+      "operation": "WINDOW",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 74,
+      "resultSchemaId": 75,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "turnKind": 3
+    },
+    {
+      "family": "FORWARD",
+      "operation": "CLOSE",
+      "routeKind": 7,
+      "releaseProfileId": 2,
+      "requestSchemaId": 74,
+      "resultSchemaId": 75,
+      "requestBytes": 65536,
+      "resultBytes": 65536,
+      "turnKind": 4
+    }
+  ],
+  "additionalDomains": [
+    {
+      "domainId": 17,
+      "name": "FORWARD_HTTPS_TURN",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-turn-request.v1",
+      "purpose": "REQUEST_COMMITMENT"
+    },
+    {
+      "domainId": 112,
+      "name": "FORWARD_HTTPS_TURN_RESULT",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-turn-result.v1",
+      "purpose": "RESULT_SIGNATURE"
+    },
+    {
+      "domainId": 214,
+      "name": "FORWARD_HTTPS_PARENT_CAPABILITY",
+      "exactAsciiBytes": "hiverelay.blind.forward-https-parent-capability.v1",
+      "purpose": "AUXILIARY_SIGNATURE"
+    }
+  ],
+  "exactRequestBytes": 65536,
+  "exactResultBytes": 65536,
+  "forwardDescriptorOperationBits": 0,
+  "forwardAdvertisedOperationBits": 0,
+  "forwardReadinessOperationBits": 0,
+  "compatibilityFloor": {
+    "hiverelay-blind-abi-v1.cenc": "8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6",
+    "hiverelay-blind-abi-v1.draft.cenc": "8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6",
+    "vector-manifest-v1.cenc": "e23137dc90f52a1c9c3c8ac1e6ecb98eb32b653260fe1049f078ff8cebabc522",
+    "vectors/draft/vector-manifest-v1.draft.cenc": "e23137dc90f52a1c9c3c8ac1e6ecb98eb32b653260fe1049f078ff8cebabc522",
+    "hiverelay-blind-wire-authority-v1.json": "d6b757334bbec7b85d949085ce4b896a5fe960bc4c86c7f9001f81be78d0cefc",
+    "schema-catalog-runtime-authority.js": "6c0c7a8be1f77709cd60edad083606fa3e3889f2f50396592bfe290db6404fcc",
+    "wire-runtime-authority.js": "3c861d390f8f6b60a390334e3320cd22cdce6071dfe3a5f42231460e73f52cea",
+    "hiverelay-blind-release-closure-v1.json": "9f82a7dbe4aee8cc4dd2c7e22864314a7489280b8ceb3fbf2dd68e71d095a663"
+  }
+}

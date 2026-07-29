@@ -1,0 +1,598 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>HiveRelay Operator Dashboard Design — 2026-07-19</title>
+<style>
+  :root {
+    --bg: #0e1118; --bg-glow: #131a2b;
+    --card: #151a26; --card-hi: #1a2132; --border: #222b3e; --border-hi: #2e3b56;
+    --green: #3fb950; --orange: #f0a64a; --cyan: #58a6ff; --red: #f47067; --accent: #f5c842;
+    --text: #d6dde8; --dim: #8493a8; --faint: #5c697e; --bright: #fff;
+    --mono: 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    --radius: 12px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg) radial-gradient(1100px 500px at 50% -150px, var(--bg-glow), transparent);
+    color: var(--text); font: 15px/1.55 var(--sans); min-height: 100vh; padding: 1.5rem;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; }
+  h1 { font-size: 1.65rem; color: var(--bright); margin: .3em 0 .5em; letter-spacing: .2px; }
+  h2 { font-size: 1.2rem; color: var(--bright); margin: 2em 0 .7em; padding-bottom: .35em;
+    border-bottom: 1px solid var(--border); }
+  h3 { font-size: 1rem; color: var(--cyan); margin: 1.4em 0 .5em; }
+  p { margin: .6em 0; color: var(--text); }
+  a { color: var(--cyan); }
+  code { font-family: var(--mono); font-size: .86em; background: #1a2132; padding: .12em .4em;
+    border-radius: 5px; color: #c9d4e8; }
+  .badge {
+    display: inline-block; font-size: .68rem; letter-spacing: .06em; text-transform: uppercase;
+    background: var(--accent); color: #10131b; border-radius: 999px; padding: 3px 10px;
+    font-weight: 700; margin: 0 6px 10px 0;
+  }
+  .badge.muted { background: #2e3b56; color: var(--text); }
+  .meta { color: var(--dim); font-size: .92rem; margin-bottom: 1.2em; }
+  blockquote {
+    margin: 1em 0; padding: .85em 1.1em; background: rgba(88,166,255,.08);
+    border-left: 3px solid var(--cyan); border-radius: 0 8px 8px 0; color: #b8c7dc;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: .88rem; margin: 1em 0; }
+  th, td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+  th { background: #1a2132; color: var(--dim); font-size: .72rem; text-transform: uppercase;
+    letter-spacing: .06em; }
+  tr:nth-child(even) td { background: rgba(255,255,255,.015); }
+  .card {
+    background: linear-gradient(180deg, var(--card-hi), var(--card));
+    border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.15rem;
+    margin: 1em 0;
+  }
+  .grid { display: grid; gap: .9rem; margin: 1em 0; }
+  .grid-4 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+  .grid-2 { grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); }
+  .grid-3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .stat {
+    background: linear-gradient(180deg, var(--card-hi), var(--card));
+    border: 1px solid var(--border); border-radius: var(--radius); padding: .9rem 1rem;
+  }
+  .stat .lbl { font-size: .66rem; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim); }
+  .stat .val { font: 700 1.55rem/1.1 var(--mono); color: var(--bright); margin-top: .35em; }
+  .stat .sub { font: .68rem var(--mono); color: var(--faint); margin-top: .35em; }
+  .val.g { color: var(--green); } .val.o { color: var(--orange); } .val.c { color: var(--cyan); }
+  .val.r { color: var(--red); } .val.a { color: var(--accent); }
+  .pill {
+    display: inline-flex; align-items: center; gap: .35rem; font-size: .72rem; font-family: var(--mono);
+    padding: .28rem .7rem; border-radius: 999px; border: 1px solid rgba(63,185,80,.28);
+    background: rgba(63,185,80,.1); color: var(--green);
+  }
+  .pill::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+    box-shadow: 0 0 6px currentColor; }
+  .pill.warn { color: var(--orange); border-color: rgba(240,166,74,.3); background: rgba(240,166,74,.1); }
+  .pill.bad { color: var(--red); border-color: rgba(244,112,103,.35); background: rgba(244,112,103,.1); }
+  .pill.dim { color: var(--dim); border-color: var(--border); background: transparent; }
+  .mock-top {
+    display: flex; flex-wrap: wrap; align-items: center; gap: .7rem;
+    background: rgba(17,22,34,.92); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: .75rem 1rem; margin-bottom: 1rem;
+  }
+  .mock-top .brand { font-weight: 700; color: var(--bright); }
+  .mock-top .nav a {
+    color: var(--dim); text-decoration: none; font-size: .8rem; padding: .35rem .7rem;
+    border-radius: 999px;
+  }
+  .mock-top .nav a.on { background: var(--accent); color: #10131b; font-weight: 600; }
+  .panel-title {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: 1.2px; color: var(--dim);
+    margin-bottom: .7rem; font-weight: 600;
+  }
+  .spark {
+    height: 48px; border-radius: 8px; background:
+      linear-gradient(180deg, rgba(88,166,255,.15), transparent),
+      repeating-linear-gradient(90deg, transparent, transparent 18px, rgba(255,255,255,.03) 18px, rgba(255,255,255,.03) 19px);
+    border: 1px solid var(--border); position: relative; overflow: hidden;
+  }
+  .spark svg { width: 100%; height: 100%; display: block; }
+  .row-list { font-family: var(--mono); font-size: .78rem; }
+  .row-list .r {
+    display: grid; grid-template-columns: 1fr auto auto; gap: .6rem; padding: .45rem 0;
+    border-bottom: 1px solid rgba(255,255,255,.04);
+  }
+  .row-list .r:last-child { border-bottom: 0; }
+  .tag {
+    font-size: .65rem; text-transform: uppercase; letter-spacing: .05em; padding: .15rem .45rem;
+    border-radius: 4px; font-weight: 600;
+  }
+  .tag.t1 { background: rgba(88,166,255,.15); color: var(--cyan); }
+  .tag.t2 { background: rgba(245,200,66,.12); color: var(--accent); }
+  .tag.app { background: rgba(63,185,80,.12); color: var(--green); }
+  .tag.risk { background: rgba(244,112,103,.12); color: var(--red); }
+  .forbid {
+    background: rgba(244,112,103,.08); border: 1px solid rgba(244,112,103,.25);
+    border-radius: var(--radius); padding: .85em 1.1em; margin: 1em 0; font-size: .9rem;
+  }
+  .okbox {
+    background: rgba(63,185,80,.08); border: 1px solid rgba(63,185,80,.22);
+    border-radius: var(--radius); padding: .85em 1.1em; margin: 1em 0; font-size: .9rem;
+  }
+  ul.tight li { margin: .3em 0; }
+  .footer { margin-top: 2.5em; padding-top: 1em; border-top: 1px solid var(--border);
+    color: var(--faint); font-size: .85rem; }
+  .ia { display: flex; flex-wrap: wrap; gap: .4rem; margin: .8em 0 1.2em; }
+  .ia span {
+    font-size: .75rem; padding: .35rem .75rem; border-radius: 999px; border: 1px solid var(--border);
+    color: var(--dim); background: var(--card);
+  }
+  .ia span.pri { border-color: rgba(245,200,66,.45); color: var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<span class="badge">Operator UX</span>
+<span class="badge muted">HiveRelay · Peerit · Giga</span>
+<span class="badge muted">2026-07-19</span>
+
+<h1>Node Operator Dashboard Design</h1>
+<p class="meta">
+  What data matters when a HiveRelay node is fully stood up for the giga substrate
+  (blind cells, Tor, namespace/OutboxLog, WAL, T1 gateway) and first apps like <strong>Peerit</strong>.
+  Builds on the existing dashboard shell (<code>dashboard/index.html</code> + Network / Payments / Blindspark)
+  and the APIs already exposed (<code>/health</code>, <code>/status</code>, <code>/api/overview</code>, Prometheus).
+</p>
+
+<blockquote>
+  <strong>Operator job:</strong> keep a conduit healthy, compliant, and economically viable —
+  without becoming a content curator or leaking privacy-sensitive topology.
+  The dashboard answers five questions at a glance: <em>Am I up? Am I full? Am I exposed?
+  Am I useful? Am I in legal/ops trouble?</em>
+</blockquote>
+
+<!-- ============================================================ -->
+<h2>1. Inputs we examined</h2>
+<table>
+  <thead><tr><th>Source</th><th>What it taught the dashboard</th></tr></thead>
+  <tbody>
+    <tr><td>Giga release architecture</td><td>Role split T1/T2/T3; privacy claim ladders; Tor redaction; WAL as durability spine</td></tr>
+    <tr><td>Peerit ops architecture</td><td>OutboxLog as app data plane; Opaque-Log v2; moderation is client-side; DO-NOT-SERVE is operator-side</td></tr>
+    <tr><td>Execution pack (2026-07-19)</td><td>Live health already returns version/uptime/disk; headers/CSP matter for T1; suppress must be drillable</td></tr>
+    <tr><td>Existing dashboard</td><td>Connections, apps seeded, storage, relayed bytes, subsidy, credits, peer list — keep and extend</td></tr>
+    <tr><td>DEVELOPER / PRODUCTION</td><td>Public vs management auth; accounting receipts; capability doc; metrics flags</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>2. Information architecture</h2>
+
+<div class="ia">
+  <span class="pri">Home · Pulse</span>
+  <span class="pri">Roles &amp; Claims</span>
+  <span class="pri">Storage &amp; WAL</span>
+  <span class="pri">Apps &amp; Namespaces</span>
+  <span>Transports · Privacy</span>
+  <span>Gateway · T1</span>
+  <span>Custody · Blind</span>
+  <span>Compliance · Takedown</span>
+  <span>Economics</span>
+  <span>Alerts · Audit</span>
+</div>
+
+<p>
+  <strong>Auth model (keep):</strong> public <code>/health</code> + bounded <code>/status</code> for probes;
+  management-authenticated <code>/api/overview</code>, <code>/api/health-detail</code>, admin takedown, accounting, subsidy.
+  Dashboard UI is localhost or reverse-proxy with injected UI token (existing pattern).
+</p>
+
+<div class="forbid">
+  <strong>Never show on public/status surfaces (redaction ladder):</strong>
+  full onion addresses, restricted-discovery rosters, client-auth pubkeys, raw PEERIT_READ_KEY,
+  release signing seeds, unredacted peer IPs of private clients, plaintext outbox contents,
+  per-user social graph. Public metrics get <em>coarse health only</em> for Tor (ready / degraded / down).
+</div>
+
+<!-- ============================================================ -->
+<h2>3. What data is important (and why)</h2>
+
+<table>
+  <thead>
+    <tr><th>Domain</th><th>Live signals</th><th>Why the operator needs it</th><th>Sensitivity</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>Liveness</strong></td>
+      <td>Process up; API up; uptime; version/channel; last crash reason</td>
+      <td>Pager truth; fleet pin mismatch; “am I actually serving?”</td>
+      <td>Public OK</td>
+    </tr>
+    <tr>
+      <td><strong>Host resources</strong></td>
+      <td>Disk used % + free bytes; inode pressure; heap/RSS; CPU load; FD count</td>
+      <td>Disk-full wedges writes and reds health (known failure mode)</td>
+      <td>Management</td>
+    </tr>
+    <tr>
+      <td><strong>Storage accounting</strong></td>
+      <td>bytes stored / max; by role (seeder, outboxlog, shard-store); eviction rate; capacity %</td>
+      <td>Quota planning; when to grow disk; which app is hogging</td>
+      <td>Management (+ signed receipt for claims)</td>
+    </tr>
+    <tr>
+      <td><strong>Role posture</strong></td>
+      <td>T1 availability · T2 custody · T3 witness flags; gateway mounted? yes/no</td>
+      <td>Misconfig (T2 with gateway) is a security incident, not a cosmetic bug</td>
+      <td>Management; coarse public</td>
+    </tr>
+    <tr>
+      <td><strong>OutboxLog / namespaces</strong></td>
+      <td>Per-namespace: writers, rows, bytes/24h vs <code>bytesPerDay</code>, append rate, reject rate, SSE clients</td>
+      <td>Peerit stand-up; abuse; cap hits; multi-app isolation</td>
+      <td>Management (counts only, not bodies)</td>
+    </tr>
+    <tr>
+      <td><strong>WAL / blind durability</strong></td>
+      <td>WAL size; frames/s; fsync p50/p99; prune horizon; <code>walPruningSupported</code>; replay/SPEND errors; continuity hash healthy?</td>
+      <td>Giga freeze path; “am I durable or just fast?”</td>
+      <td>Management</td>
+    </tr>
+    <tr>
+      <td><strong>Shard store / blind cells</strong></td>
+      <td>PUT/GET/proof/reject/evict counters; pin fail reasons; bytes under pin; retainMs buckets</td>
+      <td>Custody usefulness; pin spam; capacity</td>
+      <td>Management (no share material)</td>
+    </tr>
+    <tr>
+      <td><strong>Transports</strong></td>
+      <td>DHT / holesail / dht-relay-ws: connections, rate-limits; Tor: health enum only on public; private: HS_DESC uploads, probe fails, restricted-discovery mode</td>
+      <td>Privacy lane readiness without leaking location</td>
+      <td>Mixed — Tor detail management-only</td>
+    </tr>
+    <tr>
+      <td><strong>T1 gateway</strong></td>
+      <td>Requests/s; bytes out; 4xx/5xx; exact-byte verify fails; which app keys served; TLS cert expiry</td>
+      <td>Public distribution health; cert cliff</td>
+      <td>Management</td>
+    </tr>
+    <tr>
+      <td><strong>Compliance</strong></td>
+      <td>Suppression count (keys / appIds); last takedown ts; admin auth enabled?; backup age; restore drill last success</td>
+      <td>Legal readiness; “can I comply in minutes?”</td>
+      <td>Management + audit log</td>
+    </tr>
+    <tr>
+      <td><strong>Economics</strong></td>
+      <td>Subsidy accrued/today/cap; payout destination set?; credits; invoices; lease occupancy</td>
+      <td>Why run the node; coordinator claim prep</td>
+      <td>Management</td>
+    </tr>
+    <tr>
+      <td><strong>Fleet identity</strong></td>
+      <td>Node pubkey; region; channel (canary/stable); release tag; capability doc hash</td>
+      <td>Multi-node ops; “am I the version the roster expects?”</td>
+      <td>Pubkey public; rest management</td>
+    </tr>
+    <tr>
+      <td><strong>Alerts</strong></td>
+      <td>health-warning / health-critical stream; disk thresholds; Tor degraded; WAL interior break; rate-limit storms</td>
+      <td>Actionable attention without watching graphs all day</td>
+      <td>Management</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="okbox">
+  <strong>What operators should not need:</strong> post titles, report reasons, moderation tallies, user handles, decrypted bodies.
+  Those are <em>app semantics</em>. The node shows <em>plumbing</em>. If Peerit moderation is “working,” the proof is client-side; the operator only needs outbox throughput, suppress list, and backup health.
+</div>
+
+<!-- ============================================================ -->
+<h2>4. Design mock — Home · Pulse</h2>
+<p>Primary screen after login/localhost. Extends today’s Connections / Apps / Stored / Relayed row with role, disk, and compliance pulse.</p>
+
+<div class="card">
+  <div class="mock-top">
+    <div class="brand">⬡ HiveRelay</div>
+    <div class="nav">
+      <a class="on" href="#pulse">Pulse</a>
+      <a href="#roles">Roles</a>
+      <a href="#storage">Storage</a>
+      <a href="#apps">Apps</a>
+      <a href="#privacy">Privacy</a>
+      <a href="#gateway">Gateway</a>
+      <a href="#custody">Custody</a>
+      <a href="#compliance">Compliance</a>
+      <a href="#econ">Economics</a>
+    </div>
+    <div style="margin-left:auto;display:flex;gap:.5rem;align-items:center">
+      <span class="pill">up 17h 39m</span>
+      <span class="pill dim" style="font-size:.7rem">v0.24.3 · stable</span>
+    </div>
+  </div>
+
+  <div class="grid grid-4">
+    <div class="stat"><div class="lbl">Node health</div><div class="val g">OK</div><div class="sub">disk · api · wal · tor</div></div>
+    <div class="stat"><div class="lbl">Disk</div><div class="val c">22%</div><div class="sub">of 50 GB · status ok</div></div>
+    <div class="stat"><div class="lbl">Connections</div><div class="val">47</div><div class="sub">circuits 2 active</div></div>
+    <div class="stat"><div class="lbl">Roles</div><div class="val a">T1+T2</div><div class="sub">gateway off · custody on</div></div>
+  </div>
+
+  <div class="grid grid-3" style="margin-top:.9rem">
+    <div class="stat"><div class="lbl">OutboxLog · peerit</div><div class="val c">1.2k</div><div class="sub">writers · 18 MB/24h of 50 MB</div></div>
+    <div class="stat"><div class="lbl">Shard store</div><div class="val">384</div><div class="sub">pins · 0 reject/min</div></div>
+    <div class="stat"><div class="lbl">Suppressions</div><div class="val o">3</div><div class="sub">keys · admin armed</div></div>
+  </div>
+
+  <div class="grid grid-2" style="margin-top:.9rem">
+    <div class="card" style="margin:0">
+      <div class="panel-title">Throughput · last 60m</div>
+      <div class="spark">
+        <svg viewBox="0 0 400 48" preserveAspectRatio="none">
+          <polyline fill="none" stroke="#58a6ff" stroke-width="2"
+            points="0,30 40,28 80,32 120,22 160,26 200,18 240,24 280,16 320,20 360,14 400,18" />
+          <polyline fill="none" stroke="#3fb950" stroke-width="2" opacity=".85"
+            points="0,36 40,34 80,35 120,33 160,34 200,30 240,32 280,28 320,29 360,27 400,26" />
+        </svg>
+      </div>
+      <div class="sub" style="margin-top:.5rem;font-family:var(--mono);font-size:.7rem;color:var(--faint)">
+        blue: appends/s · green: GET bytes/s
+      </div>
+    </div>
+    <div class="card" style="margin:0">
+      <div class="panel-title">Attention</div>
+      <div class="row-list">
+        <div class="r"><span>WAL fsync p99</span><span class="pill">12ms</span><span style="color:var(--faint)">ok</span></div>
+        <div class="r"><span>Tor privacy lane</span><span class="pill warn">degraded</span><span style="color:var(--faint)">probe fail 1/3</span></div>
+        <div class="r"><span>Backup age</span><span class="pill">4h</span><span style="color:var(--faint)">timer ok</span></div>
+        <div class="r"><span>Cert / TLS (if gateway)</span><span class="pill dim">n/a</span><span style="color:var(--faint)">gateway off</span></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============================================================ -->
+<h2 id="roles">5. Panel designs</h2>
+
+<h3>5.1 Roles &amp; claim honesty</h3>
+<div class="card">
+  <div class="panel-title">What this node is allowed to claim</div>
+  <div class="grid grid-3">
+    <div class="stat"><div class="lbl">T1 availability</div><div class="val g">ON</div><div class="sub">public seeding · no private content claim</div></div>
+    <div class="stat"><div class="lbl">T2 custody</div><div class="val a">ON</div><div class="sub">shard-store · no gateway mounts</div></div>
+    <div class="stat"><div class="lbl">T1 HTTPS gateway</div><div class="val" style="color:var(--faint)">OFF</div><div class="sub">hard-block if T2-only policy</div></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--dim);margin-top:.8rem">
+    Surfaces capability-doc fields: <code>supported_transports</code>, health-gated
+    <code>privacyTransports</code> (no onion text on public), coverage labels.
+    Red banner if illegal combo: gateway routes detected while role=T2-only.
+  </p>
+</div>
+
+<h3 id="storage">5.2 Storage &amp; WAL</h3>
+<div class="grid grid-2">
+  <div class="card">
+    <div class="panel-title">Capacity split</div>
+    <div class="row-list">
+      <div class="r"><span>Seeder / hyper cores</span><span>12.4 GB</span><span>41%</span></div>
+      <div class="r"><span>OutboxLog namespaces</span><span>2.1 GB</span><span>7%</span></div>
+      <div class="r"><span>Shard store (blind cells)</span><span>6.8 GB</span><span>23%</span></div>
+      <div class="r"><span>WAL + journals</span><span>0.4 GB</span><span>1%</span></div>
+      <div class="r"><span>Free</span><span>8.3 GB</span><span class="pill">28%</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="panel-title">WAL pulse (blind line)</div>
+    <div class="grid grid-2">
+      <div class="stat"><div class="lbl">Frames / s</div><div class="val c">42</div></div>
+      <div class="stat"><div class="lbl">fsync p99</div><div class="val g">9ms</div></div>
+      <div class="stat"><div class="lbl">Pruning</div><div class="val g">ON</div><div class="sub">walPruningSupported</div></div>
+      <div class="stat"><div class="lbl">SPEND_REPLAY</div><div class="val">0</div><div class="sub">last 24h</div></div>
+    </div>
+  </div>
+</div>
+
+<h3 id="apps">5.3 Apps &amp; namespaces (Peerit-first)</h3>
+<div class="card">
+  <div class="panel-title">Admitted namespaces</div>
+  <table>
+    <thead><tr><th>Namespace</th><th>Mode</th><th>Writers</th><th>24h ingest</th><th>Cap</th><th>SSE</th><th>Status</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><span class="tag app">peerit</span></td>
+        <td>non-blind NS · client Opaque-Log v2</td>
+        <td>1 184</td>
+        <td>18.2 MB</td>
+        <td>50 MB/day</td>
+        <td>36</td>
+        <td><span class="pill">healthy</span></td>
+      </tr>
+      <tr>
+        <td><span class="tag t2">sandbox-app</span></td>
+        <td>blind NS</td>
+        <td>12</td>
+        <td>0.4 MB</td>
+        <td>10 MB/day</td>
+        <td>2</td>
+        <td><span class="pill dim">idle</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <p style="font-size:.88rem;color:var(--dim)">
+    No post bodies. Optional deep-link: “open Peerit admin docs” / roster check.
+    Show <code>singleIngressWriter</code> warning if this node is the sole writer ingress for an app.
+  </p>
+</div>
+
+<h3 id="privacy">5.4 Transports &amp; privacy lanes</h3>
+<div class="grid grid-3">
+  <div class="stat"><div class="lbl">Clearnet / DHT</div><div class="val g">ready</div><div class="sub">47 peers · 0 RL/min</div></div>
+  <div class="stat"><div class="lbl">Tor (public view)</div><div class="val o">degraded</div><div class="sub">no onion shown</div></div>
+  <div class="stat"><div class="lbl">Tor (management)</div><div class="val c">detail</div><div class="sub">HS_DESC ok · probe 1 fail · RD on</div></div>
+</div>
+<p style="font-size:.88rem;color:var(--dim)">
+  Management panel may show onion only behind explicit reveal + copy, never in Prometheus public scrape.
+  Negative-probe status (unauthorized client refused) should appear as a first-class health bit once implemented.
+</p>
+
+<h3 id="gateway">5.5 T1 HTTPS gateway</h3>
+<div class="card">
+  <div class="panel-title">When gateway role is enabled</div>
+  <div class="grid grid-4">
+    <div class="stat"><div class="lbl">req / min</div><div class="val c">240</div></div>
+    <div class="stat"><div class="lbl">bytes out / h</div><div class="val">1.1 GB</div></div>
+    <div class="stat"><div class="lbl">verify fails</div><div class="val g">0</div><div class="sub">exact-byte</div></div>
+    <div class="stat"><div class="lbl">TLS expiry</div><div class="val o">18d</div></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--dim);margin-top:.7rem">
+    List served app keys (z32/hex short) + last 404/403 spikes. Hard assert: no custody routes bound.
+  </p>
+</div>
+
+<h3 id="custody">5.6 Blind custody / shard store</h3>
+<div class="grid grid-2">
+  <div class="card">
+    <div class="panel-title">Counters (Prometheus-aligned)</div>
+    <div class="row-list">
+      <div class="r"><span>hiverelay_shard_put_total</span><span>12 440</span></div>
+      <div class="r"><span>get / proof</span><span>88k / 2.1k</span></div>
+      <div class="r"><span>rejected (bad pin)</span><span class="val r" style="font-size:1rem">14</span></div>
+      <div class="r"><span>evicted / swept</span><span>120 / 40</span></div>
+    </div>
+  </div>
+  <div class="card">
+    <div class="panel-title">Operator actions</div>
+    <ul class="tight" style="font-size:.9rem;color:var(--dim)">
+      <li>Export accounting receipt (signed, management auth)</li>
+      <li>Force disk rescan</li>
+      <li>View pin-reject reasons histogram (no pin payloads)</li>
+      <li>Link to blind-cell fleet soak evidence (if enrolled)</li>
+    </ul>
+  </div>
+</div>
+
+<h3 id="compliance">5.7 Compliance · DO-NOT-SERVE</h3>
+<div class="card">
+  <div class="panel-title">Takedown readiness</div>
+  <div class="grid grid-4">
+    <div class="stat"><div class="lbl">Admin surface</div><div class="val g">ARMED</div><div class="sub">secret set</div></div>
+    <div class="stat"><div class="lbl">Suppressed keys</div><div class="val o">3</div></div>
+    <div class="stat"><div class="lbl">Suppressed appIds</div><div class="val">0</div></div>
+    <div class="stat"><div class="lbl">Last drill</div><div class="val c">2d</div><div class="sub">pass</div></div>
+  </div>
+  <p style="font-size:.88rem;color:var(--dim);margin-top:.7rem">
+    UI: paste opaque <code>key</code> and/or <code>appId</code> → suppress / unsuppress → show audit entry
+    (timestamp, operator id, notice reference field — free text, no content).
+    Never display record bodies. Backup age + last successful restore path.
+  </p>
+</div>
+
+<h3 id="econ">5.8 Economics (existing, keep)</h3>
+<p>
+  Retain subsidy card (accrued / today / cap / payout destination), credits, invoices.
+  Add: “claim payload ready” indicator when uptime + evidence gates for coordinator are met.
+</p>
+
+<!-- ============================================================ -->
+<h2>6. Live information &amp; refresh model</h2>
+<table>
+  <thead><tr><th>Channel</th><th>Cadence</th><th>Use</th></tr></thead>
+  <tbody>
+    <tr><td><code>GET /health</code></td><td>5–15s probes / LB</td><td>Liveness only</td></tr>
+    <tr><td><code>GET /status</code></td><td>15–30s public scrape</td><td>Coarse public card</td></tr>
+    <tr><td><code>GET /api/overview</code> + WS</td><td>2–5s while tab visible</td><td>Dashboard pulse (existing visibility pause)</td></tr>
+    <tr><td><code>GET /api/health-detail</code></td><td>10–30s</td><td>WAL / Tor / auto-heal detail</td></tr>
+    <tr><td>Prometheus <code>/metrics</code></td><td>15–60s</td><td>Fleet Grafana; long retention</td></tr>
+    <tr><td>Event stream (health-warning/critical)</td><td>push</td><td>Toast + optional webhook</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>7. Suggested API shape additions (thin, not a rewrite)</h2>
+<pre style="background:#141a28;color:#e6ebf5;padding:14px 16px;border-radius:10px;overflow:auto;font: .82rem/1.45 var(--mono)">
+// Management-auth additions (illustrative)
+GET /api/overview  // extend existing
+{
+  "roles": { "t1": true, "t2": true, "gateway": false, "witness": false },
+  "disk": { "usedPct": 22, "freeBytes": …, "status": "ok" },
+  "wal": {
+    "pruningSupported": true,
+    "framesPerSec": 42,
+    "fsyncP99Ms": 9,
+    "spendReplay24h": 0,
+    "healthy": true
+  },
+  "namespaces": [
+    { "id": "peerit", "writers": 1184, "bytes24h": …, "capBytes24h": …, "sse": 36 }
+  ],
+  "shardStore": { "puts": …, "rejects": …, "bytes": … },
+  "compliance": {
+    "adminArmed": true,
+    "suppressedKeys": 3,
+    "suppressedAppIds": 0,
+    "backupAgeSec": 14400
+  },
+  "privacyTransportsPublic": [
+    { "id": "tor-v3-onion-v1", "health": "degraded" }  // no address
+  ]
+}
+</pre>
+
+<p style="font-size:.9rem;color:var(--dim)">
+  Prefer extending <code>/api/overview</code> + Prometheus families over many one-off routes.
+  Peerit-specific depth stays in app ops tools; the node only exposes namespace plumbing stats.
+</p>
+
+<!-- ============================================================ -->
+<h2>8. Alert catalogue (operator-facing)</h2>
+<table>
+  <thead><tr><th>Severity</th><th>Condition</th><th>Suggested action</th></tr></thead>
+  <tbody>
+    <tr><td class="val r" style="font-size:.9rem">Critical</td><td>Disk ≥ 90% or health-critical</td><td>Expand volume / free space; freeze admissions</td></tr>
+    <tr><td class="val r" style="font-size:.9rem">Critical</td><td>WAL interior break / fail-closed recovery</td><td>Stop writes; restore from backup; open incident</td></tr>
+    <tr><td class="val o" style="font-size:.9rem">Warning</td><td>Disk ≥ 75%; namespace ≥ 80% of bytesPerDay</td><td>Plan capacity; rate-limit noisy writers</td></tr>
+    <tr><td class="val o" style="font-size:.9rem">Warning</td><td>Tor degraded; privacy lane removed from capability doc</td><td>Check tor daemon; do not advertise private claims</td></tr>
+    <tr><td class="val o" style="font-size:.9rem">Warning</td><td>Admin surface unarmed while admitting public apps</td><td>Set takedown secret; run drill</td></tr>
+    <tr><td class="val o" style="font-size:.9rem">Warning</td><td>Backup age &gt; 24h</td><td>Fix timer; off-host copy</td></tr>
+    <tr><td class="val c" style="font-size:.9rem">Info</td><td>Version ≠ fleet channel target</td><td>Schedule update</td></tr>
+  </tbody>
+</table>
+
+<!-- ============================================================ -->
+<h2>9. Implementation path (pragmatic)</h2>
+<ol style="margin-left:1.2em">
+  <li><strong>v0 — now:</strong> Keep current dashboard; add disk + role chips + suppression count to Pulse (fields largely in status/overview already for disk/uptime).</li>
+  <li><strong>v1:</strong> Namespaces card + compliance panel (OutboxLog + suppress APIs) + Tor public health enum.</li>
+  <li><strong>v2:</strong> WAL + shard Prometheus panels; gateway panel when enabled; negative-probe bit. <em>(shipped)</em></li>
+  <li><strong>v3:</strong> Fleet multi-node view (read-only aggregate of many <code>/status</code>); never merges private Tor detail.
+    <em>(shipped: <code>GET /api/fleet</code> + <code>/fleet</code> dashboard; config.fleet.peers)</em></li>
+</ol>
+
+<!-- ============================================================ -->
+<h2>10. Relation to Peerit stand-up</h2>
+<table>
+  <thead><tr><th>Peerit concern</th><th>Dashboard surface</th></tr></thead>
+  <tbody>
+    <tr><td>Can writers land commits?</td><td>OutboxLog append rate, 4xx/429, capacity</td></tr>
+    <tr><td>Is Opaque-Log “blind enough” for ops?</td><td>No content panels — only cell counts/bytes</td></tr>
+    <tr><td>Legal notice arrives</td><td>Compliance · suppress by opaque id · audit log</td></tr>
+    <tr><td>Moderation “broken”?</td><td>Usually not a node issue — point operator to client policy; check only if outbox reject spikes</td></tr>
+    <tr><td>App unreachable in browser</td><td>T1 gateway / peerit.site is separate; node shows if it hosts gateway routes</td></tr>
+    <tr><td>Multi-ingress ready?</td><td>Flag if this node is sole writer in roster (config/ops annotation)</td></tr>
+  </tbody>
+</table>
+
+<div class="footer">
+  <p>
+    Design date <strong>2026-07-19</strong>. Complements
+    <code>GIGA-RELEASE-ARCHITECTURE-2026-07-19.html</code>,
+    <code>PEERIT-OPS-ARCHITECTURE-2026-07-19.html</code>, and
+    <code>peerit-ops-execution-2026-07-19/</code>.
+  </p>
+  <p>
+    Visual language matches the shipping HiveRelay dashboard (dark cards, mono stats, accent gold).
+    Goal: operators run giga-capable nodes without reading app content or overclaiming privacy.
+  </p>
+</div>
+
+</div>
+</body>
+</html>

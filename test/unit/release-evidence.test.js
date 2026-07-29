@@ -237,6 +237,50 @@ test('release evidence writer records digest, gates, and external surfaces', asy
   t.is(body.surfaces.umbrelCommunityStore.commitUrl, `https://github.com/bigdestiny2/blindspark-umbrel-store/commit/${SHA}`)
 })
 
+test('release evidence writer records public gateway fleet rollout as canary-gated deferred work', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-evidence-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const outFile = path.join(dir, 'release-evidence.json')
+  await runEvidence(outFile, completeFullReleaseEnv({
+    HIVERELAY_RELEASE_CHANNEL: 'none',
+    HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED: 'true',
+    HIVERELAY_PUBLIC_GATEWAY_MANIFEST_STATUS: 'enabled',
+    HIVERELAY_PUBLIC_GATEWAY_MANIFEST_PATH: 'fleet/public-hive-gateway-release.json',
+    HIVERELAY_PUBLIC_GATEWAY_MANIFEST_SHA256: '4'.repeat(64),
+    HIVERELAY_PUBLIC_GATEWAY_RELEASE_TARGET: 'v9.9.9',
+    HIVERELAY_PUBLIC_GATEWAY_COMMIT_SHA: SHA,
+    HIVERELAY_PUBLIC_GATEWAY_ADMISSION_PROFILE: 'blind-substrate-public-v1',
+    HIVERELAY_PUBLIC_GATEWAY_COHORT_SIZE: '3',
+    HIVERELAY_FLEET_ROLLOUT_STATUS: 'deferred-gateway-canary-gated',
+    HIVERELAY_FLEET_ROLLOUT_CHANNEL: '',
+    HIVERELAY_FLEET_ROLLOUT_EVIDENCE: '',
+    HIVERELAY_FLEET_ROLLOUT_EVIDENCE_SHA256: '',
+    HIVERELAY_FLEET_CHANNEL_CONFIG: '',
+    HIVERELAY_FLEET_CHANNEL_CONFIG_SHA256: ''
+  }), {
+    linkedArtifacts: { 'fleet-rollout-evidence.json': false }
+  })
+
+  const body = JSON.parse(await readFile(outFile, 'utf8'))
+  t.is(body.release.channel, 'none')
+  t.alike(body.release.publicGateway, {
+    enabled: true,
+    manifestStatus: 'enabled',
+    manifestPath: 'fleet/public-hive-gateway-release.json',
+    manifestSha256: '4'.repeat(64),
+    releaseTarget: 'v9.9.9',
+    commitSha: SHA,
+    admissionProfile: 'blind-substrate-public-v1',
+    cohortSize: 3
+  })
+  t.is(body.surfaces.fleetRollout, 'deferred-gateway-canary-gated')
+  t.is(body.surfaces.fleetRolloutEvidence.path, '')
+  t.is(body.surfaces.fleetChannelConfig.path, '')
+})
+
 test('release evidence writer rejects symlinked present sidecars before writing evidence', async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-evidence-'))
   t.teardown(async () => {

@@ -1,0 +1,83 @@
+{
+  "schema": "hiverelay.blind.release-closure.v1",
+  "profile": {
+    "artifact": "docs/protocol/HIVERELAY-BLIND-RC1-PROFILE-BINDING-V1.json",
+    "schema": "hiverelay.blind.rc1-profile-binding.v1",
+    "profile": "peerit-1f2",
+    "sourceCommit": "1f2a971e6a6bf401c2d59f904d73824e3cfbeb9a",
+    "profileSpecHash": "931a85e29eb3767d8d2a1920d7e127cf20d708cce6975d967522fd07f475f473",
+    "profileAbiHash": "205d935d74bec6f80f8b6ee934c9f281f85a07e1efd25d9977f111c34fb0ded6",
+    "profileVectorSetHash": "c5f679378d5b84de88cadffd89612044df59443663e292c308dde19fa4583155"
+  },
+  "wire": {
+    "artifact": "packages/blind-protocol/hiverelay-blind-wire-authority-v1.json",
+    "specHash": "c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592",
+    "abiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+    "vectorSetHash": "fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05"
+  },
+  "implementation": {
+    "artifact": "docs/protocol/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md",
+    "implementationSpecHash": "a907ea7aae6939ddd081da4efe066418fc4d1448974207cba001d5f2f8809da7"
+  },
+  "store": {
+    "artifact": "packages/blind-protocol/hiverelay-blind-store-format-authority-v1.draft.cenc",
+    "storeFormatHash": "d590838a91655dc1cf8d04f277416caacaf1b73ddbddd9f6f19b104dfb92234c",
+    "storeVectorSetHash": "5005229ae8876b5cf7c56405ee1ca7585c054e531e48615cb47edcd32f5e3f75"
+  },
+  "privateIpc": {
+    "artifact": "packages/blind-ipc/hiverelay-blind-private-ipc-authority-v1.json",
+    "importedWireAbiHash": "199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567",
+    "privateIpcFormatHash": "dd895c7a849609d647134216499cbbf9344ba06fc181413db6f1e27dc26da561",
+    "privateIpcVectorSetHash": "fa58b38f6edf4a9d0390c7af7f454150ccfe2d1398b105686ff8e0f2883893cb"
+  },
+  "decisions": {
+    "artifact": "docs/protocol/HIVERELAY-BLIND-OWNER-DECISIONS-V1.json",
+    "decisionsHash": "5a4e3a3c5edab0b0e0f1b56720128b4a17f412122ed12361a76224a55ab71260",
+    "ids": [
+      "D1",
+      "D2",
+      "D3",
+      "D4",
+      "D5",
+      "D6",
+      "D7"
+    ]
+  },
+  "operationProfile": {
+    "advertisedOperationBits": 131071,
+    "advertisedOperationCount": 17,
+    "reservedOperationBits": 4063232,
+    "reservedOperationCount": 5,
+    "reservedOperations": [
+      {
+        "familyId": 4,
+        "operationId": 3
+      },
+      {
+        "familyId": 5,
+        "operationId": 1
+      },
+      {
+        "familyId": 5,
+        "operationId": 2
+      },
+      {
+        "familyId": 5,
+        "operationId": 3
+      },
+      {
+        "familyId": 5,
+        "operationId": 4
+      }
+    ]
+  },
+  "compatibilityBlockers": [
+    "BLIND_DAEMON_MUST_ENFORCE_RESERVED_OPERATION_PROFILE",
+    "BLIND_EDGE_MUST_ENFORCE_RESERVED_OPERATION_PROFILE",
+    "BLIND_STORAGE_MUST_MIGRATE_TO_FORMAT_1_2_DETERMINISTIC_BUCKETS",
+    "PEERIT_MUST_CONSUME_THIS_CLOSURE"
+  ],
+  "contractReady": true,
+  "productReleaseReady": false,
+  "closureHash": "4d4afc934d1b7cb9540062766a1f95887f192adf06302c7be02a267b571d6180"
+}

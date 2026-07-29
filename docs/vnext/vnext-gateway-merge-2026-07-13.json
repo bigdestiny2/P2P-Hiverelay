@@ -1,0 +1,71 @@
+{
+  "schema": "hiverelay-vnext-gateway-merge-evidence-v1",
+  "at": "2026-07-13T11:09:38Z",
+  "worktree": "00-core/hr-vnext-gateway-merge",
+  "branch": "feat/vnext-gateway-merge",
+  "mergeCommit": "2ab0cb625910db856f01f25db0b18d78ebf17c94",
+  "parents": {
+    "vnext": "01e0a92d67da2221fe3a9c90038d3830e4fa8348",
+    "gateway": "0ff54842993e4e34bdc58bc1ff5c49e55de52548"
+  },
+  "parentsRaw": "01e0a92d67da2221fe3a9c90038d3830e4fa8348 0ff54842993e4e34bdc58bc1ff5c49e55de52548",
+  "conflictResolution": {
+    "files": ["package.json"],
+    "policy": "retain vnext blind workspaces/scripts and run-brittle-suite harness; add gateway public-hive-gateway live/soak scripts; keep gateway storage + public HTTPS runtime; keep vnext credits auth-gate"
+  },
+  "verification": {
+    "storageCapConfigAdmission": {
+      "command": "brittle test/unit/storage-cap-resolve.test.js test/unit/config-loader.test.js test/unit/storage-admission-authority.test.js",
+      "result": "pass",
+      "tests": "57/57",
+      "asserts": "325/325"
+    },
+    "storageGatewayLifecycle": {
+      "command": "brittle hyper-gateway-hardening + storage-admission + storage-cap + app-registry-physical + client-lifecycle + storage-startup-rollback",
+      "result": "pass",
+      "tests": "130/130",
+      "asserts": "941/941"
+    },
+    "blindProtocol": {
+      "command": "npm run test:blind-protocol",
+      "result": "pass",
+      "tests": "30/30",
+      "asserts": "1340/1340"
+    },
+    "blindBoundary": {
+      "command": "npm run test:blind-boundary",
+      "result": "pass",
+      "tests": "291/291",
+      "asserts": "3482/3482"
+    },
+    "publicHiveGatewayUnitCreditsFleet": {
+      "command": "brittle public-hive-gateway-*.test.js hive-gateway-host api-credits fleet-gateway-quarantine fleet-updater-gateway",
+      "result": "pass",
+      "tests": "119/119",
+      "asserts": "1209/1209"
+    },
+    "publicHiveGatewayDeployRehearsal": {
+      "command": "brittle test/integration/public-hive-gateway-deploy-rehearsal.test.js",
+      "result": "pass",
+      "tests": "1/1",
+      "asserts": "38/38"
+    }
+  },
+  "notRun": [
+    "full npm test suite",
+    "test:public-hive-gateway:live (network/TLS live harness)",
+    "fleet --mode fleet production canary",
+    "publish/deploy/npm/GHCR"
+  ],
+  "residualGates": [
+    "frozen non-transitional T1/T2/T3 admission predicate",
+    "owner decisions D-5 D-6 D-7",
+    "blind package versions still 0.0.0-draft.1",
+    "production start remains fail-closed for blind daemon",
+    "no live fleet promotion"
+  ],
+  "authorizesRelease": false,
+  "authorizesDeploy": false,
+  "authorizesFleetPromotion": false,
+  "peeritTouched": false
+}

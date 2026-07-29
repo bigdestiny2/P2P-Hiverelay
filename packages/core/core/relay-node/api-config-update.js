@@ -1,4 +1,9 @@
 import { validatePositiveInt, validatePositiveNumber } from './api-validation.js'
+import {
+  copyStorageCapProvenance,
+  markStorageCapExplicit,
+  STORAGE_CAP_PROVENANCE
+} from '../../config/storage-cap.js'
 
 const INT_FIELDS = {
   maxStorageBytes: { min: 1048576, max: 10e12 },
@@ -69,6 +74,8 @@ function rollbackApplied ({ applied, config, previousConfig }) {
     if (Object.prototype.hasOwnProperty.call(previousConfig, field)) config[field] = previousConfig[field]
     else delete config[field]
   }
+  if (previousConfig[STORAGE_CAP_PROVENANCE]) copyStorageCapProvenance(previousConfig, config)
+  else delete config[STORAGE_CAP_PROVENANCE]
 }
 
 export async function runConfigUpdateAction ({
@@ -91,6 +98,7 @@ export async function runConfigUpdateAction ({
         return { ok: false, kind: 'bad-request', status: 400, payload: errorPayload(result.error) }
       }
       config[field] = result.value
+      if (field === 'maxStorageBytes') markStorageCapExplicit(config, 'management-api')
       applied.push(field)
     }
   }

@@ -1,0 +1,1105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Year-1 Scale Research · 10k Peerit DAU · 1000 HiveRelay Operators</title>
+  <style>
+    :root {
+      --bg: #eef2ef; --card: #fff; --ink: #132018; --muted: #5a6860; --line: #d0dcd4;
+      --g: #0c8a68; --gd: #066b50; --gs: #e2f5ee; --b: #2b6cb0; --bs: #e8f1fb;
+      --a: #b7791f; --as: #fdf6e3; --c: #c45c4a; --cs: #fdecea; --p: #6b5b95; --ps: #f1edf8;
+      --dk: #0f1a15; --sans: "Segoe UI", system-ui, -apple-system, sans-serif;
+      --serif: "Iowan Old Style", Palatino, "Palatino Linotype", Georgia, serif;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: var(--sans); color: var(--ink); background: var(--bg); line-height: 1.62; }
+    .wrap { max-width: 1120px; margin: 0 auto; padding: 2rem 1.15rem 5rem; }
+    .hero {
+      background: linear-gradient(145deg, #072820 0%, #0a4d3c 38%, #0c6e8a 100%);
+      color: #fff; border-radius: 24px; padding: 2.1rem 1.85rem 1.9rem; margin-bottom: 1.15rem;
+      position: relative; overflow: hidden;
+    }
+    .hero::after {
+      content: ""; position: absolute; right: -40px; top: -40px; width: 220px; height: 220px;
+      border-radius: 50%; background: rgba(255,255,255,.06);
+    }
+    .hero .ey { font-size: .7rem; letter-spacing: .16em; text-transform: uppercase; opacity: .82; font-weight: 700; }
+    .hero h1 { font-family: var(--serif); font-size: clamp(1.75rem, 4vw, 2.5rem); margin: .45rem 0 .7rem; line-height: 1.12; font-weight: 600; }
+    .hero p { margin: 0; opacity: .93; max-width: 68ch; font-size: 1.03rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: .45rem; margin-top: 1.05rem; }
+    .chip { background: rgba(255,255,255,.13); border: 1px solid rgba(255,255,255,.2); padding: .28rem .7rem; border-radius: 999px; font-size: .76rem; font-weight: 600; }
+    nav.toc { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: 1.15rem; }
+    nav.toc a {
+      text-decoration: none; font-size: .74rem; font-weight: 600; color: var(--muted);
+      background: var(--card); border: 1px solid var(--line); padding: .3rem .58rem; border-radius: 999px;
+    }
+    nav.toc a:hover { color: var(--gd); border-color: #a8d4c4; }
+    section {
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      padding: 1.45rem 1.3rem 1.6rem; margin-bottom: 1rem; box-shadow: 0 1px 0 rgba(15,30,22,.03);
+    }
+    h2 { font-family: var(--serif); font-size: 1.48rem; margin: 0 0 .45rem; letter-spacing: -.01em; }
+    h2 .n { color: var(--g); font-family: var(--sans); font-size: .74rem; letter-spacing: .11em; text-transform: uppercase; display: block; margin-bottom: .28rem; font-weight: 700; }
+    h3 { font-size: 1.05rem; margin: 1.25rem 0 .4rem; color: #1a2a22; }
+    h4 { font-size: .92rem; margin: 1rem 0 .3rem; color: var(--muted); text-transform: uppercase; letter-spacing: .06em; }
+    .lede { color: var(--muted); max-width: 70ch; margin: 0 0 1rem; font-size: .98rem; }
+    p { max-width: 72ch; margin: .5rem 0; }
+    ul, ol { max-width: 72ch; }
+    li { margin: .28rem 0; }
+    .callout { border-radius: 12px; padding: .9rem 1.05rem; margin: 1rem 0; max-width: 74ch; font-size: .93rem; }
+    .callout.g { background: var(--gs); border: 1px solid #b7e6d3; }
+    .callout.a { background: var(--as); border: 1px solid #f0d89a; }
+    .callout.b { background: var(--bs); border: 1px solid #c5daf3; }
+    .callout.c { background: var(--cs); border: 1px solid #f0c4bc; }
+    .callout.p { background: var(--ps); border: 1px solid #d4cce8; }
+    .callout strong.t { display: block; margin-bottom: .25rem; font-size: .95rem; }
+    .fig {
+      margin: 1.05rem 0; background: linear-gradient(180deg, #fbfcfb 0%, #eef4f0 100%);
+      border: 1px solid var(--line); border-radius: 14px; padding: 1rem .75rem .7rem; overflow-x: auto;
+    }
+    .fig.dark { background: linear-gradient(180deg, #14241c, #0f1a15); border-color: #1e3328; }
+    .fig svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+    .cap { text-align: center; font-size: .76rem; color: var(--muted); margin: .45rem 0 0; max-width: none; }
+    .fig.dark .cap { color: #8a9a90; }
+    table {
+      width: 100%; border-collapse: collapse; font-size: .83rem; margin: .85rem 0 1rem;
+      border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+    }
+    th, td { text-align: left; padding: .52rem .58rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+    th { background: #eef4f0; font-size: .7rem; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; font-weight: 700; }
+    tr:last-child td { border-bottom: 0; }
+    tr:hover td { background: #f8fbf9; }
+    td.num { font-variant-numeric: tabular-nums; font-weight: 700; color: var(--gd); white-space: nowrap; }
+    td.bad { color: var(--c); font-weight: 700; }
+    td.warn { color: var(--a); font-weight: 700; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; margin: 1rem 0; }
+    .grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: .65rem; margin: 1rem 0; }
+    .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: .55rem; margin: 1rem 0; }
+    .grid5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: .5rem; margin: 1rem 0; }
+    @media (max-width: 900px) { .grid4, .grid5 { grid-template-columns: 1fr 1fr; } }
+    @media (max-width: 720px) { .grid2, .grid3 { grid-template-columns: 1fr; } .grid4, .grid5 { grid-template-columns: 1fr; } }
+    .stat {
+      background: #f7faf8; border: 1px solid var(--line); border-radius: 12px; padding: .85rem .7rem; text-align: center;
+    }
+    .stat .v { font-size: 1.32rem; font-weight: 800; color: var(--gd); line-height: 1.15; font-variant-numeric: tabular-nums; }
+    .stat .l { font-size: .71rem; color: var(--muted); margin-top: .28rem; line-height: 1.3; }
+    .stat.inv { background: var(--dk); border-color: #1e3328; }
+    .stat.inv .v { color: #3ecf8e; }
+    .stat.inv .l { color: #8a9a90; }
+    .assumptions {
+      font-size: .82rem; background: #f7faf8; border: 1px dashed #b8c9be; border-radius: 10px;
+      padding: .8rem .95rem; max-width: 78ch; color: var(--muted);
+    }
+    .assumptions strong { color: var(--ink); }
+    .formula {
+      font-family: var(--mono); font-size: .78rem; background: #0f1a15; color: #c8e6d8;
+      padding: .85rem 1rem; border-radius: 10px; overflow-x: auto; line-height: 1.55; margin: .75rem 0;
+    }
+    code { font-family: var(--mono); font-size: .86em; background: #e8eee9; padding: .08em .32em; border-radius: 4px; }
+    .two-col { display: grid; grid-template-columns: 1.15fr .85fr; gap: 1rem; align-items: start; }
+    @media (max-width: 800px) { .two-col { grid-template-columns: 1fr; } }
+    footer {
+      text-align: center; color: var(--muted); font-size: .78rem; margin-top: 1.4rem;
+      padding: 1.2rem; border-top: 1px solid var(--line);
+    }
+    .src { font-size: .78rem; color: var(--muted); margin-top: .4rem; }
+    .tag { display: inline-block; font-size: .68rem; font-weight: 700; padding: .12rem .4rem; border-radius: 4px; vertical-align: middle; }
+    .tag.ok { background: var(--gs); color: var(--gd); }
+    .tag.warn { background: var(--as); color: #8a5a10; }
+    .tag.bad { background: var(--cs); color: #9a3a2a; }
+    @media print {
+      body { background: #fff; }
+      .hero { break-after: page; }
+      section { break-inside: avoid; box-shadow: none; }
+      nav.toc { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="hero">
+      <p class="ey">Research note · closed-form simulation · July 2026 · v1.1</p>
+      <h1>Year-1 network scale study</h1>
+      <p>
+        What happens if <strong>Peerit reaches 10,000 DAU</strong>, there are
+        <strong>1,000 independent HiveRelay operators</strong>, and a handful of other apps
+        each draw hundreds to thousands of users? This note simulates storage, memory,
+        bandwidth, hardware tiers, rate-limit cliffs, and Phase-1/2 economics —
+        grounded in codebase constants, soak evidence, and published rate cards.
+      </p>
+      <div class="meta">
+        <span class="chip">Analytical model · not release evidence</span>
+        <span class="chip">Blind cell classes 4 KiB–1 MiB</span>
+        <span class="chip">Peerit CAPACITY.md soaks</span>
+        <span class="chip">ECONOMICS.md mid prices</span>
+        <span class="chip">Operator incentives Y1</span>
+      </div>
+    </header>
+
+    <nav class="toc">
+      <a href="#exec">01 Findings</a>
+      <a href="#scenario">02 Scenario</a>
+      <a href="#model">03 Model</a>
+      <a href="#sim">04 Simulation</a>
+      <a href="#traffic">05 Storage</a>
+      <a href="#memory">06 Memory</a>
+      <a href="#powerlaw">07 Load skew</a>
+      <a href="#scale">08 Scale risks</a>
+      <a href="#nat">09 Shared NAT</a>
+      <a href="#econ">10 Economics</a>
+      <a href="#growth">11 Growth path</a>
+      <a href="#stress">12 Stress</a>
+      <a href="#gaps">13 Gaps</a>
+      <a href="#recs">14 Recs</a>
+      <a href="#appendix">Appendix</a>
+    </nav>
+
+    <!-- 01 EXEC -->
+    <section id="exec">
+      <h2><span class="n">01 · Executive findings</span>Hardware is easy; coordination is hard</h2>
+      <p class="lede">
+        Under a text-oriented social workload with <strong>5× cell replication</strong> and
+        <strong>180-day retention</strong>, 1,000 operators are a large over-provision of raw
+        capacity for ~16k combined DAU. The binding constraints are rate limits, writer-group
+        ceilings, client selection skew, and operator P&amp;L — not terabytes or GHz.
+      </p>
+
+      <div class="grid5">
+        <div class="stat inv"><div class="v">~884 MB</div><div class="l">fair-share disk / operator (5×, 180d)</div></div>
+        <div class="stat inv"><div class="v">~414 MB</div><div class="l">modeled process RSS (typical Core op)</div></div>
+        <div class="stat inv"><div class="v">~0.19</div><div class="l">logical write RPS network-wide</div></div>
+        <div class="stat inv"><div class="v">~$1.14</div><div class="l">Phase-2 mid revenue / typical op / mo</div></div>
+        <div class="stat inv"><div class="v">$5–20</div><div class="l">VPS sweet-spot for fair-share Core</div></div>
+      </div>
+
+      <div class="grid2">
+        <div class="callout g">
+          <strong class="t">What scales cleanly</strong>
+          Disk, CPU, and average bandwidth at text-social mix. A Pi 5 or $5–20 VPS holds a
+          fair-share Core role. Network physical corpus stays under <strong>~1 TB</strong>
+          network-wide at year-1 baseline — trivial for 1,000 nodes.
+        </div>
+        <div class="callout a">
+          <strong class="t">What does not scale by default</strong>
+          Shared-NAT browser rate limits (measured 1,200 req/60s/IP knee), OutboxLog’s
+          <strong>20k ever-writer group ceiling</strong>, single-ingress Peerit, and mid-card
+          economics that leave operators underwater vs VPS cost.
+        </div>
+      </div>
+
+      <div class="fig dark">
+        <svg viewBox="0 0 1040 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#8a9a90" font-size="13" font-weight="700">Year-1 verdict map</text>
+          <!-- axes -->
+          <line x1="80" y1="250" x2="980" y2="250" stroke="#2a3d34" stroke-width="2"/>
+          <line x1="80" y1="50" x2="80" y2="250" stroke="#2a3d34" stroke-width="2"/>
+          <text x="530" y="285" text-anchor="middle" fill="#6a7a70" font-size="11">Ease of solving with more iron →</text>
+          <text x="22" y="150" text-anchor="middle" fill="#6a7a70" font-size="11" transform="rotate(-90 22 150)">Product / coordination difficulty →</text>
+
+          <!-- quadrant labels -->
+          <text x="280" y="70" fill="#3ecf8e" font-size="11" font-weight="700" opacity=".7">HARD + CHEAP HARDWARE</text>
+          <text x="720" y="70" fill="#c45c4a" font-size="11" font-weight="700" opacity=".7">HARD + EXPENSIVE</text>
+          <text x="280" y="235" fill="#3ecf8e" font-size="11" font-weight="700" opacity=".7">EASY + CHEAP</text>
+          <text x="720" y="235" fill="#b7791f" font-size="11" font-weight="700" opacity=".7">EASY + EXPENSIVE (avoid)</text>
+
+          <!-- points -->
+          <circle cx="220" cy="210" r="18" fill="#0c8a68"/><text x="220" y="214" text-anchor="middle" fill="#fff" font-size="9" font-weight="700">disk</text>
+          <circle cx="260" cy="200" r="16" fill="#0c8a68"/><text x="260" y="204" text-anchor="middle" fill="#fff" font-size="9" font-weight="700">CPU</text>
+          <circle cx="300" cy="195" r="15" fill="#0c8a68"/><text x="300" y="199" text-anchor="middle" fill="#fff" font-size="8" font-weight="700">RAM</text>
+          <circle cx="340" cy="188" r="14" fill="#2b6cb0"/><text x="340" y="192" text-anchor="middle" fill="#fff" font-size="8" font-weight="700">BW</text>
+
+          <circle cx="420" cy="95" r="28" fill="#c45c4a"/><text x="420" y="92" text-anchor="middle" fill="#fff" font-size="10" font-weight="800">NAT</text>
+          <text x="420" y="105" text-anchor="middle" fill="#fff" font-size="8">429 cliff</text>
+
+          <circle cx="520" cy="110" r="26" fill="#b7791f"/><text x="520" y="107" text-anchor="middle" fill="#fff" font-size="9" font-weight="800">select</text>
+          <text x="520" y="120" text-anchor="middle" fill="#fff" font-size="8">skew</text>
+
+          <circle cx="610" cy="100" r="24" fill="#b7791f"/><text x="610" y="104" text-anchor="middle" fill="#fff" font-size="9" font-weight="800">econ</text>
+
+          <circle cx="700" cy="120" r="22" fill="#6b5b95"/><text x="700" y="117" text-anchor="middle" fill="#fff" font-size="9" font-weight="800">20k</text>
+          <text x="700" y="129" text-anchor="middle" fill="#fff" font-size="8">groups</text>
+
+          <circle cx="800" cy="140" r="20" fill="#6b5b95"/><text x="800" y="144" text-anchor="middle" fill="#fff" font-size="8" font-weight="700">media</text>
+        </svg>
+        <p class="cap">Figure 1 — At year-1 demand, spend engineering on coordination, not on bigger disks.</p>
+      </div>
+    </section>
+
+    <!-- 02 SCENARIO -->
+    <section id="scenario">
+      <h2><span class="n">02 · Scenario</span>Demand sketch at the one-year mark</h2>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <!-- clients -->
+          <rect x="30" y="40" width="200" height="260" rx="16" fill="#0c8a68"/>
+          <text x="130" y="80" text-anchor="middle" fill="#c8f0e0" font-size="12" font-weight="700">CLIENTS</text>
+          <text x="130" y="130" text-anchor="middle" fill="#fff" font-size="40" font-weight="800">10k</text>
+          <text x="130" y="160" text-anchor="middle" fill="#c8f0e0" font-size="14">Peerit DAU</text>
+          <text x="130" y="195" text-anchor="middle" fill="#a0dcc8" font-size="11">+ ~6.1k other-app DAU</text>
+          <text x="130" y="220" text-anchor="middle" fill="#a0dcc8" font-size="11">≈ 16.1k total DAU</text>
+          <text x="130" y="255" text-anchor="middle" fill="#a0dcc8" font-size="11">browser + Pear clients</text>
+
+          <!-- apps -->
+          <rect x="270" y="40" width="220" height="260" rx="16" fill="#1a2a22" stroke="#3ecf8e" stroke-width="1.5"/>
+          <text x="380" y="75" text-anchor="middle" fill="#3ecf8e" font-size="12" font-weight="700">APP LAYER</text>
+          <rect x="290" y="95" width="180" height="36" rx="8" fill="#0c8a68"/>
+          <text x="380" y="118" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Peerit · 10k DAU</text>
+          <rect x="290" y="140" width="180" height="28" rx="6" fill="#2b6cb0"/>
+          <text x="380" y="159" text-anchor="middle" fill="#fff" font-size="11">Paste 2k · Tickets 1.5k</text>
+          <rect x="290" y="176" width="180" height="28" rx="6" fill="#6b5b95"/>
+          <text x="380" y="195" text-anchor="middle" fill="#fff" font-size="11">Sports 1.2k · POS 0.8k</text>
+          <rect x="290" y="212" width="180" height="28" rx="6" fill="#b7791f"/>
+          <text x="380" y="231" text-anchor="middle" fill="#fff" font-size="11">Marketplace 0.6k</text>
+          <text x="380" y="275" text-anchor="middle" fill="#8a9a90" font-size="10">client-side crypto · app semantics</text>
+
+          <!-- arrows -->
+          <path d="M500 170 H540" stroke="#94a39b" stroke-width="2"/>
+          <polygon points="538,164 550,170 538,176" fill="#94a39b"/>
+
+          <!-- substrate -->
+          <rect x="560" y="40" width="220" height="260" rx="16" fill="#2b6cb0"/>
+          <text x="670" y="80" text-anchor="middle" fill="#c5daf3" font-size="12" font-weight="700">SUBSTRATE</text>
+          <text x="670" y="125" text-anchor="middle" fill="#fff" font-size="15" font-weight="800">HiveRelay Core</text>
+          <text x="670" y="155" text-anchor="middle" fill="#c5daf3" font-size="12">CELL · INBOX · CORE</text>
+          <text x="670" y="180" text-anchor="middle" fill="#c5daf3" font-size="12">FORWARD · admit</text>
+          <text x="670" y="215" text-anchor="middle" fill="#a8c4e8" font-size="11">R = 5 replicas</text>
+          <text x="670" y="240" text-anchor="middle" fill="#a8c4e8" font-size="11">180-day hot retention</text>
+          <text x="670" y="270" text-anchor="middle" fill="#a8c4e8" font-size="11">optional T1 HTTPS gateway</text>
+
+          <path d="M780 170 H820" stroke="#94a39b" stroke-width="2"/>
+          <polygon points="818,164 830,170 818,176" fill="#94a39b"/>
+
+          <!-- ops -->
+          <rect x="830" y="40" width="180" height="260" rx="16" fill="#6b5b95"/>
+          <text x="920" y="90" text-anchor="middle" fill="#d4cce8" font-size="12" font-weight="700">OPERATORS</text>
+          <text x="920" y="145" text-anchor="middle" fill="#fff" font-size="40" font-weight="800">1k</text>
+          <text x="920" y="175" text-anchor="middle" fill="#d4cce8" font-size="13">independent boxes</text>
+          <text x="920" y="210" text-anchor="middle" fill="#b8aed4" font-size="11">home · VPS · bare metal</text>
+          <text x="920" y="240" text-anchor="middle" fill="#b8aed4" font-size="11">multi-region aspiration</text>
+        </svg>
+        <p class="cap">Figure 2 — Ecosystem topology used for the year-1 scenario.</p>
+      </div>
+
+      <table>
+        <thead>
+          <tr><th>App</th><th>DAU</th><th>Write frac</th><th>Events / writer / day</th><th>Cell size mix</th><th>Role</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>Peerit</strong></td><td class="num">10,000</td><td class="num">15%</td><td class="num">6.5</td><td>class-3 dominant (64 KiB)</td><td>Primary social write load</td></tr>
+          <tr><td>Paste</td><td class="num">2,000</td><td class="num">5%</td><td class="num">1.5</td><td>~48 KiB notes</td><td>Occasional larger blobs</td></tr>
+          <tr><td>Tickets</td><td class="num">1,500</td><td class="num">8%</td><td class="num">3.0</td><td>~32 KiB</td><td>Event bursts</td></tr>
+          <tr><td>Sports</td><td class="num">1,200</td><td class="num">12%</td><td class="num">8.0</td><td>~24 KiB</td><td>Live-ish updates</td></tr>
+          <tr><td>POS</td><td class="num">800</td><td class="num">25%</td><td class="num">12.0</td><td>~16 KiB</td><td>Merchant devices</td></tr>
+          <tr><td>Marketplace</td><td class="num">600</td><td class="num">10%</td><td class="num">4.0</td><td>~40 KiB</td><td>Listings + messages</td></tr>
+        </tbody>
+      </table>
+      <p class="src">Sources: scenario hypothesis from product roadmap; cell classes from blind protocol (<code>4 KiB / 16 KiB / 64 KiB / 256 KiB / 1 MiB</code>).</p>
+    </section>
+
+    <!-- 03 MODEL -->
+    <section id="model">
+      <h2><span class="n">03 · Model &amp; method</span>What we simulated</h2>
+      <p class="lede">
+        Deterministic closed-form accounting with a power-law traffic split — not a discrete-event
+        packet simulator and <strong>not</strong> production evidence. Answers: “Are we order-of-magnitude fine?”
+      </p>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 200" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <rect x="20" y="35" width="170" height="130" rx="12" fill="#e2f5ee" stroke="#0c8a68" stroke-width="1.5"/>
+          <text x="105" y="85" text-anchor="middle" font-size="13" font-weight="800" fill="#0c8a68">Workload</text>
+          <text x="105" y="110" text-anchor="middle" font-size="10" fill="#5a6860">DAU × write frac</text>
+          <text x="105" y="128" text-anchor="middle" font-size="10" fill="#5a6860">→ cells / day</text>
+
+          <path d="M195 100 H225" stroke="#94a39b" stroke-width="2"/><polygon points="223,94 235,100 223,106" fill="#94a39b"/>
+
+          <rect x="240" y="35" width="170" height="130" rx="12" fill="#e8f1fb" stroke="#2b6cb0" stroke-width="1.5"/>
+          <text x="325" y="85" text-anchor="middle" font-size="13" font-weight="800" fill="#2b6cb0">Logical store</text>
+          <text x="325" y="110" text-anchor="middle" font-size="10" fill="#5a6860">unique ciphertext</text>
+          <text x="325" y="128" text-anchor="middle" font-size="10" fill="#5a6860">× retention days</text>
+
+          <path d="M415 100 H445" stroke="#94a39b" stroke-width="2"/><polygon points="443,94 455,100 443,106" fill="#94a39b"/>
+
+          <rect x="460" y="35" width="170" height="130" rx="12" fill="#f1edf8" stroke="#6b5b95" stroke-width="1.5"/>
+          <text x="545" y="85" text-anchor="middle" font-size="13" font-weight="800" fill="#6b5b95">Physical net</text>
+          <text x="545" y="110" text-anchor="middle" font-size="10" fill="#5a6860">× replica factor R</text>
+          <text x="545" y="128" text-anchor="middle" font-size="10" fill="#5a6860">spread over N ops</text>
+
+          <path d="M635 100 H665" stroke="#94a39b" stroke-width="2"/><polygon points="663,94 675,100 663,106" fill="#94a39b"/>
+
+          <rect x="680" y="35" width="170" height="130" rx="12" fill="#fdf6e3" stroke="#b7791f" stroke-width="1.5"/>
+          <text x="765" y="85" text-anchor="middle" font-size="13" font-weight="800" fill="#b7791f">Per-op share</text>
+          <text x="765" y="110" text-anchor="middle" font-size="10" fill="#5a6860">fair + power-law</text>
+          <text x="765" y="128" text-anchor="middle" font-size="10" fill="#5a6860">disk · RAM · BW</text>
+
+          <path d="M855 100 H885" stroke="#94a39b" stroke-width="2"/><polygon points="883,94 895,100 883,106" fill="#94a39b"/>
+
+          <rect x="900" y="35" width="120" height="130" rx="12" fill="#1a221e"/>
+          <text x="960" y="90" text-anchor="middle" font-size="13" font-weight="800" fill="#3ecf8e">$ / tier</text>
+          <text x="960" y="115" text-anchor="middle" font-size="10" fill="#a8b8b0">fit + risk</text>
+        </svg>
+        <p class="cap">Figure 3 — Accounting pipeline.</p>
+      </div>
+
+      <div class="formula">
+logical_bytes_day = Σ_app (DAU × write_frac × events_per_writer × cells_per_event × avg_cell_bytes × mailbox_oh)
+physical_bytes_day = logical_bytes_day × R
+retained_physical = physical_bytes_day × retention_days
+fair_share_disk   = retained_physical / N_operators
+RSS ≈ base_runtime + index(hot_set) + connection_buffers
+Phase2_sats ≈ disk_GB×50 + bw_GB×100 + contracted_hours×5
+      </div>
+
+      <div class="assumptions">
+        <strong>Grounding constants</strong><br/>
+        • Blind cell size classes: <code>4 KiB / 16 KiB / 64 KiB / 256 KiB / 1 MiB</code><br/>
+        • Peerit soak: local OutboxLog ~140 MB RSS @ 30 clients; atomic two-relay 200 writers → ~285 MB RSS, p99 issues when co-located<br/>
+        • OutboxLog hard cap: <strong>20,000 groups</strong> (ever-writers); second relay does <em>not</em> raise the ceiling<br/>
+        • Shared-NAT default: <strong>1,200 accepted requests / 60s / IP</strong> (configurable; measured knee at 30 concurrent writers on one IP)<br/>
+        • ECONOMICS.md mid card: storage <strong>50 sats/GB-mo</strong>, bandwidth <strong>100 sats/GB</strong>, availability <strong>5 sats/hr</strong>; 1 sat ≈ $0.001 @ $100k BTC<br/>
+        • Replica target <strong>R=5</strong>; retention <strong>180 days</strong>; Peerit write frac 15%; 2.5 posts + 4 comments/writer/day; class-3 mix + 15% mailbox overhead
+      </div>
+    </section>
+
+    <!-- 04 SIM -->
+    <section id="sim">
+      <h2><span class="n">04 · Simulation workbook</span>Closed-form results (baseline text mix)</h2>
+
+      <h3>Daily generation</h3>
+      <table>
+        <thead><tr><th>Stream</th><th>Writers / day</th><th>Cells / day</th><th>Logical bytes / day</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr><td>Peerit</td><td class="num">1,500</td><td class="num">11,700</td><td class="num">882 MB</td><td>1.5k × 6.5 × 1.2 × 64 KiB × 1.15</td></tr>
+          <tr><td>Other apps (sum)</td><td class="num">~610</td><td class="num">4,401</td><td class="num">101 MB</td><td>Per-app table above</td></tr>
+          <tr><td><strong>Network logical total</strong></td><td class="num">—</td><td class="num">~16,100</td><td class="num">~982 MB</td><td>Unique ciphertext before replication</td></tr>
+          <tr><td><strong>× R=5 physical</strong></td><td class="num">—</td><td class="num">—</td><td class="num">~4.91 GB/day</td><td>Network-wide write amplification</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Retained corpus (180 days)</h3>
+      <div class="grid4">
+        <div class="stat"><div class="v">~177 GB</div><div class="l">logical unique social corpus</div></div>
+        <div class="stat"><div class="v">~884 GB</div><div class="l">physical network-wide (5×)</div></div>
+        <div class="stat"><div class="v">~884 MB</div><div class="l">fair-share disk / operator if uniform</div></div>
+        <div class="stat"><div class="v">~0.19 RPS</div><div class="l">logical cell writes network-wide</div></div>
+      </div>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Where the ~884 GB physical corpus comes from</text>
+
+          <!-- stacked flow -->
+          <rect x="60" y="60" width="920" height="48" rx="10" fill="#0c8a68"/>
+          <text x="520" y="90" text-anchor="middle" fill="#fff" font-size="15" font-weight="800">Peerit ciphertext ≈ 90% of logical social bytes</text>
+
+          <rect x="60" y="120" width="920" height="32" rx="8" fill="#6b5b95"/>
+          <text x="520" y="141" text-anchor="middle" fill="#fff" font-size="13" font-weight="700">Other apps ≈ 10% · Paste/Tickets/Sports/POS/Marketplace</text>
+
+          <text x="60" y="185" fill="#5a6860" font-size="12" font-weight="700">Amplification &amp; placement</text>
+
+          <rect x="60" y="200" width="200" height="100" rx="12" fill="#e8f1fb" stroke="#2b6cb0"/>
+          <text x="160" y="240" text-anchor="middle" font-size="22" font-weight="800" fill="#2b6cb0">×5</text>
+          <text x="160" y="265" text-anchor="middle" font-size="11" fill="#5a6860">replica factor</text>
+
+          <rect x="280" y="200" width="200" height="100" rx="12" fill="#e2f5ee" stroke="#0c8a68"/>
+          <text x="380" y="240" text-anchor="middle" font-size="22" font-weight="800" fill="#0c8a68">÷1k</text>
+          <text x="380" y="265" text-anchor="middle" font-size="11" fill="#5a6860">if uniform placement</text>
+
+          <rect x="500" y="200" width="220" height="100" rx="12" fill="#fdf6e3" stroke="#b7791f"/>
+          <text x="610" y="235" text-anchor="middle" font-size="14" font-weight="800" fill="#b7791f">+ indexes / WAL</text>
+          <text x="610" y="255" text-anchor="middle" font-size="11" fill="#5a6860">~1–5% disk overhead</text>
+          <text x="610" y="275" text-anchor="middle" font-size="11" fill="#5a6860">T1 shells: tens of MB</text>
+
+          <rect x="740" y="200" width="240" height="100" rx="12" fill="#fdecea" stroke="#c45c4a"/>
+          <text x="860" y="235" text-anchor="middle" font-size="14" font-weight="800" fill="#c45c4a">Media stress</text>
+          <text x="860" y="255" text-anchor="middle" font-size="11" fill="#5a6860">class 4–5 cells</text>
+          <text x="860" y="275" text-anchor="middle" font-size="11" fill="#5a6860">can 4–15× this stack</text>
+        </svg>
+        <p class="cap">Figure 4 — Baseline social mix is text-dominated; media is the real disk risk.</p>
+      </div>
+
+      <h3>Read bandwidth model</h3>
+      <p>
+        Assume ~0.8 MB/day effective fetch per Peerit DAU (feed pages + small media amortized)
+        and ~0.4 MB/day for other apps:
+      </p>
+      <table>
+        <thead><tr><th>Metric</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Network read volume / day</td><td class="num">~10.4 GB</td></tr>
+          <tr><td>Typical operator (50% traffic on 90% of ops)</td><td class="num">~5.8 MB/day · ~174 MB/month</td></tr>
+          <tr><td>Top 10% operator (50% traffic on 10% of ops)</td><td class="num">~52 MB/day · ~1.6 GB/month</td></tr>
+          <tr><td>Modeled read ops (32 KiB pages)</td><td class="num">~3.7 RPS network-wide</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 05 TRAFFIC / STORAGE visual already in sim - keep short section for anchor -->
+    <section id="traffic">
+      <h2><span class="n">05 · Storage depth</span>Retention, growth, operator count</h2>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 320" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Fair-share disk per operator vs operator count (text baseline, R=5, 180d)</text>
+          <!-- y axis labels -->
+          <text x="70" y="70" text-anchor="end" fill="#5a6860" font-size="10">100 GB</text>
+          <text x="70" y="140" text-anchor="end" fill="#5a6860" font-size="10">50 GB</text>
+          <text x="70" y="210" text-anchor="end" fill="#5a6860" font-size="10">10 GB</text>
+          <text x="70" y="255" text-anchor="end" fill="#5a6860" font-size="10">1 GB</text>
+          <line x1="80" y1="50" x2="80" y2="270" stroke="#d0dcd4"/>
+          <line x1="80" y1="270" x2="980" y2="270" stroke="#d0dcd4"/>
+
+          <!-- bars: 10→88GB, 50→17.7, 100→8.8, 500→1.8, 1000→0.88, 5000→0.18 -->
+          <!-- scale log-ish visual height from baseline 270 -->
+          <rect x="120" y="72" width="90" height="198" rx="6" fill="#c45c4a"/>
+          <text x="165" y="62" text-anchor="middle" font-size="12" font-weight="800" fill="#c45c4a">88 GB</text>
+          <text x="165" y="295" text-anchor="middle" font-size="12" font-weight="700">10 ops</text>
+
+          <rect x="260" y="195" width="90" height="75" rx="6" fill="#b7791f"/>
+          <text x="305" y="185" text-anchor="middle" font-size="12" font-weight="800" fill="#b7791f">17.7</text>
+          <text x="305" y="295" text-anchor="middle" font-size="12" font-weight="700">50</text>
+
+          <rect x="400" y="220" width="90" height="50" rx="6" fill="#0c8a68"/>
+          <text x="445" y="210" text-anchor="middle" font-size="12" font-weight="800" fill="#0c8a68">8.8</text>
+          <text x="445" y="295" text-anchor="middle" font-size="12" font-weight="700">100</text>
+
+          <rect x="540" y="248" width="90" height="22" rx="6" fill="#0c8a68"/>
+          <text x="585" y="240" text-anchor="middle" font-size="12" font-weight="800" fill="#0c8a68">1.8</text>
+          <text x="585" y="295" text-anchor="middle" font-size="12" font-weight="700">500</text>
+
+          <rect x="680" y="255" width="90" height="15" rx="6" fill="#0c8a68"/>
+          <text x="725" y="248" text-anchor="middle" font-size="12" font-weight="800" fill="#0c8a68">0.88</text>
+          <text x="725" y="295" text-anchor="middle" font-size="12" font-weight="700">1,000</text>
+
+          <rect x="820" y="262" width="90" height="8" rx="4" fill="#2b6cb0"/>
+          <text x="865" y="255" text-anchor="middle" font-size="12" font-weight="800" fill="#2b6cb0">0.18</text>
+          <text x="865" y="295" text-anchor="middle" font-size="12" font-weight="700">5,000</text>
+        </svg>
+        <p class="cap">Figure 5 — More operators → less disk each, thinner revenue density. At 100 serious ops, fair-share is still only ~9 GB text-only.</p>
+      </div>
+
+      <div class="callout b">
+        <strong class="t">Reading the storage chart</strong>
+        Even at <strong>10 operators</strong> the text baseline is ~88 GB fair-share — still a single SSD.
+        The year-1 story is not “we need petabyte clusters.” It is “will clients pick diverse operators,
+        and will anyone get paid enough to stay?”
+      </div>
+    </section>
+
+    <!-- 06 MEMORY -->
+    <section id="memory">
+      <h2><span class="n">06 · Memory &amp; hardware</span>What a relay box needs</h2>
+
+      <h3>RSS stack (typical Core operator)</h3>
+      <div class="fig">
+        <svg viewBox="0 0 1040 220" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="30" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Modeled process memory · fair-share Core load</text>
+          <!-- stacked bar -->
+          <rect x="80" y="70" width="520" height="56" fill="#0c8a68"/>
+          <text x="340" y="104" text-anchor="middle" fill="#fff" font-size="14" font-weight="700">Base runtime ~350 MB</text>
+          <rect x="600" y="70" width="12" height="56" fill="#2b6cb0"/>
+          <rect x="612" y="70" width="100" height="56" fill="#6b5b95"/>
+          <text x="662" y="104" text-anchor="middle" fill="#fff" font-size="12" font-weight="700">bufs ~64</text>
+          <rect x="712" y="70" width="230" height="56" fill="#e2f5ee" stroke="#0c8a68" stroke-width="2"/>
+          <text x="827" y="104" text-anchor="middle" fill="#0c8a68" font-size="13" font-weight="800">OS headroom → 2 GB OK</text>
+
+          <text x="80" y="160" fill="#5a6860" font-size="12">Index term ≈ 0.8% of 7-day hot set (~33 MB hot on disk → &lt;1 MB index RSS)</text>
+          <text x="80" y="185" fill="#066b50" font-size="15" font-weight="800">Modeled RSS ≈ 414 MB · recommend 2 GB system RAM minimum</text>
+          <text x="80" y="208" fill="#5a6860" font-size="11">Soak anchors: 140 MB @ 30 clients · 285 MB peak @ 200 co-located writers (CAPACITY.md)</text>
+        </svg>
+        <p class="cap">Figure 6 — Memory stack for a fair-share Core relay at year-1 social load.</p>
+      </div>
+
+      <h3>Recommended hardware tiers</h3>
+      <table>
+        <thead><tr><th>Tier</th><th>Hardware</th><th>Disk</th><th>RAM</th><th>Role fit</th><th>Verdict @ this demand</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>T0 Home / Pi</strong></td>
+            <td>Pi 5 / mini PC / old laptop</td>
+            <td class="num">64–256 GB</td>
+            <td class="num">4–8 GB</td>
+            <td>Core seeder + light blind capacity</td>
+            <td><span class="tag ok">FIT</span> fair-share; reputation builder</td>
+          </tr>
+          <tr>
+            <td><strong>T1 VPS</strong></td>
+            <td>$5–20 cloud VPS</td>
+            <td class="num">80–200 GB</td>
+            <td class="num">2–4 GB</td>
+            <td>Typical independent operator</td>
+            <td><span class="tag ok">SWEET SPOT</span></td>
+          </tr>
+          <tr>
+            <td><strong>T2 Dedicated</strong></td>
+            <td>Bare metal / large VPS</td>
+            <td class="num">1–4 TB</td>
+            <td class="num">16–32 GB</td>
+            <td>Power-law head, multi-app shells, services</td>
+            <td><span class="tag ok">NEEDED</span> for traffic head</td>
+          </tr>
+          <tr>
+            <td><strong>T3 Services</strong></td>
+            <td>GPU / high CPU</td>
+            <td class="num">0.5–2 TB</td>
+            <td class="num">32 GB+</td>
+            <td>AI / heavy RPC services</td>
+            <td><span class="tag warn">OPTIONAL</span> different business</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="callout b">
+        <strong class="t">Disk &gt; RAM at year-1 text scale</strong>
+        Plan disk for retention + media growth. RAM stays modest if you avoid loading whole corpora
+        into heap and keep Hypercore/sparse replication disciplined. ECONOMICS.md operator profiles
+        already target “$5 VPS or Raspberry Pi” for Core — this simulation agrees for fair-share load.
+      </div>
+    </section>
+
+    <!-- 07 POWER LAW -->
+    <section id="powerlaw">
+      <h2><span class="n">07 · Load skew</span>1,000 operators will not share work evenly</h2>
+      <p class="lede">
+        Discovery, reputation, and client selection produce a fat head. We model
+        <strong>50% of read bandwidth on the top 10% of operators</strong> (mild power-law).
+        Tor-like altruistic networks historically show even stronger concentration.
+      </p>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Illustrative operator utilization (1,000 ops · mild power-law)</text>
+          <!-- histogram-ish -->
+          <rect x="80" y="60" width="70" height="180" rx="4" fill="#c45c4a"/>
+          <rect x="160" y="100" width="70" height="140" rx="4" fill="#b7791f"/>
+          <rect x="240" y="140" width="70" height="100" rx="4" fill="#0c8a68"/>
+          <rect x="320" y="170" width="70" height="70" rx="4" fill="#0c8a68"/>
+          <rect x="400" y="190" width="70" height="50" rx="4" fill="#2b6cb0"/>
+          <rect x="480" y="205" width="70" height="35" rx="4" fill="#2b6cb0"/>
+          <rect x="560" y="215" width="70" height="25" rx="4" fill="#6b5b95"/>
+          <rect x="640" y="222" width="70" height="18" rx="4" fill="#6b5b95"/>
+          <rect x="720" y="228" width="70" height="12" rx="4" fill="#94a39b"/>
+          <rect x="800" y="232" width="70" height="8" rx="4" fill="#94a39b"/>
+          <rect x="880" y="235" width="70" height="5" rx="3" fill="#c0cdc6"/>
+
+          <line x1="70" y1="240" x2="970" y2="240" stroke="#d0dcd4"/>
+          <text x="115" y="265" text-anchor="middle" font-size="10" fill="#5a6860">top 1%</text>
+          <text x="275" y="265" text-anchor="middle" font-size="10" fill="#5a6860">top 10%</text>
+          <text x="520" y="265" text-anchor="middle" font-size="10" fill="#5a6860">mid</text>
+          <text x="800" y="265" text-anchor="middle" font-size="10" fill="#5a6860">long tail</text>
+          <text x="520" y="290" text-anchor="middle" font-size="11" fill="#5a6860">Many home nodes sit near-idle unless incentives or selection force diversity</text>
+        </svg>
+        <p class="cap">Figure 7 — Expected utilization skew. Head nodes need T2 hardware; tail is reputation-only economics.</p>
+      </div>
+
+      <table>
+        <thead><tr><th>Cohort</th><th>Share of ops</th><th>Share of useful BW (model)</th><th>Disk pressure</th><th>Economics</th></tr></thead>
+        <tbody>
+          <tr><td>Top 1% (10 ops)</td><td class="num">1%</td><td class="num">~20%</td><td class="warn">elevated</td><td>Only cohort near break-even if paid</td></tr>
+          <tr><td>Top 10% (100 ops)</td><td class="num">10%</td><td class="num">~50%</td><td class="num">moderate</td><td>Hobby + partial paid</td></tr>
+          <tr><td>Remaining 90%</td><td class="num">90%</td><td class="num">~50%</td><td class="num">low</td><td>Phase-1 reputation / subsidy / ideology</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 08 SCALE -->
+    <section id="scale">
+      <h2><span class="n">08 · Does it scale?</span>Bottlenecks ranked</h2>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 360" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Risk ranking · 10k Peerit DAU · 1k operators · baseline social</text>
+
+          <text x="220" y="70" text-anchor="end" fill="#1a221e" font-size="13">Disk (fair-share)</text>
+          <rect x="240" y="52" width="100" height="28" rx="6" fill="#0c8a68"/>
+          <text x="360" y="71" fill="#0c8a68" font-size="13" font-weight="700">LOW · ~0.9 GB</text>
+
+          <text x="220" y="115" text-anchor="end" fill="#1a221e" font-size="13">CPU / write RPS</text>
+          <rect x="240" y="97" width="100" height="28" rx="6" fill="#0c8a68"/>
+          <text x="360" y="116" fill="#0c8a68" font-size="13" font-weight="700">LOW · 0.19 RPS logical</text>
+
+          <text x="220" y="160" text-anchor="end" fill="#1a221e" font-size="13">RAM (typical)</text>
+          <rect x="240" y="142" width="130" height="28" rx="6" fill="#0c8a68"/>
+          <text x="385" y="161" fill="#0c8a68" font-size="13" font-weight="700">LOW–MED · ~414 MB</text>
+
+          <text x="220" y="205" text-anchor="end" fill="#1a221e" font-size="13">Bandwidth (typical)</text>
+          <rect x="240" y="187" width="100" height="28" rx="6" fill="#0c8a68"/>
+          <text x="360" y="206" fill="#0c8a68" font-size="13" font-weight="700">LOW · ~6 MB/day</text>
+
+          <text x="220" y="250" text-anchor="end" fill="#1a221e" font-size="13">OutboxLog 20k groups</text>
+          <rect x="240" y="232" width="220" height="28" rx="6" fill="#b7791f"/>
+          <text x="475" y="251" fill="#b7791f" font-size="13" font-weight="700">MED · OK at 10k; cliff near 20k writers</text>
+
+          <text x="220" y="295" text-anchor="end" fill="#1a221e" font-size="13">Shared-NAT rate limits</text>
+          <rect x="240" y="277" width="280" height="28" rx="6" fill="#c45c4a"/>
+          <text x="535" y="296" fill="#c45c4a" font-size="13" font-weight="700">HIGH if web clients share IP / CGNAT</text>
+
+          <text x="220" y="340" text-anchor="end" fill="#1a221e" font-size="13">Operator util. skew</text>
+          <rect x="240" y="322" width="300" height="28" rx="6" fill="#c45c4a"/>
+          <text x="555" y="341" fill="#c45c4a" font-size="13" font-weight="700">HIGH — idle tail without incentives / selection</text>
+        </svg>
+        <p class="cap">Figure 8 — Policy and economics dominate raw hardware at this demand.</p>
+      </div>
+
+      <h3>OutboxLog launch shape vs blind multi-app substrate</h3>
+      <table>
+        <thead><tr><th></th><th>OutboxLog (Peerit launch shape)</th><th>Blind multi-app substrate</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>10k DAU Peerit</strong></td>
+            <td>Feasible if ever-writers ≪ 20k; rate-limit engineering critical</td>
+            <td>No per-app group map on daemon; quota/admission economy</td>
+          </tr>
+          <tr>
+            <td><strong>+ 5 other apps</strong></td>
+            <td>Each OutboxLog-style app multiplies service namespaces / load</td>
+            <td>Same CELL/INBOX plane; app semantics stay client-side</td>
+          </tr>
+          <tr>
+            <td><strong>50k+ writers</strong></td>
+            <td class="bad">Hits 20k group ceiling unless redesigned</td>
+            <td>Scales with storage quotas + admission, not fixed group table</td>
+          </tr>
+          <tr>
+            <td><strong>Multi-ingress truth</strong></td>
+            <td>Atomic two-relay path required; single writer is social SPOF</td>
+            <td>Designed for multi-operator custody from day one</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 09 NAT -->
+    <section id="nat">
+      <h2><span class="n">09 · Shared NAT deep dive</span>The product cliff that hardware won’t fix</h2>
+      <p class="lede">
+        Peerit CAPACITY.md measured a hard knee: with the default
+        <strong>1,200 accepted requests / 60 seconds / source IP</strong>,
+        30 concurrent writers behind one IP hit HTTP 429 during vote publication.
+        Raising the envelope to 12,000/60s removed the knee locally — but production
+        must choose an explicit operator policy behind a real trusted proxy.
+      </p>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 280" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Shared-NAT request budget vs concurrent browser writers</text>
+
+          <!-- bucket line at 20 rps = 1200/60 -->
+          <line x1="100" y1="80" x2="960" y2="80" stroke="#c45c4a" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="970" y="84" fill="#c45c4a" font-size="11" font-weight="700">20 rps bucket (1,200/60s)</text>
+
+          <line x1="100" y1="50" x2="960" y2="50" stroke="#0c8a68" stroke-width="2" stroke-dasharray="6 4"/>
+          <text x="970" y="54" fill="#0c8a68" font-size="11" font-weight="700">200 rps (12k/60s)</text>
+
+          <!-- load points -->
+          <circle cx="200" cy="200" r="14" fill="#0c8a68"/>
+          <text x="200" y="230" text-anchor="middle" font-size="11" font-weight="700">10 wr</text>
+          <text x="200" y="248" text-anchor="middle" font-size="10" fill="#5a6860">safe</text>
+
+          <circle cx="380" cy="160" r="16" fill="#b7791f"/>
+          <text x="380" y="230" text-anchor="middle" font-size="11" font-weight="700">20 wr</text>
+          <text x="380" y="248" text-anchor="middle" font-size="10" fill="#5a6860">near knee</text>
+
+          <circle cx="560" cy="95" r="18" fill="#c45c4a"/>
+          <text x="560" y="230" text-anchor="middle" font-size="11" font-weight="700">30 wr</text>
+          <text x="560" y="248" text-anchor="middle" font-size="10" fill="#c45c4a">measured 429</text>
+
+          <circle cx="740" cy="70" r="16" fill="#c45c4a"/>
+          <text x="740" y="230" text-anchor="middle" font-size="11" font-weight="700">50 wr</text>
+          <text x="740" y="248" text-anchor="middle" font-size="10" fill="#c45c4a">blocked</text>
+
+          <circle cx="900" cy="55" r="14" fill="#6b5b95"/>
+          <text x="900" y="230" text-anchor="middle" font-size="11" font-weight="700">office CGNAT</text>
+          <text x="900" y="248" text-anchor="middle" font-size="10" fill="#5a6860">many users / IP</text>
+
+          <line x1="100" y1="220" x2="960" y2="220" stroke="#d0dcd4"/>
+        </svg>
+        <p class="cap">Figure 9 — Shared-NAT policy knee from CAPACITY.md diagnostic sweeps (local two-relay).</p>
+      </div>
+
+      <div class="grid2">
+        <div class="callout c">
+          <strong class="t">Year-1 implication for 10k DAU</strong>
+          If a non-trivial fraction of users are browsers behind CGNAT/office NAT,
+          default per-IP buckets will 429 long before disk or CPU care. Fix is
+          multi-IP edge topology, higher operator envelopes, Pear/native clients
+          that do not collapse onto one public IP, and honest trusted-proxy headers.
+        </div>
+        <div class="callout g">
+          <strong class="t">Engine vs policy</strong>
+          Distributed-profile soaks (unique IP per writer) pass correctness at 50–200 writers.
+          The 200-writer co-located p99 miss is fixture queueing (Little’s law), not proof
+          the journal cannot hit 2s p99 on isolated hosts. Staging isolation remains required.
+        </div>
+      </div>
+    </section>
+
+    <!-- 10 ECON -->
+    <section id="econ">
+      <h2><span class="n">10 · Economics</span>Phase 1 reputation → Phase 2 sats</h2>
+      <p class="lede">
+        Using ECONOMICS.md mid prices (illustrative, not live): storage 50 sats/GB-month,
+        bandwidth 100 sats/GB, availability 5 sats/hr. Reference: 1 sat ≈ $0.001 at $100k BTC.
+        Phase 1 today is reputation-only (OPERATOR_ECONOMICS.md).
+      </p>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 300" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Illustrative monthly P&amp;L · typical Core operator · Phase 2 mid card</text>
+
+          <rect x="60" y="55" width="280" height="200" rx="14" fill="#e2f5ee" stroke="#0c8a68"/>
+          <text x="200" y="90" text-anchor="middle" fill="#0c8a68" font-size="14" font-weight="800">Revenue (typical)</text>
+          <text x="200" y="140" text-anchor="middle" fill="#066b50" font-size="32" font-weight="800">~$1.14</text>
+          <text x="200" y="170" text-anchor="middle" fill="#5a6860" font-size="12">≈ 1,142 sats / month</text>
+          <text x="200" y="200" text-anchor="middle" fill="#5a6860" font-size="11">disk 44 + BW 17 + avail 1,080*</text>
+          <text x="200" y="225" text-anchor="middle" fill="#8a9a90" font-size="10">*30% contracted availability hours</text>
+
+          <rect x="380" y="55" width="280" height="200" rx="14" fill="#e8f1fb" stroke="#2b6cb0"/>
+          <text x="520" y="90" text-anchor="middle" fill="#2b6cb0" font-size="14" font-weight="800">Cost floor (VPS)</text>
+          <text x="520" y="140" text-anchor="middle" fill="#1a4a7a" font-size="32" font-weight="800">$5–20</text>
+          <text x="520" y="170" text-anchor="middle" fill="#5a6860" font-size="12">cloud VPS or home power</text>
+          <text x="520" y="200" text-anchor="middle" fill="#5a6860" font-size="11">home marginal ≈ $0–3 power</text>
+          <text x="520" y="225" text-anchor="middle" fill="#8a9a90" font-size="10">zero-marginal self-host funnel wins</text>
+
+          <rect x="700" y="55" width="280" height="200" rx="14" fill="#fdecea" stroke="#c45c4a"/>
+          <text x="840" y="90" text-anchor="middle" fill="#c45c4a" font-size="14" font-weight="800">Gap</text>
+          <text x="840" y="140" text-anchor="middle" fill="#9a3a2a" font-size="28" font-weight="800">−$4 to −$19</text>
+          <text x="840" y="170" text-anchor="middle" fill="#5a6860" font-size="12">if op pays full VPS from Core only</text>
+          <text x="840" y="200" text-anchor="middle" fill="#5a6860" font-size="11">mid card ≪ VPS · hobby scale</text>
+          <text x="840" y="225" text-anchor="middle" fill="#8a9a90" font-size="10">or raise prices / volume / services</text>
+        </svg>
+        <p class="cap">Figure 10 — At mid prices and this demand, Core-only VPS operators lose money unless subsidized or zero-marginal.</p>
+      </div>
+
+      <table>
+        <thead><tr><th>Aggregate (illustrative)</th><th>Value</th></tr></thead>
+        <tbody>
+          <tr><td>Network monthly operator revenue (1k × typical)</td><td class="num">~$1,140 / mo</td></tr>
+          <tr><td>Implied Core spend per Peerit DAU / month</td><td class="num">≪ $0.20</td></tr>
+          <tr><td>Top 10% operator (more BW share)</td><td class="num">~$2.40 / mo</td></tr>
+          <tr><td>ECONOMICS.md hobby example (500 GB utilized)</td><td class="num">~$0.56 / mo @ mid card</td></tr>
+          <tr><td>VPS cost floor</td><td class="num">$5–20 / mo</td></tr>
+          <tr><td>Verdict</td><td class="bad">Revenue ≪ cost for paid VPS at mid prices</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Three-prong year-1 answer (from OPERATOR-INCENTIVES-Y1)</h3>
+      <div class="grid3">
+        <div class="stat" style="text-align:left;padding:1rem">
+          <div class="v" style="font-size:1rem;color:var(--g)">Trojan horse</div>
+          <div class="l" style="text-align:left">Self-host Bitcoin/LN boxes already paying power — zero marginal cost. Funnel targets thousands of active relays.</div>
+        </div>
+        <div class="stat" style="text-align:left;padding:1rem">
+          <div class="v" style="font-size:1rem;color:var(--b)">Bootstrap subsidy</div>
+          <div class="l" style="text-align:left">Time-bounded founder subsidy (e.g. 1 BTC budget class) quality-gated on uptime/challenges — not a token.</div>
+        </div>
+        <div class="stat" style="text-align:left;padding:1rem">
+          <div class="v" style="font-size:1rem;color:var(--p)">Foundation net</div>
+          <div class="l" style="text-align:left">Always-on multi-region founder nodes as operator-of-last-resort for app credibility.</div>
+        </div>
+      </div>
+
+      <div class="callout a">
+        <strong class="t">Economic implication</strong>
+        1,000 operators at this demand is <strong>supply-rich</strong> — healthy for decentralization,
+        harsh for operator P&amp;L. Expect: (a) most ops on zero-marginal home boxes, (b) paid density
+        concentrates on contracts + head of power-law, (c) mid-card prices rise with real demand,
+        (d) Services (AI/identity) is a separate higher-margin business, not Core.
+      </div>
+
+      <h3>Who pays whom (healthy year-1 pattern)</h3>
+      <ul>
+        <li><strong>App publishers</strong> (Peerit et al.) buy multi-region seeding + blind capacity + optional gateway edges.</li>
+        <li><strong>End users</strong> usually pay $0 directly for Core relay (app-funded or community-funded).</li>
+        <li><strong>Home operators</strong> contribute spare capacity for reputation / ideology / future allocation.</li>
+        <li><strong>Professional operators</strong> concentrate where paid contracts exist (launch apps, enterprise).</li>
+      </ul>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 260" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Money flows · year-1 healthy pattern</text>
+
+          <rect x="40" y="70" width="180" height="120" rx="12" fill="#0c8a68"/>
+          <text x="130" y="125" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">App publishers</text>
+          <text x="130" y="150" text-anchor="middle" fill="#c8f0e0" font-size="11">Peerit / others</text>
+
+          <path d="M230 130 H290" stroke="#0c8a68" stroke-width="3"/><polygon points="288,124 300,130 288,136" fill="#0c8a68"/>
+          <text x="265" y="115" text-anchor="middle" fill="#0c8a68" font-size="10" font-weight="700">sats / contracts</text>
+
+          <rect x="310" y="70" width="180" height="120" rx="12" fill="#2b6cb0"/>
+          <text x="400" y="125" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Paid Core ops</text>
+          <text x="400" y="150" text-anchor="middle" fill="#c5daf3" font-size="11">head of power-law</text>
+
+          <path d="M230 160 H290" stroke="#b7791f" stroke-width="2" stroke-dasharray="4 3"/><polygon points="288,154 300,160 288,166" fill="#b7791f"/>
+
+          <rect x="310" y="200" width="180" height="40" rx="8" fill="#fdf6e3" stroke="#b7791f"/>
+          <text x="400" y="225" text-anchor="middle" fill="#b7791f" font-size="12" font-weight="700">Subsidy / foundation (bootstrap)</text>
+
+          <path d="M500 130 H560" stroke="#6b5b95" stroke-width="2"/><polygon points="558,124 570,130 558,136" fill="#6b5b95"/>
+
+          <rect x="580" y="70" width="180" height="120" rx="12" fill="#6b5b95"/>
+          <text x="670" y="125" text-anchor="middle" fill="#fff" font-size="14" font-weight="800">Home long tail</text>
+          <text x="670" y="150" text-anchor="middle" fill="#d4cce8" font-size="11">reputation · $0 cash</text>
+
+          <path d="M770 130 H830" stroke="#94a39b" stroke-width="2"/><polygon points="828,124 840,130 828,136" fill="#94a39b"/>
+
+          <rect x="850" y="70" width="160" height="120" rx="12" fill="#1a221e"/>
+          <text x="930" y="120" text-anchor="middle" fill="#3ecf8e" font-size="14" font-weight="800">End users</text>
+          <text x="930" y="145" text-anchor="middle" fill="#a8b8b0" font-size="11">usually $0 direct</text>
+          <text x="930" y="165" text-anchor="middle" fill="#a8b8b0" font-size="11">for Core path</text>
+        </svg>
+        <p class="cap">Figure 11 — Dev-pays Core; users rarely see relay invoices at year-1 social scale.</p>
+      </div>
+    </section>
+
+    <!-- 11 GROWTH -->
+    <section id="growth">
+      <h2><span class="n">11 · Growth path</span>Twelve months to the scenario</h2>
+      <p class="lede">
+        Illustrative geometric ramp from ~200 Peerit DAU / ~50 operators to the year-1 targets.
+        Not a forecast — a planning spine for when risks light up.
+      </p>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 340" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Illustrative growth · Peerit DAU (green) vs operators (blue)</text>
+          <line x1="80" y1="280" x2="980" y2="280" stroke="#d0dcd4"/>
+          <line x1="80" y1="50" x2="80" y2="280" stroke="#d0dcd4"/>
+
+          <!-- DAU line points month 1-12: 200..10000 scaled to y: 280 - (dau/10000)*210 -->
+          <!-- m1:200→276, m6:1184→255, m12:10000→70 -->
+          <polyline fill="none" stroke="#0c8a68" stroke-width="3"
+            points="100,276 175,274 250,271 325,268 400,263 475,255 550,245 625,230 700,208 775,177 850,133 925,70"/>
+          <polyline fill="none" stroke="#2b6cb0" stroke-width="3" stroke-dasharray="6 4"
+            points="100,270 175,266 250,262 325,256 400,249 475,239 550,226 625,209 700,187 775,158 850,120 925,70"/>
+
+          <circle cx="100" cy="276" r="4" fill="#0c8a68"/>
+          <circle cx="925" cy="70" r="5" fill="#0c8a68"/>
+          <text x="925" y="58" text-anchor="middle" fill="#0c8a68" font-size="11" font-weight="700">10k DAU</text>
+          <text x="925" y="95" text-anchor="middle" fill="#2b6cb0" font-size="11" font-weight="700">1k ops</text>
+
+          <text x="100" y="305" text-anchor="middle" font-size="10" fill="#5a6860">M1</text>
+          <text x="475" y="305" text-anchor="middle" font-size="10" fill="#5a6860">M6</text>
+          <text x="925" y="305" text-anchor="middle" font-size="10" fill="#5a6860">M12</text>
+
+          <!-- risk callouts -->
+          <rect x="300" y="100" width="200" height="50" rx="8" fill="#fdf6e3" stroke="#b7791f"/>
+          <text x="400" y="122" text-anchor="middle" fill="#b7791f" font-size="11" font-weight="700">M3–M6</text>
+          <text x="400" y="140" text-anchor="middle" fill="#5a6860" font-size="10">NAT + multi-ingress</text>
+
+          <rect x="620" y="120" width="200" height="50" rx="8" fill="#fdecea" stroke="#c45c4a"/>
+          <text x="720" y="142" text-anchor="middle" fill="#c45c4a" font-size="11" font-weight="700">M9–M12</text>
+          <text x="720" y="160" text-anchor="middle" fill="#5a6860" font-size="10">econ skew + media risk</text>
+        </svg>
+        <p class="cap">Figure 12 — Risks light up before raw capacity does. Ship multi-path Peerit early.</p>
+      </div>
+
+      <table>
+        <thead><tr><th>Month</th><th>~Peerit DAU</th><th>~Operators</th><th>Primary risk</th><th>Engineering focus</th></tr></thead>
+        <tbody>
+          <tr><td>1–2</td><td class="num">200–300</td><td class="num">50–70</td><td>product-market fit</td><td>local + staging soaks, gateway canary</td></tr>
+          <tr><td>3–5</td><td class="num">400–900</td><td class="num">90–160</td><td>shared NAT / first spikes</td><td>rate envelopes, multi-IP edges</td></tr>
+          <tr><td>6–8</td><td class="num">1.2k–2.5k</td><td class="num">200–350</td><td>single-ingress SPOF</td><td>atomic multi-relay Peerit, selection</td></tr>
+          <tr><td>9–11</td><td class="num">3.5k–7k</td><td class="num">450–800</td><td>operator churn / idle tail</td><td>reputation UX, paid contracts</td></tr>
+          <tr><td>12</td><td class="num">10k</td><td class="num">1,000</td><td>economics + media creep</td><td>Phase-2 pricing, media policy</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- 12 STRESS -->
+    <section id="stress">
+      <h2><span class="n">12 · Stress cases</span>When the cute numbers break</h2>
+
+      <table>
+        <thead><tr><th>Stress</th><th>Change</th><th>Effect (order of magnitude)</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Media social</strong></td>
+            <td>Avg cell class 4–5 (256 KiB–1 MiB) or external blob fan-out</td>
+            <td>Fair-share disk → <strong>~4–15 GB+</strong>; BW ×5–20; head needs T2</td>
+          </tr>
+          <tr>
+            <td><strong>Higher write rate</strong></td>
+            <td>40% DAU write, 20 events/writer/day</td>
+            <td>Daily logical several GB; still OK on 1k ops; harder on indexes / 429s</td>
+          </tr>
+          <tr>
+            <td><strong>Longer retention</strong></td>
+            <td>3 years hot</td>
+            <td>Disk ×6 vs 180-day; fair-share still &lt;10 GB text-only</td>
+          </tr>
+          <tr>
+            <td><strong>Fewer operators</strong></td>
+            <td>100 serious ops, not 1,000</td>
+            <td>Fair-share ×10 (~8.8 GB text); economics per op improve</td>
+          </tr>
+          <tr>
+            <td><strong>Shared NAT browsers</strong></td>
+            <td>Many users behind one IP</td>
+            <td class="bad">HTTP 429 cliffs — product-breaking without multi-IP / higher envelopes</td>
+          </tr>
+          <tr>
+            <td><strong>Single ingress Peerit</strong></td>
+            <td>Stay on one OutboxLog writer</td>
+            <td class="bad">Availability &amp; trust fail social expectations long before disk fails</td>
+          </tr>
+          <tr>
+            <td><strong>50k writers on OutboxLog</strong></td>
+            <td>Ever-writers exceed 20k groups</td>
+            <td class="bad">Hard ceiling; must redesign or migrate to blind cells</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="fig">
+        <svg viewBox="0 0 1040 280" xmlns="http://www.w3.org/2000/svg" font-family="Segoe UI, system-ui, sans-serif">
+          <text x="520" y="28" text-anchor="middle" fill="#5a6860" font-size="13" font-weight="700">Sensitivity · fair-share disk (GB) under four levers</text>
+
+          <!-- baseline -->
+          <rect x="80" y="200" width="100" height="40" rx="6" fill="#0c8a68"/>
+          <text x="130" y="190" text-anchor="middle" font-size="12" font-weight="800" fill="#0c8a68">0.88</text>
+          <text x="130" y="260" text-anchor="middle" font-size="11">Baseline</text>
+
+          <!-- media 256k ~4.4GB -->
+          <rect x="260" y="90" width="100" height="150" rx="6" fill="#c45c4a"/>
+          <text x="310" y="80" text-anchor="middle" font-size="12" font-weight="800" fill="#c45c4a">~4.4</text>
+          <text x="310" y="260" text-anchor="middle" font-size="11">Media 256 KiB</text>
+
+          <!-- 100 ops -->
+          <rect x="440" y="160" width="100" height="80" rx="6" fill="#b7791f"/>
+          <text x="490" y="150" text-anchor="middle" font-size="12" font-weight="800" fill="#b7791f">8.8</text>
+          <text x="490" y="260" text-anchor="middle" font-size="11">100 ops only</text>
+
+          <!-- 3yr retention ~5.3 -->
+          <rect x="620" y="140" width="100" height="100" rx="6" fill="#6b5b95"/>
+          <text x="670" y="130" text-anchor="middle" font-size="12" font-weight="800" fill="#6b5b95">~5.3</text>
+          <text x="670" y="260" text-anchor="middle" font-size="11">3-year retain</text>
+
+          <!-- media + 100 ops -->
+          <rect x="800" y="50" width="100" height="190" rx="6" fill="#1a221e"/>
+          <text x="850" y="40" text-anchor="middle" font-size="12" font-weight="800" fill="#3ecf8e">~44</text>
+          <text x="850" y="260" text-anchor="middle" font-size="11">Media + 100 ops</text>
+
+          <line x1="60" y1="240" x2="980" y2="240" stroke="#d0dcd4"/>
+        </svg>
+        <p class="cap">Figure 13 — Combined stresses matter; single levers stay VPS-class until media × concentration.</p>
+      </div>
+    </section>
+
+    <!-- 13 GAPS -->
+    <section id="gaps">
+      <h2><span class="n">13 · Engineering gaps</span>What must be true before this scenario is real</h2>
+      <ol>
+        <li><strong>Blind substrate production-ready</strong> — not draft packages; soak + multi-node evidence (BLIND-CAPACITY-SIZING is planning-only).</li>
+        <li><strong>Peerit dual-read → blind-first</strong> — or accept OutboxLog’s 20k-writer ceiling forever.</li>
+        <li><strong>Multi-ingress / multi-operator Peerit</strong> — single Outbox writer is a social SPOF.</li>
+        <li><strong>Rate-limit architecture for browsers</strong> — shared NAT is a measured product issue, not theoretical.</li>
+        <li><strong>Client selection that spreads load</strong> — avoid 50 operators doing 95% of work (or accept paid-tier concentration deliberately).</li>
+        <li><strong>T1 gateway fleet admission freeze</strong> — public shells at scale without transitional allowlists only.</li>
+        <li><strong>Media policy</strong> — if images/video dominate, re-run this model with class-4/5 and CDN-like BW.</li>
+        <li><strong>Phase-2 settlement path</strong> — Lightning/micropayments still pending; year-1 is reputation + subsidy designed.</li>
+      </ol>
+    </section>
+
+    <!-- 14 RECS -->
+    <section id="recs">
+      <h2><span class="n">14 · Recommendations</span>What to optimize for this year-1 shape</h2>
+      <div class="grid3">
+        <div class="stat" style="text-align:left;padding:1.05rem">
+          <div class="v" style="font-size:1.05rem">Product</div>
+          <div class="l" style="text-align:left;margin-top:.4rem">
+            Ship multi-path Peerit (browser + Pear). Treat 10k DAU as a
+            <strong>rate-limit + multi-ingress</strong> problem first, disk second.
+            Don’t wait for media to force a redesign of writer caps.
+          </div>
+        </div>
+        <div class="stat" style="text-align:left;padding:1.05rem">
+          <div class="v" style="font-size:1.05rem">Operators</div>
+          <div class="l" style="text-align:left;margin-top:.4rem">
+            Publish a <strong>T1 VPS recipe</strong> (2–4 GB RAM, ~100 GB disk) and a
+            home/Pi recipe. Recruit via zero-marginal self-host channels.
+            Don’t require enterprise iron for Core social.
+          </div>
+        </div>
+        <div class="stat" style="text-align:left;padding:1.05rem">
+          <div class="v" style="font-size:1.05rem">Economics</div>
+          <div class="l" style="text-align:left;margin-top:.4rem">
+            Expect Phase-1 reputation for most of 1k ops. Price paid capacity
+            <strong>above mid-card</strong> if you want professional density.
+            Keep Services (AI) economically separate from Core commodity.
+          </div>
+        </div>
+      </div>
+
+      <div class="callout g">
+        <strong class="t">Bottom line</strong>
+        A year-1 world with 10k Peerit DAU and 1,000 operators is
+        <strong>hardware-easy and coordination-hard</strong>.
+        The system scales on paper; the work is making selection, payments, multi-operator truth,
+        and browser rate-limit architecture work in production without collapsing back into a few founder boxes.
+      </div>
+    </section>
+
+    <!-- APPENDIX -->
+    <section id="appendix">
+      <h2><span class="n">Appendix · A</span>Parameter table (baseline run)</h2>
+      <table>
+        <thead><tr><th>Parameter</th><th>Value</th><th>Source / rationale</th></tr></thead>
+        <tbody>
+          <tr><td>Peerit DAU</td><td class="num">10,000</td><td>Scenario hypothesis</td></tr>
+          <tr><td>Other-app DAU (sum)</td><td class="num">6,100</td><td>Scenario hypothesis</td></tr>
+          <tr><td>Operators N</td><td class="num">1,000</td><td>Scenario hypothesis</td></tr>
+          <tr><td>Replica factor R</td><td class="num">5</td><td>Client durability target</td></tr>
+          <tr><td>Retention</td><td class="num">180 days</td><td>Hot social corpus planning</td></tr>
+          <tr><td>Peerit write fraction</td><td class="num">15%</td><td>Social typical</td></tr>
+          <tr><td>Events / writer / day</td><td class="num">6.5</td><td>2.5 posts + 4 comments</td></tr>
+          <tr><td>Cells / event</td><td class="num">1.2</td><td>Primary + side effects</td></tr>
+          <tr><td>Mailbox overhead</td><td class="num">1.15×</td><td>INBOX fan-out cushion</td></tr>
+          <tr><td>Avg cell (baseline)</td><td class="num">64 KiB</td><td>Class-3 dominant mix</td></tr>
+          <tr><td>Storage price</td><td class="num">50 sats/GB-mo</td><td>ECONOMICS.md mid</td></tr>
+          <tr><td>Bandwidth price</td><td class="num">100 sats/GB</td><td>ECONOMICS.md mid</td></tr>
+          <tr><td>Availability price</td><td class="num">5 sats/hr</td><td>ECONOMICS.md mid</td></tr>
+          <tr><td>Contracted avail. fraction</td><td class="num">30%</td><td>Partial SLA model for typical op</td></tr>
+          <tr><td>Sat USD ref</td><td class="num">$0.001</td><td>$100k BTC</td></tr>
+          <tr><td>OutboxLog max groups</td><td class="num">20,000</td><td>CAPACITY.md / outbox-log.js</td></tr>
+          <tr><td>Default IP rate limit</td><td class="num">1,200 / 60s</td><td>CAPACITY.md measured knee</td></tr>
+          <tr><td>Base runtime RSS</td><td class="num">~350 MB</td><td>Soak-informed model</td></tr>
+          <tr><td>Buffer pool</td><td class="num">~64 MB</td><td>Connection / stream buffers</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Appendix B · Worked Peerit day</h3>
+      <div class="formula">
+writers = 10000 × 0.15 = 1500
+events = 1500 × 6.5 = 9750
+cells  = 9750 × 1.2 = 11700
+logical_bytes = 11700 × 65536 × 1.15 ≈ 882 MB
+physical_day_network = 882 MB × 5 ≈ 4.41 GB (Peerit only)
++ other apps ≈ 101 MB logical → total logical ≈ 982 MB/day
+× 5 × 180 / 1000 ≈ 884 MB fair-share disk / operator
+      </div>
+
+      <h3>Appendix C · Authority boundary</h3>
+      <div class="callout p">
+        <strong class="t">Not release evidence</strong>
+        This document is an analytical research note. It does not authorize production fleets,
+        marketing capacity claims, or economic promises. Production claims require isolated
+        staging soaks, multi-host evidence, and signed release gates. Blind capacity planner
+        reports also set <code>authorizesRelease = false</code> by design.
+      </div>
+    </section>
+
+    <footer>
+      Year-1 scale research v1.1 · closed-form simulation · July 2026<br/>
+      Grounded in Peerit <code>deploy/CAPACITY.md</code>, <code>docs/ECONOMICS.md</code>,
+      <code>docs/OPERATOR_ECONOMICS.md</code>, <code>docs/OPERATOR-INCENTIVES-Y1.md</code>,
+      <code>docs/BLIND-CAPACITY-SIZING.md</code><br/>
+      Path: <code>docs/vnext/YEAR1-SCALE-RESEARCH.html</code> ·
+      Not a financial forecast · Not production proof
+    </footer>
+  </div>
+</body>
+</html>

@@ -1,0 +1,104 @@
+{
+  "nonceLifecycle": {
+    "edgeProcessNonce": "os-csprng-once-after-start-or-fork-stable-until-process-exit-never-persisted-or-reused",
+    "localChannelNonce": "fresh-os-csprng-for-every-open-attempt-never-reused"
+  },
+  "order": [
+    "native-peer-credentials",
+    "exact-v2-open",
+    "transport-profile",
+    "launch-topology",
+    "endpoint",
+    "open-deadline",
+    "initial-cell-put-outer-class-3-through-6",
+    "open-binding",
+    "branded-persisted-descriptor-floor-readiness-sequence-at-least-1",
+    "counter-only-memory-reservation",
+    "durable-replay-consume",
+    "first-request-body-pull",
+    "owned-prefix-side-effect-free-branded-admission-preflight",
+    "reversible-ephemeral-body-staging",
+    "exact-outer-request-fin",
+    "edge-write-half-close-response-half-readable",
+    "daemon-observed-authenticated-peer-eof",
+    "canonical-post-eof-revalidation",
+    "final-caller-cancellation-and-lifecycle-fence-before-publish",
+    "non-cancellable-publish-and-put-atomic-committed",
+    "sign-and-same-class-result"
+  ],
+  "replay": {
+    "acceptedRecordMaximumTtlMillis": 15000,
+    "authorityKind": "module-private-branded-journal-and-one-use-consume-receipt",
+    "capacity": 4096,
+    "freshEntryExpiry": "exact-open-deadline",
+    "liveEntryEvictionPermitted": false,
+    "quarantineReadinessBrand": "withheld",
+    "quarantineReadyAck": "suppress-or-refuse",
+    "quarantineZeroWriteBitsAckPermitted": false,
+    "recoveredEntryMinimumRetentionMillis": 15000,
+    "recoveredRetentionBasis": "conservative-startup-fence-not-accepted-record-ttl",
+    "startupWriteQuarantineMillis": 15000
+  },
+  "requestCompletion": {
+    "callerEofAssertionPermitted": false,
+    "commitBeforeDaemonObservedEofPermitted": false,
+    "daemonEofAuthority": "module-private-same-native-peercred-authenticated-stream-eof-after-request-fin",
+    "edgeResponseHalfReadableUntilTerminal": true,
+    "frameVerifierMintsEofAuthority": false,
+    "negativeSemantics": {
+      "eofBeforeFin": "generic-local-abort-no-public-error-no-commit",
+      "finWithoutEof": "caller-cancellation-or-deadline-then-generic-local-abort-no-public-error-no-commit",
+      "requestDataAfterFin": "generic-local-abort-no-public-error-no-commit",
+      "responseHalfClosedBeforeTerminal": "caller-cancelled-pre-boundary-discards-post-boundary-commit-completes-without-result",
+      "resultBeforeDaemonObservedEof": "forbidden-runtime-conformance-failure"
+    },
+    "sequence": [
+      "exact-outer-request-fin",
+      "edge-write-half-close",
+      "daemon-observed-authenticated-peer-eof",
+      "canonical-post-eof-revalidation"
+    ]
+  },
+  "stagedCellPut": {
+    "atomicCommitRecordKind": "PUT_ATOMIC_COMMITTED",
+    "cancellationFence": "under-canonical-locks-immediately-before-non-cancellable-publish-and-commit-unit",
+    "fixedMaximumResultBodyBytes": 16384,
+    "fixedRequiredResultEnvelopeBytes": 16435,
+    "initialMinimumOuterClass": 3,
+    "initialOuterClasses": [
+      3,
+      4,
+      5,
+      6
+    ],
+    "legacyReservationWalRecoveryCompatible": true,
+    "minimumReadyDescriptorSequence": 1,
+    "nonCancellableCommitUnit": "publish-through-put-atomic-committed-fsync-and-apply",
+    "preEofAdmission": "owned-prefix-side-effect-free-branded-preflight-only",
+    "preEofStorage": "reversible-ephemeral-staging-only",
+    "publicResultRequires": "exact-outer-plus-request-fin-plus-edge-write-half-close-plus-daemon-observed-authenticated-peer-eof-plus-canonical-revalidation",
+    "requestCompletion": {
+      "callerEofAssertionPermitted": false,
+      "commitBeforeDaemonObservedEofPermitted": false,
+      "daemonEofAuthority": "module-private-same-native-peercred-authenticated-stream-eof-after-request-fin",
+      "edgeResponseHalfReadableUntilTerminal": true,
+      "frameVerifierMintsEofAuthority": false,
+      "negativeSemantics": {
+        "eofBeforeFin": "generic-local-abort-no-public-error-no-commit",
+        "finWithoutEof": "caller-cancellation-or-deadline-then-generic-local-abort-no-public-error-no-commit",
+        "requestDataAfterFin": "generic-local-abort-no-public-error-no-commit",
+        "responseHalfClosedBeforeTerminal": "caller-cancelled-pre-boundary-discards-post-boundary-commit-completes-without-result",
+        "resultBeforeDaemonObservedEof": "forbidden-runtime-conformance-failure"
+      },
+      "sequence": [
+        "exact-outer-request-fin",
+        "edge-write-half-close",
+        "daemon-observed-authenticated-peer-eof",
+        "canonical-post-eof-revalidation"
+      ]
+    },
+    "resultSizingAuthority": "fixed-generated-worst-case-only",
+    "v2EmitsLegacyReservationWal": false,
+    "walPrewriteFence": "internal-writer-and-commit-invariants-only-never-caller-cancellation"
+  }
+}

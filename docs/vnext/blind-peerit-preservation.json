@@ -1,0 +1,116 @@
+{
+  "schema": "hiverelay-vnext-preservation-handoff-v1",
+  "verifiedAt": "2026-07-12T14:46:22.000Z",
+  "custodyRoot": "00-core/vnext-custody/blind-peerit-20260712-a8e87df0",
+  "authorizesRelease": false,
+  "authorizesDeployment": false,
+  "handoff": {
+    "file": "vnext-blind-peerit-preservation-handoff-20260712.md",
+    "sha256": "a8e87df02f9bbc376b2877fdb1da114bd08120821492b1677e5432b53fcdcc51"
+  },
+  "repositories": [
+    {
+      "id": "hiverelay-blind",
+      "base": "999b0afd7584bb727cef6e6a88a054f11513927a",
+      "tip": "211b20d892203de89be07975c155a09c976d6bd4",
+      "branch": "codex/blind-service-plane-preserve-20260712",
+      "bundle": {
+        "file": "hiverelay-blind-preserve-20260712-r2.bundle",
+        "sha256": "966571d4a4cebc27ca3017d3a2c03a3e3e619dc3967b276290fe36bea862e1c7",
+        "verified": true
+      },
+      "supersededBundle": {
+        "tip": "180fc7387949f481fd0698205d7bf3cc26943430",
+        "file": "hiverelay-blind-preserve-20260712.bundle",
+        "sha256": "8577ce5ec7250a0c31e280e4fd21f8b8dc4bb608bc410f2a2c781fbc7da9571c",
+        "reason": "browser-artifact-authority-drift-and-cli-mode-drift"
+      },
+      "inventory": {
+        "file": "hiverelay-blind-preserve-20260712.inventory.tsv",
+        "sha256": "b99c1f432b45855f19a6ac8cac985cbca55ae73ce1596cd4ecec3530fa949bca",
+        "paths": 843,
+        "coversTip": "180fc7387949f481fd0698205d7bf3cc26943430"
+      },
+      "commits": [
+        "365309174d5a7ceb726c0a18064005176f8af842",
+        "046c54e1e2e8fd7737773c2787eaccfc4d5aca51",
+        "180fc7387949f481fd0698205d7bf3cc26943430",
+        "211b20d892203de89be07975c155a09c976d6bd4"
+      ],
+      "repairVerification": {
+        "cleanInstall": "pass",
+        "blindSpecs": "pass",
+        "blindClientTests": "60/60 tests; 1398/1398 assertions",
+        "blindBoundaryTests": "276/276 tests; 3260/3260 assertions",
+        "browserArtifactReleaseReady": true,
+        "manifestAuthorityHash": "c56d951b526c4915204c531f45a870a14af815887d26e535812773fcb4977b94",
+        "sourceClosureHash": "2fd7a1fa4e8d4496d179dc99ca72d29d1dab4c307efd8b5f03167c75f9a8dd49",
+        "artifactHash": "30bcbde57251dd47018b980eaf3dba69de3afcb44ccf6930f7bddd89b708fba3"
+      }
+    },
+    {
+      "id": "peerit-blind",
+      "base": "9d445dcb263ff420f7392875ea5747614ebd4c2a",
+      "tip": "00f46f3c26a44adb29a80894d247be1411093c37",
+      "branch": "codex/peerit-blind-preserve-20260712",
+      "bundle": {
+        "file": "peerit-blind-preserve-20260712.bundle",
+        "sha256": "a8d5850799b651c5e4ce72f514105463014e21ae526616d2a32fdb781f395600",
+        "verified": true
+      },
+      "inventory": {
+        "file": "peerit-blind-preserve-20260712.inventory.tsv",
+        "sha256": "20065705a772f765b643f23ee97c6bfa486f8736c6982f68e572f6815a2de03a",
+        "paths": 467
+      },
+      "commits": [
+        "aa3ac620557ae42a0a31746b23012a8d2ac9f34b",
+        "ae35abb75417061e62d63899521fc55db9b9e61f",
+        "e13b297b5baf5d981907edc98fc7524e961f5bce",
+        "00f46f3c26a44adb29a80894d247be1411093c37"
+      ],
+      "independentVerification": {
+        "cleanInstall": "pass",
+        "npmTest": "pass",
+        "worktreeCleanAfterTests": true,
+        "scope": "local-node-and-harness-tests-only"
+      }
+    }
+  ],
+  "reports": [
+    {
+      "file": "blind-release-composite-v2-release-final.json",
+      "sha256": "1918790f4afd341eacc05c87403f2ade2291cf15412dcb4f926225136cac5951"
+    },
+    {
+      "file": "blind-real-relay-lab-v2-hardened.json",
+      "sha256": "8394191e17bf285e848bf1e726bbbb679289a9ab98e83d021ae6a95f4ab59b92"
+    },
+    {
+      "file": "blind-capacity-sizing-release-final.json",
+      "sha256": "8b9e2818061c1b23f5dfc2c2c2ea9af1f4c22ff4d5cd0011c312fd16b7b62146"
+    },
+    {
+      "file": "peerit-browser-scale-all-full-v5-256-isolated.json",
+      "sha256": "ce9ef0ba6dce0e25e0660cb44457c00b2f2c641aa8933ad51d5c247a8799ecdc"
+    },
+    {
+      "file": "peerit-persistence-fault-full-v5-isolated-profiles.json",
+      "sha256": "aaa506a9e0d99391fe3ab94fbab9eae52d8ad982d3819dc2698f39699bc76776"
+    },
+    {
+      "file": "peerit-scale-full-v5-cached.json",
+      "sha256": "64b0a3e32c3c1238db4acea3c64d7822b658fbe4b2b55666da2aeb9234d56403"
+    },
+    {
+      "file": "peerit-pow-browser-performance-v1-balanced.json",
+      "sha256": "1a5a7f7737bd173aed536ad5555dd0403a16cdc72f20378aa8c73dc41d81e710"
+    }
+  ],
+  "integrationPolicy": {
+    "mode": "review-and-cherry-pick-logical-commits",
+    "wholesaleMergeAllowed": false,
+    "mainnetReady": false,
+    "blockingGateCount": 13
+  }
+}

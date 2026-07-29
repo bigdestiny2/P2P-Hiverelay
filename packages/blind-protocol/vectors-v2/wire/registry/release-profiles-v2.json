@@ -1,0 +1,14 @@
+[
+  {
+    "profileId": 1,
+    "canonicalName": "LIMITED_PUBLIC_TEST_V1",
+    "operationBits": 131071,
+    "isDefault": true
+  },
+  {
+    "profileId": 2,
+    "canonicalName": "LIMITED_PUBLIC_TEST_FORWARD_ONE_HOP_V1",
+    "operationBits": 4063231,
+    "isDefault": false
+  }
+]

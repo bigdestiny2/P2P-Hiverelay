@@ -1,0 +1,5 @@
+{
+  "decoder": "decodeLocalReadyProbeV2",
+  "errorCode": "BAD_PRIVATE_IPC_V2_CONTRACT",
+  "outcome": "reject"
+}

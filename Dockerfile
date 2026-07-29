@@ -50,7 +50,7 @@
 #   https://github.com/holepunchto/udx-native
 #
 # Node 22 LTS — Bare/Pear runtime targets stay aligned.
-FROM node:22-bookworm-slim AS deps
+FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS deps
 WORKDIR /app
 
 # Install build tools needed for any native deps that DO build from
@@ -62,30 +62,45 @@ RUN apt-get update && \
 
 # Copy ALL workspace package.json files (npm needs them all to resolve workspaces)
 COPY package.json package-lock.json ./
+COPY packages/blind-protocol/package.json packages/blind-protocol/
+COPY packages/blind-ipc/package.json packages/blind-ipc/
+COPY packages/blind-client/package.json packages/blind-client/
+COPY packages/blind-peercred/package.json packages/blind-peercred/
+COPY packages/blind-peercred/binding.gyp packages/blind-peercred/peercred.cc packages/blind-peercred/
+COPY packages/blind-edge/package.json packages/blind-edge/
+COPY packages/blind-daemon/package.json packages/blind-daemon/
 COPY packages/core/package.json packages/core/
 COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
 COPY packages/verifier/package.json packages/verifier/
 
-# Install production deps across all workspaces. --workspaces installs deps
-# for every workspace; --include-workspace-root pulls in root devDeps if any
-# are needed at runtime (none currently, but explicit is better).
-RUN npm ci --omit=dev --workspaces --include-workspace-root --no-audit --no-fund
+# Install with build-time tooling so patch-package and native workspace builds
+# run against the exact lockfile, then prune development dependencies without
+# rerunning lifecycle scripts. The resulting node_modules tree is production-only.
+RUN npm ci --workspaces --include-workspace-root --no-audit --no-fund && \
+    npm prune --omit=dev --workspaces --include-workspace-root --ignore-scripts --no-audit --no-fund
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
-FROM node:22-bookworm-slim AS runtime
-
-LABEL org.opencontainers.image.title="p2p-hiverelay"
-LABEL org.opencontainers.image.description="Always-on P2P relay infrastructure for the Holepunch/Pear ecosystem"
-LABEL org.opencontainers.image.source="https://github.com/bigdestiny2/P2P-Hiverelay"
-LABEL org.opencontainers.image.licenses="Apache-2.0"
+FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS runtime
 
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
 # ca-certificates so HTTPS to public registries / payment providers works.
+# libatomic1 is required by the shipped rocksdb-native Linux prebuilds on ARM64
+# (and is harmless on AMD64); without it Node reports the present addon as
+# ADDON_NOT_FOUND because its dynamic linker dependency cannot be resolved.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini wget ca-certificates gosu && \
+    apt-get install -y --no-install-recommends tini wget ca-certificates gosu libatomic1 && \
     rm -rf /var/lib/apt/lists/*
+
+# Keep source identity after the expensive OS layer so a new sealed commit does
+# not invalidate dependency caches. The release workflow supplies the exact SHA.
+ARG SOURCE_COMMIT
+LABEL org.opencontainers.image.title="p2p-hiverelay"
+LABEL org.opencontainers.image.description="Always-on P2P relay infrastructure for the Holepunch/Pear ecosystem"
+LABEL org.opencontainers.image.source="https://github.com/bigdestiny2/P2P-Hiverelay"
+LABEL org.opencontainers.image.licenses="Apache-2.0"
+LABEL org.opencontainers.image.revision="$SOURCE_COMMIT"
 
 WORKDIR /app
 
@@ -99,6 +114,11 @@ COPY --from=deps /app/node_modules ./node_modules
 
 # Copy application source (respects .dockerignore)
 COPY . .
+
+# blind-peercred is compiled in the dependency stage where node-gyp and the
+# compiler toolchain are present. Its workspace build output is not hoisted
+# into node_modules, so carry it into the otherwise toolchain-free runtime.
+COPY --from=deps /app/packages/blind-peercred/build ./packages/blind-peercred/build
 
 # Non-root user for security. Fixed UID/GID so volume permissions stay
 # consistent across image rebuilds — operators with existing data

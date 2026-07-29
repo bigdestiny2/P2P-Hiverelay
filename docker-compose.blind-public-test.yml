@@ -1,0 +1,169 @@
+name: hiverelay-blind-public-test
+
+# Public-test overlay for the split Blind images (release 1.0.0-rc.1.public-test.1).
+#  - Images are pinned by image-index digest (multi-arch linux/amd64+linux/arm64);
+#    digests are bound in release/blind-public-test/artifact-manifest.json.
+#  - Host TCP 443 maps DIRECTLY to the Edge TLS listener (Blind Edge terminates
+#    public-CA TLS itself; no HTTP/TCP reverse proxy in front).
+#  - The daemon is private: no network, only the shared Unix-socket volume.
+#  - Readiness stays zero: all signed assembly inputs remain empty-by-default;
+#    without node-scoped sealed material both services fail closed.
+#  - Rollback: stop/remove only this project's containers; volumes (roots) are
+#    retained. See release/blind-public-test/rollback/.
+
+x-blind-hardening: &blind-hardening
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  stop_grace_period: 20s
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=64m
+  ulimits:
+    nofile:
+      soft: 8192
+      hard: 8192
+
+services:
+  # One-shot volume initializer (identical contract to docker-compose.blind.yml):
+  # the only root process, killed by the signed 60-second maximum, never loads
+  # product code.
+  blind-volume-init:
+    image: "hiverelay/blind-daemon@sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f"
+    restart: "no"
+    read_only: true
+    user: "0:0"
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 32
+    network_mode: none
+    stop_grace_period: 1s
+    entrypoint: ["/usr/bin/timeout", "--signal=KILL", "59s", "/bin/sh", "-ec"]
+    command:
+      - |
+        test ! -L /run/hiverelay-blind
+        test ! -L /data/blind
+        mkdir -p -- /run/hiverelay-blind /data/blind
+        test -d /run/hiverelay-blind
+        test -d /data/blind
+        test ! -L /run/hiverelay-blind
+        test ! -L /data/blind
+        chown 999:997 -- /run/hiverelay-blind /data/blind
+        chmod 0750 -- /run/hiverelay-blind
+        chmod 0700 -- /data/blind
+    volumes:
+      - blind-runtime:/run/hiverelay-blind
+      - blind-data:/data/blind
+
+  blind-daemon:
+    <<: *blind-hardening
+    image: "hiverelay/blind-daemon@sha256:57b7c2b1645b2c728efd761904b40a838b2db6111b0e9957b081d800ccf98f9f"
+    user: "999:997"
+    depends_on:
+      blind-volume-init:
+        condition: service_completed_successfully
+    network_mode: none
+    mem_limit: 1g
+    cpus: 2.0
+    environment:
+      HIVERELAY_BLIND_RUNTIME_DIR: /run/hiverelay-blind
+      HIVERELAY_BLIND_UNARY_SOCKET: /run/hiverelay-blind/unary.sock
+      HIVERELAY_BLIND_STREAM_SOCKET: /run/hiverelay-blind/stream.sock
+      HIVERELAY_BLIND_DATA: /data/blind
+      # Every production assembly input is explicit and empty-by-default
+      # (fail-closed; sealed node material is supplied by the deployment lease).
+      HIVERELAY_BLIND_RUNTIME_PROFILE: "${HIVERELAY_BLIND_RUNTIME_PROFILE:-}"
+      HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE: "${HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_FILE:-}"
+      HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_SHA256: "${HIVERELAY_BLIND_ADMISSION_ADAPTER_SCRIPT_SHA256:-}"
+      HIVERELAY_BLIND_DESCRIPTOR_FILES: "${HIVERELAY_BLIND_DESCRIPTOR_FILES:-}"
+      HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES: "${HIVERELAY_BLIND_ADMISSION_PARAMETER_FILES:-}"
+      HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE: "${HIVERELAY_BLIND_RELAY_SECRET_KEY_FILE:-}"
+      HIVERELAY_BLIND_STORE_ROOT: "${HIVERELAY_BLIND_STORE_ROOT:-}"
+      HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT: "${HIVERELAY_BLIND_PRIVATE_IPC_REPLAY_ROOT:-}"
+      HIVERELAY_BLIND_INBOX_STORE_ROOT: "${HIVERELAY_BLIND_INBOX_STORE_ROOT:-}"
+      HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE: "${HIVERELAY_BLIND_INBOX_CURSOR_KEY_FILE:-}"
+      HIVERELAY_BLIND_CORE_STORE_ROOT: "${HIVERELAY_BLIND_CORE_STORE_ROOT:-}"
+      HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE: "${HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE:-}"
+      HIVERELAY_BLIND_STORE_READER_MODE: "${HIVERELAY_BLIND_STORE_READER_MODE:-}"
+      HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE: "${HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE:-}"
+      HIVERELAY_BLIND_MAP_GENERATION: "${HIVERELAY_BLIND_MAP_GENERATION:-}"
+      HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE: "${HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE:-}"
+      HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH: "${HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH:-}"
+      HIVERELAY_BLIND_ENDPOINT_SUPPORT_BITS: "${HIVERELAY_BLIND_ENDPOINT_SUPPORT_BITS:-}"
+      HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: "${HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH:-}"
+      HIVERELAY_BLIND_ENDPOINT_IDS: "${HIVERELAY_BLIND_ENDPOINT_IDS:-}"
+      HIVERELAY_BLIND_EDGE_UID: "998"
+      HIVERELAY_BLIND_DAEMON_UID: "999"
+      HIVERELAY_BLIND_DAEMON_GID: "997"
+      HIVERELAY_BLIND_SHARED_GID: "997"
+    volumes:
+      - blind-runtime:/run/hiverelay-blind
+      - blind-data:/data/blind
+
+  blind-edge:
+    <<: *blind-hardening
+    image: "hiverelay/blind-edge@sha256:79a4e8e735681497772c06f6c35544bf4d6d77afdd0ed9f06bc6c5b2ae564fe7"
+    user: "998:997"
+    depends_on:
+      blind-daemon:
+        condition: service_healthy
+        restart: true
+    mem_limit: 1g
+    cpus: 2.0
+    environment:
+      HIVERELAY_BLIND_RUNTIME_DIR: /run/hiverelay-blind
+      HIVERELAY_BLIND_UNARY_SOCKET: /run/hiverelay-blind/unary.sock
+      HIVERELAY_BLIND_STREAM_SOCKET: /run/hiverelay-blind/stream.sock
+      # No fallback by design: an omitted signed topology hash or endpoint
+      # leaves the edge fail-closed before it opens a public listener.
+      HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH: "${HIVERELAY_BLIND_LAUNCH_TOPOLOGY_HASH:-}"
+      HIVERELAY_BLIND_STREAM_TRANSPORT_PROFILE_HASH: "${HIVERELAY_BLIND_STREAM_TRANSPORT_PROFILE_HASH:-}"
+      HIVERELAY_BLIND_HOST: 0.0.0.0
+      HIVERELAY_BLIND_PORT: "9100"
+      HIVERELAY_BLIND_ENDPOINT_ID: "${HIVERELAY_BLIND_ENDPOINT_ID:-}"
+      HIVERELAY_BLIND_DAEMON_UID: "999"
+      HIVERELAY_BLIND_DAEMON_GID: "997"
+      HIVERELAY_BLIND_SHARED_GID: "997"
+      HIVERELAY_BLIND_TLS_KEY: /run/secrets/hiverelay-blind-tls.key
+      HIVERELAY_BLIND_TLS_CERT: /run/secrets/hiverelay-blind-tls.crt
+      SSL_CERT_FILE: /etc/ssl/certs/ca-certificates.crt
+    ports:
+      # Host TCP 443 -> Edge TLS 9100, direct termination, no proxy in front.
+      - "${HIVERELAY_BLIND_BIND:-0.0.0.0}:443:9100"
+    volumes:
+      - blind-runtime:/run/hiverelay-blind:ro
+    secrets:
+      - source: blind-tls-key
+        target: hiverelay-blind-tls.key
+        uid: "998"
+        gid: "997"
+        mode: 0400
+      - source: blind-tls-cert
+        target: hiverelay-blind-tls.crt
+        uid: "998"
+        gid: "997"
+        mode: 0444
+    networks:
+      - blind-public
+
+volumes:
+  blind-runtime:
+  blind-data:
+
+networks:
+  blind-public:
+
+secrets:
+  blind-tls-key:
+    file: "${HIVERELAY_BLIND_TLS_KEY_FILE:-./deploy/blind/secrets/tls.key}"
+  blind-tls-cert:
+    file: "${HIVERELAY_BLIND_TLS_CERT_FILE:-./deploy/blind/secrets/tls.crt}"

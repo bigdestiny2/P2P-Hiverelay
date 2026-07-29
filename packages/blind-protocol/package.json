@@ -1,0 +1,51 @@
+{
+  "name": "@hiverelay/blind-protocol",
+  "version": "1.0.0-rc.1",
+  "description": "Final public WIRE registry and bounded binary framing for the HiveRelay blind substrate",
+  "private": true,
+  "type": "module",
+  "main": "index.js",
+  "browser": {
+    "./crypto.js": "./crypto-browser.js"
+  },
+  "scripts": {
+    "test": "brittle test/*.test.js",
+    "test:bare": "PATH=\"$PWD/../../node_modules/bare/bin:$PATH\" brittle-bare test/*.test.js",
+    "lint": "XDG_CACHE_HOME=/private/tmp/hiverelay-standard-cache standard --no-cache ."
+  },
+  "exports": {
+    ".": "./index.js",
+    "./dispatch": "./dispatch.js",
+    "./codec": "./codec.js",
+    "./hashes": "./hashes.js",
+    "./outer-envelope": "./outer-envelope.js",
+    "./result-binding": "./result-binding.js",
+    "./registry": "./registry.js",
+    "./schemas": "./schemas.js",
+    "./schema-catalog-runtime-authority": "./schema-catalog-runtime-authority.js",
+    "./client-composition-authority": "./client-composition-authority-entry.js",
+    "./external-profile-decoder": "./external-profile-decoder.js",
+    "./client-composition-runtime-vectors": "./client-composition-runtime-vectors.js",
+    "./wire-runtime-vectors": "./wire-runtime-vectors.js",
+    "./wire-runtime-authority": "./wire-runtime-authority.js"
+  },
+  "files": [
+    "*.js",
+    "*.cenc",
+    "hiverelay-blind-client-composition-authority-v1.json",
+    "hiverelay-blind-wire-authority-v1.json",
+    "vectors/",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "b4a": "^1.6.6",
+    "compact-encoding": "^2.15.0",
+    "sodium-javascript": "~0.8.0",
+    "sodium-universal": "^4.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "Apache-2.0"
+}

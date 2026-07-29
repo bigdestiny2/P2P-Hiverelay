@@ -1,0 +1,36 @@
+app_version: 1.0.0-rc.1
+capabilities: []
+categories:
+- networking
+changelog_url: https://github.com/bigdestiny2/P2P-Hiverelay/releases
+date_added: '2026-07-16'
+description: Run an always-on blind relay for Pear and Holepunch applications from your TrueNAS system.
+home: https://hiverelay.com
+host_mounts: []
+icon: https://media.sys.truenas.net/apps/blindspark/icons/icon.svg
+keywords:
+- hiverelay
+- blindspark
+- pear
+- holepunch
+- p2p
+lib_version: 2.3.8
+lib_version_hash: cd75c897a1e8fef54b5bd00d0d8849f240bc50db2ef650eccc0ee74f3b2b2dc1
+maintainers:
+- email: dev@truenas.com
+  name: truenas
+  url: https://www.truenas.com/
+name: blindspark
+run_as_context:
+- description: Container [blindspark] runs as non-root user and group.
+  gid: 999
+  group_name: Host group is [docker]
+  uid: 999
+  user_name: Host user is [netdata]
+screenshots: []
+sources:
+- https://apps.truenas.com/catalog/blindspark_community/
+- https://github.com/bigdestiny2/P2P-Hiverelay
+title: Blindspark by HiveRelay
+train: community
+version: 1.0.1

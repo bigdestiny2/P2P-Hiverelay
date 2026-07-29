@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "disposition_id": "hiverelay-blind-public-test-scan-disposition-20260724",
+  "policy": "release/blind-public-test/security/vulnerability-policy.json",
+  "evaluated_at": "2026-07-26T13:45Z",
+  "scanner": {
+    "image": "aquasec/trivy:0.72.0@sha256:cffe3f5161a47a6823fbd23d985795b3ed72a4c806da4c4df16266c02accdd6f",
+    "version": "0.72.0",
+    "db": {
+      "repository_used": "mirror.gcr.io/aquasec/trivy-db:2",
+      "schema_version": 2,
+      "db_updated_at": "2026-07-26T07:38:45.384765931Z",
+      "db_downloaded_at": "2026-07-26T13:41:44.464145055Z",
+      "db_file_sha256": "05b65128e1b932ac35d82d4783022b41f300347484b3709450bee6f4b3549563",
+      "ghcr_reference_digest_observed": "ghcr.io/aquasecurity/trivy-db:2@sha256:1fbb72d41752bad0028c6564d64ccd61a48ee085f60e8290f03c88769292b36b"
+    }
+  },
+  "reports": {
+    "trivy-blind-edge-linux-amd64.json": "sha256:ebc936a34993e294b062e3998b33ebba2b97564fdf160a217aa35760eef46186",
+    "trivy-blind-edge-linux-arm64.json": "sha256:53244a88450ae78536dc1d14c19f1ceea0a4fb02dd8a69185af2e2247bc78a79",
+    "trivy-blind-daemon-linux-amd64.json": "sha256:0974884315620ad13d2fcf844a93fb4452c2bf9fefc2b99e16b8996e0500a8e6",
+    "trivy-blind-daemon-linux-arm64.json": "sha256:9822e18a339d326b7618a1af7ee3ea3ec3a72c04d3ff73eb1c875f9c1c642c6f"
+  },
+  "finding_summary_per_image_per_platform": {
+    "lang-pkgs": {
+      "CRITICAL": 1,
+      "HIGH": 4,
+      "MEDIUM": 7
+    },
+    "os-pkgs": {
+      "CRITICAL": 5,
+      "HIGH": 17,
+      "MEDIUM": 58,
+      "LOW": 69,
+      "UNKNOWN": 10
+    }
+  },
+  "relay_closure_findings": 0,
+  "relay_closure_note": "Zero findings under /opt/hiverelay (the relay production closure installed from deploy/blind/*/package-lock.json) in all four reports. All lang-pkgs findings are inside the node base image's bundled npm CLI (/usr/local/lib/node_modules/npm/node_modules/**), which the build never installs and the relay never executes (ENTRYPOINT is node; no npm/git/subprocess use of the npm CLI in the request path).",
+  "dispositions": [
+    {
+      "findings": [
+        "CVE-2026-59873 (tar 7.5.11 CRITICAL, fix 7.5.19)",
+        "CVE-2026-59874 (tar 7.5.11 HIGH, fix 7.5.18)",
+        "CVE-2026-48815 (sigstore HIGH, fix 4.1.1)",
+        "CVE-2026-33671 (picomatch HIGH, fix 4.0.4/3.0.2/2.3.2)",
+        "CVE-2026-13149 (brace-expansion HIGH, fix 5.0.7/1.1.16/2.1.2)"
+      ],
+      "location": "usr/local/lib/node_modules/npm/node_modules/** (node:22-bookworm-slim base, digest-pinned)",
+      "disposition": "ACCEPT_RISK",
+      "justification": "Base-image npm CLI internals; not production dependencies of the relay, not present in the /opt/hiverelay closure, never executed by the runtime (entrypoint node; no package-management code path). Blocking condition of the policy (fix-available CRITICAL/HIGH in a production dependency reachable from the request path) is NOT met. Inherited fixes land on the next pinned base-image refresh."
+    },
+    {
+      "findings": [
+        "CVE-2026-13221 (perl-base CRITICAL, no fix)",
+        "CVE-2026-42496 (perl-base CRITICAL, no fix)",
+        "CVE-2026-57433 (perl-base CRITICAL, no fix)",
+        "CVE-2026-8376 (perl-base CRITICAL, no fix)",
+        "CVE-2023-45853 (zlib1g CRITICAL, no fix)"
+      ],
+      "location": "Debian 12.14 OS packages of the digest-pinned base images",
+      "disposition": "WATCH",
+      "justification": "No fixed version available in the pinned Debian release. perl-base is a base-system dependency not exercised by the Node request path; zlib1g is loaded by Node but the CVE concerns MiniZip (not used by Node or the relay). Re-evaluate at the next base refresh."
+    },
+    {
+      "findings": [
+        "all remaining HIGH/MEDIUM/LOW/UNKNOWN os-pkgs findings (17/58/69/10 per image-platform) and lang-pkgs MEDIUM (7)"
+      ],
+      "location": "digest-pinned base images",
+      "disposition": "ACCEPT_RISK",
+      "justification": "Base-image contents of the digest-pinned node:22-bookworm-slim runtime and node:22-bookworm toolchain stages; full per-finding data retained in the four JSON reports; relay closure is clean; re-evaluated at every base refresh."
+    }
+  ],
+  "gate_result": "NO_BLOCKING_FINDING under vulnerability-policy.json v1; report-only gate satisfied for the readiness-zero LIVE_PUBLIC_TEST_ONLY artifact set. Independent assurance must re-verify before any test-activation lease is exercised.",
+  "images_rebuilt_from": "973f25c212553653b65811eacd28ed35b1b54124 (post-teardown rebuild: assembly 66e0fa7 + FLEET-DURABILITY-P1-1 boot-restore fix 49e12d8)"
+}

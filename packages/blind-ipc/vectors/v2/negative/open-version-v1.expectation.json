@@ -1,0 +1,5 @@
+{
+  "decoder": "decodeLocalStagedCellPutOpenV2",
+  "errorCode": "PRIVATE_IPC_V2_NO_FALLBACK",
+  "outcome": "reject"
+}

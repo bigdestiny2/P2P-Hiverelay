@@ -29,6 +29,56 @@ function tmpStorage () {
   return join(tmpdir(), 'hiverelay-bare-identity-' + randomBytes(8).toString('hex'))
 }
 
+function deferred () {
+  let resolvePromise
+  const promise = new Promise(resolve => { resolvePromise = resolve })
+  return { promise, resolve: resolvePromise }
+}
+
+test('bare lifecycle: concurrent start callers share one exact completion authority', async (t) => {
+  const gate = deferred()
+  const relay = Object.create(BareRelay.prototype)
+  Object.assign(relay, {
+    running: false,
+    _starting: false,
+    _stopping: null,
+    _startCompletion: null,
+    async _startLifecycle () {
+      await gate.promise
+      this.running = true
+      return this
+    }
+  })
+
+  const first = relay.start()
+  const concurrent = relay.start()
+  t.is(concurrent, first, 'concurrent Bare caller receives the exact first promise')
+  gate.resolve()
+  t.is(await first, relay, 'shared completion resolves to the exact Bare relay')
+  t.is(relay.start(), first, 'already-running Bare start returns the completed authority')
+
+  const failureGate = deferred()
+  const failure = new Error('injected bare startup failure')
+  const failing = Object.create(BareRelay.prototype)
+  Object.assign(failing, {
+    running: false,
+    _starting: false,
+    _stopping: null,
+    _startCompletion: null,
+    async _startLifecycle () {
+      await failureGate.promise
+      throw failure
+    }
+  })
+  const rejectedFirst = failing.start()
+  const rejectedConcurrent = failing.start()
+  t.is(rejectedConcurrent, rejectedFirst, 'rejected Bare callers share exact promise')
+  failureGate.resolve()
+  let observed = null
+  try { await rejectedConcurrent } catch (err) { observed = err }
+  t.is(observed, failure, 'shared Bare rejection preserves exact startup error')
+})
+
 test('bare smoke: BareRelay module imports cleanly under Node via the imports map', (t) => {
   t.ok(BareRelay, 'BareRelay class is exported')
   t.is(typeof BareRelay, 'function', 'is a constructor')
@@ -113,4 +163,47 @@ test('bare smoke: federation module is wired (instance exists pre-start)', (t) =
   // Federation is constructed inside start() in BareRelay, not in the
   // constructor — verify the property exists and starts null.
   t.is(relay.federation, null, 'federation slot exists, lazily constructed in start()')
+})
+
+test('bare lifecycle destroys every protocol owner and retains rejected teardown for retry', async (t) => {
+  const relay = new BareRelay({ storage: '/tmp/bare-protocol-' + Date.now() })
+  const events = []
+  let rejectProof = true
+  relay._serviceProtocol = { destroy () { events.push('service') } }
+  relay._seedProtocol = { destroy () { events.push('seed') } }
+  relay._circuitRelay = { destroy () { events.push('circuit') } }
+  const proof = {
+    destroy () {
+      events.push('proof')
+      if (rejectProof) throw new Error('injected proof destroy failure')
+    }
+  }
+  relay._proofOfRelay = proof
+
+  await t.exception(relay._destroyProtocolHandlers(100), /injected proof destroy failure/)
+  t.alike(events, ['service', 'seed', 'circuit', 'proof'])
+  t.is(relay._serviceProtocol, null)
+  t.is(relay._seedProtocol, null)
+  t.is(relay._circuitRelay, null)
+  t.is(relay._proofOfRelay, proof, 'rejected owner remains reachable')
+
+  rejectProof = false
+  await relay._destroyProtocolHandlers(100)
+  t.is(relay._proofOfRelay, null)
+})
+
+test('bare lifecycle drains scope then tears down every seeded drive before store ownership', async (t) => {
+  const relay = new BareRelay({ storage: '/tmp/bare-drive-' + Date.now() })
+  const events = []
+  relay._scope = { async drain () { events.push('scope-drained') } }
+  relay.appRegistry = { apps: new Map([['a'.repeat(64), {}], ['b'.repeat(64), {}]]) }
+  relay.appLifecycle = {
+    async unseedApp (key, opts) {
+      events.push('unseed-' + key[0] + '-' + String(opts.forget))
+    }
+  }
+
+  await relay._drainLifecycleAndSeededDrives(100)
+  t.alike(events, ['scope-drained', 'unseed-a-false', 'unseed-b-false'])
+  t.is(relay._scope, null)
 })

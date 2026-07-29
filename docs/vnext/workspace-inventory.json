@@ -1,0 +1,5864 @@
+{
+  "schema": "pear-vnext-workspace-inventory-v1",
+  "observedAt": "2026-07-12T14:28:23.950Z",
+  "workspace": "pear-ecosystem",
+  "controller": {
+    "path": "00-core/hr-vnext-integration",
+    "branch": "feat/vnext-integration",
+    "commit": "a793502ec9b7ff748da25eb16eb84640951bc1ad"
+  },
+  "repositories": [
+    {
+      "path": "00-core/blindspark-umbrel-store",
+      "branch": "main",
+      "head": "89cd69cd9aa23338643346b164c5fbbe2fc2ef03",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.20.0",
+      "dirty": true,
+      "statusSha256": "b11030bbfc24c5f0f1feddf3cc66f0bc5602ada3d057d6d42a3dc7c3b119df80",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "59bb236de568612a3e17eebbc97bdd28ab017b87b56473f033037d48cc019f4a",
+      "untrackedTreeSha256": "6a33b787645327324ecd6061ab53f806c288640de584e02f6f7c18027ace3984",
+      "trackedChanges": 3,
+      "untrackedChanges": 17,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-26.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/DIGEST_PROVENANCE_2026-06-26.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY_BOUNDARY_ALIGNMENT_2026-06-26.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/browser-smoke-check.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/release-checklist.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "hiverelay-blindspark/docker-compose.yml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "hiverelay-blindspark/umbrel-app.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "hiverelay-pearpaste/data/.gitkeep",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "hiverelay-pearpaste/docker-compose.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "hiverelay-pearpaste/exports.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "hiverelay-pearpaste/icon.svg",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "hiverelay-pearpaste/umbrel-app.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "index.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/check-relay-surfaces.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/report-anchor-alignment.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/serve-preview.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/smoke-umbrel-package.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-metadata.mjs",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hiverelay",
+      "branch": "main",
+      "head": "999b0afd7584bb727cef6e6a88a054f11513927a",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.24.3",
+      "dirty": true,
+      "statusSha256": "e993695988374a78a8ea91851c34f729ff28ef2384427d122afa50eee4c54e88",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "71de0f94c0d41ed000bf262f49d1fac06a116768372d36a227f1bca21113140e",
+      "untrackedTreeSha256": "d84e834cfa64a71b2f235ef923d655fc588a460406cd14ba5fc5e89fec76ff11",
+      "trackedChanges": 23,
+      "untrackedChanges": 16,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "FEATURES.csv",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "HiveRelay-0.24.1-Announcement.pdf",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "HiveRelay-0.24.1-Explainer.pdf",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dashboard/calculator.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dashboard/catalog.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dashboard/leaderboard.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dashboard/payments.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "examples/node-app/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "examples/pear-app/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "fleet/fleet-status.sh",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/cli/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/config/default.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/config/loader.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "packages/core/core/relay-node/api-credits.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/api-metrics.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/api-status-read.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/api.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/eviction.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/services/README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/generate-features-csv.py",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/mark-retested.py",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/update-cli-help.py",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/update-features-csv.py",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "standalone/client.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "standalone/package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "standalone/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "standalone/server.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "startos-0.4/javascript/index.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/api-credits.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/config-loader.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/storage-cap-resolve.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "tmp-test-relay2/bootstrap-cache.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "tmp-test-relay2/manifests.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "tmp-test-relay2/reputation.json",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hiverelay-local-cohort",
+      "branch": "feat/local-shard-cohort",
+      "head": "91093c3e8950016b236c27662a2c760c6959b428",
+      "unborn": false,
+      "upstream": "origin/feat/local-shard-cohort",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.24.0",
+      "dirty": true,
+      "statusSha256": "5da3ec122cbeb877561ec31f7ba8bb6bd573704ef2eb55ceed0d16297e5fb9a6",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "227ad79dbd74c8a115ec19871e4bd24fbbdb1281c824fbb3a4afd2728ff2f567",
+      "untrackedTreeSha256": "07caf08c3fdf00a7152dde481cb872e1171785eaeee98076e0ab0176bc68f74d",
+      "trackedChanges": 1,
+      "untrackedChanges": 1,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "fleet/fleet-status.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "node_modules",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hiverelay-main",
+      "branch": null,
+      "head": "347b7011d3448114c614e2e0bac0927172b32520",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.24.0",
+      "dirty": false,
+      "statusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 0,
+      "untrackedChanges": 0,
+      "preservation": "clean",
+      "changes": []
+    },
+    {
+      "path": "00-core/hiverelay/.claude/worktrees/cool-mccarthy-a3b77c",
+      "branch": "claude/cool-mccarthy-a3b77c",
+      "head": "29d210437178686bbccc1791dd014af8a47260df",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.24.3",
+      "dirty": true,
+      "statusSha256": "ea65df6c8f9039b1797e1e64a1c7e55ce412a039a309e0390a5a40e1f65274b5",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "82d413c9c69208cb34bf54cc8fcf1d91ec73676108c3290a31d30d9f6c9d603f",
+      "untrackedTreeSha256": "71280bb5869a02647f8db8951d43d14fd71df09b5a2765c0a6497db189010bff",
+      "trackedChanges": 8,
+      "untrackedChanges": 1,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/ATOMIC-BLIND-CUSTODY.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/ATOMIC-CUSTODY-SIMULATION.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/DEVELOPER.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/ECONOMICS.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/HIVERELAY_OVERVIEW.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/PEAR-INTEGRATION.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/THREAT-MODEL.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/WHATS-IN-THE-RELAY.md",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hiverelay/.claude/worktrees/interesting-bhabha-bbfb66",
+      "branch": "claude/interesting-bhabha-bbfb66",
+      "head": "95f662716db4476295ff077312067169b35fde46",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.24.0",
+      "dirty": true,
+      "statusSha256": "4095fe97adb3661718dd08e1c908863eb108f7994235882fc09e65567f2b6ae6",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "a0543732a908542980eba0d4be4d47006a2fa135bc6c0112b79aa354a9c9610c",
+      "untrackedTreeSha256": "24e298ea388219b4dfa5c99955dd682f82a3036f3a10958046da769dc0ce0f29",
+      "trackedChanges": 5,
+      "untrackedChanges": 2,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": ".claude/launch.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "fleet/fleet-status.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "fleet/rotate-api-keys.sh",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/plugin-loader.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/api-service-config.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/api-service-config-helpers.test.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hr-acct",
+      "branch": "chore/s9pk-digest-guard",
+      "head": "2b2a7c2c7dee7b46415587a23b6af0a00038f7c1",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.20.2",
+      "dirty": true,
+      "statusSha256": "5365a9baf0c9390567bc253d76b066dd9b6b787ce4066d3f3a80e605c50dfc1e",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "6678f0683f604856f4e12dd44c8f781f6552d6830d0421513a99926b22c2706e",
+      "untrackedTreeSha256": "d00903b51bb678dbb2373c849df6ef82e4fea2083ecb3411932d050428ce4629",
+      "trackedChanges": 18,
+      "untrackedChanges": 9,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": ".github/workflows/umbrel-app-validate.yml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dashboard/blindspark.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/PEARBROWSER-INTEGRATION.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/SECURITY-STRATEGY.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST-COMMAND-MATRIX-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/THREAT-MODEL.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TODO-TRIAGE-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/UMBREL_SUBMISSION_SYNC_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "manifest.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/client/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/services/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/verifier/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-publish-surface.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "site/index.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/OFFICIAL-SUBMISSION-PLAN.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/SUBMISSION-CHECKLIST.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "umbrel-app/data/.gitkeep",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/docker-compose.yml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/gallery/PLACEHOLDER.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/umbrel-app.yml",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hr-fleet",
+      "branch": "feat/poker-services",
+      "head": "f482766318e97ff840e2d9f25637330a34b9eb88",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.20.2",
+      "dirty": true,
+      "statusSha256": "4da2cba52e1673a542881511de0a5099d5f0497928a797e1b2f4c400de7d8c46",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "0694d70796caef194f8d8b94b43b6e97464c9346fe1ac51223a6e13de98a2a64",
+      "untrackedTreeSha256": "03809baf9cdbaaa9541d491282c229dbb3789d78e037c608222f46cc40b0996a",
+      "trackedChanges": 19,
+      "untrackedChanges": 10,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "dashboard/blindspark.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/HYPERDRIVE-WEBAPPS-VS-PEAR-APPS.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/P2P-APP-ARCHITECTURE.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/SECURITY-STRATEGY.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST-COMMAND-MATRIX-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/THREAT-MODEL.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TODO-TRIAGE-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/UMBREL_LIFECYCLE_SMOKE_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/UMBREL_SUBMISSION_SYNC_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/client/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/api.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/services/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/verifier/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/umbrel-lifecycle-smoke.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-umbrel-package.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/relay-node.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/OFFICIAL-SUBMISSION-PLAN.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/SUBMISSION-CHECKLIST.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "umbrel-app/data/.gitkeep",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/docker-compose.yml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/gallery/PLACEHOLDER.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/umbrel-app.yml",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hr-https-gateway",
+      "branch": "feat/public-https-hive-gateway",
+      "head": "999b0afd7584bb727cef6e6a88a054f11513927a",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.24.3",
+      "dirty": true,
+      "statusSha256": "b6c62f61e165619c1bb12432f508dc4a16890880fd60e520fa3e78bf69ed10a3",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "2c112880ceae803e5ba8bff369ffb491a8a0cc3c3379db38c1fbacb1b1aec2ae",
+      "untrackedTreeSha256": "c1752466ca2ad0c22cb7fc912f8869d540f8464557c6d940820ce3538d91fb4c",
+      "trackedChanges": 39,
+      "untrackedChanges": 48,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": ".github/workflows/release-surfaces.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "deploy/public-hive-gateway/hiverelay-config.example.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "deploy/public-hive-gateway/nginx.conf.template",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "deploy/public-hive-gateway/operator-readiness-contract.example.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/PUBLIC-HIVE-GATEWAY-CANARY-RUNBOOK.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/PUBLIC-HTTPS-HIVE-GATEWAY-SPEC.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RELAYKERNEL-GATEWAY-COMPATIBILITY.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/REVERSE-PROXY.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "fleet/README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "fleet/hiverelay-updater.service",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "fleet/install-updater.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "fleet/public-hive-gateway-release.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "fleet/quarantine-public-gateway.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "fleet/updater-launcher.sh",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "fleet/updater.sh",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/cli/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/config/default.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "packages/core/config/public-hive-gateway-env.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/app-lifecycle.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/cancellable-drive-update.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/gateway-server.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/core/relay-node/index.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "packages/core/gateway/hive-host.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/core/gateway/hyper-gateway.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "packages/core/gateway/public-app-admission.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/audit-ecosystem-consumers.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/check-fleet-rollout.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/check-release-distribution-env.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/lib/public-hive-gateway-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/lib/public-hive-gateway-ops.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/lib/public-hive-gateway-policy.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/lib/public-hive-gateway-preflight.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/lib/public-hive-gateway-release-manifest.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/observe-public-hive-gateway-rollout.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/preflight-public-hive-gateway-ops.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/preflight-public-hive-gateway.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/prepare-release.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/promote-fleet-channel.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/public-hive-gateway-deploy.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/publish-fleet-channel.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/release.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/resolve-public-hive-gateway-node.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/resolve-public-hive-gateway-release.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/test-public-hive-gateway-nginx-docker.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/verify-public-hive-gateway-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/verify-public-hive-gateway-operators.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/verify-release-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/verify-release-handoff-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/write-official-umbrel-pr-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/write-release-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/integration/public-hive-gateway-deploy-rehearsal.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/integration/public-hive-gateway-live.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/integration/public-hive-gateway-ops.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/app-registry-hyperbee.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/cancellable-drive-update.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/ecosystem-consumers.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/fleet-channel-promotion.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/fleet-channel-publisher.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/fleet-gateway-quarantine.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/fleet-rollout-check.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/fleet-shell-safety.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/fleet-updater-gateway.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/fleet-updater-install.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/fleet-updater-verify-tag.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/gateway-server.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/hive-gateway-host.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/hyper-gateway-hardening.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/hyper-gateway-runtime-hardening.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/official-umbrel-pr-evidence.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/prepare-release.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-app-admission.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-deploy.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-env.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-evidence.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-node-contract.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-observer.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-ops.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-preflight.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-release-guard.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-release-manifest.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/public-hive-gateway-release-workflow.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/relay-node.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/release-distribution-env.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/release-evidence-verify.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/release-evidence.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/release-handoff-evidence-verify.test.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hr-notify-review",
+      "branch": "feat/v0.23.0-storage",
+      "head": "974890c672446c533428ae2d89b9fa62b1429156",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 5,
+      "behind": 38,
+      "packageVersion": "0.23.0",
+      "dirty": false,
+      "statusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 0,
+      "untrackedChanges": 0,
+      "preservation": "clean",
+      "changes": []
+    },
+    {
+      "path": "00-core/hr-release",
+      "branch": "release/v0.20.2",
+      "head": "cbf5e640f29b3797abb9775c4ffa2c9336dcfacb",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.20.2",
+      "dirty": true,
+      "statusSha256": "acf759873cb0c44495a43313f00e18dd728022134c6d863e1555432aaaf057b1",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "c244dbf074d4c3b7a63f5c9127411d17d71dcc791ead44e70ba42326cb2612f7",
+      "untrackedTreeSha256": "f1dd33fb7cc006e8b0f7a918e635bcedf80f44c03d1a7515899b6e980ecedf43",
+      "trackedChanges": 6,
+      "untrackedChanges": 1,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".github/workflows/release-distribution-preflight.yml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RELEASE_AUTOMATION.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/audit-workspace-alignment.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/check-github-release-setup.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/github-release-setup.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "umbrel-app/docker-compose.yml",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/hr-v024-cut",
+      "branch": "feat/keyvault-release-signing",
+      "head": "699dc31647178cd4192d531f94621a798660b6ae",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.24.0",
+      "dirty": true,
+      "statusSha256": "0c182af4cf5851fc837a5890b164cebb0552212c83332b1210f963695d1a8894",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "4230039033aae277cf6bd4766bbe1bf6e8fa9688b5cd9158128c8e9f68cab880",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 2,
+      "untrackedChanges": 0,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "CHANGELOG.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/BLIND-SHARD-DEALER-CONTRACT.md",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "00-core/pear-registry",
+      "branch": "main",
+      "head": "3bfdceb8e113ebf1a72bd1b73d3e8e936c478696",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "82a8a58b69305d6e8a3697440a8f727d709bd85bef6f8b88f674e52f868db390",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "3b4ded211a53208c709aed9bad164ec8d6caeb825575f8b081390fb188643ecd",
+      "untrackedTreeSha256": "81e025d23bbd7a69e90677491693cb0bdf29a9a390e8f844943653e0492f25b9",
+      "trackedChanges": 7,
+      "untrackedChanges": 6,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "TEST-COMMAND-MATRIX-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "lib/indexer.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "lib/payload.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "lib/publish.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "lib/resolve.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "manifest.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-publish-surface.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "site/index.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/payload.test.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/publish.test.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/resolve.test.mjs",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "01-browser/PearBrowser",
+      "branch": "main",
+      "head": "01eb8c7fbfada50672ddbb3ec79aec25621229bb",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 4,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "624f0c0b9affa8e53877ba6d8cdac606e5604188baa697ef43f2d3f373833ce4",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "450821e264d5d033a8864db1b9a97432478bf4569f034c9980875c307520cec1",
+      "untrackedTreeSha256": "76ef8298205964a8206d57c270a96a71ac7360f002678acedf7548a3da6747c7",
+      "trackedChanges": 44,
+      "untrackedChanges": 8,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "DESIGN.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "android-native/app/src/main/java/com/pearbrowser/app/bridge/PearBridgeScript.kt",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "android-native/app/src/main/java/com/pearbrowser/app/rpc/PearRpc.kt",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "android-native/app/src/main/java/com/pearbrowser/app/rpc/PearRpcClient.kt",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "android-native/app/src/main/java/com/pearbrowser/app/rpc/Protocol.kt",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "android-native/app/src/main/java/com/pearbrowser/app/ui/screens/MoreScreen.kt",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "android-native/app/src/main/java/com/pearbrowser/app/ui/theme/Theme.kt",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/lib/constants.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/lib/pear-bridge-spec.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/lib/rpc.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/lib/theme.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/screens/BackupPhraseScreen.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/screens/RestoreIdentityScreen.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/screens/SettingsScreen.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "assets/backend.android.bundle.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "assets/backend.bundle.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/constants.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/device-linker.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/http-bridge.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/hyper-proxy.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/identity.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/pear-bridge.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/relay-client.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/PEAR_UI_FULL_APP_SPEC.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/PEAR_UI_STYLE.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST_COMMAND_MATRIX_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/App/MainView.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/App/PearBrowserApp.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/Bridge/PearBridgeScript.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/RPC/PearRPC.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/RPC/Protocol.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/UI/Screens/BackupPhraseScreen.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/UI/Screens/BrowseScreen.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/UI/Screens/RestoreIdentityScreen.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/UI/Screens/SettingsScreen.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ios-native/PearBrowser/Sources/UI/Theme/PearColors.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/_stubs.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/device-linker.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/device-linking-parity.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/http-bridge-origin-sse.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/identity-bip39-standard.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/identity.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/mobile-screen-harness.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/native-catalog-parity.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/origin-token.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/pear-bridge-sync-groups.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/relay-client.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/swarm-v1-parity.test.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "01-browser/pearbrowser-desktop",
+      "branch": "fix/native-packaging-linux-deps",
+      "head": "bb3bb68ea0871eb83feff65c867b47ed1b51b6fc",
+      "unborn": false,
+      "upstream": "origin/fix/native-packaging-linux-deps",
+      "ahead": 1,
+      "behind": 0,
+      "packageVersion": "0.5.2",
+      "dirty": true,
+      "statusSha256": "c81903f8b7b7b00d7874a580f0dae9829789cfd15f6b7e900165f44ee5ab83a2",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "ea44fe97da4a1f371fa793a641331c8c2bca9e5714183a7dd8a284538006fa5c",
+      "untrackedTreeSha256": "563f85c3d420f568fc30263fe4d6f95da0df0e3fe62a940997668fcadb1af18b",
+      "trackedChanges": 30,
+      "untrackedChanges": 45,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/ai/ask-browser-service.cjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/ai/qvac-host.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/ai/qvac-model-catalog.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/ai/qvac-ollama-catalog.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/ai/qvac-runtime.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/ai/qvac-service.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/constants.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/http-bridge.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/hyper-proxy.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/index.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/page-context-bridge.cjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/pear-bridge.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/relay-client.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/rpc-websocket-auth.cjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/tab-runtime.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/ASK_BROWSER.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/BROWSER_INFRASTRUCTURE_AND_OFFERING_LEAP_2026-07-04.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/INSTALL_NATIVE_PACKAGES.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/MANUAL_RELEASE_SMOKE_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/ORIGIN_ISOLATION_MIGRATION_2026-07-02.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/PEARBROWSER-APP-COMPAT-STANDARD.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/QVAC_NATIVE_AI.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/RELEASE_NETWORK_EVIDENCE_2026-07-02.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RELEASE_SMOKE_EVIDENCE_LOG_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/TEST-COMMAND-MATRIX-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/origin-isolation-smoke-evidence-peerit-pearfeed-2026-07-04.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/origin-isolation-smoke-evidence-peerit-pearfeed-2026-07-04.template.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/origin-isolation-smoke-plan-peerit-pearfeed-2026-07-02.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "examples/qvac-native-demo/index.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "examples/qvac-native-demo/manifest.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/ask-browser-ui-client.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/ask-browser-ui.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/ask-browser-ui.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/ask-browser.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/browser.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/index.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/vendor/htm-react-shim.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qvac-smoke/vendor/react-shim.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/check-origin-isolation-smoke-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/generate-native-install-snippet.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/generate-origin-isolation-smoke-evidence.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/generate-origin-isolation-smoke-plan.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/generate-release-evidence-handoff.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/release-rpc-story-smoke.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "styles.css",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/ask-browser-packaging.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/ask-browser-service.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/ask-browser-ui.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/http-bridge-sse-ticket.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/origin-isolation-smoke-evidence.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/origin-isolation.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/page-context-bridge.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/peerit-catalog.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/qvac-http-bridge.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/qvac-native-packaging.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/qvac-ollama-catalog.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/qvac-service.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/relay-client-http.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/release-evidence.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/release-packaging.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/rpc-websocket-auth.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/tab-runtime-context.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/tabs.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/boot.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "ui/lib/ask-browser.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/lib/tabs.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/shell.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/theme/pear-ui.css",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/matchday-mesh",
+      "branch": "main",
+      "head": "c4a085136f4929da7b775930c9374308969d91f3",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": false,
+      "statusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 0,
+      "untrackedChanges": 0,
+      "preservation": "clean",
+      "changes": []
+    },
+    {
+      "path": "02-apps/p2pbuilders",
+      "branch": "main",
+      "head": "6678ba154c39edd8ff42da825c38b1c78620e5f3",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "39e282de91001025903f1444a576cec960081b4342a355635e21e2c72bea12f1",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "8bfa0316f53d8ff56d978ac30b2f08f23239ab63230cb97fc72a41b3924142b2",
+      "untrackedTreeSha256": "ec257767d28a77557737b3f7dbf86449c661a2b4b19840bc3ce1ed61352424b8",
+      "trackedChanges": 10,
+      "untrackedChanges": 50,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/bootstrap-cache.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/15/d3/15d3960c5a6203e4a2ca378a3ca40b11bdc79f0fb8cc09fb9e5673880d4f0fb9/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/15/d3/15d3960c5a6203e4a2ca378a3ca40b11bdc79f0fb8cc09fb9e5673880d4f0fb9/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/15/d3/15d3960c5a6203e4a2ca378a3ca40b11bdc79f0fb8cc09fb9e5673880d4f0fb9/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/15/d3/15d3960c5a6203e4a2ca378a3ca40b11bdc79f0fb8cc09fb9e5673880d4f0fb9/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/36/9e/369e37db91845fbecda1c608da1aa11d296ffc75a92d7fcab30c7eb2583751ff/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/36/9e/369e37db91845fbecda1c608da1aa11d296ffc75a92d7fcab30c7eb2583751ff/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/36/9e/369e37db91845fbecda1c608da1aa11d296ffc75a92d7fcab30c7eb2583751ff/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/36/9e/369e37db91845fbecda1c608da1aa11d296ffc75a92d7fcab30c7eb2583751ff/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/42/c1/42c12ad55f1bb0064fb0b5b391508f1979544d7c18f9f179229ed22f8402c6cd/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/42/c1/42c12ad55f1bb0064fb0b5b391508f1979544d7c18f9f179229ed22f8402c6cd/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/42/c1/42c12ad55f1bb0064fb0b5b391508f1979544d7c18f9f179229ed22f8402c6cd/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/42/c1/42c12ad55f1bb0064fb0b5b391508f1979544d7c18f9f179229ed22f8402c6cd/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/45/21/4521e7c4a494e10a71b18f799ae8f83e5f59963fc40f413b2b0cccfa7f71a39f/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/45/21/4521e7c4a494e10a71b18f799ae8f83e5f59963fc40f413b2b0cccfa7f71a39f/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/45/21/4521e7c4a494e10a71b18f799ae8f83e5f59963fc40f413b2b0cccfa7f71a39f/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/45/21/4521e7c4a494e10a71b18f799ae8f83e5f59963fc40f413b2b0cccfa7f71a39f/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/52/e8/52e8cfc1459270aa82c530beff2a4a6ab158aa2be3a9835171245f911f904fa5/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/52/e8/52e8cfc1459270aa82c530beff2a4a6ab158aa2be3a9835171245f911f904fa5/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/52/e8/52e8cfc1459270aa82c530beff2a4a6ab158aa2be3a9835171245f911f904fa5/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/52/e8/52e8cfc1459270aa82c530beff2a4a6ab158aa2be3a9835171245f911f904fa5/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/5e/e0/5ee063d3998059414fdc66513a601fd023e66ea6b16bd5f8fc17bd69ee554916/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/5e/e0/5ee063d3998059414fdc66513a601fd023e66ea6b16bd5f8fc17bd69ee554916/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/5e/e0/5ee063d3998059414fdc66513a601fd023e66ea6b16bd5f8fc17bd69ee554916/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/5e/e0/5ee063d3998059414fdc66513a601fd023e66ea6b16bd5f8fc17bd69ee554916/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/6f/07/6f076b6620893ceb32e2e2c8bb555111b2e35a5e0a9a90bb12392fdbdaf95a16/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/6f/07/6f076b6620893ceb32e2e2c8bb555111b2e35a5e0a9a90bb12392fdbdaf95a16/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/6f/07/6f076b6620893ceb32e2e2c8bb555111b2e35a5e0a9a90bb12392fdbdaf95a16/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/6f/07/6f076b6620893ceb32e2e2c8bb555111b2e35a5e0a9a90bb12392fdbdaf95a16/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/6f/b1/6fb1f8ec12f9b74138ffb2de23c895340f15dc11ea9e6c3889c7f06f764fe14b/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/a8/36/a8369929fe8e8dd0630a01f505201981bad1185481f3e8d74f8fae253462ea16/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/a8/36/a8369929fe8e8dd0630a01f505201981bad1185481f3e8d74f8fae253462ea16/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/a8/36/a8369929fe8e8dd0630a01f505201981bad1185481f3e8d74f8fae253462ea16/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/a8/36/a8369929fe8e8dd0630a01f505201981bad1185481f3e8d74f8fae253462ea16/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/af/b8/afb86726c8af0cea3235a329d8b392552504e741be2e355040ca198644f5b2dc/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/af/b8/afb86726c8af0cea3235a329d8b392552504e741be2e355040ca198644f5b2dc/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/af/b8/afb86726c8af0cea3235a329d8b392552504e741be2e355040ca198644f5b2dc/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/af/b8/afb86726c8af0cea3235a329d8b392552504e741be2e355040ca198644f5b2dc/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/d8/be/d8bef58cf6c11c030f74b155fecfc8606fddfa3d9b4b69c0be89bfec6b8db369/bitfield",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/d8/be/d8bef58cf6c11c030f74b155fecfc8606fddfa3d9b4b69c0be89bfec6b8db369/data",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/d8/be/d8bef58cf6c11c030f74b155fecfc8606fddfa3d9b4b69c0be89bfec6b8db369/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/d8/be/d8bef58cf6c11c030f74b155fecfc8606fddfa3d9b4b69c0be89bfec6b8db369/tree",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/cores/e0/af/e0af6d568add55a0b7179b70ebb24bc461c0cb7ecea0fbd55772905920f80df1/oplog",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/forks.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/pending-seeds.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".hiverelay-probe/primary-key",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "TEST_COMMAND_MATRIX_2026-06-27.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "check-durable.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/gossip.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/identity.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "js/pear-api.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/pow.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/sync.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "manifest.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "publish.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ship.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/bridge.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/engine.mjs",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/pear sports/pearcup-world-cup",
+      "branch": "agent/hackathon-final-release",
+      "head": "9c4de04117bde62a80624b81d384231cf9d11170",
+      "unborn": false,
+      "upstream": "origin/agent/hackathon-final-release",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": false,
+      "statusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 0,
+      "untrackedChanges": 0,
+      "preservation": "clean",
+      "changes": []
+    },
+    {
+      "path": "02-apps/pear-dealroom",
+      "branch": "main",
+      "head": "e389f07c60bd37cd96b45621d33f518c9950d422",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "1.0.0",
+      "dirty": true,
+      "statusSha256": "e190a8b218aced3ec09f65b9a606113c5152ff27a54e0164f47f023fcef197b6",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "35443ae8dd5f5c81ba61e2a098c5c8cc78bce2bcb6838af299c3368cdf1c8c33",
+      "untrackedTreeSha256": "f9b59544e7909ea60225831b614d0c037b040c8665f864b52c0cb3cea5ef64c5",
+      "trackedChanges": 9,
+      "untrackedChanges": 12,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "assets/icon.svg",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/MARKER-TRIAGE-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/ROOM_FRONTEND_PROOF_2026-06-26.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY_BOUNDARY_ALIGNMENT_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST_COMMAND_MATRIX_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "frontend/eslint.config.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/__tests__/Documents.test.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/__tests__/Onboarding.test.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/__tests__/Rooms.test.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/AccessBadge.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/DocumentList.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/RoomCard.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/RoomsPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/vite.config.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "manifest.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-publish-surface.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "site/hiverelay-bridge.draft.json",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/pear-tickets",
+      "branch": "v2",
+      "head": "d35d04663079e47f28edcbf5e6c626690316999e",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "1.0.0",
+      "dirty": true,
+      "statusSha256": "601ed7685cbe1b7a7751095c84ce751c554b759eeccedbe440e1d622d5eaf4b2",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "674f3445d7224a2e0b0fa1f715871bd9fc83b0f7a8184a8456f41647618ab2c1",
+      "untrackedTreeSha256": "93feb3b362cc9fa6e6a225b8a57abda6560452329cad8075e555d01094258e8a",
+      "trackedChanges": 66,
+      "untrackedChanges": 37,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "LAUNCH-CHECKLIST.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "LAUNCH-PLAN.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "LAUNCH_READINESS_RECONCILIATION_PROOF_2026-06-29.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "RELEASE-STATUS.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/bootstrap.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/delivery-adapters/email.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/delivery-adapters/wallet-pass.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/page-builder.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/pages.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/pairing.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/payment-adapters/lightning.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/payments.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "app/backend/runtime-links.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/backend/sync.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "app/boot.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dist-installers/android/app/build.gradle.kts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dist-installers/android/app/src/main/AndroidManifest.xml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dist-installers/android/app/src/main/java/app/pear/tickets/MainActivity.kt",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dist-installers/android/app/src/main/java/app/pear/tickets/PearRuntime.kt",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/java/app/pear/tickets/PearTicketsApp.kt",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/java/app/pear/tickets/PearTicketsApplication.kt",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/java/app/pear/tickets/scanner/ScannerActivity.kt",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/java/app/pear/tickets/services/SyncService.kt",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/res/drawable/ic_launcher.xml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/res/values/colors.xml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/res/values/strings.xml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/res/values/styles.xml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/res/xml/backup_rules.xml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dist-installers/android/app/src/main/res/xml/data_extraction_rules.xml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "dist-installers/android/build-android.sh",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/ATTENDEE-GUIDE.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-26.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-27.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/MODERNIZATION.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/ORGANIZER-GUIDE.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RELEASE-V2.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY_BOUNDARY_ALIGNMENT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST-COMMAND-MATRIX-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TODO-TRIAGE-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "frontend/eslint.config.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "frontend/src/App.test.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/App.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/api/client.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/ErrorBoundary.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/LoadingSpinner.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/PairingDialog.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/PaymentFlow.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/QRCode.tsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "frontend/src/components/ShareEventDialog.test.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/ShareEventDialog.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/StatusBadge.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/TicketCard.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/TierBadge.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/Toast.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/components/TransferDialog.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/hooks/useTickets.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/BusinessSetupPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/DeviceSyncPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/EventBrowsePage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/EventDetailPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/EventsPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/FirstRunOnboarding.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/MyTicketsPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/OnboardingPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/PaymentSetupPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/SettingsPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/TicketDetailPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/pages/UpgradePage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "frontend/src/runtime-links.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/styles.css",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/src/types/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/tsconfig.app.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "frontend/vite.config.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "index.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "landing/index.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/build-feature-ledger.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/coverage-preview.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/dashboard-preview.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/issues-preview.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/pear-tickets-feature-ledger.xlsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/pear-tickets-feature-ledger.xlsx.inspect.ndjson",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/test-log-preview.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeec0-af2e-7ef1-b614-d1824172d09b/user-stories-preview.png",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "publish-to-hiverelay.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "pwa/index.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "pwa/src/App.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "pwa/vite.config.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/mobile-two-peer-harness.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/mobile-two-peer-peer.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/republish-catalog.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-publish-surface.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "shared/apply-tickets.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/capabilities.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/launch-path.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/pairing.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/runtime-links.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/ui-worker-path.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/app.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/pearpaste",
+      "branch": "feat/pear-runtime-electron-forge",
+      "head": "2c91857e1469756f9e006725395c75f344a2962d",
+      "unborn": false,
+      "upstream": "origin/feat/pear-runtime-electron-forge",
+      "ahead": 1,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "fb8c05b14278b9202054d90d7ea141cf742180646b4d8ab14662f7d9efa26702",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "737ccbdd9f0775e36a2dc6b0fc97f882344f8ccdaa9b1c42756ac9d7ec053548",
+      "untrackedTreeSha256": "c0dddf1a9f5436ab766319bf79872243811cf849a1fc4cf579b3674d0c0939c1",
+      "trackedChanges": 43,
+      "untrackedChanges": 72,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".claude/launch.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".dockerignore",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": ".github/workflows/build-release.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "Dockerfile",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "REVIEW.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/identity.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/lifecycle-scope.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/notes-service.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/relay-service.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/MARKER-TRIAGE-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/PAIRING.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/PEARPASTE_TECHNICAL_SPEC.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/PEAR_RUNTIME_MIGRATION.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RECOVERY_DESIGN.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RELEASE.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/SHIPPING.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST-COMMAND-MATRIX-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/TESTING_MATRIX.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/handover/BUILD_LINUX.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/handover/BUILD_WINDOWS.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/handover/HANDOFF_LINUX.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/handover/HANDOFF_WINDOWS.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/handover/README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "electron/main.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "electron/preload.cjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/PearPasteMobile/.eslintrc.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/PearPasteMobile/__tests__/App.test.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/PearPasteMobile/jest.config.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/PearPasteMobile/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/PearPasteMobile/scripts/lint-mobile-shell.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/app/lib/copy.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/app/screens/DevicesScreen.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/backend/app.android.bundle.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "mobile/backend/app.ios.bundle.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/build_feature_tracker.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/node_modules",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/pearpaste_feature_audit_tracker.xlsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/pearpaste_feature_audit_tracker.xlsx.inspect.ndjson",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/preview-defect-log.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/preview-feature-stories.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/preview-sources.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/preview-summary.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "outputs/019eeebf-bfa3-7ce1-9f56-cbf546b1fdfa/preview-test-log.png",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/.gitignore",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/LICENSE",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/Makefile",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/TODO.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/UPDATING.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/assets/ABOUT.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/icon.svg",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/instructions.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/s9pk.mk",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/scripts/verify-artifacts.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/scripts/verify-package.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/actions/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/backups.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/dependencies.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/fileModels/README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/i18n/dictionaries/default.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/i18n/dictionaries/translations.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/i18n/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/init/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/interfaces.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/main.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/manifest/i18n.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/manifest/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/sdk.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/utils.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/versions/current.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/startos/versions/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/startos/tsconfig.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/hiverelay-pearpaste/data/.gitkeep",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/hiverelay-pearpaste/docker-compose.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/hiverelay-pearpaste/exports.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/hiverelay-pearpaste/icon.svg",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/hiverelay-pearpaste/umbrel-app.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/pearpaste/data/.gitkeep",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/pearpaste/docker-compose.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/pearpaste/exports.sh",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/pearpaste/icon.svg",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "platforms/umbrel/pearpaste/umbrel-app.yml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "release/container-image.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/container-release.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/prepare-container-package.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/probe-circuit.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/smoke-packaged-artifacts.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "server/web.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/integration/pairing-first-sync.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/integration/pairing-window-note.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/integration/view-changed-live-refresh.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/crypto-envelope.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/electron-ota-bridge.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/hiverelay-upgrade.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/identity-bip39-standard.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/identity.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/notes-service.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/packaging-deps.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/selfhosted-packaging.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/unit/web-server.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/desktop/app.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/desktop/styles.css",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "ui/shared/bridge-client.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "workers/main.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "workers/paste.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/peartube",
+      "branch": "main",
+      "head": "b23768d1c3829cf16dda76416bec67107cf165f6",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.185",
+      "dirty": true,
+      "statusSha256": "c141265ebd3114bc256d5cf9669ab08d5514d53501a70faafafda2c2982d7f65",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "343023080fed77a4c7de552912ce35c345eaa4ab65e8dcd519a08c29ca6c0c28",
+      "untrackedTreeSha256": "ac9f1b38ec9746cfe23ea8f17089c167d7140ad3034655fb3c3f287cc11506d2",
+      "trackedChanges": 30,
+      "untrackedChanges": 11,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/GENERATED_NATIVE_VALIDATION_PROOF_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST-COMMAND-MATRIX-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TODO-TRIAGE-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "manifest.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/app/components/VideoPlayerOverlayImpl.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/app/package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/app/tests/mobile-player-page-layout-regression.test.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Bridge/native-host-sidecar.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Bridge/native-host-sidecar.test.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Extensions/MediaFormatReader/Resources/Info.plist",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Extensions/MediaFormatReader/Resources/PearTubeMediaFormatReader.entitlements",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Extensions/MediaVideoDecoder/Resources/Info.plist",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Extensions/MediaVideoDecoder/Resources/PearTubeSupplementalVideoDecoder.entitlements",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Sources/Services/HostBridgeService.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Sources/Support/HRPCBridgeAdapter.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/Tests/PearTubeDesktopTests.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/project.yml",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/scripts/bare-pack-host-flags.test.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/scripts/ensure-barekit-bare-fs-bundle.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/scripts/ensure-barekit-corestore-bundle.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/scripts/ensure-barekit-echo-bundle.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/scripts/ensure-host-sidecar-bundle.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/desktop-native/scripts/ensure-host-worklet-bundle.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "packages/host/node_modules",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/hrpc/app-rpc-adapter.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/hrpc/hrpc.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/hrpc/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/hrpc/messages.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/schema/index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/schema/schema.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/swift-hrpc/Sources/HRPC.swift",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/swift-hrpc/hrpc.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/spec/spec/swift-schema/Sources/Schema.swift",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/validate-publish-surface.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "site/catalog-entry.draft.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "site/hiverelay-bridge.draft.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "site/index.html",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/peerit",
+      "branch": "codex/opt-in-writer",
+      "head": "9d445dcb263ff420f7392875ea5747614ebd4c2a",
+      "unborn": false,
+      "upstream": "origin/codex/opt-in-writer",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "1.0.1",
+      "dirty": true,
+      "statusSha256": "6188dd1c8e89a8dd5ec6b6f1e4c3f765de3f34404e6d0439fd22621ea38db061",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "2ce72299814af7de1315e4860b09e170c911fad06d6f75b0406706e23711521c",
+      "untrackedTreeSha256": "9adfd39422d36fbc391df7955c6a3ab068139df6bdfbcee8ecb8808ea6a96436",
+      "trackedChanges": 17,
+      "untrackedChanges": 10,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "build-web.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "deploy/web-release.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "deploy/web-signing-request.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/BLIND-SUBSTRATE-IMPLEMENTATION-SPEC.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/HIVERELAY-VNEXT-ECOSYSTEM-ORCHESTRATION-PLAN.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/PEAR-ECOSYSTEM-VNEXT-COMPLETION-AND-LAUNCH-MASTER-PLAN.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/ROCKSDB-IDB-BROWSER-STORAGE-DISCOVERY.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/diagrams/hiverelay-one-fleet-many-services.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/diagrams/hiverelay-one-fleet-many-services.svg",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/app.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/ranking.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "js/release-update.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "publish.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/service-worker-source.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/ranking-window.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/release-update.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/service-worker-atomic.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "web/asset-manifest.json",
+          "originalPath": null
+        },
+        {
+          "status": " D",
+          "path": "web/asset-manifest.sig",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "web/index.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "web/js/app.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "web/js/ranking.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "web/sw-register.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "web/sw.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "web/verify.html",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/peerit-relay",
+      "branch": "feat/outboxlog-wire-conformance",
+      "head": "b4fe357dd305a7c5ed5fb6a107c8c7eaf03752ea",
+      "unborn": false,
+      "upstream": "origin/feat/outboxlog-wire-conformance",
+      "ahead": 1,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "42a3ad8fe88f9e3ad78edd3a7f3d97784728d006d32129eeee20a0fb887b551a",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "6059fe0f70a3bfd77aa9c0f39c7b9a90e94853b6d10cb64698d7888b2aeb3f87",
+      "trackedChanges": 0,
+      "untrackedChanges": 1,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": "package-lock.json",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/peerit/.claude/worktrees/zen-villani-0bd546",
+      "branch": "claude/zen-villani-0bd546",
+      "head": "e5b88269321c0a08f1a89b16f81b66e5226035d1",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "fbf0222f20352d919e6a00e229dc9cf28161b616236fcd6359575313e6617b72",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "25e75eefcdfa7782d68cfa00b851b8a7bcc75236a1fa047d16637b6e62ddeb7b",
+      "untrackedTreeSha256": "d2f47ae66509c82f56633016b4f13339db653a3752bb684483c0d2e36132de2a",
+      "trackedChanges": 6,
+      "untrackedChanges": 1,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "docs/BLIND-OUTBOX-MIGRATION.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/data.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/gossip.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "js/pow.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/gossip-v2.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/pow-v2-binding.mjs",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/react-native-pear-end",
+      "branch": "main",
+      "head": "20dcac431e9759d648657e0c28523a4e5ca0e68e",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.0.1-alpha.0",
+      "dirty": true,
+      "statusSha256": "9e1793bb4d9aed062f39ca7ef97f7b754a099316338a3ce12a3794dda647ced1",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "6a3c9a3c8e5e0adba251487d8ad1eeaab89d149550625172f496c838b61bfde9",
+      "untrackedTreeSha256": "2914619412d5f07c6ce70c5e3e2d7468dcacf1b43f1e05dc2acf73c1ca72b843",
+      "trackedChanges": 7,
+      "untrackedChanges": 5,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "TEST-COMMAND-MATRIX-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "bin/pear-end-pack.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/MARKER-TRIAGE-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "postinstall.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "src/PearEnd.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "src/ipc.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "src/lifecycle.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "src/streamx.d.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/unit/postinstall.test.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "worklet/index.mjs",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/ultimate-sports",
+      "branch": "chore/flatten-standalone",
+      "head": "f483ac753e17e7be9d9e8556a8006c5e927ab4b7",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.4.0",
+      "dirty": true,
+      "statusSha256": "8f70a2404da862eb06745bb12c55698ac4696489b096b677f1071fbe9b841273",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "b36ea801ef4211d02ed1cae26164de3aac986084ec68f77bc7d0fac93d57bf60",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 4,
+      "untrackedChanges": 0,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "shell/app.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "shell/engines.bundle.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "src/pool-settlement-engine.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/pool-settlement.test.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "02-apps/ultimate-sports-friends",
+      "branch": "main",
+      "head": "fb3f3b07ecd12809587be25735546869b82684fc",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "1.0.0",
+      "dirty": true,
+      "statusSha256": "cd557c2643a3617cc082ca80a098f3dd9a50012ea5e490e318b5b12533d44abf",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "50c92d967298f40d9162e596ce064069003e98e5d5a6dd2c238003d96d9b5710",
+      "untrackedTreeSha256": "767edca845b9666efba3ce823c0bbc7634b21384f707e57ef6e69fbc91685691",
+      "trackedChanges": 22,
+      "untrackedChanges": 38,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": ".gitignore",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/api-worker/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/api-worker/src/auth.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/api-worker/src/catalog.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/api-worker/src/data/ufc-329-full.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/api-worker/src/db.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/api-worker/src/polymarket.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/api-worker/src/wallet.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/api-worker/src/worker.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/api-worker/tsconfig.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/api-worker/wrangler.toml",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/server/.gitignore",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/server/data/ufc-329-full.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/server/data/ufc-329-main.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/server/migrations/002_profile_setup.sql",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/server/src/app.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/server/src/catalog.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/server/src/index.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/server/src/polymarket-autosync.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/server/src/polymarket.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/server/src/wallet-service.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/server/test/db-integration.test.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/server/test/polymarket.test.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/almeida.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/basharat.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/cortez.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/costa.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/durden.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/ellison.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/gandra.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/garbrandt.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/garza.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/kamaka.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/krylov.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/pinas.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/reese.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/riley.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/steveson.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/wang-cong.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/whittaker.png",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/public/assets/fighters/yanez.png",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/App.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/lib/api.ts",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/lib/auth.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/pages/EventPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/pages/HomePage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/pages/LoginPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/pages/PicksPage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "apps/web/src/pages/ProfilePage.tsx",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "apps/web/src/styles/app.css",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "demos/video/README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "demos/video/contact-sheet.jpg",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "demos/video/qa-report.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "demos/video/usf-fight-card-demo-studio.mp4",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "demos/video/usf-fight-card-demo.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/friend-journey.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/pool-e2e.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/realtime-games.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "supabase/migrations/20260711120000_profile_setup.sql",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "03-sites/hiverelay-com",
+      "branch": "main",
+      "head": "8378c32216a5f3052b7ab07691244d57848522bb",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": null,
+      "dirty": true,
+      "statusSha256": "dd969da8d77166310282c8d0fbb6313b1bde133d4a845ac11ab3d53d1e19da1a",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "41c54e385c513a868e65d62ccb2fff33a0d29e373fe21d2e17af76b789dc4931",
+      "trackedChanges": 0,
+      "untrackedChanges": 6,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": "dev-brief.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "dev-brief.pdf",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "ecosystem-report-25page.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "ecosystem-report-25page.pdf",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "ecosystem-report.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "ecosystem-report.pdf",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "03-sites/pearbrowser-com",
+      "branch": "main",
+      "head": "f816eedbe3bc6c7de35a29a1a4421f7b6d9c8d61",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.0.0",
+      "dirty": false,
+      "statusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 0,
+      "untrackedChanges": 0,
+      "preservation": "clean",
+      "changes": []
+    },
+    {
+      "path": "03-sites/pearbrowser-publishers/src/p2pbuilders",
+      "branch": "main",
+      "head": "b188eb8872bf98188e5f70c941cfe1bc2e033114",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 1,
+      "behind": 0,
+      "packageVersion": "0.0.1",
+      "dirty": true,
+      "statusSha256": "5276614039c3cca9eb5bccf13d5dc960c54e0749f4079dac77f125e71df8e988",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "82575ab754dc0b751dfed21c253ea332b0d0c9dda9b1fac51b765547ee128922",
+      "untrackedTreeSha256": "601b388fdfef0c37ce0406abfbcd7bc1e3452b8198d5bb039fc58fe27db88b0d",
+      "trackedChanges": 7,
+      "untrackedChanges": 3,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": "landing/icon.svg",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "public/icon.svg",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/probe-relays.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/publish.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/seed-pear.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "src/terminal/main.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/m12-hiverelay-client-migration.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/m5.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/Hiveworm",
+      "branch": "v0.2-dev",
+      "head": "c8be1756735b6b993f9ab5e9d3e4597d33204e66",
+      "unborn": false,
+      "upstream": "origin/v0.2-dev",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "60c7ce1dda6cf5df9e02ed22cfb3e23731e652c3c9714fee9b6518ce8cf2a0db",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "f3e74bb7f1bc1ef6294d4195c9c545b806b99a4c06818d0d67b4280a7d492873",
+      "untrackedTreeSha256": "0e3df0fa107c0344838abc591280850f83ccec6bab6e25324803d982f1462f52",
+      "trackedChanges": 5,
+      "untrackedChanges": 3,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": "MARKER_TRIAGE_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "TEST_COMMAND_MATRIX_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "cli/verify.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/V02-DESIGN.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/check-local.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/seed-biome-autobase.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/scoreboard-convergence.test.mjs",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/Holepunch",
+      "branch": "main",
+      "head": null,
+      "unborn": true,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "1.0.0",
+      "dirty": true,
+      "statusSha256": "ed24693c14c9e7548f02b1529d61acc6b0aa8bec417c32351437aa0731facdca",
+      "stagedPatchSha256": "c60fd0ce9b9108041f11e731bdf6941a28887318e251731c4dacf13f2af7a34b",
+      "worktreePatchSha256": "c4799883af041d5ab4db33650cec0ced4f2c5e1ed360e74b4a47e0beee29c547",
+      "untrackedTreeSha256": "b248a84f83d62735bb570b30736bbd72c411405b85bd66bec7c889f1457734c6",
+      "trackedChanges": 7,
+      "untrackedChanges": 7,
+      "preservation": "initial-commit-or-immutable-archive-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".DS_Store",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": "A ",
+          "path": ".gitignore",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "Holepunch_Architecture_Guide.docx",
+          "originalPath": null
+        },
+        {
+          "status": "AM",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "TEST_COMMAND_MATRIX_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "AM",
+          "path": "client.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/MARKER-TRIAGE-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "A ",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": "A ",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "registry-client.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "registry-server.js",
+          "originalPath": null
+        },
+        {
+          "status": "AM",
+          "path": "server.js",
+          "originalPath": null
+        },
+        {
+          "status": "AM",
+          "path": "test/registry.test.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/Holepunch Challenge",
+      "branch": "main",
+      "head": "0c9214a0aa726a8365926d03062acbe13b81d7a9",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "60f02b33e9fe3897c87f920580a9cbe6e2a8fbc7e45f9e1c377d5dc279485f7c",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "9ff9b7c85240d909d3707b054befb4b9208df12351574fd0fb67dfb20d1509d2",
+      "untrackedTreeSha256": "22dc12d07b5ca74b2c51a098c77fdc9c2ef96b9d8c465da3ee44f4e796de4ac5",
+      "trackedChanges": 1,
+      "untrackedChanges": 1,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": "TEST_COMMAND_MATRIX_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "bin/cli.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/Opengit",
+      "branch": "main",
+      "head": "3691d5f994678e2f2d5fa735a548d648d4b44911",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.0.1",
+      "dirty": true,
+      "statusSha256": "bac9dcb36df740657a2f758a43c46ff7404f008ba673304e12bef00696a69f3c",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "8c6af54b8170e4b65d4f59a4e5ffa1fa9b43fa3eaa91f8586b2542a828cfe471",
+      "untrackedTreeSha256": "53e2bd851e4efa9b5c3fde08cdf31d136eae2e8936c678f73c35603664096383",
+      "trackedChanges": 28,
+      "untrackedChanges": 9,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": ".gitignore",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "CONTRIBUTING.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "HIVERELAY-INTEGRATION.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "TESTING.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/DEV-GUIDE.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/RELAY-OPERATORS.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/ROADMAP.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST-COMMAND-MATRIX-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TODO-TRIAGE-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/git-remote-opengit/bin/git-remote-opengit.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/git-remote-opengit/test/integration/clone.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/opengit-core/lib/repo.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/opengit-core/test/repo.test.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/opengit-relay/lib/relay.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/opengit-relay/package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "packages/opengit-relay/test/relay.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "qt-bare/",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/build-site.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/preflight-relay.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/probe-core-imports.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/self-host-proof-lane.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/stage1-clone-proof.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/verify-stage-5.2-relay.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/contributing.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/dev-guide.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/hiverelay-integration.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/quickstart.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/readme.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/relay-operators.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/roadmap.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/docs/testing.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/index.html",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/Opengit/qt-bare",
+      "branch": "docs/add-readme",
+      "head": "f41cb846f6df9217bad1b51b17fc5fe6d2516a89",
+      "unborn": false,
+      "upstream": "origin/docs/add-readme",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": null,
+      "dirty": false,
+      "statusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 0,
+      "untrackedChanges": 0,
+      "preservation": "clean",
+      "changes": []
+    },
+    {
+      "path": "04-experiments/anongpt-native",
+      "branch": "main",
+      "head": "3eeb13958e0e0644b704b366519f3c8d55b12d81",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.0.0",
+      "dirty": true,
+      "statusSha256": "7c5fa53441e5b243f8a02379859f1d67c75395692dccecdf1ab6646ebe424e2e",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "8a9e0af48734abf6becac8da8ea21bcc623945d1cf684a3dc1bef56b729a2bed",
+      "untrackedTreeSha256": "a73839dc21b41b2cefb4ef8911d4c85dec6ee161c0c53381911b2fd3f02c5fd3",
+      "trackedChanges": 12,
+      "untrackedChanges": 7,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".claude/settings.local.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": ".gitignore",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "SUBMISSION.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "backend/device-linker.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "backend/identity.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/CURRENT_STATUS_AUDIT_2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/SECURITY-BOUNDARY-ALIGNMENT-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/TEST-MATRIX-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "docs/THREAT-MODEL.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "index.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package-lock.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/test-anonymous-e2e.cjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/test-directory-e2e.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "scripts/test-forward-transport-e2e.cjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "site/index.html",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/hiverelay-upgrade.test.cjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/identity-bip39-standard.test.cjs",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/bare-kit-pear",
+      "branch": "main",
+      "head": "143845c56db50aee07b3edb318e8979a69936822",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "df0c29a3223935f0d0d95ecf70c476beda6a0ed77435dfbf4496130ed7c2d96d",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "320efa77cce5f532e5efdfc88edaa29f4414402066574bf28b6e41bb7ad79504",
+      "untrackedTreeSha256": "8b177ddfd701a0231a091cd1c87afb0d767b6cd32a293fb276e7d35508e3caa6",
+      "trackedChanges": 7,
+      "untrackedChanges": 12,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": " M",
+          "path": "A5-REPORT.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "BUILD.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "CURRENT_STATUS_AUDIT_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "FRESH_INSTALL_PRODUCTION_PROOF_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "NATIVE_ARTIFACT_FIXTURE_PROOF_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "SECURITY_BOUNDARY_ALIGNMENT_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "SIMULATOR_LAUNCH_PROOF_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "SWIFT_ISOLATION_CONSUMER_FIXTURE_PROOF_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "TEST-COMMAND-MATRIX-2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/consumer-fixture-proof.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/fresh-install-production-proof.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/native-artifact-fixture-proof.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/simulator-launch-proof.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "scripts/swift-test-isolation.mjs",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "src/commands/addons.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "src/commands/fetch.js",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "src/manifests/README.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "test/cli-e2e.test.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/hyper-fetch",
+      "branch": "main",
+      "head": "61b50acdc6c96c07da88e939285b0aa1da682412",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "4bd995e651773019a65933a3c901b9438688ade25d5a8351108228109aba0a10",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "5e33d0c37970ddd432a701bb5878b6224901c5310de5856b76d11616fe4d9dda",
+      "untrackedTreeSha256": "cbd830e2a9fcade10faec8fd927c6e32753d4c78eb7c8921fca04e62a0e7fa53",
+      "trackedChanges": 3,
+      "untrackedChanges": 6,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": "BROWSER_DEMO_PROOF_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "PACKED_TARBALL_CONSUMER_PROOF_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "PUBLISHED_REGISTRY_STATUS_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "TEST_COMMAND_MATRIX_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "demo/index.html",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/demo.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "test/index.test.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "04-experiments/pear-request-demo",
+      "branch": "main",
+      "head": "c7540e024b9e38d13133cc8f3fd9d37ad1bee7ba",
+      "unborn": false,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "1.0.0",
+      "dirty": false,
+      "statusSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "trackedChanges": 0,
+      "untrackedChanges": 0,
+      "preservation": "clean",
+      "changes": []
+    },
+    {
+      "path": "04-experiments/peersky-browser",
+      "branch": "main",
+      "head": "abaa8e44ee41f455162237ce5a8a93a50652a1be",
+      "unborn": false,
+      "upstream": "origin/main",
+      "ahead": 0,
+      "behind": 0,
+      "packageVersion": "1.0.0-beta.21",
+      "dirty": true,
+      "statusSha256": "7ed6408f2aa132be8b542ec274d49cfb30f5d81f9c194a381867a4054797402b",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "f09ccaeda8a152c4fffccde968deace1d70013a99bc197ea5e7d30a84ac997d4",
+      "untrackedTreeSha256": "d72d7eccbf96b253cbd6a35ea2c5995395c4d37f3db81c57de872d035e50436b",
+      "trackedChanges": 1,
+      "untrackedChanges": 19,
+      "preservation": "commit-or-immutable-bundle-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": "TEST_COMMAND_MATRIX_2026-06-24.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "docs/MARKER-TRIAGE-2026-06-23.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/.gitignore",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/SETUP.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/app.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/app/App.tsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/app/components/Browser.tsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/app/components/URLBar.tsx",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/app/lib/commands.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/app/lib/rpc.ts",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/backend/commands.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/backend/hyper-proxy.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/backend/index.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/node_modules",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/test/backend-integration.test.js",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/test/package.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "mobile/tsconfig.json",
+          "originalPath": null
+        },
+        {
+          "status": " M",
+          "path": "src/pages/p2p/chat/app.js",
+          "originalPath": null
+        }
+      ]
+    },
+    {
+      "path": "05-rollout/peerit-rollout-automation",
+      "branch": "main",
+      "head": null,
+      "unborn": true,
+      "upstream": null,
+      "ahead": null,
+      "behind": null,
+      "packageVersion": "0.1.0",
+      "dirty": true,
+      "statusSha256": "6b6b18317024bb724cd643b80648041dfe89711b662d03401acc01473fa107e5",
+      "stagedPatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "worktreePatchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "untrackedTreeSha256": "664ffb41bc284b1b86879a74e9ad657300b152bca1679bb2ab3fa634a6e50882",
+      "trackedChanges": 0,
+      "untrackedChanges": 9,
+      "preservation": "initial-commit-or-immutable-archive-required",
+      "changes": [
+        {
+          "status": "??",
+          "path": ".gitignore",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "README.md",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "bin/rollout.mjs",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "config/creatives.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "config/marketing.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "config/rollout.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "config/sponsorship-creators.example.json",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "data/manual/.gitkeep",
+          "originalPath": null
+        },
+        {
+          "status": "??",
+          "path": "package.json",
+          "originalPath": null
+        }
+      ]
+    }
+  ],
+  "nonGitProjects": [
+    {
+      "path": "00-core/hiverelay-spec",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear sports",
+      "containsNestedRepository": true,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-bazaar",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-comms",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-exchange",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-home",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-openclaw",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-pos",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-rides",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-sahifa",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-sanduq",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/pear-stays",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/peerit-mobile",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "02-apps/peerit-pwa",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "03-sites/pearbrowser-publishers",
+      "containsNestedRepository": true,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "04-experiments/Hivecompute",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "04-experiments/P2P",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    },
+    {
+      "path": "04-experiments/hiverelay-test",
+      "containsNestedRepository": false,
+      "preservation": "source-custody-or-immutable-archive-required"
+    }
+  ],
+  "summary": {
+    "repositories": 42,
+    "dirtyRepositories": 35,
+    "cleanRepositories": 7,
+    "nonGitProjects": 18,
+    "preservationComplete": false,
+    "preservationRequired": [
+      "00-core/blindspark-umbrel-store",
+      "00-core/hiverelay",
+      "00-core/hiverelay-local-cohort",
+      "00-core/hiverelay-spec",
+      "00-core/hiverelay/.claude/worktrees/cool-mccarthy-a3b77c",
+      "00-core/hiverelay/.claude/worktrees/interesting-bhabha-bbfb66",
+      "00-core/hr-acct",
+      "00-core/hr-fleet",
+      "00-core/hr-https-gateway",
+      "00-core/hr-release",
+      "00-core/hr-v024-cut",
+      "00-core/pear-registry",
+      "01-browser/PearBrowser",
+      "01-browser/pearbrowser-desktop",
+      "02-apps/p2pbuilders",
+      "02-apps/pear sports",
+      "02-apps/pear-bazaar",
+      "02-apps/pear-comms",
+      "02-apps/pear-dealroom",
+      "02-apps/pear-exchange",
+      "02-apps/pear-home",
+      "02-apps/pear-openclaw",
+      "02-apps/pear-pos",
+      "02-apps/pear-rides",
+      "02-apps/pear-sahifa",
+      "02-apps/pear-sanduq",
+      "02-apps/pear-stays",
+      "02-apps/pear-tickets",
+      "02-apps/pearpaste",
+      "02-apps/peartube",
+      "02-apps/peerit",
+      "02-apps/peerit-mobile",
+      "02-apps/peerit-pwa",
+      "02-apps/peerit-relay",
+      "02-apps/peerit/.claude/worktrees/zen-villani-0bd546",
+      "02-apps/react-native-pear-end",
+      "02-apps/ultimate-sports",
+      "02-apps/ultimate-sports-friends",
+      "03-sites/hiverelay-com",
+      "03-sites/pearbrowser-publishers",
+      "03-sites/pearbrowser-publishers/src/p2pbuilders",
+      "04-experiments/Hivecompute",
+      "04-experiments/Hiveworm",
+      "04-experiments/Holepunch",
+      "04-experiments/Holepunch Challenge",
+      "04-experiments/Opengit",
+      "04-experiments/P2P",
+      "04-experiments/anongpt-native",
+      "04-experiments/bare-kit-pear",
+      "04-experiments/hiverelay-test",
+      "04-experiments/hyper-fetch",
+      "04-experiments/peersky-browser",
+      "05-rollout/peerit-rollout-automation"
+    ]
+  }
+}

@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Blindspark by HiveRelay — Umbrel app icon.
+
+  Per Umbrel App Store spec:
+    - Format: SVG
+    - Size:   256x256
+    - Corners: NO rounded corners (Umbrel rounds them via CSS)
+
+  Design: a little yellow spark on the deep-navy relay field — the relay
+  carries the spark without seeing what it lights. No payment imagery.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#f5c842" stop-opacity="0.35"/>
+      <stop offset="60%" stop-color="#f5c842" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#f5c842" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="spark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffe066"/>
+      <stop offset="100%" stop-color="#f5a623"/>
+    </linearGradient>
+  </defs>
+
+  <!-- deep navy field (matches the dashboard palette) -->
+  <rect width="256" height="256" fill="#16213e"/>
+
+  <!-- soft glow behind the spark -->
+  <circle cx="128" cy="128" r="92" fill="url(#glow)"/>
+
+  <!-- the little spark: four-point sparkle, concave sides -->
+  <path d="M128 62
+           C 136 110, 146 120, 194 128
+           C 146 136, 136 146, 128 194
+           C 120 146, 110 136, 62 128
+           C 110 120, 120 110, 128 62 Z"
+        fill="url(#spark)"/>
+
+  <!-- tiny companion spark, top right -->
+  <path d="M186 70
+           C 189 84, 192 87, 206 90
+           C 192 93, 189 96, 186 110
+           C 183 96, 180 93, 166 90
+           C 180 87, 183 84, 186 70 Z"
+        fill="#ffe066" opacity="0.9"/>
+</svg>

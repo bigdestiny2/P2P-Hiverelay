@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HiveRelay Fleet</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%2316213e'/%3E%3Cpath d='M50 10 C 54 38 60 44 88 50 C 60 56 54 62 50 90 C 46 62 40 56 12 50 C 40 44 46 38 50 10 Z' fill='%23f5c842'/%3E%3C/svg%3E">
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#0d1117;--card:#161b22;--card-border:#21262d;--card-hover:#1c2333;
+  --green:#3fb950;--orange:#d29922;--cyan:#58a6ff;--red:#f85149;--purple:#bc8cff;--accent:#f5c842;
+  --text:#c9d1d9;--text-dim:#8b949e;--text-bright:#f0f6fc;--text-faint:#6e7681;
+  --mono:'SF Mono','Cascadia Code','Fira Code','Consolas',monospace;
+  --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+}
+html{font-size:14px}
+body{background:var(--bg) radial-gradient(1100px 500px at 50% -150px,#131a2b,transparent);color:var(--text);font-family:var(--sans);min-height:100vh}
+
+.topbar{
+  background:var(--card);border-bottom:1px solid var(--card-border);
+  padding:1rem 2rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;
+  position:sticky;top:0;z-index:100;
+}
+.topbar-logo{display:flex;align-items:center;gap:.75rem;text-decoration:none;color:inherit}
+.hive-logo{width:32px;height:32px;flex-shrink:0}
+.topbar h1{font-size:1.2rem;color:var(--text-bright);font-weight:600}
+.topbar-brand{display:flex;flex-direction:column;line-height:1.15}
+.topbar-sub{font-size:.58rem;color:var(--text-dim);letter-spacing:.6px;text-transform:uppercase}
+.topbar-nav{display:flex;gap:.2rem;margin-left:1rem;overflow-x:auto;scrollbar-width:none}
+.topbar-nav a{
+  font-size:.8rem;color:var(--text-dim);text-decoration:none;white-space:nowrap;
+  padding:.4rem .8rem;border-radius:999px;transition:color .15s,background .15s;
+}
+.topbar-nav a:hover{color:var(--text-bright);background:rgba(255,255,255,.06)}
+.topbar-nav a.active{color:#10131b;background:var(--accent);font-weight:600}
+.topbar-right{margin-left:auto;font-family:var(--mono);font-size:.78rem;color:var(--text-dim)}
+
+.container{max-width:1200px;margin:0 auto;padding:1.5rem 2rem}
+.note{
+  font-size:.82rem;color:var(--text-dim);margin-bottom:1.2rem;line-height:1.5;
+  padding:.85rem 1rem;background:rgba(88,166,255,.06);border:1px solid rgba(88,166,255,.15);border-radius:8px;
+}
+.note code{font-family:var(--mono);font-size:.78rem;color:var(--cyan)}
+
+.summary-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1rem;margin-bottom:1.5rem}
+.summary-card{
+  background:var(--card);border:1px solid var(--card-border);border-radius:8px;padding:1.1rem;
+}
+.summary-label{font-size:.68rem;text-transform:uppercase;letter-spacing:1.2px;color:var(--text-dim);margin-bottom:.45rem}
+.summary-value{font-size:1.8rem;font-weight:700;font-family:var(--mono);color:var(--text-bright);line-height:1}
+.summary-value.cyan{color:var(--cyan)}
+.summary-value.green{color:var(--green)}
+.summary-value.orange{color:var(--orange)}
+.summary-value.red{color:var(--red)}
+.summary-sub{font-size:.68rem;color:var(--text-faint);margin-top:.35rem;font-family:var(--mono)}
+
+.section-header{
+  display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:1rem;padding-bottom:.5rem;border-bottom:1px solid var(--card-border);
+}
+.section-header h2{font-size:1rem;color:var(--text-bright);font-weight:600}
+.badge{
+  font-size:.7rem;font-family:var(--mono);padding:.2rem .6rem;
+  border-radius:10px;background:rgba(88,166,255,.1);color:var(--cyan);
+}
+
+.fleet-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:1rem}
+.peer-card{
+  background:var(--card);border:1px solid var(--card-border);border-radius:10px;padding:1.1rem;
+  transition:border-color .15s;
+}
+.peer-card:hover{border-color:rgba(88,166,255,.35)}
+.peer-card.down{opacity:.75;border-color:rgba(248,81,73,.25)}
+.peer-card.self{border-color:rgba(245,200,66,.3)}
+.peer-head{display:flex;align-items:center;gap:.55rem;margin-bottom:.7rem}
+.dot{width:10px;height:10px;border-radius:50%;flex-shrink:0}
+.dot.up{background:var(--green);box-shadow:0 0 8px rgba(63,185,80,.4)}
+.dot.down{background:var(--red);box-shadow:0 0 8px rgba(248,81,73,.35)}
+.peer-name{font-weight:600;color:var(--text-bright);font-size:.95rem}
+.peer-region{
+  margin-left:auto;font-size:.68rem;font-family:var(--mono);
+  padding:.12rem .45rem;border-radius:4px;background:rgba(188,140,255,.1);color:var(--purple);
+}
+.peer-meta{font-family:var(--mono);font-size:.72rem;color:var(--cyan);margin-bottom:.75rem;word-break:break-all}
+.peer-stats{display:grid;grid-template-columns:1fr 1fr;gap:.55rem .75rem}
+.stat-lbl{font-size:.65rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-faint)}
+.stat-val{font-family:var(--mono);font-size:.9rem;color:var(--text-bright);margin-top:.1rem}
+.stat-val.warn{color:var(--orange)}
+.stat-val.bad{color:var(--red)}
+.stat-val.ok{color:var(--green)}
+.peer-err{margin-top:.75rem;font-size:.72rem;font-family:var(--mono);color:var(--orange)}
+.empty{color:var(--text-dim);padding:2rem;text-align:center;font-size:.9rem}
+</style>
+</head>
+<body>
+<div class="topbar">
+  <a href="/dashboard" class="topbar-logo">
+    <svg class="hive-logo" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+      <defs><linearGradient id="sparkg" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="#ffe066"/><stop offset="100%" stop-color="#f5a623"/></linearGradient></defs>
+      <path d="M50 6 C 54.5 36, 61 42.5, 92 50 C 61 57.5, 54.5 64, 50 94 C 45.5 64, 39 57.5, 8 50 C 39 42.5, 45.5 36, 50 6 Z" fill="url(#sparkg)"/>
+    </svg>
+    <div class="topbar-brand"><h1>HiveRelay</h1><div class="topbar-sub">fleet view</div></div>
+  </a>
+  <nav class="topbar-nav">
+    <a href="/dashboard">Dashboard</a>
+    <a href="/catalog">Catalog</a>
+    <a href="/payments">Payments</a>
+    <a href="/calculator">Calculator</a>
+    <a href="/network">Network</a>
+    <a href="/fleet" class="active">Fleet</a>
+    <a href="/leaderboard">Leaderboard</a>
+    <a href="/docs">Docs</a>
+  </nav>
+  <div class="topbar-right" id="lastUpdated">Loading…</div>
+</div>
+
+<div class="container">
+  <p class="note">
+    <strong>Fleet (v3)</strong> is a read-only aggregate of public <code>/health</code> + <code>/status</code>
+    scrapes for peers listed in <code>config.fleet.peers</code>.
+    It never merges private Tor detail (no onion addresses).
+    DHT swarm topology lives on <a href="/network" style="color:var(--cyan)">Network</a>.
+  </p>
+
+  <div class="summary-row">
+    <div class="summary-card">
+      <div class="summary-label">Peers</div>
+      <div class="summary-value cyan" id="sumPeers">--</div>
+      <div class="summary-sub" id="sumPeersSub">configured + self</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Up</div>
+      <div class="summary-value green" id="sumUp">--</div>
+      <div class="summary-sub" id="sumUpSub">&nbsp;</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Down</div>
+      <div class="summary-value" id="sumDown">--</div>
+      <div class="summary-sub" id="sumDownSub">&nbsp;</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Disk alerts</div>
+      <div class="summary-value orange" id="sumDisk">--</div>
+      <div class="summary-sub" id="sumDiskSub">warn + critical</div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-label">Privacy degraded</div>
+      <div class="summary-value" id="sumPrivacy">--</div>
+      <div class="summary-sub">Tor coarse only</div>
+    </div>
+  </div>
+
+  <div class="section-header">
+    <h2>Fleet nodes</h2>
+    <span class="badge" id="fleetBadge">--</span>
+  </div>
+  <div class="fleet-grid" id="fleetGrid">
+    <div class="empty">Loading fleet…</div>
+  </div>
+</div>
+
+<script>
+/* global fetch, AbortController, document, setInterval, clearInterval */
+(function () {
+  var REQUEST_TIMEOUT_MS = 10000;
+  var POLL_MS = 15000;
+
+  function getUiToken () {
+    var m = document.querySelector('meta[name="hiverelay-ui-token"]');
+    return m && m.content ? m.content : '';
+  }
+
+  function fetchWithTimeout (path, opts) {
+    var options = Object.assign({}, opts || {});
+    if (typeof AbortController !== 'function') return fetch(path, options);
+    var controller = new AbortController();
+    var timeout = setTimeout(function () { controller.abort(); }, REQUEST_TIMEOUT_MS);
+    options.signal = controller.signal;
+    return fetch(path, options).finally(function () { clearTimeout(timeout); });
+  }
+
+  function escapeHtml (s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function formatBytes (b) {
+    var n = Number(b);
+    if (!isFinite(n) || n < 0) return '--';
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function formatUptime (ms) {
+    var n = Number(ms);
+    if (!isFinite(n) || n < 0) return '--';
+    var m = Math.floor(n / 60000);
+    if (m < 60) return m + 'm';
+    var h = Math.floor(m / 60);
+    if (h < 48) return h + 'h';
+    return Math.floor(h / 24) + 'd';
+  }
+
+  function setText (id, value) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = value == null ? '' : String(value);
+  }
+
+  function render (payload) {
+    var summary = (payload && payload.summary) || {};
+    var peers = (payload && payload.peers) || [];
+    setText('sumPeers', summary.peerCount != null ? summary.peerCount : peers.length);
+    setText('sumUp', summary.up != null ? summary.up : '--');
+    setText('sumDown', summary.down != null ? summary.down : '--');
+    var downEl = document.getElementById('sumDown');
+    if (downEl) downEl.className = 'summary-value' + (summary.down > 0 ? ' red' : '');
+    var diskAlerts = (summary.diskWarn || 0) + (summary.diskCritical || 0);
+    setText('sumDisk', diskAlerts);
+    setText('sumDiskSub', (summary.diskWarn || 0) + ' warn · ' + (summary.diskCritical || 0) + ' crit');
+    setText('sumPrivacy', summary.privacyDegraded != null ? summary.privacyDegraded : '--');
+    setText('fleetBadge', peers.length + ' card(s)');
+    if (summary.updatedAt) {
+      setText('lastUpdated', 'Updated ' + new Date(summary.updatedAt).toLocaleTimeString());
+    }
+
+    var grid = document.getElementById('fleetGrid');
+    if (!grid) return;
+    if (!peers.length) {
+      grid.innerHTML = '<div class="empty">No fleet peers. Add <code>config.fleet.peers</code> '
+        + '[{ id, baseUrl }] or keep includeSelf for this node only.</div>';
+      return;
+    }
+
+    grid.innerHTML = peers.map(function (p) {
+      var disk = p.disk || {};
+      var diskText = disk.usedPct != null ? Math.round(disk.usedPct) + '%' : '--';
+      var diskCls = '';
+      if (disk.status === 'critical' || (disk.usedPct != null && disk.usedPct >= 90)) diskCls = 'bad';
+      else if (disk.status === 'warn' || (disk.usedPct != null && disk.usedPct >= 75)) diskCls = 'warn';
+      var privacy = (p.privacyTransports && p.privacyTransports[0]) || null;
+      var privText = privacy ? (privacy.health || (privacy.running ? 'ready' : 'down')) : 'n/a';
+      var privCls = (privText === 'ready' || privText === 'ok') ? 'ok'
+        : (privText === 'degraded' || privText === 'warn') ? 'warn'
+          : (privText === 'n/a' || privText === 'unknown') ? '' : 'bad';
+      var storage = p.storage || {};
+      var storageText = storage.used != null
+        ? formatBytes(storage.used) + (storage.max != null ? ' / ' + formatBytes(storage.max) : '')
+        : '--';
+      var errs = Array.isArray(p.errors) && p.errors.length
+        ? '<div class="peer-err">' + p.errors.map(function (e) {
+          return escapeHtml((e.endpoint || 'err') + ': ' + (e.error || ''));
+        }).join(' · ') + '</div>'
+        : '';
+      var pk = p.publicKey ? String(p.publicKey).slice(0, 12) : '';
+      return '<div class="peer-card' + (p.up ? '' : ' down') + (p.self ? ' self' : '') + '">'
+        + '<div class="peer-head">'
+        + '<span class="dot ' + (p.up ? 'up' : 'down') + '"></span>'
+        + '<span class="peer-name">' + escapeHtml(p.label || p.id) + (p.self ? ' · self' : '') + '</span>'
+        + (p.region ? '<span class="peer-region">' + escapeHtml(p.region) + '</span>' : '')
+        + '</div>'
+        + '<div class="peer-meta">' + escapeHtml(pk || (p.baseUrl || 'local')) + '</div>'
+        + '<div class="peer-stats">'
+        + '<div><div class="stat-lbl">status</div><div class="stat-val ' + (p.up ? 'ok' : 'bad') + '">'
+        + (p.up ? (p.running ? 'up' : 'up?') : 'DOWN') + '</div></div>'
+        + '<div><div class="stat-lbl">uptime</div><div class="stat-val">' + formatUptime(p.uptimeMs) + '</div></div>'
+        + '<div><div class="stat-lbl">connections</div><div class="stat-val">'
+        + (p.connections != null ? p.connections : '--') + '</div></div>'
+        + '<div><div class="stat-lbl">apps</div><div class="stat-val">'
+        + (p.seededApps != null ? p.seededApps : '--') + '</div></div>'
+        + '<div><div class="stat-lbl">disk</div><div class="stat-val ' + diskCls + '">' + escapeHtml(diskText) + '</div></div>'
+        + '<div><div class="stat-lbl">storage</div><div class="stat-val">' + escapeHtml(storageText) + '</div></div>'
+        + '<div><div class="stat-lbl">privacy</div><div class="stat-val ' + privCls + '">' + escapeHtml(privText) + '</div></div>'
+        + '<div><div class="stat-lbl">health</div><div class="stat-val '
+        + (p.healthy === false ? 'bad' : p.healthy === true ? 'ok' : '') + '">'
+        + (p.healthy === true ? 'ok' : p.healthy === false ? 'attn' : '--') + '</div></div>'
+        + '</div>'
+        + errs
+        + '</div>';
+    }).join('');
+  }
+
+  var busy = false;
+  async function refresh () {
+    if (busy || document.hidden) return;
+    busy = true;
+    try {
+      var token = getUiToken();
+      var headers = {};
+      if (token) headers.Authorization = 'Bearer ' + token;
+      var res = await fetchWithTimeout('/api/fleet', { headers: headers });
+      if (res.status === 401 || res.status === 403) {
+        setText('lastUpdated', 'Auth required for fleet (API key / localhost)');
+        var grid = document.getElementById('fleetGrid');
+        if (grid) {
+          grid.innerHTML = '<div class="empty">Management auth required for <code>/api/fleet</code>. '
+            + 'Open from localhost or with UI token.</div>';
+        }
+        return;
+      }
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      var payload = await res.json();
+      render(payload);
+    } catch (e) {
+      setText('lastUpdated', 'fetch failed — retrying…');
+    } finally {
+      busy = false;
+    }
+  }
+
+  refresh();
+  setInterval(refresh, POLL_MS);
+  document.addEventListener('visibilitychange', function () {
+    if (!document.hidden) refresh();
+  });
+})();
+</script>
+</body>
+</html>

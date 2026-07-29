@@ -522,6 +522,42 @@ test('release handoff verifier validates a full-release handoff bundle', async (
   t.ok(res.stdout.includes('Release handoff evidence verified: v9.9.9'))
 })
 
+test('release handoff verifier accepts a public gateway bundle before its dedicated canary rollout', async (t) => {
+  const dir = await fixtureDir(t)
+  const startosDir = path.join(dir, 'startos')
+  const s9pkFile = path.join(startosDir, 'blindspark.s9pk')
+  await rm(path.join(dir, 'fleet-rollout-evidence.json'))
+
+  await mkdir(startosDir)
+  await writeFile(s9pkFile, 'fake-s9pk')
+  const s9pkSha = await sha256File(s9pkFile)
+  const release = releaseEvidence({ startosSha: s9pkSha })
+  release.release.channel = 'none'
+  release.release.publicGateway = {
+    enabled: true,
+    manifestStatus: 'enabled',
+    manifestPath: 'fleet/public-hive-gateway-release.json',
+    manifestSha256: '4'.repeat(64),
+    releaseTarget: release.release.version,
+    commitSha: release.release.tagSha,
+    admissionProfile: 'blind-substrate-public-v1',
+    cohortSize: 3
+  }
+  release.surfaces.fleetRollout = 'deferred-gateway-canary-gated'
+  release.surfaces.fleetRolloutChannel = ''
+  release.surfaces.fleetRolloutEvidence = { path: '', sha256: '' }
+  release.surfaces.fleetChannelConfig = { path: '', sha256: '' }
+
+  await writeJson(path.join(dir, 'release-evidence.json'), release)
+  await writeJson(path.join(dir, 'official-umbrel-pr-evidence.json'), officialUmbrelPrEvidence({
+    evidenceLinks: { fleetRollout: '' }
+  }))
+  await writeJson(path.join(dir, 'startos-registry-evidence.json'), startosRegistryEvidence(s9pkSha))
+
+  const res = await runVerify(['--bundle-dir', dir])
+  t.ok(res.stdout.includes('Release handoff evidence verified: v9.9.9'))
+})
+
 test('release handoff verifier rejects unsupported release certificate fields', async (t) => {
   const cases = [
     ['top-level', release => { release.marketplacePublished = true }, 'release evidence has unsupported fields: marketplacePublished'],

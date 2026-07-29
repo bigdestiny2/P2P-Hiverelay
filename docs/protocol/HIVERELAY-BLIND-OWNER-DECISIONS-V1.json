@@ -1,0 +1,14 @@
+{
+  "schema": "hiverelay.blind.owner-decisions.v1",
+  "decisions": [
+    { "id": "D1", "selection": "wait-for-full-advanced-blind-before-canary", "effect": "No public Peerit canary; internal Bern mechanics-only pilot is permitted." },
+    { "id": "D2", "selection": "require-independent-ingress-operator", "effect": "Production ingress requires an independent operator." },
+    { "id": "D3", "selection": "defer-g3-until-repair-contract", "effect": "G3 remains deferred pending a repair contract." },
+    { "id": "D4", "selection": "self-operated-relays-only-for-now", "effect": "Relay participation is self-operated only." },
+    { "id": "D5", "selection": "keep-separate-t1-product", "effect": "T1 remains a separate product." },
+    { "id": "D6", "selection": "remove-k-partition-unless-measured-benefit", "effect": "No partition secret is part of normative storage authority; buckets use the deterministic public derivation." },
+    { "id": "D7", "selection": "dual-read-rollback-only-after-blind-only-write", "effect": "After the first successful blind-only write, rollback may restore blind-plus-legacy dual-read only and may never restore legacy-only operation." }
+  ],
+  "releaseAuthorization": false,
+  "deploymentAuthorization": false
+}

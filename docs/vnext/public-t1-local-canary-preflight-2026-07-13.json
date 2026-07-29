@@ -1,0 +1,27 @@
+{
+  "schema": "public-t1-local-canary-preflight-v1",
+  "at": "2026-07-13T11:29:16Z",
+  "branch": "feat/vnext-gateway-merge",
+  "mode": "canary",
+  "results": [
+    {
+      "name": "config-only",
+      "status": "pass",
+      "admissionProfile": "transitional-operator-allowlist-v1",
+      "warnings": [
+        "transitional admission not fleet-ready",
+        "no Public Suffix evidence \u2014 one app only",
+        "shared proxy caching disabled Phase 1"
+      ]
+    },
+    {
+      "name": "config-plus-nginx-render",
+      "status": "pass",
+      "nginxRendered": true,
+      "cert": "ephemeral-self-signed-for-render-only"
+    }
+  ],
+  "authorizesStagingDeploy": false,
+  "authorizesFleet": false,
+  "next": "operator supplies staging host, DNS, real TLS, one app key"
+}

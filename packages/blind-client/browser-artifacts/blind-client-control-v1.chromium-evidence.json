@@ -1,0 +1,20 @@
+{
+  "schema": "HiveRelayBlindClientBrowserArtifactChromiumEvidenceV1",
+  "version": 1,
+  "evidenceClass": "real-chromium",
+  "artifactPath": "browser-artifacts/blind-client-control-v1.mjs",
+  "artifactLength": 253673,
+  "artifactHash": "51bf061fb2d86cee91eb905a021e77774a37e27f0bba3ccb6d4e7688dcbc41a2",
+  "manifestHash": "db6614b6b5c50eebe74ebf199905c5c62a13ddc99bfbc6cb9042ad60c69976c4",
+  "sourceClosureHash": "6b648f3896b2cb1d3d7e5a5f2cee2554b1b5ce80d60134aa64bce2a8e71d93eb",
+  "chromium": "Google Chrome for Testing 151.0.7922.34",
+  "checks": [
+    "STANDALONE_ESM_IMPORT",
+    "REQUIRED_CONTROL_EXPORTS",
+    "CLOSED_EXTERNAL_PROFILE_DECODER",
+    "WEBCRYPTO_AES_256_GCM_ROUNDTRIP",
+    "SIGNED_CAPABILITY_CELL_COMPOSITION",
+    "PLAINTEXT_SENTINEL_ABSENT_FROM_REQUEST"
+  ],
+  "passed": true
+}

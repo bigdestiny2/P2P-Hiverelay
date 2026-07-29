@@ -1,0 +1,10 @@
+tip=2e3a89fa19ac22bc8d37acad90cfa0741d381ffe
+branch=feat/vnext-gateway-merge
+started=2026-07-13T16:16:26Z
+tip=2e3a89fa19ac22bc8d37acad90cfa0741d381ffe
+branch=feat/vnext-gateway-merge
+phase1_completed=2026-07-13T16:23:18Z
+unit=113/113
+rehearsal=1/1
+live=1/1 (50 asserts)
+validator=7/7

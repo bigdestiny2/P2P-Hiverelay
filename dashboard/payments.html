@@ -540,19 +540,56 @@ async function fetchPricing() {
 }
 
 /* ===== Fetch wallets ===== */
+function renderWalletsTable(wallets) {
+  var tbody = document.getElementById('walletsBody');
+  clearNode(tbody);
+  if (!wallets || wallets.length === 0) {
+    var emptyRow = appendEl(tbody, 'tr');
+    var emptyCell = appendCell(emptyRow, 'No wallets yet. Apps get 1,000 free credits on first connect. Everything works on the free tier.', 'empty-state');
+    emptyCell.colSpan = 7;
+    return;
+  }
+  for (var i = 0; i < wallets.length; i++) {
+    var w = wallets[i];
+    var row = appendEl(tbody, 'tr');
+    appendCell(row, truncateKey(w.appPubkey));
+    appendCell(row, formatSats(w.balance));
+    appendCell(row, formatSats(w.totalDeposited));
+    appendCell(row, formatSats(w.totalSpent));
+    appendCell(row, formatSats(w.totalBonusReceived + w.welcomeCreditsReceived));
+    var tierCell = appendCell(row, '');
+    tierCell.innerHTML = tierBadge(w.tier);
+    appendCell(row, timeAgo(w.lastActivity));
+  }
+}
+
+function getUiAuthHeaders() {
+  var token = getUiToken();
+  return token ? { Authorization: 'Bearer ' + token } : {};
+}
+
 async function fetchWallets() {
   try {
-    var res = await fetchWithTimeout('/api/v1/credits/stats', { headers: { 'x-api-key': '' } });
-    // Stats endpoint may require auth - fall back gracefully
-    if (!res.ok) return;
-    var stats = await res.json();
-    if (stats.credits) {
-      document.getElementById('walletSummary').textContent =
-        metricCount(stats.credits.totalWallets) + ' wallets, ' + formatSats(stats.credits.totalDeposited) + ' deposited, ' +
-        formatSats(stats.credits.totalSpent) + ' spent';
+    var res = await fetchWithTimeout('/api/v1/credits/stats', { headers: getUiAuthHeaders() });
+    if (res.ok) {
+      var stats = await res.json();
+      if (stats.credits) {
+        document.getElementById('walletSummary').textContent =
+          metricCount(stats.credits.totalWallets) + ' wallets, ' + formatSats(stats.credits.totalDeposited) + ' deposited, ' +
+          formatSats(stats.credits.totalSpent) + ' spent';
+      }
     }
   } catch (e) {
     // Stats may require auth — that's fine
+  }
+  try {
+    var walletsRes = await fetchWithTimeout('/api/v1/credits/wallets', { headers: getUiAuthHeaders() });
+    if (walletsRes.ok) {
+      var wallets = await walletsRes.json();
+      renderWalletsTable(wallets.wallets);
+    }
+  } catch (e) {
+    // Wallet list may require auth — that's fine
   }
 }
 

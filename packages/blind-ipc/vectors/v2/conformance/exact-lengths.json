@@ -1,0 +1,9 @@
+{
+  "ack": 133,
+  "frameHeader": 20,
+  "frameMaximum": 65535,
+  "open": 200,
+  "openHeader": 38,
+  "probe": 95,
+  "transportBinding": 162
+}

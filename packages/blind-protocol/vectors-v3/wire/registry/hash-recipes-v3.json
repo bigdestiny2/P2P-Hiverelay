@@ -1,0 +1,12 @@
+[
+  {
+    "recipeId": 3,
+    "name": "BLAKE2B256_ASCII_DOMAIN_PAYLOAD",
+    "canonicalPreimage": "ASCII(domain) || exact fixed-shape payload"
+  },
+  {
+    "recipeId": 4,
+    "name": "BLAKE2B256_ASCII_DOMAIN_LEN64_PAYLOAD",
+    "canonicalPreimage": "ASCII(domain) || u64be(payloadLength) || payload"
+  }
+]

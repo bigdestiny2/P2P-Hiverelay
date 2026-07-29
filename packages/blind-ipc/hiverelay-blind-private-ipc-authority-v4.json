@@ -1,0 +1,123 @@
+{
+  "authorityVersion": 4,
+  "formatVersion": 4,
+  "authorizesRelease": false,
+  "contractReady": true,
+  "runtimeReleaseReady": false,
+  "importedWireV3AbiHash": "c15c6a994d3bc2e54a397446b475a12d7f27e04be68e6e3eb86b28d518752881",
+  "basePrivateIpcV3FormatHash": "efb4fd8eae1a2338722deced991fdc907b465d7580acfe2bde8ad692dc1c8200",
+  "privateIpcFormatHash": "7395b1bc453dfd43d3085281a42179f281ed17c9e64e8fb627cc019a32b4bfe7",
+  "privateIpcRegistrySha256": "9f3c8222580895c18fc0dff1fb26e5ebea3efddf07a1bab3bc1a01e40fc60766",
+  "privateIpcVectorSetHash": "1b94a1c33a309684e1fb44c89512c9e572bb5a707b0afb722d0ab567197a5aa8",
+  "privateIpcVectorManifestSha256": "33b7f7a797311539c53326fe81cab6e928eb4517a096960609c2e9516ec0ff5b",
+  "baseSchemaCount": 15,
+  "additionalSchemas": [
+    {
+      "schemaId": 16,
+      "schemaName": "LocalForwardHttpsOriginAuthorityV4",
+      "fields": [
+        "0:4 magic=LFA4",
+        "4 version=4",
+        "5 authorityKind=1[TLS_EXPORTER_BINDING_HASH_BY_PEERCRED_EDGE]",
+        "6 transportId=1[HTTPS_DIRECT]",
+        "7 endpointId:1..255",
+        "8:10 flags=0",
+        "10:12 reserved=0",
+        "12:44 wireV3AbiHash",
+        "44:76 signedLaunchTopologyHash",
+        "76:108 edgeProcessNonce",
+        "108:140 localChannelNonce",
+        "140:172 tlsExporterBindingHash",
+        "172:204 originRequestCommitment",
+        "204:236 stableSessionId",
+        "236:244 sequence:u64be",
+        "244:252 acceptedMonotonicMillis:u64be",
+        "252:260 absoluteDeadlineMonotonicMillis:u64be",
+        "260:292 localExchangeId"
+      ]
+    },
+    {
+      "schemaId": 17,
+      "schemaName": "LocalForwardHttpsTurnV4",
+      "fields": [
+        "0:4 magic=LFT4",
+        "4 version=4",
+        "5 direction[ORIGIN_REQUEST=1|RESULT=2]",
+        "6 wireRole[ORIGIN_REQUEST:ORIGIN_TEMPLATE=0|RESULT:TARGET_RESULT=1|SOURCE_PRE_FORWARD_ERROR=2|SOURCE_POST_FORWARD_AMBIGUOUS=3]",
+        "7 flags=0",
+        "8:40 wireV3AbiHash",
+        "40:72 localExchangeId",
+        "72:104 originRequestCommitment",
+        "104:136 stableSessionId",
+        "136:144 sequence:u64be",
+        "144:148 bodyLength=65536",
+        "148:65684 canonical WIRE v3 body[ORIGIN_REQUEST:ID76 role ORIGIN_TEMPLATE|RESULT:ID77 resultRole equals wireRole]"
+      ]
+    },
+    {
+      "schemaId": 18,
+      "schemaName": "LocalForwardHttpsTargetIngressV4",
+      "fields": [
+        "0:4 magic=LTI4",
+        "4 version=4",
+        "5 authorityKind=2[TARGET_TLS_EXPORTER_BINDING_HASH_BY_PEERCRED_EDGE]",
+        "6 transportId=1[HTTPS_DIRECT]",
+        "7 endpointId:1..255",
+        "8:10 flags=0",
+        "10:12 reserved=0",
+        "12:44 wireV3AbiHash[nonzero]",
+        "44:76 signedLaunchTopologyHash[nonzero]",
+        "76:108 edgeProcessNonce[nonzero]",
+        "108:140 localChannelNonce[nonzero;single-use]",
+        "140:172 targetTlsExporterBindingHash[nonzero]",
+        "172:204 forwardedRequestCommitment[nonzero]",
+        "204:236 stableSessionId[nonzero]",
+        "236:244 sequence:u64be",
+        "244:252 acceptedMonotonicMillis:u64be",
+        "252:260 absoluteDeadlineMonotonicMillis:u64be",
+        "260:292 targetLocalExchangeId[nonzero]",
+        "292:65828 exact canonical WIRE ID76 role FORWARDED body",
+        "targetTlsExporterLabel:ASCII(EXPORTER-HiveRelay-Blind-Forward-Target-v1)",
+        "targetTlsExporterContext:BLAKE2b256(ASCII(hiverelay.blind.private-ipc-forward-target-tls-context.v4)||stableSessionId32||u64be(sequence)||forwardedRequestCommitment32)",
+        "targetTlsExporterBindingHash:BLAKE2b256(ASCII(hiverelay.blind.private-ipc-forward-target-tls-binding.v4)||u64be(64)||targetTlsExporterSecret32||targetTlsExporterContext32)",
+        "targetLocalExchangeId:BLAKE2b256(ASCII(hiverelay.blind.private-ipc-forward-target-exchange.v4)||u64be(260)||bytes[0:260])",
+        "body:exact canonical WIRE ID76 requestRole FORWARDED; commitment/session/sequence match header; no origin/outer-envelope/native-stream/fallback form",
+        "raw target TLS exporter, source address, URL, host, IP, cookies, authorization, credentials, and app metadata are unrepresentable"
+      ]
+    }
+  ],
+  "schemaCount": 18,
+  "vectorCount": 26,
+  "exactByteLimits": {
+    "sourceOriginRequest": 65976,
+    "targetIngressRequest": 65828,
+    "result": 65684,
+    "targetLocalRequestPlusResult": 131512
+  },
+  "replayPayloadBytes": 232,
+  "replayCapacity": 4096,
+  "maxDeadlineMillis": 15000,
+  "forwardDescriptorOperationBits": 0,
+  "forwardAdvertisedOperationBits": 0,
+  "forwardReadinessOperationBits": 0,
+  "compatibilityFloor": {
+    "hiverelay-blind-private-ipc-v1.cenc": "116c78ad151543ff9973d4cb92089ddfbc2e3f861b1f502b9aa0c85a5a52e4f6",
+    "hiverelay-blind-private-ipc-v1.draft.cenc": "116c78ad151543ff9973d4cb92089ddfbc2e3f861b1f502b9aa0c85a5a52e4f6",
+    "vector-manifest-v1.cenc": "d9949afeeb9fc06db9864d388a6917ca99bbec244395932a707cd8ab9736e29e",
+    "hiverelay-blind-private-ipc-authority-v1.json": "cba3f4be2f616a66730a90ce92ce78a963cf5389d18e41b9cdfe4ae1eeb5a59d",
+    "hiverelay-blind-private-ipc-v2.cenc": "3475a93f8d6da4d5c516ec0017f4eb8337a2397f89dbb0000ea004f225461344",
+    "vector-manifest-v2.cenc": "0abb90824d9e5388d538ae6a49cee67437056987601717bb9bdb003218deccff",
+    "hiverelay-blind-private-ipc-authority-v2.json": "9e2abeed720afcea9165775bca0dff165901a1eab97251a7677d66e6292143a7",
+    "hiverelay-blind-private-ipc-v3.cenc": "c3e109c36d4252399a1dab655cbc94291963fedfff9826630c82c7c33492b639",
+    "vector-manifest-v3.cenc": "13ab3659deb5442189f52fb326dfb6b72e4050c0ce2de1fca39de94a20c7489f",
+    "hiverelay-blind-private-ipc-authority-v3.json": "253d0c015c12cc67ab2b599992c2b23ea2256ebd5a669d0799f8c21181b3abf3",
+    "private-ipc-v3-contract.js": "f0baeb69c787d461f052468a31c490274b39854a97927583047691c58285f730",
+    "private-ipc-v3-status.js": "f8fbd4c28c955755ca2a42f5c5bd714bd9ecc3b87fbb685d1410553ec1d1369c"
+  },
+  "modelOnly": true,
+  "releaseBlockers": [
+    "filesystem journals, fsync, dedicated socket enforcement and tamper recovery remain runtime/storage work",
+    "native peercred enforcement, real TLS exporter extraction and crash injection remain runtime work",
+    "FORWARD descriptor, advertised and readiness bits remain zero pending independent acceptance"
+  ]
+}

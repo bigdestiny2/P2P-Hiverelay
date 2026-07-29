@@ -24,6 +24,8 @@ import http from 'http'
 import { EventEmitter } from 'events'
 import { Federation } from 'p2p-hiverelay/core/federation.js'
 
+const CATALOG_APP_MAX_STORAGE_BYTES = 16 * 1024 * 1024
+
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 async function pickUnusedPort () {
@@ -120,7 +122,8 @@ async function startMultiPathServer ({ count, appsPerCatalog, delayMs = 0, keyNa
       apps.push({
         appKey: fakeAppKey(i, `${keyNamespace}-r${idx}`),
         publisherPubkey: 'p'.repeat(64),
-        type: 'app'
+        type: 'app',
+        maxStorageBytes: CATALOG_APP_MAX_STORAGE_BYTES
       })
     }
     const body = buildCatalog(apps)
@@ -151,7 +154,8 @@ async function startSingleBigCatalogServer (numApps) {
     apps.push({
       appKey: fakeAppKey(i, 'big'),
       publisherPubkey: 'p'.repeat(64),
-      type: 'app'
+      type: 'app',
+      maxStorageBytes: CATALOG_APP_MAX_STORAGE_BYTES
     })
   }
   const body = buildCatalog(apps)

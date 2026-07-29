@@ -1,0 +1,23 @@
+{
+  "ack": {
+    "exactBytes": 133,
+    "reader": "readLocalReadyAckLengthV2",
+    "requiredDiscriminantBytes": 7
+  },
+  "frame": {
+    "maximumBytes": 65535,
+    "minimumHeaderBytes": 20,
+    "reader": "readLocalStagedCellPutFrameLengthV2"
+  },
+  "open": {
+    "exactBytes": 200,
+    "reader": "readLocalStagedCellPutOpenLengthV2",
+    "requiredHeaderBytes": 38
+  },
+  "probe": {
+    "exactBytes": 95,
+    "reader": "readLocalReadyProbeLengthV2",
+    "requiredDiscriminantBytes": 7
+  },
+  "rule": "return null until prefix/header or discriminant is complete; reject impossible declaration or non-v2 version before body allocation"
+}

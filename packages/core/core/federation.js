@@ -27,6 +27,7 @@ import http from 'http'
 import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { dirname, basename, join } from 'path'
 import { verifyForkProof, verifyForkEvidence } from './fork-proof-signing.js'
+import { positiveStorageBound } from '../config/storage-cap.js'
 
 const DEFAULT_FOLLOW_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const FETCH_TIMEOUT = 10_000
@@ -459,6 +460,11 @@ export class Federation extends EventEmitter {
     for (const app of data.apps) {
       const appKey = app.appKey || app.driveKey || app.key
       if (!appKey) continue
+      const maxStorageBytes = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
+      if (maxStorageBytes === null) {
+        this.emit('federation-rejected', { appKey, source: entry.url, reason: 'storage-bound-invalid' })
+        continue
+      }
       // Skip apps we already seed or have already queued.
       if (this.node?.seededApps?.has?.(appKey)) continue
       if (this.node?.appRegistry?.has?.(appKey)) continue
@@ -477,7 +483,8 @@ export class Federation extends EventEmitter {
         parentKey: app.parentKey || null,
         mountPath: app.mountPath || null,
         source: 'federation',
-        sourceRelay: entry.url
+        sourceRelay: entry.url,
+        maxStorageBytes
       }
 
       const mode = this.node._resolveAcceptMode()
@@ -498,7 +505,8 @@ export class Federation extends EventEmitter {
             privacyTier: synthRequest.privacyTier,
             blind: synthRequest.blind,
             storageClass: synthRequest.storageClass,
-            availabilityClass: synthRequest.availabilityClass
+            availabilityClass: synthRequest.availabilityClass,
+            maxStorage: maxStorageBytes
           })
           this.emit('federation-seeded', { appKey, source: entry.url, mode })
         } catch (err) {
@@ -528,6 +536,11 @@ export class Federation extends EventEmitter {
     // default). Best-effort: if the remote has no /api/forks/proofs
     // endpoint or it errors, we silently move on.
     try { await this._pullForkProofs(entry.url) } catch (_) { /* non-fatal */ }
+
+    // Pull signed gateway-denylist gossip from this followed peer too —
+    // same bounded, best-effort cadence. This is how a takedown issued on
+    // one relay propagates to the rest of the fleet.
+    try { await this._pullGatewayDenylist(entry.url) } catch (_) { /* non-fatal */ }
 
     return queued
   }
@@ -628,6 +641,37 @@ export class Federation extends EventEmitter {
     }
     if (merged > 0 || rejected > 0) {
       this.emit('fork-proofs-merged', { source: entryUrl, count: merged, rejected })
+    }
+  }
+
+  /**
+   * Pull a remote relay's signed gateway denylist and merge verified entries
+   * into our local store. This is how a takedown issued on one relay reaches
+   * the rest of the fleet: entries are self-authenticating signed envelopes
+   * naming hashed drive keys, so no trust in the *carrying* peer is needed —
+   * GatewayDenylist.add() re-verifies every signature and gates on our local
+   * trusted-admin allow-list (empty list = fail closed, nothing merges).
+   *
+   * Best-effort like fork-proof gossip: a missing endpoint or malformed
+   * payload is silently skipped. Per-call timeout via FETCH_TIMEOUT.
+   */
+  async _pullGatewayDenylist (entryUrl) {
+    if (!this.node?.gatewayDenylist) return
+    const data = await this._fetchJson(entryUrl, '/api/gateway/denylist')
+    if (!data || !Array.isArray(data.entries)) return
+    let merged = 0
+    let rejected = 0
+    for (const entry of data.entries) {
+      if (!entry) continue
+      const result = this.node.gatewayDenylist.add(entry, { source: entryUrl })
+      if (result.ok && result.added) merged++
+      else if (!result.ok) {
+        rejected++
+        this.emit('denylist-entry-rejected', { source: entryUrl, reason: result.reason })
+      }
+    }
+    if (merged > 0 || rejected > 0) {
+      this.emit('denylist-merged', { source: entryUrl, count: merged, rejected })
     }
   }
 
