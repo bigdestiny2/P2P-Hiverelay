@@ -86,7 +86,9 @@ export const AUDIT_OWNED_DIFF_SLICES = Object.freeze([
     id: 'hyperdrive-release-lifecycle',
     title: 'Bounded Hyperdrive release rotation and scoped reclamation',
     files: [
+      'CHANGELOG.md',
       'docs/APP-RELEASE-LIFECYCLE.md',
+      'docs/LADDER-SHIP-MAP.md',
       'docs/PEAR-INTEGRATION.md',
       'packages/core/core/app-registry.js',
       'packages/core/core/index.js',

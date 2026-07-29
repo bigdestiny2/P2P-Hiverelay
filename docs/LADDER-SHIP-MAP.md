@@ -55,13 +55,14 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Item | State |
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
-| Repair candidate | Post-RC7 tree: full Node unit **3528/3528**, integration **106/106**, lint and workspace audit green; requires a new prerelease identity before deployment |
+| Repair candidate | Post-RC7 tree: full Node unit **3559/3559**, integration **107/107**, lint, workspace audit, public-artifact audit, and npm package dry-runs green; requires a new prerelease identity before deployment |
 | Scoped live health (2026-07-29) | 9/10 permitted relays reachable; eight are healthy at their assigned target; `utah-8gb` is healthy but drifted at RC4 with its stable updater disabled; Bern is unreachable |
 | Wake runtime | `notify` loaded 9/9 reachable, but signed live egress **0/9** and exact-lane wake **0/9**; seven stable relays still carry the old false `notify-v1` feature claim |
 | Agent mailbox | `outboxlog` loaded and signed-advertised on **7/9** reachable permitted relays; absent on canary Utah and drifted Utah-8GB |
 | Privacy runtime | two signed Tor endpoints, both restricted without a negative proof on their deployed versions; post-RC7 code suppresses that claim until the anonymous rejection probe succeeds |
 | One-hop forward | advertised on one permitted relay; remains a bounded compatibility route, not split-transport/OHTTP evidence |
 | Packaging truth | Node/Bare now translate bounded service/Tor env into first-boot defaults; persisted config and `services.json` remain authoritative, while `/api/v1/services` plus the signed capability doc are runtime proof |
+| App release storage | Bounded Hyperdrive publishing is integrated in the repair candidate: exact tree mirroring, signed monotonic releases, budget-triggered drive rotation, pinned-tree verification, and exact app/publisher rollback reclamation; not deployed until the new prerelease ships |
 | Track B | Blind public-test pilot (syd/dal) — **parallel** version line, not this fleet tag |
 | Boot-restore | Worktree only — **not on main** until Track C |
 | Blind packages on main | **Absent** (`blind-daemon` / edge only in vNext worktrees) |
@@ -81,6 +82,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Memory notify provider | Test/development only; never an advertised production capability | It records attempts but deliberately has `live:false`. |
 | Legacy one-hop byte bridge | Compatibility path pending replacement, not G2-W | It does not provide OHTTP role separation or BlindForward flow-control semantics. |
 | Nym full-data-path claims | Parked; bounded control-message candidate only | Coverage/cost do not support a general relay data path today. |
+| Unbounded in-place Hyperdrive release history | Replaced in the repair candidate by signed, budgeted drive rotation and scoped rollback retention | Rewriting one forever-growing drive makes historical release blocks accumulate without an enforceable per-drive ceiling. |
 
 Split transport itself is **not redundant**: its vNext wire codecs are useful, but the runtime,
 `BlindTransportDescriptorV1`, OHTTP ingress/gateway, browser client, padding reconciliation, and

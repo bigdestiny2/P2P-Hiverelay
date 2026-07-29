@@ -21,6 +21,11 @@ deployment.**
 - OutboxLog partitioned-Hypercore journals bind storage admission before append,
   settle journal operations before close, and keep the configured aggregate
   byte commitment authoritative across restart.
+- App publishing mirrors the live Hyperdrive tree exactly and rotates to a new
+  drive before its signed per-drive budget is exceeded. Relays verify the
+  pinned content hash, durably retain release authority across restart, and
+  reclaim only older releases from the exact app-and-publisher chain while
+  preserving the signed rollback set and existing custody/lease protections.
 - Service management now persists to `<storage>/services.json`, rolls back API
   state on write failure, accepts the shipped `storage-proof` builtin, and
   honors an explicit persisted `enabled: false` over package defaults.

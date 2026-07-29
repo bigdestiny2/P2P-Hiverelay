@@ -191,7 +191,9 @@ test('audit-owned diff accepts known audit slice paths', async (t) => {
 
 test('audit-owned diff assigns the Hyperdrive release lifecycle surface', (t) => {
   const paths = [
+    'CHANGELOG.md',
     'docs/APP-RELEASE-LIFECYCLE.md',
+    'docs/LADDER-SHIP-MAP.md',
     'docs/PEAR-INTEGRATION.md',
     'packages/core/core/app-registry.js',
     'packages/core/core/index.js',
