@@ -997,8 +997,8 @@ export class RelayNode extends EventEmitter {
     if (!path) return
     try {
       const data = JSON.parse(await readFile(path, 'utf8'))
-      if (data && data.enabled === true && Array.isArray(data.plugins)) {
-        this.config.enableServices = true
+      if (data && typeof data.enabled === 'boolean' && Array.isArray(data.plugins)) {
+        this.config.enableServices = data.enabled
         // expandServiceDeps pulls in bundle support services (e.g. poker -> vrf+
         // arbitration+zk) and filters to builtins, in case services.json was
         // hand-edited to list a bundle key without its deps.
@@ -1040,6 +1040,7 @@ export class RelayNode extends EventEmitter {
       } catch (err) {
         try { await unlink(tmp) } catch (_) {}
         this.emit('services-config-persist-error', err)
+        throw err
       }
     }
     // Reflect in live config; the registry itself (re)starts on restart.

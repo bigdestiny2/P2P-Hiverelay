@@ -77,10 +77,17 @@ rewrites — on all 13 relays. Its own README says "do not expose port 3458"; th
 Per the audit's verdict: **G1 in code, G4-T in code.** It moves G2-S, G2-W, G3 and G4-I not at all,
 and is **net-negative on G0** because of C-1 below.
 
-Both headline packaging claims are **inert**. All nine `HIVERELAY_*` service and Tor variables have
-**zero readers** on the Node runtime that Docker, systemd and Umbrel all launch — six are Bare-only,
-three are read nowhere in the repo. "Tor on by default" and "a fresh appliance is no longer an empty
-seeder" are true of the *expressed* configuration and false of the *running* one.
+At the audited RC6 baseline, both headline packaging claims were **inert**. All nine
+`HIVERELAY_*` service and Tor variables had **zero readers** on the Node runtime
+that Docker, systemd and Umbrel all launch — six were Bare-only and three were
+read nowhere in the repo. "Tor on by default" and "a fresh appliance is no
+longer an empty seeder" were true of the *expressed* configuration and false of
+the *running* one.
+
+> Post-RC7 repair (2026-07-29): the Node CLI now translates those variables as
+> first-boot defaults with persisted config and `services.json` precedence;
+> packaged OutboxLog is bounded and shard-store remains opt-in. Deployment and
+> signed runtime evidence are still pending.
 
 ---
 

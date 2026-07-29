@@ -277,11 +277,13 @@ test('restricted discovery activation failure leaves a running public service ho
   const tt = new TorTransport({
     socksPort,
     localPort: 9100,
-    _controlFactory: factory
+    _controlFactory: factory,
+    _probeConnectionFactory: async () => ({ socket: { destroy () {} } })
   })
   await tt.start()
   control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' first')
   control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' second')
+  await new Promise((resolve) => setTimeout(resolve, 0))
   t.is(tt.health, TorHealth.READY)
 
   await t.exception(tt.addAuthClient(ALICE_PUB), /requires persistent keyFile mode/)
@@ -472,11 +474,17 @@ test('health probe cannot bypass descriptor uploads after a roster rebuild', asy
   await tt.stop()
 })
 
-test('health — descriptor uploads drive readiness without probe vport', async (t) => {
+test('health — explicit probe opt-out uses descriptor uploads only', async (t) => {
   const socksPort = await fakeSocks(t)
   const dir = tmpdir(t)
   const { control, factory } = fakeFactory({})
-  const tt = new TorTransport({ socksPort, localPort: 9100, keyFile: path.join(dir, 'hs-key.blob'), _controlFactory: factory })
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    health: { probeVport: false },
+    _controlFactory: factory
+  })
   const states = []
   tt.on('health', (s) => states.push(s))
   await tt.start()
@@ -485,7 +493,7 @@ test('health — descriptor uploads drive readiness without probe vport', async 
   control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' xyz')
   t.is(tt.health, TorHealth.KEY_LOADED) // minDescriptorUploads = 2
   control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' abc')
-  t.is(tt.health, TorHealth.READY) // no probeVport → uploads are the signal
+  t.is(tt.health, TorHealth.READY) // explicit opt-out → uploads are the signal
   t.ok(states.includes(TorHealth.DESCRIPTOR_UPLOADED))
 
   const info = tt.getInfo()
@@ -493,8 +501,82 @@ test('health — descriptor uploads drive readiness without probe vport', async 
   t.is(info.persistent, true)
   t.is(info.authClients, 0)
   t.is(info.descriptorUploads, 2)
+  t.is(info.negativeProbe, null)
   await tt.stop()
   t.is(tt.getInfo().health, TorHealth.DISABLED)
+})
+
+test('health — restricted discovery requires an unauthorized negative probe', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const dir = tmpdir(t)
+  const { control, factory } = fakeFactory({})
+  let probes = 0
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    rosterFile: path.join(dir, 'roster.json'),
+    _controlFactory: factory,
+    _probeConnectionFactory: async () => {
+      probes++
+      throw new Error('Socks5 proxy rejected connection - HostUnreachable')
+    }
+  })
+  await tt.start()
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' first')
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' second')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  t.is(probes, 1)
+  t.is(tt.health, TorHealth.READY)
+  t.is(tt.getInfo().negativeProbe, true)
+  await tt.stop()
+})
+
+test('health — restricted discovery degrades immediately if an unauthenticated probe connects', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const dir = tmpdir(t)
+  const { control, factory } = fakeFactory({})
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    rosterFile: path.join(dir, 'roster.json'),
+    _controlFactory: factory,
+    _probeConnectionFactory: async () => ({ socket: { destroy () {} } })
+  })
+  await tt.start()
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' first')
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' second')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  t.is(tt.health, TorHealth.DEGRADED)
+  t.is(tt.getInfo().negativeProbe, false)
+  await tt.stop()
+})
+
+test('health — an ambiguous restricted probe failure never passes the auth gate', async (t) => {
+  const socksPort = await fakeSocks(t)
+  const dir = tmpdir(t)
+  const { control, factory } = fakeFactory({})
+  const tt = new TorTransport({
+    socksPort,
+    localPort: 9100,
+    keyFile: path.join(dir, 'hs-key.blob'),
+    rosterFile: path.join(dir, 'roster.json'),
+    health: { probeFailLimit: 3 },
+    _controlFactory: factory,
+    _probeConnectionFactory: async () => { throw new Error('connect ETIMEDOUT') }
+  })
+  await tt.start()
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' first')
+  control.emit('event', 'HS_DESC UPLOADED ' + SERVICE_ID + ' second')
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  t.is(tt.health, TorHealth.DESCRIPTOR_UPLOADED)
+  t.is(tt.getInfo().negativeProbe, null)
+  await tt._probeNow()
+  await tt._probeNow()
+  t.is(tt.health, TorHealth.DEGRADED)
+  t.is(tt.getInfo().negativeProbe, null)
+  await tt.stop()
 })
 
 test('PoW — SETCONF applied; failure surfaces with HiddenServiceDir guidance', async (t) => {

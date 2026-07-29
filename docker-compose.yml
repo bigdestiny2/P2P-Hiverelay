@@ -51,7 +51,9 @@ services:
       - HIVERELAY_TOR_CONTROL_HOST=hiverelay-tor
       - HIVERELAY_TOR_CONTROL_PORT=9051
       - HIVERELAY_TOR_KEY_FILE=/config/tor-onion-key.blob
-      - HIVERELAY_TOR_CLIENT_AUTH_DIR=/config/tor-client-auth
+      - HIVERELAY_TOR_MIN_DAEMON_VERSION=0.4.9.5
+      # Optional restricted-discovery roster (one base32 x25519 pubkey/line):
+      # - HIVERELAY_TOR_ROSTER_FILE=/config/tor-client-auth-roster.txt
       #
       # ─── Utility services (enabled by default) ───────────────────
       # These make the relay useful to all apps on the substrate:
@@ -64,8 +66,13 @@ services:
       # repairticket = self-healing work orders
       - HIVERELAY_ENABLE_SERVICES=1
       - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes
+      - HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE=512MB
       - HIVERELAY_NOTIFY=1
-      - HIVERELAY_SHARD_STORE=1
+      # Real APNs/FCM/WebPush egress requires a private JSON descriptor:
+      # - HIVERELAY_NOTIFY_PUSH_CONFIG=/config/notify-push.json
+      # Shard custody is deliberately opt-in because it consumes operator disk:
+      # - HIVERELAY_SHARD_STORE=1
       - HIVERELAY_STORAGE_PROOF=1
       - HIVERELAY_VRF=1
       - HIVERELAY_WITNESSLOG=1
@@ -123,10 +130,12 @@ services:
       - HIVERELAY_TOR=1
       - HIVERELAY_TOR_SOCKS_HOST=hiverelay-na-tor
       - HIVERELAY_TOR_CONTROL_HOST=hiverelay-na-tor
+      - HIVERELAY_TOR_MIN_DAEMON_VERSION=0.4.9.5
       - HIVERELAY_ENABLE_SERVICES=1
       - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes
+      - HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE=512MB
       - HIVERELAY_NOTIFY=1
-      - HIVERELAY_SHARD_STORE=1
       - HIVERELAY_STORAGE_PROOF=1
       - HIVERELAY_VRF=1
       - HIVERELAY_WITNESSLOG=1
@@ -169,10 +178,12 @@ services:
       - HIVERELAY_TOR=1
       - HIVERELAY_TOR_SOCKS_HOST=hiverelay-eu-tor
       - HIVERELAY_TOR_CONTROL_HOST=hiverelay-eu-tor
+      - HIVERELAY_TOR_MIN_DAEMON_VERSION=0.4.9.5
       - HIVERELAY_ENABLE_SERVICES=1
       - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes
+      - HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE=512MB
       - HIVERELAY_NOTIFY=1
-      - HIVERELAY_SHARD_STORE=1
       - HIVERELAY_STORAGE_PROOF=1
       - HIVERELAY_VRF=1
       - HIVERELAY_WITNESSLOG=1
@@ -215,10 +226,12 @@ services:
       - HIVERELAY_TOR=1
       - HIVERELAY_TOR_SOCKS_HOST=hiverelay-as-tor
       - HIVERELAY_TOR_CONTROL_HOST=hiverelay-as-tor
+      - HIVERELAY_TOR_MIN_DAEMON_VERSION=0.4.9.5
       - HIVERELAY_ENABLE_SERVICES=1
       - HIVERELAY_OUTBOXLOG=1
+      - HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes
+      - HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE=512MB
       - HIVERELAY_NOTIFY=1
-      - HIVERELAY_SHARD_STORE=1
       - HIVERELAY_STORAGE_PROOF=1
       - HIVERELAY_VRF=1
       - HIVERELAY_WITNESSLOG=1

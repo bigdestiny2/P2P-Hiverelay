@@ -50,7 +50,7 @@ const testnet = await createTestnet(3)
 for (let i = 0; i < N; i++) {
   const apiKey = 'cohort-' + randomBytes(6).toString('hex')
   const node = new RelayNode({
-    storage: join(BASE, 'relay-' + i),          // persistent → stable relay pubkey across restarts
+    storage: join(BASE, 'relay-' + i), // persistent → stable relay pubkey across restarts
     bootstrapNodes: testnet.bootstrap,
     enableAPI: true,
     apiPort: 0,
@@ -80,6 +80,6 @@ await writeFile(ROSTER, JSON.stringify(roster, null, 2) + '\n')
 console.log(`\n▶ ${N}-relay shard-store cohort LIVE — /api/v1/shard mounted on each.`)
 console.log(`  roster written → ${ROSTER}`)
 console.log(`  smoke it:  node scripts/blind-dispersal-live.mjs ${ROSTER}`)
-console.log(`  (same-operator cohort → mechanism proof, not the security property. Ctrl-C to stop.)\n`)
+console.log('  (same-operator cohort → mechanism proof, not the security property. Ctrl-C to stop.)\n')
 
 await new Promise(() => {}) // stay alive

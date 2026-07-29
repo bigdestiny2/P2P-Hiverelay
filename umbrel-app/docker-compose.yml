@@ -35,7 +35,7 @@ services:
     # that reintroduces the audited supply-chain gap (HR-DIS-002) and CI
     # will reject it. This baseline pin is v0.20.2 (the last release whose
     # digest was captured); the next `release:prepare` bumps it.
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.25.0-rc.4
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8
     init: true
     restart: on-failure
     stop_grace_period: 1m
@@ -92,13 +92,19 @@ services:
       HIVERELAY_TOR_CONTROL_HOST: tor
       HIVERELAY_TOR_CONTROL_PORT: "9051"
       HIVERELAY_TOR_KEY_FILE: /data/tor-onion-key.blob
+      HIVERELAY_TOR_MIN_DAEMON_VERSION: 0.4.9.5
 
       # ─── Utility services (enabled by default) ───────────────────
       # These make the relay useful to all apps on the substrate:
       HIVERELAY_ENABLE_SERVICES: "true"
       HIVERELAY_OUTBOXLOG: "true"
+      HIVERELAY_OUTBOXLOG_JOURNAL: hypercore-outboxes
+      HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE: 512MB
       HIVERELAY_NOTIFY: "true"
-      HIVERELAY_SHARD_STORE: "true"
+      # Real wake egress can be mounted privately and selected with
+      # HIVERELAY_NOTIFY_PUSH_CONFIG=/data/notify-push.json.
+      # Shard custody stays opt-in because it consumes operator disk.
+      # HIVERELAY_SHARD_STORE: "true"
       HIVERELAY_STORAGE_PROOF: "true"
       HIVERELAY_VRF: "true"
       HIVERELAY_WITNESSLOG: "true"

@@ -198,6 +198,25 @@ test('HiveRelayClient - advanced mode: autoDiscover false', async (t) => {
   t.is(client._started, true, 'still started')
 })
 
+test('HiveRelayClient - connection error guard precedes replication and identity parsing', async (t) => {
+  const swarm = mockSwarm()
+  const client = new HiveRelayClient({ swarm })
+  t.teardown(async () => { await client.destroy() })
+  await client.start()
+
+  const conn = new EventEmitter()
+  client.store = {
+    replicate (stream) {
+      const err = new Error('connection reset by peer')
+      err.code = 'ECONNRESET'
+      stream.emit('error', err)
+    }
+  }
+
+  t.execution(() => swarm.emit('connection', conn, {}), 'early Noise errors are contained even before peer identity is available')
+  client.store = null
+})
+
 test('HiveRelayClient - advanced mode: getRelays empty initially', (t) => {
   const swarm = mockSwarm()
   const client = new HiveRelayClient({ swarm })

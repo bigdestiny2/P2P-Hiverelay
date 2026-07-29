@@ -194,7 +194,8 @@ replayed). It backs `client.proveSeeded(driveKey, { relay, samples })`.
 It is **OFF by default.** Enable it per node:
 
 - **Node runtime** — add `storage-proof` to `config.plugins` (or the
-  **Services** tab / `services.json`):
+  **Services** tab / `services.json`), or set the first-boot environment
+  default `HIVERELAY_STORAGE_PROOF=1`:
 
   ```json
   {
@@ -202,8 +203,8 @@ It is **OFF by default.** Enable it per node:
   }
   ```
 
-- **Bare / appliance runtime** — add `storage-proof` to `config.services`,
-  or set the env var:
+- **Bare runtime** — add `storage-proof` to `config.services`, or set the same
+  env var:
 
   ```bash
   HIVERELAY_STORAGE_PROOF=1

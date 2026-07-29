@@ -115,8 +115,13 @@ with the relay's stable pubkey (from the signed capability doc) as
 
 The onion endpoint appears in the signed capability doc
 (`privacyTransports`) only while the transport reports `ready`
-(descriptor uploads observed + optional SOCKS self-probe). Degraded health
-removes the entry — clients never see a dead endpoint. Health states:
+(descriptor uploads observed + an automatically selected SOCKS probe).
+Public endpoints require a successful self-connect. Restricted-discovery
+endpoints require an unauthenticated connection attempt to be rejected and
+carry signed `negativeProbe: true`; without that proof they are omitted.
+`health.probeVport: false` explicitly selects descriptor-only compatibility
+and therefore cannot advertise a restricted endpoint. Degraded health removes
+the entry. Health states:
 `tor-starting → key-loaded → descriptor-uploaded → ready`, plus `degraded`
 and `disabled`.
 

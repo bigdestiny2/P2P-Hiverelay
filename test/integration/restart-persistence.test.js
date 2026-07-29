@@ -99,7 +99,9 @@ async function startPublisher (baseDir, bootstrap, count, label) {
   const keys = []
   await publisher.start()
   for (let i = 0; i < count; i++) {
-    const drive = new Hyperdrive(publisher.store.namespace(`${label}-${i}`).session())
+    // namespace() is itself a Corestore session; a nested session loses the
+    // namespace under Corestore 7 and deadlocks the second writable drive.
+    const drive = new Hyperdrive(publisher.store.namespace(`${label}-${i}`))
     await drive.ready()
     await drive.put('/index.bin', randomBytes(64 * 1024))
     drives.push(drive)

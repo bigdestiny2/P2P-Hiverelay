@@ -339,7 +339,10 @@ export default {
     // PoW defense is daemon-wide SETCONF and requires a pow-enabled tor build
     // plus a HiddenServiceDir-configured service (M0 finding, 2026-07-17).
     pow: { enabled: false, queueRate: 250, queueBurst: 1000 },
-    // Health-gated advertisement: descriptor uploads + optional SOCKS self-probe.
+    // Health-gated advertisement: null auto-selects an exposed vport for a
+    // SOCKS self-probe; false is an explicit descriptor-only compatibility
+    // opt-out. Restricted discovery is never advertised without a successful
+    // unauthenticated negative probe.
     health: { probeIntervalMs: 900000, probeFailLimit: 3, minDescriptorUploads: 2, probeVport: null }
   },
 

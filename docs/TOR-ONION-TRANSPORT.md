@@ -99,16 +99,8 @@ Load-bearing semantics (each verified live against tor 0.4.9.6 in the M0 spike):
 - `Flags=V3Auth` is **mandatory** with `ClientAuthV3`; the daemon never holds client secrets — only public keys.
 - **No runtime roster add exists**: enrollment rebuilds the service in place (same address; brief intro-point churn). Roster persists in `rosterFile` (operator-private) and re-applies at start.
 - Client credential install is one control-port command with `Flags=Permanent`; no hand-written files.
-- Filesystem deployments (`HiddenServiceDir` + `authorized_clients/*.auth` + RELOAD) are the PoW-capable shape; the valid `.auth` line is exactly `descriptor:x25519:<pub>` (3 fields), and an all-invalid roster runs **fail-open**.
-
-  > **No negative probe exists.** This sentence previously claimed one "in the health gate";
-  > it is unbuilt and is tracked as Ship 8 (`LADDER-SHIP-MAP.md:230`), consistent with
-  > `GIGA-RELEASE-ARCHITECTURE.md:171` ("NOT implemented … Required before RC").
-  > Note also that this fail-open scenario is **not reachable in this runtime**: the transport
-  > uses control-port `ADD_ONION` with ClientAuthV3, where invalid entries throw
-  > (`auth-keys.js:245-246`) and an empty roster installs an unreachable guard credential
-  > (`tor/index.js:709-717`). The filesystem shape described above is the one that would
-  > fail open, and we do not deploy it.
+- Filesystem deployments (`HiddenServiceDir` + `authorized_clients/*.auth` + RELOAD) are the PoW-capable shape; the valid `.auth` line is exactly `descriptor:x25519:<pub>` (3 fields), and an all-invalid filesystem roster runs **fail-open**. That filesystem scenario is not reachable in this runtime: control-port `ADD_ONION` rejects invalid `ClientAuthV3` entries and an empty roster installs an unreachable guard credential.
+- Restricted-discovery health now makes a credential-free SOCKS connection attempt. An expected Tor authorization rejection is the successful negative proof; an accepted connection degrades immediately, while ambiguous failures never pass the gate. The signed `privacyTransports` entry is omitted unless `negativeProbe === true`.
 
 ## 5. Health-gated advertisement
 
@@ -118,15 +110,15 @@ stateDiagram-v2
   disabled --> tor_starting: start()
   tor_starting --> key_loaded: ADD_ONION ok
   key_loaded --> descriptor_uploaded: ≥2 HS_DESC UPLOADED
-  descriptor_uploaded --> ready: self-probe ok (or no probe vport)
+  descriptor_uploaded --> ready: positive or negative probe passes
   ready --> degraded: probe fails ×3
   degraded --> ready: probe recovers
   ready --> disabled: stop()
 ```
 
-The signed capability doc carries `privacyTransports` **only while `ready`**: version floor checked, key restored and address matched, ≥2 descriptor uploads observed, and a SOCKS self-probe through the network back to the read-plane vport. Degraded health removes the entry — clients never see a dead endpoint (`ONION-INV-003`). The field is omitted entirely when empty, so relays without Tor produce byte-identical docs to older builds (fixture-stable signing).
+The signed capability doc carries `privacyTransports` **only while `ready`**: version floor checked, key restored and address matched, ≥2 descriptor uploads observed, and a SOCKS probe through the network to an automatically selected exposed vport. Public onions require a successful connection. Restricted onions probe without a client credential and require an authorization rejection; `negativeProbe: true` is included in the signed entry. `health.probeVport: false` is an explicit descriptor-only compatibility mode, but restricted endpoints in that mode are never advertised. Degraded health removes the entry (`ONION-INV-003`). The field is omitted entirely when empty, so relays without Tor produce byte-identical docs to older builds (fixture-stable signing).
 
-The advertisement entry: `{id: tor-v3-onion-v1, addresses: [{address, keyId, notBefore, notAfter, priority}], vports, vportRoles {readPlane, peer}, auth {mode, enrollment}, pow, exposure, relayLocation: 'hidden-onion', supports[]}` — signed by the stable relay identity, with rotation overlap handled by a fresh `keyId`.
+The advertisement entry: `{id: tor-v3-onion-v1, addresses: [{address, keyId, notBefore, notAfter, priority}], vports, vportRoles {readPlane, peer}, auth {mode, enrollment}, negativeProbe?, pow, exposure, relayLocation: 'hidden-onion', supports[]}` — signed by the stable relay identity, with rotation overlap handled by a fresh `keyId`.
 
 ## 6. Policy resolution (client side)
 
@@ -159,7 +151,7 @@ Public surfaces get coarse health only (`running`, `activeConnections`) — the 
 2. Long-lived services accumulate guard-discovery exposure (PoPETs 2022; arXiv 2602.23560 intro-circuit intersection attack, Feb 2026) — mitigated by vanguards-lite, endpoint rotation, `hidden-only` exposure.
 3. `dual` exposure links the public and onion identities via shared uptime — operators choose: hidden-only identity, or accept the link.
 4. Operator-side deanonymization (payment rails, hosting accounts, cross-signing) is out of transport scope — see the operator checklist in `docs/tor-transport.md`.
-5. Remaining follow-up: 100 MB/10 min bulk gate on realistic uplinks (5 MB live gate passed at 1.19 Mbps). Shipped since (2026-07-18): pairing-channel enrollment hookup (`transports/tor/enrollment.js` — the envelope rides `RelayNode.pairDevice` extras; verify → roster rebuild-in-place → rosterFile persist → signed receipt; 4 tests in `tor-enrollment.test.js`) and peer-vport listener binding (`transports/tor/peer-listener.js` — loopback Noise XK endpoint the onion peer vport 19737 forwards to, folded into the transport's vport mapping and lifecycle; 7 tests in `tor-peer-listener.test.js`).
+5. Remaining follow-up: 100 MB/10 min bulk gate on realistic uplinks (5 MB live gate passed at 1.19 Mbps). Implemented on the release-repair branch (2026-07-29): automatic positive/negative probing and fail-closed signed admission for restricted discovery. Shipped since (2026-07-18): pairing-channel enrollment hookup (`transports/tor/enrollment.js` — the envelope rides `RelayNode.pairDevice` extras; verify → roster rebuild-in-place → rosterFile persist → signed receipt; 4 tests in `tor-enrollment.test.js`) and peer-vport listener binding (`transports/tor/peer-listener.js` — loopback Noise XK endpoint the onion peer vport 19737 forwards to, folded into the transport's vport mapping and lifecycle; 7 tests in `tor-peer-listener.test.js`).
 
 ## 10. Test evidence
 

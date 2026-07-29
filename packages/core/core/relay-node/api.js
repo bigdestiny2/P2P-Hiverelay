@@ -1854,7 +1854,7 @@ export class RelayAPI extends EventEmitter {
             body,
             config: this.node.config,
             registry: this.node.serviceRegistry,
-            persistConfig: () => this._persistConfig(),
+            persistConfig: () => this._persistServicesConfig(),
             serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)
           })
           if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
@@ -1869,7 +1869,7 @@ export class RelayAPI extends EventEmitter {
             config: this.node.config,
             node: this.node,
             store: this.node.store,
-            persistConfig: () => this._persistConfig(),
+            persistConfig: () => this._persistServicesConfig(),
             serviceConfigPayload: () => serviceConfigPayload(this.node.config, this.node.serviceRegistry)
           })
           if (!result.ok && result.kind === 'config-persist') return this._persistFailureResponse(res, result)
@@ -2200,6 +2200,14 @@ export class RelayAPI extends EventEmitter {
       })
       throw err
     }
+  }
+
+  async _persistServicesConfig () {
+    if (typeof this.node.setServicesConfig !== 'function') return this._persistConfig()
+    return this.node.setServicesConfig({
+      enabled: this.node.config.enableServices === true,
+      plugins: Array.isArray(this.node.config.plugins) ? this.node.config.plugins : []
+    })
   }
 
   async _persistConfigOrRespond (res, rollback = null) {

@@ -201,12 +201,12 @@ adds stronger catalog tooling:
 
 ## Compatibility note for this workspace
 
-There can be active version skew across the ecosystem. On 2026-07-07, the
+There can be active version skew across the ecosystem. On 2026-07-29, the
 current Hiverelay workspace packages are:
 
-- `p2p-hiverelay` `0.24.1`
-- `p2p-hiverelay-client` `0.24.1`
-- `p2p-hiverelay-verifier` `0.24.1`
+- `p2p-hiverelay` `0.25.0-rc.7`
+- `p2p-hiverelay-client` `0.25.0-rc.7`
+- `p2p-hiverelay-verifier` `0.25.0-rc.7`
 
 PearBrowser desktop is the bundled consumer that must be kept in lockstep:
 `scripts/check-hiverelay-layout.mjs`, `package-lock.json`, and desktop CI must
@@ -219,12 +219,12 @@ documenting and testing stable wire contracts
 `/v1/hyper/...`, signed catalog bees, signed DHT relay records, and `indexRoom`)
 instead of relying on package-version parity alone.
 
-p2pbuilders now points at the local Hiverelay `0.24.1` workspace packages and
+p2pbuilders now points at the local Hiverelay `0.25.0-rc.7` workspace packages and
 uses the split `p2p-hiverelay-client` SDK, with a local migration guard that
 rejects the removed `p2p-hiverelay/client` subpath. Opengit's optional
-`--use-hiverelay` bridge also points at the local `0.24.1` core/client packages
+`--use-hiverelay` bridge also points at the local `0.25.0-rc.7` core/client packages
 and dynamically imports the split ESM client while preserving the native relay
-default. PearPaste and anonGPT now also point at the local `0.24.1` Hiverelay
+default. PearPaste and anonGPT now also point at the local `0.25.0-rc.7` Hiverelay
 workspace packages by default, because they are live customer-facing relay
 consumers. The main PearBrowser bundle is still the release-critical bundled
 consumer, but whole-ecosystem package-parity claims require these

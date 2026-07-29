@@ -356,6 +356,94 @@ test('applyOutboxlogNamespaceEnv: a persisted config.json namespace wins over en
   t.is(config.outboxlog.namespace, 'saved-ns', 'persisted namespace wins over the env default')
 })
 
+test('runtime env defaults: Node packaging enables bounded services and Tor', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-runtime-env-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+  const { applyRuntimeEnvDefaults, loadConfig } = await importLoaderWithHome(home)
+  const overrides = {}
+
+  applyRuntimeEnvDefaults(overrides, {
+    HIVERELAY_ENABLE_SERVICES: 'true',
+    HIVERELAY_OUTBOXLOG: '1',
+    HIVERELAY_NOTIFY: 'true',
+    HIVERELAY_STORAGE_PROOF: '1',
+    HIVERELAY_TOR: '1',
+    HIVERELAY_TOR_SOCKS_HOST: 'tor-sidecar',
+    HIVERELAY_TOR_SOCKS_PORT: '19050',
+    HIVERELAY_TOR_CONTROL_PORT: '19051',
+    HIVERELAY_TOR_KEY_FILE: '/private/tor-key.blob',
+    HIVERELAY_TOR_MIN_DAEMON_VERSION: '0.4.9.5',
+    HIVERELAY_OUTBOXLOG_JOURNAL: 'hypercore-outboxes',
+    HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE: '512MB'
+  }, {})
+
+  const config = loadConfig(overrides)
+  t.is(config.enableServices, true)
+  t.alike(config.plugins, ['notify', 'outboxlog', 'storage-proof'])
+  t.is(config.transports.tor, true)
+  t.is(config.tor.socksHost, 'tor-sidecar')
+  t.is(config.tor.socksPort, 19050)
+  t.is(config.tor.controlPort, 19051)
+  t.is(config.tor.keyFile, '/private/tor-key.blob')
+  t.is(config.tor.minDaemonVersion, '0.4.9.5')
+  t.is(config.outboxlog.journal, 'hypercore-outboxes')
+  t.is(config.outboxlog.maxJournalStorageBytes, 512 * 1024 * 1024)
+})
+
+test('runtime env defaults: persisted fields and CLI flags remain authoritative', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-runtime-precedence-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+  const { applyRuntimeEnvDefaults } = await importLoaderWithHome(home)
+  const overrides = { transports: { tor: true }, tor: { socksPort: 29050 } }
+
+  applyRuntimeEnvDefaults(overrides, {
+    HIVERELAY_ENABLE_SERVICES: '1',
+    HIVERELAY_NOTIFY: '1',
+    HIVERELAY_TOR: '0',
+    HIVERELAY_TOR_SOCKS_HOST: 'env-host',
+    HIVERELAY_TOR_SOCKS_PORT: '39050',
+    HIVERELAY_OUTBOXLOG_JOURNAL: 'hypercore-outboxes'
+  }, {
+    enableServices: false,
+    plugins: ['identity'],
+    tor: { socksHost: 'persisted-host' },
+    outboxlog: { journal: 'hypercore' }
+  })
+
+  t.absent(Object.prototype.hasOwnProperty.call(overrides, 'enableServices'), 'persisted service toggle is not shadowed')
+  t.absent(Object.prototype.hasOwnProperty.call(overrides, 'plugins'), 'persisted plugin selection is not shadowed')
+  t.is(overrides.transports.tor, true, 'CLI Tor flag wins')
+  t.absent(overrides.tor.socksHost, 'persisted Tor host is not shadowed')
+  t.is(overrides.tor.socksPort, 29050, 'CLI Tor port wins')
+  t.absent(overrides.outboxlog, 'persisted journal is not shadowed')
+})
+
+test('runtime env defaults: push credentials load from a private JSON file path', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-notify-env-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+  const { applyRuntimeEnvDefaults } = await importLoaderWithHome(home)
+  const descriptor = { kind: 'webpush', credentials: { subject: 'mailto:ops@example.test' } }
+  const overrides = {}
+  applyRuntimeEnvDefaults(overrides, {
+    HIVERELAY_NOTIFY_PUSH_CONFIG: '/run/secrets/hiverelay-notify.json'
+  }, {}, {
+    readTextFile: (requested) => {
+      t.is(requested, '/run/secrets/hiverelay-notify.json')
+      return JSON.stringify(descriptor)
+    }
+  })
+  t.alike(overrides.notify.push, descriptor)
+
+  t.exception(() => applyRuntimeEnvDefaults({}, { HIVERELAY_TOR_SOCKS_PORT: 'nope' }, {}), /Invalid HIVERELAY_TOR_SOCKS_PORT/)
+  t.exception(() => applyRuntimeEnvDefaults({}, { HIVERELAY_NOTIFY: 'sometimes' }, {}), /Invalid HIVERELAY_NOTIFY/)
+})
+
 function execCli (argv, env) {
   return new Promise((resolve, reject) => {
     execFile(process.execPath, ['packages/core/cli/index.js', ...argv], {

@@ -111,8 +111,23 @@ test('service config api: catalog is authenticated and reports configured servic
   t.ok(res.body.available.includes('poker'))
   t.ok(res.body.available.includes('outboxlog'))
   t.ok(res.body.available.includes('notify'))
+  t.ok(res.body.available.includes('storage-proof'))
   t.alike(res.body.bundles.poker, ['poker', 'vrf', 'arbitration', 'zk'])
   t.alike(res.body.active, ['identity'])
+})
+
+test('service config api: persists through services.json authority when node supports it', async (t) => {
+  const { node, port, auth } = await makeServer(t)
+  const calls = []
+  node.setServicesConfig = async (value) => { calls.push(value); return value }
+
+  const res = await request(port, 'POST', '/api/manage/services/config', {
+    enabled: true,
+    plugins: ['storage-proof']
+  }, auth)
+
+  t.is(res.statusCode, 200)
+  t.alike(calls, [{ enabled: true, plugins: ['storage-proof'] }])
 })
 
 test('service config api: saves builtins and expands poker bundle', async (t) => {

@@ -23,11 +23,11 @@ test('api service config helpers: route helper maps exact service config update'
 })
 
 test('api service config helpers: normalize builtins and expand bundles', (t) => {
-  const normalized = normalizeManageServicePlugins([' Poker ', 'AI', 'vrf', 'outboxlog', 'notify', ''])
+  const normalized = normalizeManageServicePlugins([' Poker ', 'AI', 'vrf', 'outboxlog', 'notify', 'storage-proof', ''])
 
   t.alike(normalized, {
     ok: true,
-    plugins: ['poker', 'vrf', 'arbitration', 'zk', 'ai', 'outboxlog', 'notify']
+    plugins: ['poker', 'vrf', 'arbitration', 'zk', 'ai', 'outboxlog', 'notify', 'storage-proof']
   })
 
   t.alike(normalizeManageServicePlugins(null), { ok: true, plugins: [] })

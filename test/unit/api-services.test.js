@@ -150,9 +150,11 @@ test('POST /api/manage/services/config: persists opt-in, restartRequired', async
   t.is(res.body.restartRequired, true)
   t.is(res.body.config.enabled, true)
   t.alike(res.body.config.plugins, ['ai'])
-  // The opt-in is persisted by mutating node.config (then api._persistConfig()).
+  // The opt-in is persisted through node.setServicesConfig(), whose runtime
+  // authority is <storage>/services.json rather than config.json.
   t.is(node.config.enableServices, true)
   t.alike(node.config.plugins, ['ai'])
+  t.alike(node._servicesConfigCalls, [{ enabled: true, plugins: ['ai'] }])
 })
 
 test('config endpoint requires auth', async (t) => {

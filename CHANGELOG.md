@@ -6,6 +6,56 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [Unreleased] — 2026-07-29
+
+**Post-RC7 release repair. Requires a new prerelease identity before any fleet
+deployment.**
+
+### Fixed — runtime and persistence
+
+- Relay app lifecycle now serializes recovery, seed, update, and retirement on
+  one canonical mutation authority; preserves exact finite storage commitments;
+  retains failed teardown owners for retry; and no longer acknowledges work
+  before durable state is complete. The test suites no longer use a finalizer
+  that could force a passing exit while asynchronous work remained.
+- OutboxLog partitioned-Hypercore journals bind storage admission before append,
+  settle journal operations before close, and keep the configured aggregate
+  byte commitment authoritative across restart.
+- Service management now persists to `<storage>/services.json`, rolls back API
+  state on write failure, accepts the shipped `storage-proof` builtin, and
+  honors an explicit persisted `enabled: false` over package defaults.
+- The Node plugin lifecycle now applies `config.vrfBeacon`, making the existing
+  beacon implementation and HTTP routes reachable on configured Node relays.
+
+### Fixed — wake, mailbox, and privacy
+
+- Notify watches prefer the exact signed `notify-outbox-lane`; the global
+  `notify-feed-head` compatibility source is marked deprecated and omitted from
+  preferred signed watch sources when exact-lane support is present.
+- Tor restricted-discovery readiness now performs an unauthenticated negative
+  probe against an exposed onion vport. A restricted endpoint that accepts the
+  probe, or cannot prove rejection, is degraded and cannot be signed-advertised.
+- Client connection error containment is installed before replication and peer
+  identity parsing, closing an early Noise/session crash window.
+- Operator and fleet dashboards render untrusted relay/app data through text
+  nodes and validate links instead of constructing executable HTML.
+
+### Fixed — packaging and fleet evidence
+
+- Docker, systemd, and Umbrel service/Tor environment values are now real Node
+  first-boot defaults. Explicit CLI values, persisted `config.json`, and the
+  storage-local services authority retain precedence.
+- Packaged OutboxLog uses `hypercore-outboxes` with a finite 512 MB local
+  journal commitment. Shard custody is opt-in instead of silently consuming
+  disk on every Docker/Umbrel node. Real wake credentials can be mounted in an
+  owner-readable JSON descriptor selected by `HIVERELAY_NOTIFY_PUSH_CONFIG`.
+- Fleet health and service probes support exact include/exclude scopes before
+  SSH, report exact prerelease versions and updater/channel drift, inspect
+  signed capability evidence, and avoid exposing private inventory/key paths.
+- StartOS and Umbrel metadata, release-evidence tests, and operator docs are
+  synchronized to the current prerelease baseline and distinguish configured
+  defaults from signed runtime proof.
+
 ## [0.25.0-rc.7] — 2026-07-28
 
 **Security release. Supersedes rc.6 — deploy this.**

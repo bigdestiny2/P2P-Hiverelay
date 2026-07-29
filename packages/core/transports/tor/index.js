@@ -49,6 +49,7 @@ const DEFAULT_CONTROL_HOST = '127.0.0.1'
 const DEFAULT_CONTROL_PORT = 9051
 const TOR_CHECK_TIMEOUT = 5000
 const KEY_BLOB_RE = /^ED25519-V3:[A-Za-z0-9+/=]+$/
+const RESTRICTED_PROBE_REJECTION_RE = /(?:HostUnreachable|NotAllowed|onion service descriptor (?:can not|cannot) be found)/i
 
 export const TorHealth = Object.freeze({
   DISABLED: 'disabled',
@@ -215,6 +216,7 @@ export class TorTransport extends EventEmitter {
     this._probeTimer = null
     this._probeFails = 0
     this._descriptorUploads = 0
+    this.negativeProbe = null
     this._controlFactory = opts._controlFactory || null // test injection
     this._probeConnectionFactory = opts._probeConnectionFactory ||
       ((options) => SocksClient.createConnection(options))
@@ -298,6 +300,7 @@ export class TorTransport extends EventEmitter {
       }
       this._descriptorUploads = 0
       this._probeFails = 0
+      this.negativeProbe = null
       this._setHealth(TorHealth.DISABLED)
       throw err
     }
@@ -317,6 +320,8 @@ export class TorTransport extends EventEmitter {
     if (this._control) { this._control.destroy(); this._control = null }
     if (this.peerListener) await this.peerListener.stop()
     this._descriptorUploads = 0
+    this._probeFails = 0
+    this.negativeProbe = null
     this.emit('stopped')
   }
 
@@ -363,6 +368,8 @@ export class TorTransport extends EventEmitter {
     let deleted = false
     let added = false
     this._descriptorUploads = 0
+    this._probeFails = 0
+    this.negativeProbe = null
     try {
       await this._control.cmd('DEL_ONION ' + this.serviceId)
       deleted = true
@@ -386,6 +393,8 @@ export class TorTransport extends EventEmitter {
             throw new Error('onion address changed while restoring the previous roster')
           }
           this._descriptorUploads = 0
+          this._probeFails = 0
+          this.negativeProbe = null
           this._setHealth(TorHealth.KEY_LOADED)
         } catch (rollbackErr) {
           err.rollbackError = rollbackErr
@@ -567,6 +576,9 @@ export class TorTransport extends EventEmitter {
         this._serviceActive = false
         const blob = await this._loadOrThrowKey()
         await this._addOnion(blob, nextKeys)
+        this._descriptorUploads = 0
+        this._probeFails = 0
+        this.negativeProbe = null
         this._setHealth(TorHealth.KEY_LOADED)
       } catch (err) {
         this._setHealth(TorHealth.DEGRADED)
@@ -613,11 +625,33 @@ export class TorTransport extends EventEmitter {
     this._probeTimer.unref && this._probeTimer.unref()
   }
 
-  /** Self-probe: SOCKS-connect back to our own onion through the network. */
+  _healthProbeVport () {
+    if (this.healthOpts.probeVport === false) return null
+    const configured = Number(this.healthOpts.probeVport)
+    if (Number.isSafeInteger(configured) && configured > 0 && configured <= 65535) return configured
+    const effective = this._effectiveVports()
+    const preferred = [this.readVport, this.peerVport]
+      .find((port) => Number.isSafeInteger(port) && effective.some((entry) => entry.vport === port))
+    if (preferred) return preferred
+    const fallback = effective.find((entry) => Number.isSafeInteger(entry.vport) && entry.vport > 0 && entry.vport <= 65535)
+    return fallback ? fallback.vport : null
+  }
+
+  /**
+   * Probe our own onion through the Tor network.
+   *
+   * Public services require a successful connection. Restricted services
+   * deliberately probe without a client credential: a Tor authorization
+   * rejection is success, while an accepted connection proves that the
+   * descriptor became public and degrades the endpoint immediately.
+   */
   async _probeNow () {
-    const vport = this.healthOpts.probeVport
+    const vport = this._healthProbeVport()
     if (!vport || !this.onionAddress) {
-      // No probe surface configured: descriptor uploads are the readiness signal.
+      // Explicit probe opt-out or no exposed port: descriptor uploads are the
+      // only available signal. Restricted endpoints never claim a negative
+      // authorization probe in this mode.
+      this.negativeProbe = null
       if (this.health === TorHealth.DESCRIPTOR_UPLOADED) this._setHealth(TorHealth.READY)
       return
     }
@@ -627,6 +661,7 @@ export class TorTransport extends EventEmitter {
       this.health !== TorHealth.READY &&
       this.health !== TorHealth.DEGRADED
     ) return
+    const restricted = this.isRestrictedDiscoveryActive()
     try {
       const { socket } = await this._probeConnectionFactory({
         proxy: { host: this.socksHost, port: this.socksPort, type: 5 },
@@ -635,9 +670,23 @@ export class TorTransport extends EventEmitter {
         timeout: 60000
       })
       socket.destroy()
+      if (restricted) {
+        this.negativeProbe = false
+        this._probeFails = this.healthOpts.probeFailLimit
+        this._setHealth(TorHealth.DEGRADED)
+        return
+      }
+      this.negativeProbe = null
       this._probeFails = 0
       this._setHealth(TorHealth.READY)
-    } catch {
+    } catch (err) {
+      if (restricted && RESTRICTED_PROBE_REJECTION_RE.test(String(err && err.message ? err.message : err))) {
+        this.negativeProbe = true
+        this._probeFails = 0
+        this._setHealth(TorHealth.READY)
+        return
+      }
+      if (restricted) this.negativeProbe = null
       this._probeFails++
       if (this._probeFails >= this.healthOpts.probeFailLimit) this._setHealth(TorHealth.DEGRADED)
     }
@@ -810,6 +859,7 @@ export class TorTransport extends EventEmitter {
       pow: this.pow ? !!this.pow.enabled : false,
       persistent: !!this.keyFile,
       descriptorUploads: this._descriptorUploads,
+      negativeProbe: this.negativeProbe,
       activeConnections: this._connections.size
     }
   }

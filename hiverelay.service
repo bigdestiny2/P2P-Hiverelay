@@ -21,7 +21,11 @@ Environment=HIVERELAY_LOG_LEVEL=info
 # These make the relay useful to all apps on the substrate.
 Environment=HIVERELAY_ENABLE_SERVICES=1
 Environment=HIVERELAY_OUTBOXLOG=1
+Environment=HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes
+Environment=HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE=512MB
 Environment=HIVERELAY_NOTIFY=1
+# Real APNs/FCM/WebPush egress: mount an owner-readable JSON descriptor, then
+# set Environment=HIVERELAY_NOTIFY_PUSH_CONFIG=/etc/hiverelay/notify-push.json
 Environment=HIVERELAY_STORAGE_PROOF=1
 Environment=HIVERELAY_VRF=1
 Environment=HIVERELAY_WITNESSLOG=1
@@ -38,7 +42,9 @@ Environment=HIVERELAY_TOR_SOCKS_PORT=9050
 Environment=HIVERELAY_TOR_CONTROL_HOST=127.0.0.1
 Environment=HIVERELAY_TOR_CONTROL_PORT=9051
 Environment=HIVERELAY_TOR_KEY_FILE=/var/lib/hiverelay/tor-onion-key.blob
-Environment=HIVERELAY_TOR_CLIENT_AUTH_DIR=/var/lib/hiverelay/tor-client-auth
+Environment=HIVERELAY_TOR_MIN_DAEMON_VERSION=0.4.9.5
+# Restricted discovery: set HIVERELAY_TOR_ROSTER_FILE to an owner-readable
+# roster containing one base32 x25519 client public key per line.
 
 # Restart policy — RestartSec=15 prevents ELOCKED crash loops
 # (random-access-file needs time to release primary-key lock)

@@ -93,6 +93,21 @@ test('vrf is a builtin service provider', (t) => {
   t.ok(BUILTIN_SERVICE_NAMES.includes('vrf'))
 })
 
+test('VRF service consumes Node PluginLoader context.config.vrfBeacon', async (t) => {
+  const service = new VRFService({ seed: FIXED_SEED })
+  await service.start({
+    config: {
+      vrfBeacon: { enabled: true, intervalMs: 12_345, retain: 7, domain: 'context-beacon' }
+    }
+  })
+  t.teardown(async () => { await service.stop() })
+
+  const info = await service['beacon-info']()
+  t.is(info.intervalMs, 12_345)
+  t.is(info.retain, 7)
+  t.ok(service.beacon, 'Node runtime config enables the beacon')
+})
+
 test('isVrfHttpRoute and resolveVrfRoute match the documented surface', (t) => {
   t.ok(isVrfHttpRoute('/api/v1/vrf/beacon-info'))
   t.ok(isVrfHttpRoute('/api/v1/vrf/beacon-latest'))

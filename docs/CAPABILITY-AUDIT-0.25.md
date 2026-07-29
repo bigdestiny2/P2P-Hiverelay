@@ -11,6 +11,18 @@ what is built but undeployed — and a concrete fleet enablement plan.
 | Fleet snapshot | `docs/html/fleet-live.json`, `generatedAt 2026-07-27 10:17 UTC`, 12 relays (`summary.total: 12`) |
 | Method | Read-only. No SSH, no fleet mutation. Every claim carries `file:line` or a quoted command. |
 
+> Repair status (2026-07-29, post-RC7 worktree): this document preserves the
+> audited RC6 baseline below. The release repair now translates the shipped
+> service/Tor environment into Node first-boot defaults, keeps persisted config
+> and `services.json` authoritative, persists management API edits to
+> `<storage>/services.json`, accepts `storage-proof`, configures packaged
+> OutboxLog with a finite partitioned-Hypercore journal, and leaves shard-store
+> opt-in. Focused regression tests cover precedence, explicit disable, Tor
+> fields, bounded journal bytes, and private notify descriptor loading. These
+> fixes require a new prerelease and are not yet deployed. The Node plugin
+> lifecycle now also consumes `config.vrfBeacon`, closing the audited
+> beacon-config dead end.
+
 ### Evidence-quality caveat, stated once and load-bearing throughout
 
 `docs/html/fleet-live.json` records `services_source: "config"` for **10 of 12** relays.
@@ -57,7 +69,7 @@ It exists only in the gitignored `fleet/relays.local.json:77-81`. The real fleet
 | App-origin HTTPS gateway runtime | `packages/core/gateway/{hive-host,exact-app-context,public-app-admission}.js`, wired `gateway-server.js:23,75,115-150,238-246`; `git ls-tree v0.25.0-rc.5 packages/core/gateway/` lists all three; 34/34 unit tests pass | Merged but opt-in-off (no `hiveAppHostSuffix` default) |
 | Fleet update path fix | `CHANGELOG.md:9-42` — `patch-package` moved to prod deps; `rollback_to_previous()` gains `--force` | **rc.6 only, and rc.6 is not in any channel** |
 
-### 1.3 The two headline claims are both inert
+### 1.3 Audited RC6 baseline: the two headline claims were inert
 
 Every `HIVERELAY_*` service/Tor variable in the three shipped packagings is read by **zero** lines
 on the runtime those packagings launch. Measured directly:
@@ -166,6 +178,8 @@ appears to work and is **silently discarded at the next restart** by `_loadServi
 **Dimension note:** `docs/BLIND-CELLS.md` and `docs/NAMESPACE.md` verify line-for-line against code, and
 `docs/STORAGE-CAP-SAFETY.md` self-flags its own gap accurately. The spec-drift problem is concentrated
 in `PROTOCOL-SPEC.md` and a handful of Tor/services sentences.
+
+> Resolution note (2026-07-29): the Tor negative-probe finding above records the audited baseline. The release-repair branch now produces `negativeProbe`, automatically probes an exposed vport, degrades restricted endpoints that accept anonymous access, and refuses to sign-advertise a restricted endpoint without a successful negative proof. Live/fleet evidence is still pending.
 
 ---
 

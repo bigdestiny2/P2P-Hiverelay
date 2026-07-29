@@ -234,7 +234,7 @@ test('operator pulse renders management overview and escapes namespace names', (
     '  suppress: document.getElementById("statSuppress").textContent,',
     '  writers: document.getElementById("statOutboxWriters").textContent,',
     '  privacy: document.getElementById("statPrivacy").textContent,',
-    '  nsAssigned: document.getElementById("namespacesBody").innerHTMLAssignments[0] || "",',
+    '  nsHtml: document.getElementById("namespacesBody").innerHTML,',
     '  nsDisplay: document.getElementById("namespacesPanel").style.display,',
     '  compDisplay: document.getElementById("compliancePanel").style.display,',
     '  walDisplay: document.getElementById("walPanel").style.display,',
@@ -244,7 +244,7 @@ test('operator pulse renders management overview and escapes namespace names', (
     '  shardDisplay: document.getElementById("shardPanel").style.display,',
     '  shardPut: document.getElementById("shardPut").textContent,',
     '  armed: document.getElementById("compAdminArmed").textContent,',
-    '  attentionAssigned: (document.getElementById("attentionList").innerHTMLAssignments || []).join("")',
+    '  attentionHtml: document.getElementById("attentionList").innerHTML',
     '})'
   ].join('\n')))
 
@@ -263,11 +263,10 @@ test('operator pulse renders management overview and escapes namespace names', (
   t.is(out.shardDisplay, '')
   t.is(out.shardPut, '10')
   t.is(out.armed, 'ARMED')
-  // Use the raw assignment (FakeElement re-escapes on get).
-  t.ok(out.nsAssigned.includes('&lt;img src=x onerror=alert(1)&gt;'))
-  t.ok(out.nsAssigned.includes('blind'))
-  t.absent(out.nsAssigned.includes('<img'))
-  t.absent(out.attentionAssigned.includes('T2 custody with gateway'), 'gateway off → no co-location warning')
+  t.ok(out.nsHtml.includes('&lt;img src=x onerror=alert(1)&gt;'))
+  t.ok(out.nsHtml.includes('blind'))
+  t.absent(out.nsHtml.includes('<img'))
+  t.absent(out.attentionHtml.includes('T2 custody with gateway'), 'gateway off → no co-location warning')
 })
 
 test('operator pulse public overview hides management panels', (t) => {
@@ -394,10 +393,13 @@ function renderDomWith (body) {
 function renderOperatorPulseWith (body) {
   const elements = {}
   const source = [
-    extractFunction('escapeHtml'),
+    extractFunction('clearNode'),
+    extractFunction('appendEl'),
     extractFunction('formatBytes'),
     extractFunction('formatCount'),
     extractFunction('setText'),
+    extractFunction('renderNamespaceRows'),
+    extractFunction('renderAttentionList'),
     extractFunction('updateOperatorPulse'),
     body
   ].join('\n')
@@ -408,6 +410,12 @@ function renderOperatorPulseWith (body) {
     Math,
     isNaN,
     document: {
+      createElement (tag) {
+        return new FakeElement(tag)
+      },
+      createTextNode (text) {
+        return new FakeText(text)
+      },
       getElementById (id) {
         if (!elements[id]) {
           const el = new FakeElement('div')

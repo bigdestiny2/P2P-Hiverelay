@@ -47,10 +47,17 @@ function buildPrivacyTransports ({ relay, config, custodyEnabled, advertisedAtMs
   if (tt.health !== 'ready') return []
 
   const torCfg = (config && config.tor) || {}
-  const notBefore = tt.startedAtMs || advertisedAtMs
   const restrictedDiscovery = typeof tt.isRestrictedDiscoveryActive === 'function'
     ? tt.isRestrictedDiscoveryActive()
     : !!((tt.clientAuthKeys && tt.clientAuthKeys.length > 0) || tt.rosterFile)
+  // A private onion endpoint is only safe to advertise after a live SOCKS
+  // probe made *without* a client credential has been rejected by Tor. The
+  // transport can still report descriptor-only readiness when an operator
+  // explicitly disables probing, but that weaker compatibility mode must
+  // never create a signed restricted-discovery claim.
+  if (restrictedDiscovery && tt.negativeProbe !== true) return []
+
+  const notBefore = tt.startedAtMs || advertisedAtMs
   const authMode = restrictedDiscovery ? 'client-auth-v3' : 'none'
   const vports = typeof tt._effectiveVports === 'function' ? tt._effectiveVports() : []
   const hasPeerListener = !!tt.peerListener
@@ -94,6 +101,7 @@ function buildPrivacyTransports ({ relay, config, custodyEnabled, advertisedAtMs
     vports: vports.map((v) => v.vport),
     vportRoles,
     auth: { mode: authMode, enrollment: authMode === 'client-auth-v3' ? ['pairing-channel'] : [] },
+    ...(restrictedDiscovery ? { negativeProbe: true } : {}),
     pow: { enabled: !!(tt.pow && tt.pow.enabled) },
     exposure: torCfg.exposure || 'dual',
     relayLocation: 'hidden-onion',
@@ -542,12 +550,21 @@ function buildServicesProtocolProfile (relay, servicesEnabled) {
     // the doc cannot claim a vocabulary or quota the service doesn't enforce.
     // Literals remain only as the fallback for a service without limits().
     const notifyLimits = serviceLimits(services.get('notify'))
+    const availableWatchSources = Array.isArray(notifyLimits.watchSources) ? notifyLimits.watchSources : []
+    const hasExactLaneWake = availableWatchSources.includes('notify-outbox-lane')
+    const watchSources = hasExactLaneWake
+      ? availableWatchSources.filter(source => source !== 'notify-feed-head')
+      : availableWatchSources
+    const deprecatedWatchSources = hasExactLaneWake && availableWatchSources.includes('notify-feed-head')
+      ? ['notify-feed-head']
+      : []
     profile.notify = {
       version: serviceVersion(services.get('notify')) || '0.1.0',
       providers: notifyLimits.providers || ['runtime', 'apns', 'fcm', 'webpush'],
       credential_modes: notifyLimits.credentialModes || ['runtime-owned', 'app-owned'],
       modes: notifyLimits.modes || ['direct', 'watch', 'presence-fallback'],
-      watch_sources: notifyLimits.watchSources || [],
+      watch_sources: watchSources,
+      ...(deprecatedWatchSources.length ? { deprecated_watch_sources: deprecatedWatchSources } : {}),
       payload: {
         max_ciphertext_bytes: notifyLimits.maxCiphertextBytes || 3072,
         plaintext_allowed: false,

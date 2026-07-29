@@ -205,11 +205,14 @@ const fleetStatusScript = readText(hiverelayRoot, 'fleet', 'fleet-status.sh')
 const fleetUpdaterScript = readText(hiverelayRoot, 'fleet', 'updater.sh')
 const deployVpsScript = readText(hiverelayRoot, 'scripts', 'deploy-vps.sh')
 const relayJanitorScript = readText(hiverelayRoot, 'scripts', 'relay-janitor.js')
+const rootDockerCompose = readText(hiverelayRoot, 'docker-compose.yml')
+const systemdService = readText(hiverelayRoot, 'hiverelay.service')
 const cliIndex = readText(hiverelayRoot, 'packages', 'core', 'cli', 'index.js')
 const cliCatalog = readText(hiverelayRoot, 'packages', 'core', 'cli', 'catalog.js')
 const cliSetup = readText(hiverelayRoot, 'packages', 'core', 'cli', 'setup.js')
 const cliManage = readText(hiverelayRoot, 'packages', 'core', 'cli', 'manage.js')
 const defaultConfig = readText(hiverelayRoot, 'packages', 'core', 'config', 'default.js')
+const configLoader = readText(hiverelayRoot, 'packages', 'core', 'config', 'loader.js')
 const constantsCore = readText(hiverelayRoot, 'packages', 'core', 'core', 'constants.js')
 const blindsparkDashboard = readText(hiverelayRoot, 'dashboard', 'blindspark.html')
 const fullDashboard = readText(hiverelayRoot, 'dashboard', 'index.html')
@@ -322,6 +325,7 @@ const pokerReadme = readText(hiverelayRoot, 'packages', 'services', 'builtin', '
 const servicesIndex = readText(hiverelayRoot, 'packages', 'services', 'index.js')
 const servicesReadme = readText(hiverelayRoot, 'packages', 'services', 'README.md')
 const notifyService = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'notify-service.js')
+const vrfService = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'vrf-service.js')
 const outboxLogApp = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'index.js')
 const outboxLogBlindSeal = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'blind-seal.js')
 const outboxLogEngine = readText(hiverelayRoot, 'packages', 'services', 'builtin', 'outboxlog', 'outbox-log.js')
@@ -509,9 +513,11 @@ const standaloneGatewayServerTest = readText(hiverelayRoot, 'test', 'unit', 'gat
 const pokerHttpAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'poker-http-adapter.test.js')
 const pokerWsAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'poker-ws-adapter.test.js')
 const outboxLogTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog.test.js')
+const outboxLogAtomicCommitTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog-atomic-commit.test.js')
 const outboxLogBlindSealTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog-blind-seal.test.js')
 const outboxLogHttpAdapterTest = readText(hiverelayRoot, 'test', 'unit', 'outboxlog-http-adapter.test.js')
 const notifyServiceTest = readText(hiverelayRoot, 'test', 'unit', 'notify-service.test.js')
+const apiVrfTest = readText(hiverelayRoot, 'test', 'unit', 'api-vrf.test.js')
 const docsDashboard = readText(hiverelayRoot, 'dashboard', 'docs.html')
 const catalogDashboard = readText(hiverelayRoot, 'dashboard', 'catalog.html')
 const networkDashboard = readText(hiverelayRoot, 'dashboard', 'network.html')
@@ -1464,7 +1470,7 @@ if (
   relayApiOverview.includes('unknown overview route') &&
   relayApiOverview.includes('export function overviewHealth') &&
   relayApiOverview.includes('node.getStats({ includeSecrets: authed === true })') &&
-  relayApiOverview.includes('sanitizeGatewayStats(gateway.getStats())') &&
+  relayApiOverview.includes('sanitizeGatewayStats(gw.getStats())') &&
   relayApiOverview.includes('export function overviewStorage') &&
   relayApiOverview.includes('export function overviewServed') &&
   relayApiOverview.includes('export function overviewRelay') &&
@@ -1885,7 +1891,7 @@ if (
   outboxLogEngine.includes('const head = group.rows.get(headKey)') &&
   outboxLogApp.includes('export class OutboxLogApp extends ServiceProvider') &&
   outboxLogApp.includes("name: 'outboxlog'") &&
-  outboxLogApp.includes("capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']") &&
+  outboxLogApp.includes("capabilities: ['create', 'append', 'get', 'range', 'directory', 'outboxlog.sync', 'outboxlog.commit', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']") &&
   outboxLogTest.includes('runWireConformance') &&
   outboxLogTest.includes("t.is(runWireConformance(log.sync, { label: 'outboxlog' }), 26)") &&
   outboxLogTest.includes('default verifier accepts same-writer opaque records') &&
@@ -1906,7 +1912,10 @@ if (
   outboxLogEngine.includes('BLIND_FORBIDDEN_FIELDS') &&
   outboxLogEngine.includes('OUTBOXLOG_BLIND_SEAL_VERSION') &&
   outboxLogEngine.includes('createOutboxBlindSealedBody') &&
-  outboxLogEngine.includes('isOutboxBlindRecord(data) && !hasBlindForbiddenField(data)') &&
+  outboxLogEngine.includes('function namespaceRecordAllowed (namespaceInfo, type, data)') &&
+  outboxLogEngine.includes('if (hasBlindForbiddenField(data)) return false') &&
+  outboxLogEngine.includes('if (isOutboxBlindRecord(data)) return true') &&
+  outboxLogEngine.includes('return isBlindControlRecord(type, data)') &&
   outboxLogEngine.includes("const BLIND_BODY_FIELDS = new Set(['sealed'])") &&
   outboxLogEngine.includes('function normalizeBlindSealedBody') &&
   outboxLogEngine.includes('function normalizeBlindSeal') &&
@@ -1917,7 +1926,7 @@ if (
   outboxLogApp.includes('isOutboxBlindRecord') &&
   servicesIndex.includes('createOutboxBlindSealedBody') &&
   servicesIndex.includes('isOutboxBlindSealedBody') &&
-  outboxLogApp.includes("capabilities: ['outboxlog.sync', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']") &&
+  outboxLogApp.includes("capabilities: ['create', 'append', 'get', 'range', 'directory', 'outboxlog.sync', 'outboxlog.commit', 'outboxlog.directory', 'outboxlog.events', 'outboxlog.namespaces']") &&
   outboxLogApp.includes('namespaces ()') &&
   outboxLogHttpAdapter.includes('sync.create(body.body.appId, { namespace: body.body.namespace })') &&
   outboxLogTest.includes('namespace registry accepts non-Peerit app records and enforces caps') &&
@@ -1926,6 +1935,7 @@ if (
   outboxLogTest.includes('opaque-but-unsealed') &&
   outboxLogTest.includes('version: 0') &&
   outboxLogTest.includes('namespace config admits Poked-style apps without a relay fork') &&
+  outboxLogAtomicCommitTest.includes('blind namespace admits only sealed data and exact control rows') &&
   servicesReadme.includes('It is namespace-driven rather than Peerit-specific') &&
   servicesReadme.includes('`outboxlog.namespaces` such as `peerit`, `poked`, or `privchat`') &&
   servicesReadme.includes('`createOutboxBlindSealedBody()`') &&
@@ -2089,7 +2099,10 @@ if (
   outboxLogHttpAdapter.includes("return respond(res, 500, { error: 'outboxlog route failed' })") &&
   outboxLogHttpAdapter.includes('sseMaxPerIp') &&
   outboxLogHttpAdapter.includes('sseMaxTotal') &&
-  outboxLogHttpAdapter.includes('overLimit(ip, ctx.rateLimit || DEFAULT_RATE_LIMIT, state)') &&
+  outboxLogHttpAdapter.includes('const rate = consumeRateLimit(ip, rateLimit, state)') &&
+  outboxLogHttpAdapter.includes('OUTBOXLOG_HTTP_MAX_RATE_BUCKETS') &&
+  outboxLogHttpAdapter.includes('function claimSseSlot (ip, state, ctx)') &&
+  outboxLogHttpAdapter.includes('function writeSseData (res, event, name = null)') &&
   outboxLogHttpAdapter.includes("res.setHeader('Content-Type', 'text/event-stream')") &&
   outboxLogHttpAdapter.includes("res.write('data: ' + JSON.stringify(event) + '\\n\\n')") &&
   outboxLogSwarmHub.includes('export function createOutboxSwarmHub') &&
@@ -2105,8 +2118,11 @@ if (
   outboxLogHttpAdapterTest.includes('serves Peerit sync routes and directory') &&
   outboxLogHttpAdapterTest.includes('hardens JSON body parsing before sync mutation') &&
   outboxLogHttpAdapterTest.includes('rate limits by client IP') &&
+  outboxLogHttpAdapterTest.includes('rate bucket cardinality stays bounded under unique-IP churn') &&
+  outboxLogHttpAdapterTest.includes('rejected requests do not consume rate-limit budget') &&
   outboxLogHttpAdapterTest.includes('tokenized swarm SSE receives peer messages') &&
-  outboxLogHttpAdapterTest.includes('caps open SSE streams per IP')
+  outboxLogHttpAdapterTest.includes('caps open SSE streams per IP') &&
+  outboxLogHttpAdapterTest.includes('sync event stream honors backpressure and resumes on drain')
 ) {
   pass('OutboxLog HTTP adapter covers Peerit token, sync, directory, and swarm SSE routes with hardened bounds before mount wiring')
 } else {
@@ -2229,10 +2245,12 @@ if (
   outboxLogHypercoreJournal.includes("OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME = 'outboxlog/outboxes/index'") &&
   outboxLogHypercoreJournal.includes("OUTBOXLOG_OUTBOX_CORE_PREFIX = 'outboxlog/outboxes/'") &&
   outboxLogHypercoreJournal.includes('export async function createPartitionedHypercoreOutboxJournal') &&
-  outboxLogHypercoreJournal.includes('store.get({ name: meta.coreName })') &&
+  outboxLogHypercoreJournal.includes('tryOpenExistingCore(store, { name: meta.coreName })') &&
+  outboxLogHypercoreJournal.includes('this.store.get({ name: outbox.name })') &&
   outboxLogHypercoreJournal.includes('coreNameForOutbox(entry.appId, this.coreNamePrefix)') &&
   outboxLogHypercoreJournal.includes('async seedCores') &&
-  outboxLogHypercoreJournal.includes('await seeder.seedCore(coreKey)') &&
+  outboxLogHypercoreJournal.includes('await seeder.announceAuthorityOwnedCore(') &&
+  outboxLogHypercoreJournal.includes('await seeder.withdrawAuthorityOwnedCore(coreKey, this.storageController.ownershipHandoff)') &&
   outboxLogApp.includes("outboxlog.journal === 'hypercore-outboxes'") &&
   outboxLogApp.includes('seedPersistenceCores') &&
   outboxLogTest.includes('partitioned Corestore journal mirrors accepted rows into per-outbox cores') &&
@@ -2249,10 +2267,12 @@ if (
   outboxLogSeederRuntimeTest.includes('outboxlog app runtime seeder pins partitioned Hypercore cores by key') &&
   outboxLogSeederRuntimeTest.includes("journal: 'hypercore-outboxes'") &&
   outboxLogSeederRuntimeTest.includes('app.seedPersistenceCores()') &&
-  outboxLogSeederRuntimeTest.includes('get ({ name, key })') &&
+  outboxLogSeederRuntimeTest.includes('get ({ name, key, createIfMissing = true })') &&
   outboxLogSeederRuntimeTest.includes('keyGets.push(keyHex)') &&
-  outboxLogSeederRuntimeTest.includes('seeder.cores.get(info.index.coreKey).core') &&
-  outboxLogSeederRuntimeTest.includes("seeder.on('seeding-core'") &&
+  outboxLogSeederRuntimeTest.includes("seeder.on('seeding-owned-core'") &&
+  outboxLogSeederRuntimeTest.includes("t.alike(store.keyGets, [], 'writer-owned cores are never re-opened as remote seed pins')") &&
+  outboxLogSeederRuntimeTest.includes('seeder._ownedAnnouncements.get(info.index.coreKey).sourceCore') &&
+  outboxLogSeederRuntimeTest.includes('same-process stop and restart withdraws old sessions before rebinding a new handoff') &&
   outboxLogSeederRuntimeTest.includes('swarm.joins.length') &&
   outboxLogSeederRuntimeTest.includes('OUTBOXLOG_PARTITIONED_JOURNAL_INDEX_NAME') &&
   outboxLogSeederRuntimeTest.includes('OUTBOXLOG_OUTBOX_CORE_PREFIX')
@@ -2834,8 +2854,9 @@ if (
   relayApi.includes('const cors = buildCorsDecision(this.corsOrigins, requestOrigin, requestPath)') &&
   relayApi.includes('if (cors.varyOrigin)') &&
   relayApi.includes("appendVaryHeader(res, 'Origin')") &&
-  relayApi.includes("res.setHeader('Access-Control-Allow-Origin', cors.allowedOrigin)") &&
-  relayApi.includes('if (cors.preflightDenied)') &&
+  relayApi.includes('const publicOutboxLog = isOutboxLogHttpRoute(requestPath)') &&
+  relayApi.includes("res.setHeader('Access-Control-Allow-Origin', publicOutboxLog ? '*' : cors.allowedOrigin)") &&
+  relayApi.includes('if (cors.preflightDenied && !publicOutboxLog)') &&
   relayApi.includes('return getAllowedOrigin(this.corsOrigins, requestOrigin)') &&
   apiResponseTest.includes('appendVaryHeader preserves wildcard and avoids duplicates') &&
   apiCorsTest.includes('origin allowlist supports deny-by-default, strings, arrays, and wildcard') &&
@@ -2843,7 +2864,8 @@ if (
   apiCorsTest.includes('public poker routes stay wildcard but usage telemetry stays managed') &&
   apiAuthTest.includes('configured CORS origins vary cached responses by Origin') &&
   apiAuthTest.includes('allowed dynamic CORS response varies by Origin') &&
-  apiAuthTest.includes('denied preflight also varies by Origin')
+  apiAuthTest.includes('denied preflight also varies by Origin') &&
+  apiOutboxLogTest.includes('/api/outboxlog browser preflight exposes only the public blind-pipe headers')
 ) {
   pass('management API CORS decisions are extracted and dynamic responses vary by Origin for cache safety')
 } else {
@@ -3056,7 +3078,8 @@ if (
 }
 
 if (
-  relayApi.includes('import {\n  checkApiRateLimit,') &&
+  relayApi.includes('checkApiRateLimit,') &&
+  relayApi.includes("} from './api-rate-limit.js'") &&
   relayApi.includes('return checkApiRateLimit(this._rateLimits, ip)') &&
   relayApi.includes('return checkEndpointRateLimit(this._endpointRateLimits, ip, path)') &&
   relayApi.includes('return clientIpFromRequest(req, this.trustProxy)') &&
@@ -3872,7 +3895,7 @@ if (
   relayApiConfigUpdate.includes("const result = validatePositiveNumber(body.maxRelayBandwidthMbps, 0.1, 100000, 'maxRelayBandwidthMbps')") &&
   relayApiModeTransport.includes("const result = validatePositiveInt(body.maxConnections, 0, 100000, 'maxConnections')") &&
   relayApiModeTransport.includes("const result = validatePositiveNumber(body.maxRelayBandwidthMbps, 0, 100000, 'maxRelayBandwidthMbps')") &&
-  relayApiModeTransport.includes("const result = validatePositiveInt(body.maxStorageBytes, 0, 10e12, 'maxStorageBytes')") &&
+  relayApiModeTransport.includes("const result = validatePositiveInt(body.maxStorageBytes, 1, 10e12, 'maxStorageBytes')") &&
   relayApi.includes('runDevicePairingManagementRouteAction') &&
   relayApi.includes('resolveDevicePairingManagementRoute,') &&
   relayApi.includes('const devicePairingRoute = resolveDevicePairingManagementRoute(req.method, path)') &&
@@ -3906,9 +3929,9 @@ if (
 }
 
 if (
-  gatewayServer.includes('opts.gatewayPort ?? DEFAULT_GATEWAY_PORT') &&
+  gatewayServer.includes('opts.gatewayPort ?? nodeConfig.gatewayPort ?? DEFAULT_GATEWAY_PORT') &&
   gatewayServer.includes('_activeSockets = new Set()') &&
-  gatewayServer.includes("this.server.on('connection'") &&
+  gatewayServer.includes("server.on('connection'") &&
   gatewayServer.includes("import { buildGatewayCatalogPayload } from './api-catalog-read.js'") &&
   gatewayServer.includes("import { writeJson } from './api-response.js'") &&
   gatewayServer.includes('const result = buildGatewayCatalogPayload({ node: this.node, url })') &&
@@ -3968,13 +3991,13 @@ if (
   gatewayServer.includes('closeAllConnections') &&
   gatewayServer.includes('socket.destroy()') &&
   gatewayServer.includes('const RATE_LIMIT_MAX_BUCKETS = 50_000') &&
-  gatewayServer.includes('this._maxRateLimitBuckets = positiveInteger(opts.maxRateLimitBuckets, RATE_LIMIT_MAX_BUCKETS)') &&
+  gatewayServer.includes("this._maxRateLimitBuckets = strictPositiveInteger(opts.maxRateLimitBuckets, RATE_LIMIT_MAX_BUCKETS, 'maxRateLimitBuckets', 1_000_000)") &&
   gatewayServer.includes('if (!entry && this._rateLimits.size >= this._maxRateLimitBuckets)') &&
   gatewayServer.includes('this._sweepRateLimits(now)') &&
   gatewayServer.includes('if (this._rateLimits.size >= this._maxRateLimitBuckets) return false') &&
   gatewayServer.includes('!Number.isFinite(entry.count)') &&
   gatewayServer.includes('!Number.isFinite(entry.resetAt)') &&
-  gatewayServer.includes('function positiveInteger') &&
+  gatewayServer.includes('function strictPositiveInteger') &&
   apiCatalogReadTest.includes('api catalog read: route helper maps exact public catalog reads') &&
   apiCatalogReadTest.includes('api catalog read: route payload helper dispatches catalog and legacy typed routes') &&
   apiCatalogReadTest.includes('unknown catalog read route') &&
@@ -4015,6 +4038,11 @@ const gatewayStatsRouteEnd = relayApi.indexOf('// Index-layer query routes', gat
 const gatewayStatsRouteBlock = gatewayStatsRouteStart === -1
   ? ''
   : relayApi.slice(gatewayStatsRouteStart, gatewayStatsRouteEnd)
+const appLifecycleRetireDriveStart = appLifecycleCore.indexOf('async _retireDrive (owner)')
+const appLifecycleRetireDriveEnd = appLifecycleCore.indexOf('async _registerPersistentDownloads', appLifecycleRetireDriveStart)
+const appLifecycleRetireDriveBlock = appLifecycleRetireDriveStart === -1
+  ? ''
+  : appLifecycleCore.slice(appLifecycleRetireDriveStart, appLifecycleRetireDriveEnd)
 if (
   relayApi.includes("import {\n  buildGatewayStatsRoutePayload,\n  resolveGatewayStatsRoute\n} from './api-gateway-stats.js'") &&
   relayApi.includes('const gatewayStatsRoute = resolveGatewayStatsRoute(req.method, path)') &&
@@ -4024,7 +4052,7 @@ if (
   gatewayStatsRouteBlock.includes('route: gatewayStatsRoute') &&
   !gatewayStatsRouteBlock.includes('this._gateway.getStats()') &&
   relayApiOverview.includes("import { sanitizeGatewayStats } from './api-gateway-stats.js'") &&
-  relayApiOverview.includes("gateway: gateway && typeof gateway.getStats === 'function' ? sanitizeGatewayStats(gateway.getStats()) : null") &&
+  relayApiOverview.includes("const gatewayStats = gw && typeof gw.getStats === 'function'\n    ? sanitizeGatewayStats(gw.getStats())\n    : null") &&
   relayApiGatewayStats.includes('export function resolveGatewayStatsRoute') &&
   relayApiGatewayStats.includes("'GET /api/gateway'") &&
   relayApiGatewayStats.includes('export function buildGatewayStatsRoutePayload') &&
@@ -4549,19 +4577,31 @@ if (
   appRegistryCore.includes('const throwOnError = opts.throwOnError === true') &&
   appRegistryCore.includes('this._beeWriteTail = op.catch(() => {})') &&
   appRegistryCore.includes('throw err') &&
-  appLifecycleCore.includes('node.appRegistry.set(appKeyHex, {') &&
+  (
+    appLifecycleCore.includes('node.appRegistry.set(appKeyHex, {') ||
+    appLifecycleCore.includes('node.appRegistry.set(appKeyHex, nextEntry, { persist: false })')
+  ) &&
   appLifecycleCore.includes('}, { persist: false })') &&
   appLifecycleCore.includes('await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })') &&
-  appLifecycleCore.includes('node.appRegistry.restoreSnapshot(registrySnapshot)') &&
+  appLifecycleCore.includes('const previousEntry = node.appRegistry.get(appKeyHex) || null') &&
+  appLifecycleCore.includes('if (previousEntry) node.appRegistry.set(appKeyHex, previousEntry, { persist: false })') &&
+  appLifecycleCore.includes('else node.appRegistry.delete(appKeyHex, { persist: false })') &&
   appLifecycleCore.includes('node.appRegistry.delete(appKeyHex, { persist: false })') &&
   appLifecycleCore.includes('await node.appRegistry.persistDelete(appKeyHex, { throwOnError: true })') &&
-  appLifecycleCore.indexOf('await node.appRegistry.persistDelete(appKeyHex, { throwOnError: true })') <
-    appLifecycleCore.indexOf('Destroy persistent download ranges before tearing down the drive') &&
+  appLifecycleRetireDriveBlock.includes('Phase 1: Settle live resources, inverse of acquisition') &&
+  appLifecycleRetireDriveBlock.includes('Phase 2: Durable delete') &&
+  appLifecycleRetireDriveBlock.includes('Phase 3: Complete') &&
+  appLifecycleCore.includes('this._retiringDrives.set(appKeyHex, owner)') &&
+  appLifecycleRetireDriveBlock.indexOf('Phase 1: Settle live resources, inverse of acquisition') <
+    appLifecycleRetireDriveBlock.indexOf('await node.appRegistry.persistDelete(appKeyHex, { throwOnError: true })') &&
+  appLifecycleRetireDriveBlock.indexOf('await node.appRegistry.persistDelete(appKeyHex, { throwOnError: true })') <
+    appLifecycleRetireDriveBlock.indexOf('Phase 3: Complete') &&
   appLifecycleCore.indexOf('await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })') <
-    appLifecycleCore.indexOf('node.swarm.join(discoveryKey, { server: true, client: true })') &&
+    appLifecycleCore.indexOf("this.emit('seeding', { appKey: appKeyHex") &&
   appRegistryTest.includes('snapshot restore preserves map identity and indexes') &&
   appRegistryTest.includes('explicit JSON persistence rejects write failures') &&
-  appLifecyclePersistenceTest.includes('failed unseed registry delete keeps live resources intact') &&
+  appLifecyclePersistenceTest.includes('failed durable unseed retains retry debt after ordered live teardown') &&
+  appLifecyclePersistenceTest.includes('closed retiring entry is restored in memory for retry') &&
   appLifecyclePersistenceTest.includes('seedApp rolls back registry when explicit registry persist fails')
 ) {
   pass('app seed/unseed lifecycle persists registry changes before API-visible success and rolls back failed durable writes')
@@ -4935,7 +4975,7 @@ if (
   networkDiscoveryCore.includes('MAX_META_BYTES = 2048') &&
   networkDiscoveryCore.includes('HOLESAIL_Z32_KEY') &&
   networkDiscoveryCore.includes('normalizeHolesailKey (key)') &&
-  networkDiscoveryCore.includes('_handleMetadataFrame (pubkey, buf)') &&
+  networkDiscoveryCore.includes('_handleMetadataFrame (pubkey, buf, conn = null, epoch = this._lifecycleEpoch)') &&
   networkDiscoveryCore.includes('buf.byteLength > MAX_META_BYTES') &&
   networkDiscoveryCore.includes('contentLength > MAX_API_OVERVIEW_BYTES') &&
   networkDiscoveryCore.includes("Buffer.byteLength(chunk, 'utf8')") &&
@@ -5065,7 +5105,8 @@ if (
   relayApiSeedCore.includes("typeof body.appKey === 'string'") &&
   relayApiSeedCore.includes('isValidHexKey(coreKey, 64)') &&
   relayApiSeedCore.includes("return { ok: false, status: 503, payload: { error: 'seeder not available' } }") &&
-  relayApiSeedCore.includes('node.seeder.seedCore(coreKey)') &&
+  relayApiSeedCore.includes('node.seeder.seedCore(coreKey, { maxStorageBytes })') &&
+  relayApiSeedCore.includes('positiveStorageBound(body.maxStorageBytes)') &&
   relayApiSeedCore.includes("body.catalog === true && typeof node.setCatalogBeeKey === 'function'") &&
   relayApiSeedCore.includes("return { ok: false, kind: 'seed-error', error: err }") &&
   apiSeedCoreTest.includes('seed-core helper: route resolver maps only the exact operator seed-core route') &&
@@ -5765,7 +5806,10 @@ if (
 if (
   quorumSelector.includes('const DEFAULT_MIN_OPERATORS = 3') &&
   quorumSelector.includes('adds the most missing dimensions') &&
-  quorumSelector.includes('gain = (seenRegions.has(region) ? 0 : 1) + (seenOperators.has(op) ? 0 : 1)') &&
+  quorumSelector.includes('function failureDomainOf') &&
+  quorumSelector.includes('function operatorOf') &&
+  quorumSelector.includes('seenDomains.has(failureDomainOf(r))') &&
+  quorumSelector.includes("return r.operator || '__undeclared__'") &&
   quorumSelector.includes('function normalizedScore') &&
   quorumSelector.includes('Number.isFinite(score) && score >= 0 && score <= 1') &&
   quorumSelector.includes('function normalizedLatency') &&
@@ -5777,7 +5821,9 @@ if (
   quorumSelectorTest.includes('warns when operator diversity is below the floor') &&
   quorumSelectorTest.includes('ignores malformed or unnormalized score claims') &&
   quorumSelectorTest.includes('ignores malformed latency claims when scores tie') &&
-  threatModelDoc.includes('client `selectQuorum` now diversity-ranks by region and operator')
+  quorumSelectorTest.includes('one owner across many hosts counts as ONE operator') &&
+  quorumSelectorTest.includes('an undeclared operator is unknown, not independent') &&
+  threatModelDoc.includes('client `selectQuorum` now spreads by region and failure domain while counting operator independence separately')
 ) {
   pass('client quorum selection prioritizes operator/region diversity and ignores malformed ranking signals')
 } else {
@@ -7141,6 +7187,43 @@ if (
 const umbrelAppDataDirExpression = '$' + '{APP_DATA_DIR}'
 const umbrelAppSeedExpression = '$' + '{APP_SEED}'
 if (
+  vrfService.includes('context.config.vrfBeacon') &&
+  vrfService.includes('this._configureBeacon(context.config.vrfBeacon)') &&
+  apiVrfTest.includes('VRF service consumes Node PluginLoader context.config.vrfBeacon')
+) {
+  pass('Node PluginLoader context activates the configured VRF beacon instead of leaving its HTTP surface permanently disabled')
+} else {
+  fail('Node VRF beacon config can drift back into an unreachable constructor-only option')
+}
+
+if (
+  configLoader.includes('export function applyRuntimeEnvDefaults') &&
+  configLoader.includes("HIVERELAY_OUTBOXLOG: 'outboxlog'") &&
+  configLoader.includes("HIVERELAY_STORAGE_PROOF: 'storage-proof'") &&
+  configLoader.includes("'HIVERELAY_TOR_MIN_DAEMON_VERSION', 'tor', 'minDaemonVersion'") &&
+  configLoader.includes("'HIVERELAY_TOR_ROSTER_FILE', 'tor', 'rosterFile'") &&
+  configLoader.includes("'HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE', 'outboxlog', 'maxJournalStorageBytes'") &&
+  configLoader.includes('HIVERELAY_NOTIFY_PUSH_CONFIG') &&
+  cliIndex.includes('applyRuntimeEnvDefaults(cliOverrides, process.env)') &&
+  relayNode.includes("typeof data.enabled === 'boolean'") &&
+  configLoaderTest.includes('runtime env defaults: Node packaging enables bounded services and Tor') &&
+  configLoaderTest.includes('runtime env defaults: persisted fields and CLI flags remain authoritative') &&
+  relayNodeTest.includes('persisted services disable overrides package defaults') &&
+  rootDockerCompose.includes('HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes') &&
+  rootDockerCompose.includes('HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE=512MB') &&
+  systemdService.includes('Environment=HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes') &&
+  systemdService.includes('Environment=HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE=512MB') &&
+  umbrelCompose.includes('HIVERELAY_OUTBOXLOG_JOURNAL: hypercore-outboxes') &&
+  umbrelCompose.includes('HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE: 512MB') &&
+  !/^\s+- HIVERELAY_SHARD_STORE=1\s*$/m.test(rootDockerCompose) &&
+  !/^\s+HIVERELAY_SHARD_STORE:\s*["']?true["']?\s*$/m.test(umbrelCompose)
+) {
+  pass('Node packaging env maps to operator-overridable services, bounded OutboxLog persistence, private wake descriptors, and Tor defaults')
+} else {
+  fail('Node packaging can drift back to inert or unbounded service/Tor environment claims')
+}
+
+if (
   // The official-submission compose must pin an immutable, digest-qualified GHCR
   // image (real 64-hex digest, never a floating tag) so Umbrel reviewers get a
   // reproducible pull. The image *tag* tracks the last published appliance image
@@ -7164,11 +7247,11 @@ if (
   cliIndex.includes('else if (process.env.HIVERELAY_STORAGE) cliOverrides.storage = process.env.HIVERELAY_STORAGE') &&
   cliIndex.includes('HIVERELAY_MAX_STORAGE') &&
   cliIndex.includes("parseBytesOrExit(process.env.HIVERELAY_MAX_STORAGE, 'HIVERELAY_MAX_STORAGE')") &&
-  cliIndex.includes('!hasPersistedConfig()') &&
-  cliIndex.includes('function hasPersistedConfig') &&
+  cliIndex.includes('!hasPersistedMaxStorage()') &&
+  cliIndex.includes('function hasPersistedMaxStorage') &&
   cliIndex.includes('Invalid $' + '{label}: expected a positive size') &&
   configLoaderTest.includes('cli start rejects invalid HIVERELAY_MAX_STORAGE before boot') &&
-  configLoaderTest.includes('cli start uses HIVERELAY_MAX_STORAGE only before saved operator config exists') &&
+  configLoaderTest.includes('cli start keeps HIVERELAY_MAX_STORAGE explicit until a cap is persisted') &&
   configLoaderTest.includes('cli start uses HIVERELAY_STORAGE when --storage is absent') &&
   configLoaderTest.includes('cli start --storage overrides HIVERELAY_STORAGE') &&
   configLoaderTest.includes('Max Store:  50.0 GB') &&
@@ -9094,7 +9177,10 @@ const updaterRollbackHealthGate = 'if healthy "' + '$' + '{CUR_VER#v}"; then'
 if (
   fleetUpdaterScript.includes('rollback_to_previous') &&
   fleetUpdaterScript.includes('deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous') &&
-  fleetUpdaterScript.includes('if ! git checkout --quiet "$CUR_SHA"; then') &&
+  // Rollback must force away only updater-created dirt. The updater already
+  // refuses to start on a dirty tree, so this is both safe and necessary when
+  // a failed dependency install has modified the target checkout.
+  fleetUpdaterScript.includes('if ! git checkout --quiet --force "$CUR_SHA"; then') &&
   fleetUpdaterScript.includes('if ! deps_if_changed "$TARGET_SHA" "$CUR_SHA"; then') &&
   fleetUpdaterScript.includes(updaterExpectedVersionArg) &&
   fleetUpdaterScript.includes(updaterTargetHealthGate) &&

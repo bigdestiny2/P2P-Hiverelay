@@ -25,6 +25,9 @@ function k (label) {
 function mockNode (registry, opts = {}) {
   return {
     appRegistry: registry,
+    storageAdmission: {
+      canAcknowledge: () => true
+    },
     swarm: opts.swarm || {
       join: () => {},
       flush: () => Promise.resolve()
@@ -52,6 +55,40 @@ function mockDrive ({
   blobsComplete = true,
   blobLength = 8
 } = {}) {
+  function mockCore ({ length, byteLength, canDownload = () => true }) {
+    const state = {
+      length,
+      byteLength,
+      fork: 0,
+      update: async () => true
+    }
+    state.snapshot = () => {
+      const snapshot = {
+        length: state.length,
+        byteLength: state.byteLength,
+        fork: state.fork,
+        ready: async () => {},
+        close: async () => {},
+        download: () => {
+          const tracker = {
+            destroy: () => {},
+            done: async () => {
+              if (!canDownload()) {
+                await new Promise(resolve => {
+                  const tmr = setTimeout(resolve, 100_000)
+                  if (typeof tmr.unref === 'function') tmr.unref()
+                })
+              }
+            }
+          }
+          return tracker
+        }
+      }
+      return snapshot
+    }
+    return state
+  }
+
   const drive = {
     closed: false,
     closing: false,
@@ -72,18 +109,25 @@ function mockDrive ({
       }
       return dl
     },
-    blobs: {
-      core: {
-        length: blobLength,
-        has: async (start, end) => {
-          if (drive.blobs.core.length === 0) return true
-          return blobsComplete
-        }
-      }
-    },
+    _blobDownloadComplete: blobsComplete && downloadOk,
     // Test helper: flip the partial-pin signal mid-test so we can model
     // "first repair pass pulls some blocks, second pass pulls the rest."
-    _setBlobsComplete: (v) => { drive.blobs.core.has = async () => v }
+    _setBlobsComplete: (v) => {
+      drive.blobs.core.has = async () => v
+      drive._blobDownloadComplete = v
+    }
+  }
+  drive.db = { core: mockCore({ length: 1, byteLength: 128 }) }
+  drive.blobs = {
+    core: mockCore({
+      length: blobLength,
+      byteLength: blobLength * 128,
+      canDownload: () => drive._blobDownloadComplete
+    })
+  }
+  drive.blobs.core.has = async () => {
+    if (drive.blobs.core.length === 0) return true
+    return blobsComplete
   }
   return drive
 }
@@ -112,7 +156,7 @@ test('repair: succeeds when drive update yields version > 0', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 0, updateOk: true })
-  reg.set(k('cc'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('cc'), { type: 'app', drive, discoveryKey: drive.discoveryKey, maxStorage: 4096 })
   const lifecycle = new AppLifecycle(mockNode(reg))
   const ok = await lifecycle.repairUnanchored(k('cc'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, true, 'returns true')
@@ -125,7 +169,7 @@ test('repair: returns false on update timeout', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 0, updateOk: false })
-  reg.set(k('dd'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('dd'), { type: 'app', drive, discoveryKey: drive.discoveryKey, maxStorage: 4096 })
   const lifecycle = new AppLifecycle(mockNode(reg))
   const ok = await lifecycle.repairUnanchored(k('dd'), { updateTimeout: 200, downloadTimeout: 200 })
   t.is(ok, false)
@@ -137,7 +181,7 @@ test('repair: returns false on update throw', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 0, throwsOnUpdate: true })
-  reg.set(k('ee'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('ee'), { type: 'app', drive, discoveryKey: drive.discoveryKey, maxStorage: 4096 })
   const lifecycle = new AppLifecycle(mockNode(reg))
   const ok = await lifecycle.repairUnanchored(k('ee'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, false)
@@ -212,7 +256,7 @@ test('repair: partial pin (metadata replicated, blocks missing) stays unanchored
   const reg = new AppRegistry(dir)
   // Drive replies "metadata synced" but blob core has gaps.
   const drive = mockDrive({ version: 5, updateOk: true, downloadOk: true, blobsComplete: false })
-  reg.set(k('partial'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('partial'), { type: 'app', drive, discoveryKey: drive.discoveryKey, maxStorage: 4096 })
   const lifecycle = new AppLifecycle(mockNode(reg))
   const ok = await lifecycle.repairUnanchored(k('partial'), { updateTimeout: 500, downloadTimeout: 500 })
   t.is(ok, false, 'repair reports failure on partial pin (would have returned true before the fix)')
@@ -224,7 +268,7 @@ test('repair: partial pin gets anchored once all blob blocks land', async (t) =>
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
   const drive = mockDrive({ version: 5, updateOk: true, downloadOk: true, blobsComplete: false })
-  reg.set(k('eventually'), { type: 'app', drive, discoveryKey: drive.discoveryKey })
+  reg.set(k('eventually'), { type: 'app', drive, discoveryKey: drive.discoveryKey, maxStorage: 4096 })
   const lifecycle = new AppLifecycle(mockNode(reg))
 
   // First pass: blocks missing → not anchored

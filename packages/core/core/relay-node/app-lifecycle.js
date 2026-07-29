@@ -4,7 +4,7 @@ import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
 import { readFile } from 'fs/promises'
 import { join } from 'path'
-import { updateWithTimeout, downloadWithTimeout, getDriveSize } from './cancellable-drive-update.js'
+import { updateWithTimeout, getDriveSize } from './cancellable-drive-update.js'
 import { isAbortError } from './lifecycle-scope.js'
 import { verifyShareBundleForRelay } from '../pvss.js'
 import { STORAGE_SHARE_BUNDLE_MAX_BYTES } from '../../config/storage-admission-authority.js'
@@ -17,6 +17,10 @@ import {
   normalizeStorageClass
 } from '../constants.js'
 
+// Capability marker used only by durable registry recovery. A Symbol keeps
+// external callers from forging the serve-only path through JSON/options.
+const STORAGE_RECOVERY_INGRESS = Symbol('storage-recovery-ingress')
+
 function seedAdmissionTimeoutError (timeoutMs) {
   const err = new Error(`Seed admission timed out after ${timeoutMs}ms`)
   err.code = 'STORAGE_SEED_ADMISSION_TIMEOUT'
@@ -28,6 +32,24 @@ function seedAdmissionAbortError () {
   err.name = 'AbortError'
   err.code = 'ABORT_ERR'
   return err
+}
+
+function stableCoreProofState (core, attempts = 4) {
+  if (!core) return null
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const forkBefore = Number(core.fork ?? 0)
+    const lengthBefore = Number(core.length)
+    const byteLengthBefore = Number(core.byteLength)
+    const lengthAfter = Number(core.length)
+    const byteLengthAfter = Number(core.byteLength)
+    const forkAfter = Number(core.fork ?? 0)
+    if (Number.isSafeInteger(forkBefore) && forkBefore >= 0 && forkBefore === forkAfter &&
+        Number.isSafeInteger(lengthBefore) && lengthBefore >= 0 && lengthBefore === lengthAfter &&
+        Number.isSafeInteger(byteLengthBefore) && byteLengthBefore >= 0 && byteLengthBefore === byteLengthAfter) {
+      return { fork: forkAfter, length: lengthAfter, byteLength: byteLengthAfter }
+    }
+  }
+  return null
 }
 
 /**
@@ -67,6 +89,16 @@ export class AppLifecycle extends EventEmitter {
    */
   get seededApps () {
     return this.node.appRegistry.apps
+  }
+
+  _joinDriveDiscovery (appKeyHex, discoveryKey, handles = null) {
+    const handle = this.node.swarm.join(discoveryKey, { server: true, client: true })
+    const entry = this.node.appRegistry.get(appKeyHex)
+    const owned = entry && entry.discoveryHandles instanceof Set
+      ? entry.discoveryHandles
+      : (handles instanceof Set ? handles : null)
+    if (owned) owned.add(handle)
+    return handle
   }
 
   /**
@@ -189,6 +221,7 @@ export class AppLifecycle extends EventEmitter {
       if (!entry || !entry.appKey) continue
       try {
         await this.seedApp(entry.appKey, {
+          [STORAGE_RECOVERY_INGRESS]: true,
           appId: entry.appId || null,
           type: entry.type || 'app',
           parentKey: entry.parentKey || null,
@@ -266,6 +299,7 @@ export class AppLifecycle extends EventEmitter {
         if (!appKey) continue
         try {
           await this.seedApp(appKey, {
+            [STORAGE_RECOVERY_INGRESS]: true,
             appId: entry.appId || null,
             type: entry.type || 'app',
             parentKey: entry.parentKey || null,
@@ -291,7 +325,7 @@ export class AppLifecycle extends EventEmitter {
     // Checked before every other gate (including "seeding not enabled") so
     // the caller gets the specific, retryable cause rather than a generic
     // refusal that hides the fact that startup simply hasn't finished.
-    if (node._storageIngressReady === false) {
+    if (node._storageIngressReady === false && opts[STORAGE_RECOVERY_INGRESS] !== true) {
       const err = new Error('storage recovery inventory has not sealed')
       err.code = 'STORAGE_RECOVERY_INVENTORY_PENDING'
       throw err
@@ -439,7 +473,8 @@ export class AppLifecycle extends EventEmitter {
     // reservation first — each of those is a resource we would then have to
     // unwind, and the reservation error (STORAGE_ADMISSION_BLOCKED) would
     // mask the real cause.
-    if (node.appRegistry && typeof node.appRegistry.assertDurableWritesAvailable === 'function') {
+    if (normalizedOpts[STORAGE_RECOVERY_INGRESS] !== true &&
+        node.appRegistry && typeof node.appRegistry.assertDurableWritesAvailable === 'function') {
       node.appRegistry.assertDurableWritesAvailable()
     }
 
@@ -468,6 +503,7 @@ export class AppLifecycle extends EventEmitter {
           err.repin = reconcile
           throw err
         }
+        this._recordCustodyReceiptOnRepin(appKeyHex, existing, normalizedOpts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through to seed properly.
@@ -488,6 +524,11 @@ export class AppLifecycle extends EventEmitter {
 
   async _seedAppInner (appKeyHex, opts, contentType, parentKey, mountPath, privacyTier) {
     const node = this.node
+    const recoveringEntry = this.seededApps.get(appKeyHex) || null
+    const recoveringExisting = recoveringEntry !== null
+    const readOnlyRecovery = recoveringExisting &&
+      opts[STORAGE_RECOVERY_INGRESS] === true &&
+      node.appRegistry.physicalReadOnly === true
 
     // Re-check after acquiring mutex — another call may have seeded it.
     // Same null-discoveryKey guard + v0.8.12 opts reconcile as the
@@ -505,6 +546,7 @@ export class AppLifecycle extends EventEmitter {
           err.repin = reconcile
           throw err
         }
+        this._recordCustodyReceiptOnRepin(appKeyHex, existing, opts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through.
@@ -516,8 +558,13 @@ export class AppLifecycle extends EventEmitter {
     const admissionCap = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
       ? Math.floor(opts.maxStorage)
       : null
+    if (!recoveringExisting && admissionCap === null) {
+      const err = new Error('positive safe-integer maxStorage is required')
+      err.code = 'STORAGE_BOUND_REQUIRED'
+      throw err
+    }
     let admissionReservation = null
-    if (node.storageAdmission && typeof node.storageAdmission.reserve === 'function' && admissionCap !== null) {
+    if (!readOnlyRecovery && node.storageAdmission && typeof node.storageAdmission.reserve === 'function' && admissionCap !== null) {
       const reservation = node.storageAdmission.reserve(`drive:${appKeyHex}`, admissionCap)
       if (!reservation || reservation.allowed !== true) {
         const err = new Error('Storage admission blocked: ' + (reservation && reservation.reason))
@@ -537,6 +584,7 @@ export class AppLifecycle extends EventEmitter {
     }
 
     let drive = null
+    const discoveryHandles = new Set()
     try {
       // Evict oldest app if storage capacity would be exceeded
       if (node.config.enableEviction !== false && node.seeder && node.seeder.totalBytesStored >= node.config.maxStorageBytes && this.seededApps.size > 0) {
@@ -600,7 +648,7 @@ export class AppLifecycle extends EventEmitter {
       try {
         await Promise.race([
           drive.ready(),
-          new Promise((_, reject) => {
+          new Promise((_resolve, reject) => {
             readyTimer = setTimeout(
               () => reject(new Error('DRIVE_READY_TIMEOUT after ' + READY_TIMEOUT_MS + 'ms')),
               READY_TIMEOUT_MS
@@ -616,16 +664,32 @@ export class AppLifecycle extends EventEmitter {
 
       // Signal that we're looking for peers for this drive's cores
       const done = drive.findingPeers ? drive.findingPeers() : null
-      node.swarm.join(discoveryKey, { server: true, client: true })
-      node.swarm.flush().then(() => { if (done) done() }).catch(() => { if (done) done() })
-
-      // Eagerly replicate drive content. Extracted to a method in v0.8.12
-      // so the alreadySeeded re-pin path can call it too — see
-      // _reconcileSeedOptsOnRepin.
-      //
-      // Tracked in the LifecycleScope so stop() drains the loop before
-      // tearing down the corestore (vector A1 in STALE-REF-INVENTORY.md).
-      this._trackEagerReplicate(appKeyHex, drive, opts, { source: 'fresh-seed' })
+      this._joinDriveDiscovery(appKeyHex, discoveryKey, discoveryHandles)
+      try {
+        await node.swarm.flush()
+        if (admissionReservation) {
+          // A fresh remote Hyperdrive does not know its blob-core key until
+          // the metadata feed has synchronized. Asking getBlobs() first can
+          // therefore time out even while the publisher is correctly serving
+          // the drive (the PVSS dealer→relay path exercises this exact race).
+          await updateWithTimeout(drive, { timeoutMs: 10_000 })
+          const measured = await getDriveSize(drive, { timeoutMs: 10_000, requireAuthoritative: true })
+          if (!Number.isSafeInteger(measured.totalBytes) || measured.totalBytes < 0) {
+            const err = new Error('DRIVE_SIZE_UNRESOLVED')
+            err.code = 'STORAGE_SIZE_PROOF_UNAVAILABLE'
+            throw err
+          }
+          if (measured.totalBytes > admissionCap) {
+            const err = new Error('maxStorage is below the authoritative drive size')
+            err.code = 'STORAGE_BOUND_BELOW_ACTUAL'
+            err.actualBytes = measured.totalBytes
+            err.boundBytes = admissionCap
+            throw err
+          }
+        }
+      } finally {
+        if (done) done()
+      }
 
       // Revocability commitments — recorded at seed time, derived from the
       // signed seed-request payload (committed by publisher signature, so
@@ -661,10 +725,10 @@ export class AppLifecycle extends EventEmitter {
       // exact pre-seed view (usually the null-discoveryKey placeholder that
       // load() created), rather than leaving a half-seeded entry behind.
       const previousEntry = node.appRegistry.get(appKeyHex) || null
-
-      node.appRegistry.set(appKeyHex, {
+      const nextEntry = {
         drive,
         discoveryKey,
+        discoveryHandles,
         startedAt: Date.now(),
         bytesServed: 0,
         type: contentType,
@@ -691,7 +755,21 @@ export class AppLifecycle extends EventEmitter {
         unseedFreezeMs,
         durability,
         maxStorage
-      }, { persist: false })
+      }
+      if (readOnlyRecovery) {
+        if (typeof node.appRegistry.attachRuntime !== 'function' ||
+            node.appRegistry.attachRuntime(appKeyHex, {
+              drive,
+              discoveryKey,
+              discoveryHandles,
+              bytesServed: 0,
+              retiring: false
+            }) !== true) {
+          throw new Error('APP_REGISTRY_RUNTIME_ATTACH_FAILED')
+        }
+      } else {
+        node.appRegistry.set(appKeyHex, nextEntry, { persist: false })
+      }
 
       // Durability gate: persist EXPLICITLY and await it before reporting the
       // seed as successful. AppRegistry.set() persists fire-and-forget, so a
@@ -699,7 +777,7 @@ export class AppLifecycle extends EventEmitter {
       // discoveryKey, the drive served traffic, and the entry simply was not
       // there after the next restart. On failure, restore the pre-seed view
       // and rethrow; the enclosing catch closes the drive.
-      if (typeof node.appRegistry.persistEntry === 'function') {
+      if (!readOnlyRecovery && typeof node.appRegistry.persistEntry === 'function') {
         try {
           await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })
         } catch (err) {
@@ -724,6 +802,12 @@ export class AppLifecycle extends EventEmitter {
         admissionReservation = null
       }
 
+      // Start exact-state replication only after both durable registry
+      // persistence and storage-authority commitment are visible.
+      if (!readOnlyRecovery) {
+        this._trackEagerReplicate(appKeyHex, drive, opts, { source: 'fresh-seed' })
+      }
+
       // 2026-05-23: register persistent download ranges on the drive's
       // cores so they actively pull missing blocks from any peer that
       // has them — not only during the one-shot _eagerReplicate +
@@ -743,15 +827,17 @@ export class AppLifecycle extends EventEmitter {
       // for this seed cycle. _eagerReplicate's drive.download('/') will
       // populate the blob core on next pass, then a subsequent
       // _registerPersistentDownloads call picks up the slack.
-      this._registerPersistentDownloads(appKeyHex, drive).catch((err) => {
-        this.emit('persistent-download-error', {
-          appKey: appKeyHex,
-          error: err.message || String(err)
+      if (!readOnlyRecovery) {
+        this._registerPersistentDownloads(appKeyHex, drive).catch((err) => {
+          this.emit('persistent-download-error', {
+            appKey: appKeyHex,
+            error: err.message || String(err)
+          })
         })
-      })
+      }
 
       if (node.distributedDriveBridge) {
-        node.distributedDriveBridge.registerDrive(appKeyHex, drive)
+        try { node.distributedDriveBridge.registerDrive(appKeyHex, drive) } catch (_) {}
       }
 
       this.emit('seeding', { appKey: appKeyHex, discoveryKey: b4a.toString(discoveryKey, 'hex') })
@@ -761,6 +847,9 @@ export class AppLifecycle extends EventEmitter {
       // Hyperdrive constructor both throw with `drive` still null), then undo
       // the admission reservation so a failed seed leaves the ledger exactly as
       // it found it.
+      for (const handle of discoveryHandles) {
+        try { if (handle && typeof handle.destroy === 'function') await handle.destroy() } catch (_) {}
+      }
       if (drive) { try { await drive.close() } catch (_) {} }
       this._rollbackSeedAdmission(admissionReservation)
       throw err
@@ -825,6 +914,173 @@ export class AppLifecycle extends EventEmitter {
     return promise
   }
 
+  async _downloadProvedDriveRanges (drive, proof, opts = {}) {
+    const timeoutMs = Number.isFinite(opts.timeoutMs) ? opts.timeoutMs : 120_000
+    const signal = opts.signal || null
+    const metaCore = proof?.metaCoreSnapshot
+    const blobCore = proof?.blobCoreSnapshot
+    if (!metaCore || !blobCore || !Number.isSafeInteger(proof?.metaLength) ||
+        !Number.isSafeInteger(proof?.blobLength)) {
+      throw new Error('authoritative drive range proof unavailable')
+    }
+    const trackers = []
+    const add = (core, end) => {
+      if (end <= 0) return
+      trackers.push(core.download({ start: 0, end }))
+    }
+    add(metaCore, proof.metaLength)
+    add(blobCore, proof.blobLength)
+    let timer = null
+    let abortHandler = null
+    try {
+      await new Promise((resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('download timeout')), timeoutMs)
+        if (signal) {
+          if (signal.aborted) {
+            const err = new Error('Aborted')
+            err.name = 'AbortError'
+            reject(err)
+            return
+          }
+          abortHandler = () => {
+            const err = new Error('Aborted')
+            err.name = 'AbortError'
+            reject(err)
+          }
+          signal.addEventListener('abort', abortHandler)
+        }
+        Promise.all(trackers.map((tracker) => {
+          if (typeof tracker.done === 'function') return tracker.done()
+          if (typeof tracker.downloaded === 'function') return tracker.downloaded()
+          throw new Error('drive range tracker unavailable')
+        })).then(resolve, reject)
+      })
+    } finally {
+      if (timer) clearTimeout(timer)
+      if (signal && abortHandler) signal.removeEventListener('abort', abortHandler)
+      for (const tracker of trackers) {
+        try { tracker.destroy() } catch {}
+      }
+    }
+  }
+
+  _validAnchoredProof (proof) {
+    return Number.isSafeInteger(proof?.driveVersion) && proof.driveVersion > 0 &&
+      Number.isSafeInteger(proof.metaLength) && proof.metaLength >= 0 &&
+      Number.isSafeInteger(proof.blobLength) && proof.blobLength >= 0 &&
+      Number.isSafeInteger(proof.totalBytes) && proof.totalBytes >= 0 &&
+      Number.isSafeInteger(proof.metaFork) && proof.metaFork >= 0 &&
+      Number.isSafeInteger(proof.blobFork) && proof.blobFork >= 0
+  }
+
+  async _closeDriveProof (proof) {
+    for (const core of [proof?.metaCoreSnapshot, proof?.blobCoreSnapshot]) {
+      if (core && typeof core.close === 'function') {
+        try { await core.close() } catch {}
+      }
+    }
+    if (proof) {
+      proof.metaCoreSnapshot = null
+      proof.blobCoreSnapshot = null
+    }
+  }
+
+  async _installPersistentDownloadProof (appKeyHex, drive, proof) {
+    const entry = this.node.appRegistry && this.node.appRegistry.get(appKeyHex)
+    if (!entry || entry.drive !== drive || !this._validAnchoredProof(proof) ||
+        !proof.metaCoreSnapshot || !proof.blobCoreSnapshot) return false
+
+    const metaState = stableCoreProofState(proof.metaCoreSnapshot)
+    const blobState = stableCoreProofState(proof.blobCoreSnapshot)
+    if (!metaState || !blobState ||
+        metaState.length !== proof.metaLength || metaState.fork !== proof.metaFork ||
+        blobState.length !== proof.blobLength || blobState.fork !== proof.blobFork ||
+        metaState.byteLength + blobState.byteLength !== proof.totalBytes) return false
+
+    const nextRanges = []
+    try {
+      nextRanges.push(proof.metaCoreSnapshot.download({ start: 0, end: proof.metaLength }))
+      nextRanges.push(proof.blobCoreSnapshot.download({ start: 0, end: proof.blobLength }))
+    } catch (err) {
+      for (const range of nextRanges) {
+        try { range.destroy() } catch {}
+      }
+      throw err
+    }
+
+    const previousRanges = Array.isArray(entry.downloadRanges) ? entry.downloadRanges : []
+    const previousCores = Array.isArray(entry.downloadSnapshotCores) ? entry.downloadSnapshotCores : []
+    entry.downloadRanges = nextRanges
+    entry.downloadSnapshotCores = [proof.metaCoreSnapshot, proof.blobCoreSnapshot]
+    proof.metaCoreSnapshot = null
+    proof.blobCoreSnapshot = null
+
+    for (const range of previousRanges) {
+      try { if (range && typeof range.destroy === 'function') range.destroy() } catch {}
+    }
+    for (const core of previousCores) {
+      try { if (core && typeof core.close === 'function') await core.close() } catch {}
+    }
+    return true
+  }
+
+  async _commitAnchoredProof (appKeyHex, drive, proof, tracked = false) {
+    const node = this.node
+    if (!tracked) {
+      return this._withDriveLease(appKeyHex, () => this._commitAnchoredProof(appKeyHex, drive, proof, true))
+    }
+    if (!this._validAnchoredProof(proof)) return false
+    if (!node.storageAdmission?.canAcknowledge(`drive:${appKeyHex}`)) return false
+    const entry = node.appRegistry.get(appKeyHex)
+    if (!entry || entry.drive !== drive || drive.closed || drive.closing) return false
+    const previous = {
+      anchored: entry.anchored,
+      anchoredAt: entry.anchoredAt,
+      anchoredLength: entry.anchoredLength,
+      lastAnchorCheck: entry.lastAnchorCheck,
+      storageProvedDriveVersion: entry.storageProvedDriveVersion,
+      storageProvedMetaLength: entry.storageProvedMetaLength,
+      storageProvedBlobLength: entry.storageProvedBlobLength,
+      storageProvedTotalBytes: entry.storageProvedTotalBytes,
+      storageProvedMetaFork: entry.storageProvedMetaFork,
+      storageProvedBlobFork: entry.storageProvedBlobFork
+    }
+    const now = Date.now()
+    node.appRegistry.update(appKeyHex, {
+      anchored: true,
+      anchoredAt: entry.anchoredAt || now,
+      anchoredLength: proof.driveVersion,
+      lastAnchorCheck: now,
+      storageProvedDriveVersion: proof.driveVersion,
+      storageProvedMetaLength: proof.metaLength,
+      storageProvedBlobLength: proof.blobLength,
+      storageProvedTotalBytes: proof.totalBytes,
+      storageProvedMetaFork: proof.metaFork,
+      storageProvedBlobFork: proof.blobFork
+    }, { persist: false })
+    try {
+      if (typeof node.appRegistry.persistEntry === 'function') {
+        await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })
+      } else {
+        await node.appRegistry.flush({ throwOnError: true })
+      }
+    } catch (err) {
+      if (node.appRegistry.get(appKeyHex) === entry) {
+        node.appRegistry.update(appKeyHex, previous, { persist: false })
+      }
+      throw err
+    }
+    try {
+      await this._installPersistentDownloadProof(appKeyHex, drive, proof)
+    } catch (err) {
+      this.emit('persistent-download-error', {
+        appKey: appKeyHex,
+        error: err && err.message ? err.message : String(err)
+      })
+    }
+    return true
+  }
+
   /**
    * Eagerly replicate a drive with the v0.8.11 size-check. Called from:
    *   1. _seedAppInner — fresh seed, after the drive is created.
@@ -857,6 +1113,9 @@ export class AppLifecycle extends EventEmitter {
     if (!drive || drive.closed || drive.closing) return
     const discoveryKey = drive.discoveryKey
     const source = meta.source || 'fresh-seed'
+    const initialBound = node.appRegistry && node.appRegistry.get(appKeyHex)?.maxStorage
+    const initialCap = positiveStorageBound(initialBound ?? opts.maxStorage)
+    if (initialCap === null) return
 
     const MAX_RETRIES = 6
     // Tightened tail — 120s was wasteful when the repair monitor takes
@@ -871,8 +1130,9 @@ export class AppLifecycle extends EventEmitter {
       // was aborted (stop() / self-heal restart in progress).
       if (aborted() || drive.closed || drive.closing) return
 
+      let pinnedProof = null
       try {
-        node.swarm.join(discoveryKey, { server: true, client: true })
+        this._joinDriveDiscovery(appKeyHex, discoveryKey)
         await raceOr(node.swarm.flush())
 
         if (aborted() || drive.closed || drive.closing) return
@@ -898,32 +1158,34 @@ export class AppLifecycle extends EventEmitter {
           // locally if the actual size exceeds the cap the publisher
           // declared. Publisher sees the event (via SDK) at pin time
           // instead of discovering it via end-user reports.
-          const cap = Number.isFinite(opts.maxStorage) && opts.maxStorage > 0
-            ? opts.maxStorage
-            : null
-          if (cap !== null) {
-            const { totalBytes, metaBytes, blobBytes } = await raceOr(
-              getDriveSize(drive, { timeoutMs: 10_000 })
-            )
-            if (totalBytes > cap) {
-              const recommendedCap = Math.ceil(totalBytes * 1.25)
-              this.emit('seed-aborted', {
-                appKey: appKeyHex,
-                reason: 'maxStorage-too-small',
-                recoverable: false,
-                driveBytes: totalBytes,
-                metaBytes,
-                blobBytes,
-                cap,
-                recommendedCap,
-                source,
-                hint: 'drive is ' + totalBytes + ' bytes; publisher should re-seed with maxStorage ≥ ' + recommendedCap
-              })
-              // Clean up — we won't accumulate partial bytes for a drive
-              // we can never anchor.
-              try { await this.unseedApp(appKeyHex) } catch (_) {}
-              return
-            }
+          const liveBound = node.appRegistry && node.appRegistry.get(appKeyHex)?.maxStorage
+          const cap = positiveStorageBound(liveBound ?? opts.maxStorage)
+          // The admission contract must remain finite for the entire pin.
+          // If a concurrent registry mutation removes/corrupts the bound,
+          // stop without anchoring and let reconciliation repair policy.
+          if (cap === null) return
+          pinnedProof = await raceOr(
+            getDriveSize(drive, { timeoutMs: 10_000, requireAuthoritative: true, pinSnapshots: true })
+          )
+          const { totalBytes, metaBytes, blobBytes } = pinnedProof
+          if (!Number.isSafeInteger(totalBytes) || totalBytes < 0 || totalBytes > cap) {
+            const recommendedCap = Number.isSafeInteger(totalBytes) ? Math.ceil(totalBytes * 1.25) : null
+            this.emit('seed-aborted', {
+              appKey: appKeyHex,
+              reason: 'maxStorage-too-small',
+              recoverable: false,
+              driveBytes: totalBytes,
+              metaBytes,
+              blobBytes,
+              cap,
+              recommendedCap,
+              source,
+              hint: 'drive is ' + totalBytes + ' bytes; publisher should re-seed with maxStorage ≥ ' + recommendedCap
+            })
+            // Clean up — we won't accumulate partial bytes for a drive
+            // we can never anchor.
+            try { await this.unseedApp(appKeyHex) } catch (_) {}
+            return
           }
 
           // Cancellable download — destroys the download tracker on
@@ -939,7 +1201,10 @@ export class AppLifecycle extends EventEmitter {
           //     unanchored so runRepairPass keeps re-queuing them.
           let downloadComplete = true
           try {
-            await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: 120_000 }))
+            await raceOr(this._downloadProvedDriveRanges(drive, pinnedProof, {
+              timeoutMs: 120_000,
+              signal: scope ? scope.signal : null
+            }))
           } catch (err) {
             if (isAbortError(err)) return
             downloadComplete = false
@@ -955,12 +1220,13 @@ export class AppLifecycle extends EventEmitter {
           // (every blob block present), not just that metadata synced.
           // If we don't have all blocks yet, record an anchor check and
           // let the retry loop / periodic repair monitor keep pulling.
-          const fullyReplicated = downloadComplete && await this._isDriveFullyReplicated(drive)
-          if (fullyReplicated && node.appRegistry && typeof node.appRegistry.setAnchored === 'function') {
-            node.appRegistry.setAnchored(appKeyHex, drive.version)
-            await this._recordCustodyReceipt(appKeyHex, opts, drive.version)
-            this.emit('anchored', { appKey: appKeyHex, version: drive.version, source })
-            this.emit('reseeded', { appKey: appKeyHex, version: drive.version, source })
+          const fullyReplicated = downloadComplete && this._validAnchoredProof(pinnedProof)
+          const anchored = fullyReplicated && await this._commitAnchoredProof(appKeyHex, drive, pinnedProof)
+          if (anchored) {
+            const anchoredVersion = pinnedProof.driveVersion
+            await this._recordCustodyReceipt(appKeyHex, opts, anchoredVersion)
+            this.emit('anchored', { appKey: appKeyHex, version: anchoredVersion, source })
+            this.emit('reseeded', { appKey: appKeyHex, version: anchoredVersion, source })
             return
           }
 
@@ -976,6 +1242,8 @@ export class AppLifecycle extends EventEmitter {
         // SESSION_CLOSED / timeout / drive closed mid-call → fall through
         // to the retry delay below if the drive is still considered open.
         if (drive.closed || drive.closing) return
+      } finally {
+        await this._closeDriveProof(pinnedProof)
       }
 
       if (attempt < MAX_RETRIES - 1) {
@@ -1054,15 +1322,21 @@ export class AppLifecycle extends EventEmitter {
 
     if (newCap === null || newCap === oldCap) {
       return {
-        ok: true, changed: false,
+        ok: true,
+        changed: false,
         reason: newCap === null ? 'cap-omitted-on-recovery' : 'cap-unchanged',
-        oldCap, newCap, effectiveCap: oldCap
+        oldCap,
+        newCap,
+        effectiveCap: oldCap
       }
     }
 
     if (oldCap !== null && newCap < oldCap) {
       const warning = {
-        appKey: appKeyHex, reason: 'cap-lowered-on-repin', oldCap, newCap,
+        appKey: appKeyHex,
+        reason: 'cap-lowered-on-repin',
+        oldCap,
+        newCap,
         hint: 'Lowering maxStorage on a recovered entry is not honored; relay keeps the higher persisted cap.'
       }
       this._safeEmit('seed-cap-warning', warning)
@@ -1071,8 +1345,12 @@ export class AppLifecycle extends EventEmitter {
 
     if (oldCap === null) {
       const warning = {
-        appKey: appKeyHex, reason: 'cap-baseline-unknown-on-repin', oldCap, newCap,
-        incrementalBytes: null, effectiveCap: oldCap,
+        appKey: appKeyHex,
+        reason: 'cap-baseline-unknown-on-repin',
+        oldCap,
+        newCap,
+        incrementalBytes: null,
+        effectiveCap: oldCap,
         hint: 'Cannot safely calculate incremental storage for a previously-uncapped recovered entry. Let recovery finish, unseed it, then seed fresh with maxStorage.'
       }
       this._safeEmit('seed-cap-warning', warning)
@@ -1207,6 +1485,7 @@ export class AppLifecycle extends EventEmitter {
 
     return { ok: true, changed: true, incrementalBytes, replicationStarted: true }
   }
+
   /**
    * Read /manifest.json for indexing.
    *
@@ -1378,6 +1657,8 @@ export class AppLifecycle extends EventEmitter {
     const entry = node.appRegistry.get(appKeyHex)
     if (!entry || !entry.drive) return false
     if (entry.anchored === true) return true // already anchored, nothing to do
+    const cap = positiveStorageBound(entry.maxStorage)
+    if (cap === null) return false
 
     const drive = entry.drive
     if (drive.closed || drive.closing) return false
@@ -1396,7 +1677,7 @@ export class AppLifecycle extends EventEmitter {
 
     // Re-announce on the discovery topic in case the swarm dropped us
     try {
-      node.swarm.join(drive.discoveryKey, { server: true, client: true })
+      this._joinDriveDiscovery(appKeyHex, drive.discoveryKey)
       await raceOr(Promise.race([
         node.swarm.flush().catch(() => {}),
         new Promise(resolve => {
@@ -1430,6 +1711,34 @@ export class AppLifecycle extends EventEmitter {
       return false
     }
 
+    // Bind repair to one signed metadata/blob snapshot before opening any
+    // storage-producing range. This keeps repair from racing eager replication
+    // and publishing the retired metadata-only `anchored=true` state.
+    let sizeProof = null
+    try {
+      sizeProof = await raceOr(getDriveSize(drive, {
+        timeoutMs: 10_000,
+        requireAuthoritative: true,
+        pinSnapshots: true
+      }))
+      if (!Number.isSafeInteger(sizeProof.totalBytes) || sizeProof.totalBytes < 0 ||
+          sizeProof.totalBytes > cap) {
+        this.emit('seed-aborted', {
+          appKey: appKeyHex,
+          reason: 'maxStorage-too-small',
+          driveBytes: sizeProof.totalBytes,
+          cap,
+          source: 'repair'
+        })
+        await this._closeDriveProof(sizeProof)
+        return false
+      }
+    } catch (err) {
+      await this._closeDriveProof(sizeProof)
+      if (isAbortError(err)) return false
+      return false
+    }
+
     // We have metadata; pull blob content (cancellable on timeout).
     //
     // 2026-05-22: same fix as _eagerReplicate — don't mark anchored on a
@@ -1447,7 +1756,10 @@ export class AppLifecycle extends EventEmitter {
         // as success — flag downloadComplete=false so the partial-pin
         // gate below keeps the entry unanchored and runRepairPass
         // re-queues it on the next tick.
-        await raceOr(downloadWithTimeout(drive, '/', { timeoutMs: downloadTimeout }))
+        await raceOr(this._downloadProvedDriveRanges(drive, sizeProof, {
+          timeoutMs: downloadTimeout,
+          signal: scope ? scope.signal : null
+        }))
       } catch (err) {
         if (isAbortError(err)) return false
         downloadComplete = false
@@ -1455,10 +1767,10 @@ export class AppLifecycle extends EventEmitter {
 
       if ((scope && scope.aborted) || drive.closed || drive.closing) return false
 
-      if (drive.version > 0 && downloadComplete && await this._isDriveFullyReplicated(drive)) {
-        node.appRegistry.setAnchored(appKeyHex, drive.version)
-        await this._recordCustodyReceipt(appKeyHex, entry, drive.version)
-        this.emit('anchored', { appKey: appKeyHex, version: drive.version, source: 'repair' })
+      if (downloadComplete && this._validAnchoredProof(sizeProof) &&
+          await this._commitAnchoredProof(appKeyHex, drive, sizeProof)) {
+        await this._recordCustodyReceipt(appKeyHex, entry, sizeProof.driveVersion)
+        this.emit('anchored', { appKey: appKeyHex, version: sizeProof.driveVersion, source: 'repair' })
         return true
       }
 
@@ -1471,6 +1783,8 @@ export class AppLifecycle extends EventEmitter {
     } catch (err) {
       if (isAbortError(err)) return false
       this.emit('repair-download-failed', { appKey: appKeyHex, error: err.message })
+    } finally {
+      await this._closeDriveProof(sizeProof)
     }
     return false
   }
@@ -1778,7 +2092,7 @@ export class AppLifecycle extends EventEmitter {
           if (tracker && typeof tracker.done === 'function') {
             await Promise.race([
               tracker.done(),
-              new Promise((_, reject) => { const tmr = setTimeout(() => reject(new Error('share bundle range timeout')), timeoutMs); if (typeof tmr.unref === 'function') tmr.unref() })
+              new Promise((_resolve, reject) => { const tmr = setTimeout(() => reject(new Error('share bundle range timeout')), timeoutMs); if (typeof tmr.unref === 'function') tmr.unref() })
             ])
           }
         }
@@ -1806,6 +2120,33 @@ export class AppLifecycle extends EventEmitter {
         { appKey, core, snapshotCore: null, tracker: null, auxStore, discovery, onConnection }
       try { await this._releaseAuxShareBundleResource(resource) } catch (_) {}
     }
+  }
+
+  /**
+   * An already-seeded drive never re-enters the async anchor path. A custody
+   * re-pin still has to verify and record its share receipt, otherwise the
+   * dealer waits forever for a quorum that this relay silently ignored.
+   * Keep this asynchronous to match fresh-seed behaviour: /seed acknowledges
+   * durable drive ownership while the publisher polls the receipt registry.
+   */
+  _recordCustodyReceiptOnRepin (appKeyHex, existing, opts) {
+    if (!opts || opts.blind !== true || !opts.custodyIntentId) return
+
+    const version = Number.isFinite(opts.contentVersion)
+      ? opts.contentVersion
+      : (existing && Number.isFinite(existing.version) ? existing.version : 0)
+    const promise = this._recordCustodyReceipt(appKeyHex, opts, version)
+      .catch((err) => {
+        this._safeEmit('custody-receipt-error', {
+          appKey: appKeyHex,
+          intentId: opts.custodyIntentId,
+          error: (err && err.message) || String(err)
+        })
+        return null
+      })
+
+    const scope = this.node && this.node._scope
+    if (scope && typeof scope.tracked === 'function') scope.tracked(promise)
   }
 
   async _recordCustodyReceipt (appKeyHex, opts = {}, contentVersion = 0) {
@@ -1838,7 +2179,7 @@ export class AppLifecycle extends EventEmitter {
       }
       const relayPubkey = b4a.toString(node.swarm.keyPair.publicKey, 'hex')
       const bundle = typeof this._readShareBundle === 'function'
-        ? await this._readShareBundle(intent.shareBundleKey)
+        ? await this._readShareBundle(intent.shareBundleKey, { appKey: appKeyHex })
         : null
       const result = verifyShareBundleForRelay(intent, bundle, relayPubkey)
       if (!result.ok) {
@@ -2064,39 +2405,51 @@ export class AppLifecycle extends EventEmitter {
    * @param {Hyperdrive} drive
    * @returns {Promise<void>}
    */
-  async _registerPersistentDownloads (appKeyHex, drive) {
+  async _registerPersistentDownloads (appKeyHex, drive, tracked = false) {
     const node = this.node
+    if (!tracked && node.storageAdmission && typeof node.storageAdmission.runKeyMutation === 'function') {
+      return node.storageAdmission.runKeyMutation(`drive:${appKeyHex}`, () =>
+        this._registerPersistentDownloads(appKeyHex, drive, true))
+    }
     const entry = node.appRegistry && node.appRegistry.get(appKeyHex)
     if (!entry) return
     if (!drive || drive.closed || drive.closing) return
+    const cap = positiveStorageBound(entry.maxStorage)
+    if (cap === null) return
 
-    // Replace any prior ranges (idempotent — see retry path above).
-    if (Array.isArray(entry.downloadRanges)) {
-      for (const dl of entry.downloadRanges) {
-        try { if (dl && typeof dl.destroy === 'function') dl.destroy() } catch (_) {}
+    // A live `end: -1` range keeps expanding as metadata advances and can
+    // materialize bytes that were never measured or admitted. Prove one
+    // immutable metadata/blob snapshot, ensure its aggregate footprint fits
+    // the durable cap, then register only those finite ranges.
+    let settleRegistration = null
+    const token = {
+      settled: new Promise(resolve => { settleRegistration = resolve })
+    }
+    entry.downloadRegistration = token
+    let proof = null
+    try {
+      proof = await getDriveSize(drive, {
+        timeoutMs: 10_000,
+        requireAuthoritative: true,
+        pinSnapshots: true
+      })
+      if (node.appRegistry.get(appKeyHex) !== entry || entry.drive !== drive ||
+          entry.downloadRegistration !== token || drive.closed || drive.closing) return
+      if (!Number.isSafeInteger(proof && proof.totalBytes) || proof.totalBytes < 0 || proof.totalBytes > cap) {
+        this._safeEmit('persistent-download-error', {
+          appKey: appKeyHex,
+          error: 'drive footprint exceeds durable maxStorage bound'
+        })
+        return
       }
-    }
-    entry.downloadRanges = []
-
-    // Metadata core — always present after drive.ready().
-    if (drive.db && drive.db.core && typeof drive.db.core.download === 'function') {
+      await this._installPersistentDownloadProof(appKeyHex, drive, proof)
+    } finally {
       try {
-        const metaDl = drive.db.core.download({ start: 0, end: -1 })
-        entry.downloadRanges.push(metaDl)
-      } catch (_) { /* core may already be closing — skip */ }
-    }
-
-    // Blob core — lazy. getBlobs() lazily creates / opens it. May fail
-    // if the drive is mid-close; that's fine, skip + retry next cycle.
-    let blobs = drive.blobs
-    if (!blobs && typeof drive.getBlobs === 'function') {
-      blobs = await drive.getBlobs().catch(() => null)
-    }
-    if (blobs && blobs.core && typeof blobs.core.download === 'function') {
-      try {
-        const blobDl = blobs.core.download({ start: 0, end: -1 })
-        entry.downloadRanges.push(blobDl)
-      } catch (_) { /* skip */ }
+        await this._closeDriveProof(proof)
+      } finally {
+        if (entry.downloadRegistration === token) entry.downloadRegistration = null
+        settleRegistration()
+      }
     }
   }
 

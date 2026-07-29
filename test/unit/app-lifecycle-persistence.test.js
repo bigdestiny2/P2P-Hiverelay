@@ -3,6 +3,7 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { mkdir, rm } from 'fs/promises'
+import Hyperdrive from 'hyperdrive'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
 import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
 import { LifecycleScope } from 'p2p-hiverelay/core/relay-node/lifecycle-scope.js'
@@ -102,6 +103,69 @@ test('AppLifecycle: failed durable unseed retains retry debt after ordered live 
   t.absent(lifecycle._retiringDrives.has(appKey))
 })
 
+test('AppLifecycle: persistent drive pulls are finite ranges on one proved snapshot', async (t) => {
+  const appKey = 'b'.repeat(64)
+  const registry = new AppRegistry(null)
+  const downloads = []
+  let mutationKey = null
+
+  const makeCore = (name, length, byteLength, fork) => ({
+    length,
+    byteLength,
+    fork,
+    async update () { return true },
+    snapshot () {
+      return {
+        length,
+        byteLength,
+        fork,
+        async ready () {},
+        download (range) {
+          downloads.push({ name, range })
+          return { destroy () {} }
+        },
+        async close () {}
+      }
+    }
+  })
+  const metaCore = makeCore('meta', 7, 700, 2)
+  const blobCore = makeCore('blob', 11, 1100, 3)
+  const drive = {
+    version: 5,
+    closed: false,
+    closing: false,
+    db: { core: metaCore },
+    blobs: { core: blobCore }
+  }
+  registry.set(appKey, {
+    type: 'app',
+    maxStorage: 4096,
+    discoveryKey: Buffer.alloc(32, 2),
+    drive
+  }, { persist: false })
+
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    storageAdmission: {
+      runKeyMutation (key, operation) {
+        mutationKey = key
+        return operation()
+      }
+    }
+  })
+  await lifecycle._registerPersistentDownloads(appKey, drive)
+
+  const entry = registry.get(appKey)
+  t.is(mutationKey, `drive:${appKey}`, 'registration serializes on the drive storage key')
+  t.alike(downloads, [
+    { name: 'meta', range: { start: 0, end: 7 } },
+    { name: 'blob', range: { start: 0, end: 11 } }
+  ], 'only the proved metadata/blob lengths become persistent wants')
+  t.is(entry.downloadRanges.length, 2, 'the finite range owners stay reachable for retirement')
+  t.is(entry.downloadSnapshotCores.length, 2, 'the exact snapshot owners stay reachable for retirement')
+  t.absent(entry.downloadRegistration, 'the registration settlement barrier is released')
+})
+
 test('RelayNode: seedApp rolls back registry when explicit registry persist fails', async (t) => {
   const storage = tmpStorage()
   await mkdir(storage, { recursive: true })
@@ -119,7 +183,11 @@ test('RelayNode: seedApp rolls back registry when explicit registry persist fail
   })
   await node.start()
 
-  const appKey = randomBytes(32).toString('hex')
+  const writer = new Hyperdrive(node.store.session())
+  await writer.ready()
+  await writer.put('/persist-fixture.txt', Buffer.from('durable rollback fixture'))
+  const appKey = writer.key.toString('hex')
+  await writer.close()
   const placeholder = { discoveryKey: null, maxStorage: 1024 * 1024, type: 'app' }
   node.appRegistry.set(appKey, placeholder, { persist: false })
   const previous = node.appRegistry.get(appKey)
@@ -432,9 +500,18 @@ async function admissionNode (t) {
   return node
 }
 
+async function authorAdmissionDrive (node, label) {
+  const writer = new Hyperdrive(node.store.session())
+  await writer.ready()
+  await writer.put('/fixture.txt', Buffer.from(label))
+  const appKey = writer.key.toString('hex')
+  await writer.close()
+  return appKey
+}
+
 test('AppLifecycle: successful seed commits its storage admission reservation', async (t) => {
   const node = await admissionNode(t)
-  const appKey = randomBytes(32).toString('hex')
+  const appKey = await authorAdmissionDrive(node, 'successful admission')
   const cap = 1024 * 1024
 
   await node.seedApp(appKey, { maxStorage: cap })
@@ -458,7 +535,7 @@ test('AppLifecycle: successful seed commits its storage admission reservation', 
 
 test('AppLifecycle: failed seed rolls its reservation back to the adopted commitment', async (t) => {
   const node = await admissionNode(t)
-  const appKey = randomBytes(32).toString('hex')
+  const appKey = await authorAdmissionDrive(node, 'failed admission rollback')
   const cap = 1024 * 1024
 
   node.appRegistry.set(appKey, { discoveryKey: null, maxStorage: cap, type: 'app' }, { persist: false })
@@ -483,7 +560,7 @@ test('AppLifecycle: failed seed rolls its reservation back to the adopted commit
 
 test('AppLifecycle: seed failure before the drive exists still rolls the reservation back', async (t) => {
   const node = await admissionNode(t)
-  const appKey = randomBytes(32).toString('hex')
+  const appKey = await authorAdmissionDrive(node, 'constructor failure rollback')
 
   // Throws from the Hyperdrive construction — earlier than the drive-close
   // catch that used to be _seedAppInner's only failure handler.

@@ -2195,7 +2195,7 @@ saveConfig(config)              // Write to ~/.hiverelay/config.json
 
 ### Outbox Service Configuration
 
-The OutboxLog service (signed, append-only outboxes for browser apps — see `docs/SERVICES.md`) is enabled explicitly through `config.plugins` / `services.json` (`outboxlog`), or on the Bare/appliance path with:
+The OutboxLog service (signed, append-only outboxes for browser apps — see `docs/SERVICES.md`) is enabled explicitly through `config.plugins` / `services.json` (`outboxlog`), or as a Node/Bare packaging default with:
 
 ```bash
 export HIVERELAY_OUTBOXLOG=1
@@ -2204,7 +2204,7 @@ export HIVERELAY_OUTBOXLOG=1
 **Namespace registration (required — deployment footgun):** the outbox is app-neutral, and every signed record carries a namespace (Peerit signs `'peerit'`). The relay rejects any record whose namespace is not registered with `unknown namespace` (HTTP `400`) — so `HIVERELAY_OUTBOXLOG=1` alone is not enough; a freshly ENV-provisioned box `400`s every publish until you register the app's namespace:
 
 ```bash
-# env (Bare/appliance)
+# env (Node/Bare first-boot default)
 export HIVERELAY_OUTBOXLOG_NAMESPACE=peerit
 ```
 

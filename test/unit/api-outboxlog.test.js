@@ -191,6 +191,22 @@ test('/api/token redacts adapter load failures and emits internals', async (t) =
   t.ok(events[0].error.message.includes('/data/hiverelay/private'))
 })
 
+test('/api/outboxlog browser preflight exposes only the public blind-pipe headers', async (t) => {
+  const { port } = await serverWithApi(t, mockNode({ registry: null }))
+  const res = await request(port, 'OPTIONS', '/api/sync/create', null, {
+    Origin: 'https://peerit.example',
+    'Access-Control-Request-Method': 'POST',
+    'Access-Control-Request-Headers': 'Content-Type, X-Pear-Token'
+  })
+
+  t.is(res.statusCode, 204)
+  t.is(res.headers['access-control-allow-origin'], '*')
+  t.is(res.headers['access-control-allow-methods'], 'GET, POST, OPTIONS')
+  t.is(res.headers['access-control-allow-headers'], 'Content-Type, X-Pear-Token, X-Pear-Admin-Token')
+  t.is(res.headers['access-control-expose-headers'], 'Retry-After')
+  t.is(res.headers.vary, 'Origin', 'the outer API cache key remains origin-safe before adapter handoff')
+})
+
 test('/api/token explicit OutboxLog config retains a coarse fail-safe when adapter loading fails', async (t) => {
   const app = fakeOutboxLogApp()
   const node = mockNode({

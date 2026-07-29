@@ -6,6 +6,7 @@ const watchdog = readFileSync('fleet/health-watchdog.sh', 'utf8')
 const fleetStatus = readFileSync('fleet/fleet-status.sh', 'utf8')
 const deployVps = readFileSync('scripts/deploy-vps.sh', 'utf8')
 const rolloutCheck = readFileSync('scripts/check-fleet-rollout.mjs', 'utf8')
+const fleetServiceProbe = readFileSync('scripts/probe-fleet-services.mjs', 'utf8')
 const relayJanitor = readFileSync('scripts/relay-janitor.js', 'utf8')
 const cli = readFileSync('packages/core/cli/index.js', 'utf8')
 
@@ -80,6 +81,19 @@ test('fleet health tooling discovers API keys from root-only env files', (t) => 
   t.ok(relayJanitor.includes('root-only env file first'))
 })
 
+test('fleet status preserves prerelease versions and reads counters from status', (t) => {
+  t.ok(fleetStatus.includes('require(process.env.HOME + "/hiverelay/package.json").version'))
+  t.absent(fleetStatus.includes('tr -dc \'0-9.\''))
+  t.ok(fleetStatus.includes('http://127.0.0.1:9100/status'))
+  t.ok(fleetStatus.includes('HEALTH="$H" STATUS="$S" python3 -c'))
+  t.ok(fleetStatus.includes('s.get("seededApps","?")'))
+  t.ok(fleetStatus.includes('s.get("connections","?")'))
+  t.ok(fleetStatus.includes('systemctl is-enabled hiverelay-updater.timer'))
+  t.ok(fleetStatus.includes('systemctl is-active hiverelay-updater.timer'))
+  t.ok(fleetStatus.includes('/etc/hiverelay-updater.conf'))
+  t.ok(fleetStatus.includes('UPDATER CONFIGURED ASSIGNED'))
+})
+
 test('relay janitor keeps remote API keys out of local ssh argv', (t) => {
   t.ok(relayJanitor.includes('remoteHasApiKey'))
   t.ok(relayJanitor.includes('remoteUnseed'))
@@ -114,6 +128,12 @@ test('fleet status sanitizes terminal output and validates inventory before ssh'
   t.ok(fleetStatus.includes('valid_host()'))
   t.ok(fleetStatus.includes('valid_channel()'))
   t.ok(fleetStatus.includes('valid_key_path()'))
+  t.ok(fleetStatus.includes('valid_name_list()'))
+  t.ok(fleetStatus.includes('HIVERELAY_FLEET_INCLUDE'))
+  t.ok(fleetStatus.includes('HIVERELAY_FLEET_EXCLUDE'))
+  t.ok(fleetStatus.includes('INCLUDE="$INCLUDE" EXCLUDE="$EXCLUDE" python3 -c'))
+  t.ok(fleetStatus.includes('if include and r["name"] not in include:'))
+  t.ok(fleetStatus.includes('if r["name"] in exclude:'))
   t.ok(fleetStatus.includes('BADHOST'))
   t.ok(fleetStatus.includes('BADCHAN'))
   t.ok(fleetStatus.includes('BADKEY'))
@@ -124,6 +144,30 @@ test('fleet status sanitizes terminal output and validates inventory before ssh'
   t.absent(fleetStatus.includes(
     '"$' + '{ver:-?}" "$' + '{run:-?}" "$' + '{apps:-?}" "$' + '{conns:-?}" "$' + '{disk:-?}" "$target"'
   ))
+})
+
+test('fleet service probe scopes relay ownership before opening connections', (t) => {
+  t.ok(fleetServiceProbe.includes("optionValue('--include')"))
+  t.ok(fleetServiceProbe.includes("optionValue('--exclude')"))
+  t.ok(fleetServiceProbe.includes('HIVERELAY_FLEET_INCLUDE'))
+  t.ok(fleetServiceProbe.includes('HIVERELAY_FLEET_EXCLUDE'))
+  t.ok(fleetServiceProbe.indexOf('const relays = inventoryRelays.filter') < fleetServiceProbe.indexOf('Promise.all(relays.map(probe))'))
+  t.ok(fleetServiceProbe.includes('if (!knownNames.has(name)) throw new Error'))
+  t.ok(fleetServiceProbe.includes("throw new Error('relay scope selected no inventory entries')"))
+  t.ok(fleetServiceProbe.includes('base.error = safeProbeError(err)'))
+  t.ok(fleetServiceProbe.includes("return 'probe failed'"))
+  t.absent(fleetServiceProbe.includes('err?.message?.slice'))
+  t.ok(fleetServiceProbe.includes("inventoryLabel = inv === join(REPO, 'fleet', 'relays.json') ? 'fleet/relays.json' : 'operator inventory'"))
+  t.ok(fleetServiceProbe.includes('/.well-known/hiverelay.json'))
+  t.ok(fleetServiceProbe.includes("notifyWatchSources.includes('notify-outbox-lane')"))
+  t.ok(fleetServiceProbe.includes('notifyProfile?.egress?.live === true'))
+  t.ok(fleetServiceProbe.includes("features.includes('notify-v1')"))
+  t.ok(fleetServiceProbe.includes('unsafe legacy wake advertisements:'))
+  t.ok(fleetServiceProbe.includes('signed exact-lane wake:'))
+  t.ok(fleetServiceProbe.includes('advertised outbox mailbox:'))
+  t.ok(fleetServiceProbe.includes("privacyTransports.find(entry => entry?.network === 'tor')"))
+  t.ok(fleetServiceProbe.includes('restricted Tor endpoints with negative proof:'))
+  t.ok(fleetServiceProbe.includes('advertised one-hop forward relays:'))
 })
 
 test('relay CLI keeps high-frequency status output off service logs', (t) => {

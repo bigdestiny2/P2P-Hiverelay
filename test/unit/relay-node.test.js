@@ -284,6 +284,29 @@ test('RelayNode - relaykernel locks persisted services overrides off', async (t)
   t.is(persisted.lockReason, 'relaykernel-profile')
 })
 
+test('RelayNode - persisted services disable overrides package defaults', async (t) => {
+  const storage = tmpStorage()
+  await writeFile(path.join(storage, 'services.json'), JSON.stringify({
+    enabled: false,
+    plugins: ['notify', 'outboxlog']
+  }))
+
+  const node = new RelayNode({
+    storage,
+    enableAPI: false,
+    enableServices: true,
+    plugins: ['notify', 'outboxlog', 'storage-proof']
+  })
+  t.teardown(async () => {
+    try { await node.store.close() } catch (_) {}
+    await rm(storage, { recursive: true, force: true })
+  })
+
+  await node._loadServicesOverride()
+  t.is(node.config.enableServices, false, 'operator disable remains authoritative after restart')
+  t.alike(node.config.plugins, ['notify', 'outboxlog'], 'selection is retained for later re-enable')
+})
+
 test('RelayNode - startup DHT flush is bounded', async (t) => {
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, dhtFlushTimeoutMs: 5 })
   t.teardown(async () => {

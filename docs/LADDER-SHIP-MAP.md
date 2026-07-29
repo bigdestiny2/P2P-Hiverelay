@@ -1,6 +1,6 @@
 # Ladder ship map (chronological)
 
-**Date:** 2026-07-26 · **Status:** living operator/product plan · **Baseline:** monorepo canary `v0.25.0-rc.1` · stable `v0.24.3` (see [community update](./COMMUNITY-UPDATE-0.25.0-rc.1.md))
+**Date:** 2026-07-29 · **Status:** living operator/product plan · **Baseline:** fleet canary `v0.25.0-rc.7` · stable `v0.24.3` · post-RC7 repair candidate in `codex/hiverelay-release-fleet-20260729`
 
 > Two parallel tracks, one honesty ladder. **Version tags and claim badges stay separate until a deliberate merge.** Do not call the blind public-test pilot “fleet v0.25.0,” and do not claim rungs the current ship has not evidenced.
 
@@ -54,17 +54,37 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 
 | Item | State |
 |------|--------|
-| Fleet channel | **canary `v0.25.0-rc.1`** · **stable `v0.24.3`** (GitHub `main` `channels.json`) |
-| Tag / GH prerelease | [`v0.25.0-rc.1`](https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/v0.25.0-rc.1) signed + published |
-| Packaging in RC | Tor + utility **defaults** in Docker/systemd/Umbrel |
-| Service wiring (Track A content) | VRF/notify HTTP, client helpers, dashboard panels, outboxlog durability — in the RC tag |
-| Live fleet (as of 2026-07-26 probe) | Most boxes still **0.24.3** until canary updater tick; `transports.tor` often null until host Tor |
-| Dubai pattern | Utility services live via **`services.json`** (runtime authority for plugins), not config alone |
+| Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
+| Repair candidate | Post-RC7 tree: full Node unit **3528/3528**, integration **106/106**, lint and workspace audit green; requires a new prerelease identity before deployment |
+| Scoped live health (2026-07-29) | 9/10 permitted relays reachable; eight are healthy at their assigned target; `utah-8gb` is healthy but drifted at RC4 with its stable updater disabled; Bern is unreachable |
+| Wake runtime | `notify` loaded 9/9 reachable, but signed live egress **0/9** and exact-lane wake **0/9**; seven stable relays still carry the old false `notify-v1` feature claim |
+| Agent mailbox | `outboxlog` loaded and signed-advertised on **7/9** reachable permitted relays; absent on canary Utah and drifted Utah-8GB |
+| Privacy runtime | two signed Tor endpoints, both restricted without a negative proof on their deployed versions; post-RC7 code suppresses that claim until the anonymous rejection probe succeeds |
+| One-hop forward | advertised on one permitted relay; remains a bounded compatibility route, not split-transport/OHTTP evidence |
+| Packaging truth | Node/Bare now translate bounded service/Tor env into first-boot defaults; persisted config and `services.json` remain authoritative, while `/api/v1/services` plus the signed capability doc are runtime proof |
 | Track B | Blind public-test pilot (syd/dal) — **parallel** version line, not this fleet tag |
 | Boot-restore | Worktree only — **not on main** until Track C |
 | Blind packages on main | **Absent** (`blind-daemon` / edge only in vNext worktrees) |
 
-**Badge today (honest):** G0 + G1 + **partial G2-S/G3** (shard-store code exists; not fleet-wide) + **partial G4-T** (Tor code + packaging default; host deploy uneven).
+**Badge today (honest):** G0 + **partial G1** (mailbox present; push wake not live) + **partial G2-S/G3** (shard-store code exists; not fleet-wide) + **partial G4-T** (two deployed onions do not yet carry the new restricted-endpoint negative proof).
+
+### Retiring or becoming redundant
+
+| Surface | Action / status | Why |
+|---------|-----------------|-----|
+| `v0.25.0-rc.5` | Retired; never deploy | Its updater install path cannot complete. |
+| RC4 / RC6 fleet targets | Retired by RC7 and the next repair prerelease | They lack the complete updater/security/health corrections. |
+| Stable `v0.24.3` `notify-v1` claim | Must be retired by a health-gated stable promotion | Seven live relays advertise wake while using a non-live memory sink. |
+| `notify-feed-head` | Compatibility-only; deprecated in signed capabilities when exact lanes are wired | Global sender-head changes can wake unrelated recipients; `notify-outbox-lane` is precise and opaque. |
+| Config-derived fleet service reports | Replaced by runtime `/api/v1/services` plus signed capability evidence | Config can be overridden by `services.json` and previously reported services that never loaded. |
+| Grep-and-strip package version parsing | Replaced by exact package JSON parsing | It changed `v0.25.0-rc.7` into the misleading `v0.25.0.7`. |
+| Memory notify provider | Test/development only; never an advertised production capability | It records attempts but deliberately has `live:false`. |
+| Legacy one-hop byte bridge | Compatibility path pending replacement, not G2-W | It does not provide OHTTP role separation or BlindForward flow-control semantics. |
+| Nym full-data-path claims | Parked; bounded control-message candidate only | Coverage/cost do not support a general relay data path today. |
+
+Split transport itself is **not redundant**: its vNext wire codecs are useful, but the runtime,
+`BlindTransportDescriptorV1`, OHTTP ingress/gateway, browser client, padding reconciliation, and
+main-tree merge remain Ship 9 work. No current fleet claim should imply G2-W.
 
 ### Physical co-location (Sydney pattern; same on Dallas)
 
@@ -100,6 +120,9 @@ Qualification order for Track B: **syd-1 full accept → then Dallas (or Bern) o
 
 ### Ship 1 — `v0.25.0-rc.1` · Fleet canary (Track A only)
 
+**Historical status:** superseded through RC7. The live canary is RC7; post-RC7
+repairs require a new prerelease rather than mutating the meaning of that tag.
+
 **When:** after 0.1 committed + green tests  
 **Channel:** `canary` only (utah, utah-0.5gb)  
 **Not:** syd Blind stack, not stable, not Dallas Blind
@@ -126,6 +149,12 @@ Qualification order for Track B: **syd-1 full accept → then Dallas (or Bern) o
 ---
 
 ### Ship 2 — `v0.25.0` · Fleet stable (Track A)
+
+**Current status:** not ready. First deploy the post-RC7 candidate to canary,
+configure and prove at least one real push egress if wake is in the claim, land
+restricted-Tor negative-probe and 100 MB onion evidence, observe 24–48 hours,
+then promote stable. Held and independently owned lanes remain excluded until
+their owners release them.
 
 **When:** Ship 1 green  
 **Channel:** bump `stable` (+ keep canary on same or next RC)
@@ -227,7 +256,7 @@ Still not fleet-wide enable.
 | Syd/dal promote from public-test digests → release digests **or** re-pin | Continuous line |
 | Capability-doc honesty: advertise only evidenced routes | Badges |
 
-**Gate:** Linux Phase-0-class durability/throughput (giga holdouts), negative-probe on restricted Tor if claiming private onion, boot-restore after wipe test.
+**Gate:** Linux Phase-0-class durability/throughput (giga holdouts), fleet/live evidence for the locally implemented restricted-Tor negative probe, boot-restore after wipe test.
 
 ---
 
@@ -269,7 +298,7 @@ Not: every relay is blind; not G2-W/G4-I/G5.
 | Contents | Ladder |
 |----------|--------|
 | Persistent onion keys + backup | Production Tor |
-| Negative-probe on restricted discovery (giga holdout) | No fail-open roster |
+| Negative-probe on restricted discovery (implemented locally; fleet evidence pending) | No fail-open roster |
 | 100 MB bulk-over-onion measurement | Capacity honesty |
 | Optional: onion peer vport + control-plane health ads | G4-T operational |
 
@@ -409,9 +438,18 @@ You can call the **product ladder complete for honest marketing** when:
 
 ## 9. Immediate next three moves (in order)
 
-1. **Branch + tag path for Track A:** `feat/service-http-wiring` → `v0.25.0-rc.1` canary → `v0.25.0` stable.
-2. **Unblock Track B:** DNS `relay-syd.p2phiverelay.xyz` (live) → deploy/qualify syd-1 → Dallas as 2nd FD.
-3. **Only then** merge boot-restore + tag **0.26** for “blind-capable product.”
+1. **Name and ship the repair candidate:** finish release gates, cut a new signed
+   post-RC7 prerelease, and deploy it to the permitted canary only. Correct
+   Utah-8GB's disabled stable updater separately; do not fold a downgrade into
+   a canary promotion.
+2. **Prove the claims on live canary:** configure operator-owned push egress if
+   wake is a release claim; verify exact-lane wake, outboxlog persistence,
+   restricted-Tor negative probe, and the 100 MB onion transfer. Observe for
+   24–48 hours.
+3. **Promote stable, then continue the later ladder:** health-gated stable rollout
+   retires the false v0.24.3 notify advertisement. Ship 9 split transport remains
+   after its vNext owner lane produces the runtime/descriptor; Track B ownership
+   and Sydney/Dallas are deliberately untouched by this sequence.
 
 ---
 

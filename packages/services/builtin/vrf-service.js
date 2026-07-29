@@ -102,16 +102,24 @@ export class VRFService extends ServiceProvider {
     // Allow an explicit override seed (mainly for tests / fixed deployments).
     this._explicitSeed = opts.seed ? toBytes(opts.seed, 'seed') : null
 
-    // Beacon is opt-in. opts.beacon: { enabled, intervalMs, domain, retain }
-    const b = opts.beacon || {}
+    // Beacon is opt-in. opts.beacon: { enabled, intervalMs, domain, retain }.
+    // Node's generic PluginLoader constructs every provider before it has the
+    // service context, so start() also accepts context.config.vrfBeacon when
+    // no explicit constructor descriptor was supplied.
+    this._beaconConfigExplicit = Object.prototype.hasOwnProperty.call(opts, 'beacon')
+    this._configureBeacon(opts.beacon)
+    this.beacon = null
+    this._beaconTimer = null
+  }
+
+  _configureBeacon (value) {
+    const b = value && typeof value === 'object' && !Array.isArray(value) ? value : {}
     this.beaconConfig = {
       enabled: b.enabled === true,
       intervalMs: Math.max(MIN_BEACON_INTERVAL_MS, b.intervalMs || DEFAULT_BEACON_INTERVAL_MS),
       domain: b.domain || DEFAULT_DOMAIN,
       retain: b.retain || DEFAULT_RETAIN
     }
-    this.beacon = null
-    this._beaconTimer = null
   }
 
   manifest () {
@@ -129,6 +137,9 @@ export class VRFService extends ServiceProvider {
 
   async start (context = {}) {
     this.node = context.node || null
+    if (!this._beaconConfigExplicit && context.config && context.config.vrfBeacon) {
+      this._configureBeacon(context.config.vrfBeacon)
+    }
 
     // Resolve the source key material, in priority order.
     let nodeSeed = null

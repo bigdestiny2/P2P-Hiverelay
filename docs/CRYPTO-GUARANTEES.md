@@ -210,8 +210,9 @@ cryptographically precluded. Sealed PoRep is out of scope. (v1 proves the
 drive's **metadata** core; blobs-core proofs are a follow-up.)
 
 **Privacy gate (blind drives).** The relay-side service is opt-in and **off
-by default** (Node: `config.plugins` / Services tab; Bare/appliance:
-`config.services` or `HIVERELAY_STORAGE_PROOF=1`). Critically, a blind or
+by default** (Node: `config.plugins` / Services tab or first-boot
+`HIVERELAY_STORAGE_PROOF=1`; Bare: `config.services` or the same env flag).
+Critically, a blind or
 privacy-redacted drive returns `NOT_SEEDED` — **indistinguishable** from a key
 the relay genuinely doesn't hold. A signed proof is cryptographic,
 relay-attributable evidence of possession; serving it for a blind drive would

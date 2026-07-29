@@ -212,7 +212,7 @@ framing loses to any adversary who knows the literature.
 |---|---|---|
 | Authored state immutability | `packages/core/core/delegation.js` (signed certs), Hyperdrive append-only | ✅ shipped |
 | Hypercore append-only Merkle | upstream `hypercore` v10 | ✅ shipped |
-| Replica diversity at infrastructure | `packages/core/core/federation.js` (per-relay catalog mirroring) + `packages/core/core/quorum-selector.js` | ✅ shipped; client `selectQuorum` now diversity-ranks by region and operator, and warns when either floor is not met |
+| Replica diversity at infrastructure | `packages/core/core/federation.js` (per-relay catalog mirroring) + `packages/core/core/quorum-selector.js` | ✅ shipped; client `selectQuorum` now spreads by region and failure domain while counting operator independence separately, and warns when either floor is not met |
 | Quorum selection UX | `packages/client/index.js` (`HiveRelayClient`) | ✅ shipped v0.6.0 (`selectQuorum`, `queryQuorumWithComparison`) |
 | Fork-detection during local replication | `client.open()` attaches listeners to `drive.core.on('truncate' / 'verification-error')`; auto-reports to `ForkDetector` | ✅ shipped v0.6.0 (catches local fork-detected events, NOT silent multi-replica equivocation) |
 | Fork-proof gossip across federation | `packages/core/core/federation.js` (pulls `/api/forks/proofs` per cycle) | ✅ shipped v0.6.0 |

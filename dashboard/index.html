@@ -660,12 +660,6 @@ function fetchCatalogNames() {
   }).catch(function() {});
 }
 
-function escapeHtml(s) {
-  if (s === null || s === undefined) return '';
-  return String(s).replace(/[&<>"']/g, function(ch) {
-    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch];
-  });
-}
 function clearNode(node) {
   while (node.firstChild) node.removeChild(node.firstChild);
   node.textContent = '';
@@ -676,6 +670,44 @@ function appendEl(parent, tag, className, text) {
   if (text !== undefined) el.textContent = String(text);
   parent.appendChild(el);
   return el;
+}
+function renderNamespaceRows(parent, list, attention) {
+  clearNode(parent);
+  if (!list.length) {
+    var emptyRow = appendEl(parent, 'div', 'r');
+    var emptyLabel = appendEl(emptyRow, 'span', '', 'No namespaces configured');
+    emptyLabel.style.color = 'var(--text-faint)';
+    appendEl(emptyRow, 'span');
+    appendEl(emptyRow, 'span');
+    return;
+  }
+  list.forEach(function(ns) {
+    var cap = ns.capBytes24h != null ? formatBytes(ns.capBytes24h) : '∞';
+    var pct = (ns.capBytes24h && ns.capBytes24h > 0)
+      ? Math.min(100, Math.round((ns.bytes24h || 0) / ns.capBytes24h * 100)) + '%'
+      : '';
+    if (ns.capBytes24h && ns.bytes24h != null && ns.bytes24h / ns.capBytes24h >= 0.8) {
+      attention.push({ text: 'Namespace ' + String(ns.name || '') + ' near daily byte cap', sev: 'warn' });
+    }
+    var row = appendEl(parent, 'div', 'r');
+    var nameCell = appendEl(row, 'span');
+    appendEl(nameCell, 'span', '', ns.name || 'unnamed');
+    if (ns.blind) {
+      nameCell.appendChild(document.createTextNode(' '));
+      var blind = appendEl(nameCell, 'span', '', 'blind');
+      blind.style.color = 'var(--accent)';
+    }
+    appendEl(row, 'span', '', (ns.writers || 0) + ' writers');
+    appendEl(row, 'span', '', formatBytes(ns.bytes24h || 0) + ' / ' + cap + (pct ? ' (' + pct + ')' : ''));
+  });
+}
+function renderAttentionList(parent, attention) {
+  clearNode(parent);
+  attention.forEach(function(a) {
+    var row = appendEl(parent, 'li');
+    appendEl(row, 'span', '', a.text);
+    appendEl(row, 'span', 'sev ' + (a.sev === 'ok' ? 'ok' : a.sev === 'bad' ? 'bad' : ''), a.sev === 'ok' ? 'ok' : a.sev === 'bad' ? 'crit' : 'warn');
+  });
 }
 function safeHttpUrl(value) {
   var raw = String(value || '').trim();
@@ -1132,24 +1164,7 @@ function updateOperatorPulse(overview) {
       var nsBody = document.getElementById('namespacesBody');
       if (nsPanel && nsBody) {
         nsPanel.style.display = '';
-        if (!list.length) {
-          nsBody.innerHTML = '<div class="r"><span style="color:var(--text-faint)">No namespaces configured</span><span></span><span></span></div>';
-        } else {
-          nsBody.innerHTML = list.map(function (ns) {
-            var cap = ns.capBytes24h != null ? formatBytes(ns.capBytes24h) : '∞';
-            var pct = (ns.capBytes24h && ns.capBytes24h > 0)
-              ? Math.min(100, Math.round((ns.bytes24h || 0) / ns.capBytes24h * 100)) + '%'
-              : '';
-            if (ns.capBytes24h && ns.bytes24h != null && ns.bytes24h / ns.capBytes24h >= 0.8) {
-              attention.push({ text: 'Namespace ' + ns.name + ' near daily byte cap', sev: 'warn' });
-            }
-            return '<div class="r"><span>' + escapeHtml(ns.name) +
-              (ns.blind ? ' <span style="color:var(--accent)">blind</span>' : '') +
-              '</span><span>' + (ns.writers || 0) + ' writers</span><span>' +
-              formatBytes(ns.bytes24h || 0) + ' / ' + cap + (pct ? ' (' + pct + ')' : '') +
-              '</span></div>';
-          }).join('');
-        }
+        renderNamespaceRows(nsBody, list, attention);
       }
     }
     if (shard) {
@@ -1313,12 +1328,7 @@ function updateOperatorPulse(overview) {
 
   var att = document.getElementById('attentionList');
   if (att) {
-    att.innerHTML = attention.map(function (a) {
-      return '<li><span>' + escapeHtml(a.text) + '</span><span class="sev ' +
-        (a.sev === 'ok' ? 'ok' : a.sev === 'bad' ? 'bad' : '') + '">' +
-        (a.sev === 'ok' ? 'ok' : a.sev === 'bad' ? 'crit' : 'warn') +
-        '</span></li>';
-    }).join('');
+    renderAttentionList(att, attention);
   }
 }
 

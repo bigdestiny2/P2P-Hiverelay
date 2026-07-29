@@ -174,9 +174,26 @@ test('capability doc advertises notify and outboxlog service profiles when runni
   t.ok(doc.features.includes('outboxlog-v1'))
   t.is(doc.protocol_profile.services.notify.version, '0.1.0')
   t.is(doc.protocol_profile.services.notify.payload.plaintext_allowed, false)
-  t.alike(doc.protocol_profile.services.notify.watch_sources, ['notify-feed-head', 'notify-outbox-lane'])
+  t.alike(doc.protocol_profile.services.notify.watch_sources, ['notify-outbox-lane'])
+  t.alike(doc.protocol_profile.services.notify.deprecated_watch_sources, ['notify-feed-head'])
   t.is(doc.protocol_profile.services.notify.limits.max_watches_per_receive_cap, 64)
   t.is(doc.protocol_profile.services.outboxlog.model, 'single-writer-signed-outbox')
+})
+
+test('capability doc keeps legacy notify feed-head visible until exact lanes are wired', async (t) => {
+  const relay = {
+    config: { enableServices: true },
+    serviceRegistry: {
+      services: new Map([
+        ['notify', { status: 'running', provider: { limits: () => ({ watchSources: ['notify-feed-head'], egress: { live: true } }) } }]
+      ]),
+      catalog: () => [{ name: 'notify', version: '0.1.0' }]
+    }
+  }
+
+  const doc = buildCapabilityDoc({ relay })
+  t.alike(doc.protocol_profile.services.notify.watch_sources, ['notify-feed-head'])
+  t.absent(doc.protocol_profile.services.notify.deprecated_watch_sources)
 })
 
 test('relaykernel capability doc advertises only active kernel-compatible surfaces', async (t) => {
@@ -622,6 +639,7 @@ function readyTor (overrides = {}) {
     endpointKeyId: null,
     rosterFile: null,
     clientAuthKeys: [],
+    negativeProbe: null,
     pow: null,
     localPort: 9200,
     readVport: 80,
@@ -676,21 +694,43 @@ test('privacyTransports — ready onion entry shape and labels', async (t) => {
 })
 
 test('privacyTransports — client-auth mode from roster/keys; custody off drops custody kinds', async (t) => {
-  const withRoster = buildCapabilityDoc({ relay: relayWithTor(readyTor({ rosterFile: '/x/roster.json' })) })
+  const withRoster = buildCapabilityDoc({ relay: relayWithTor(readyTor({ rosterFile: '/x/roster.json', negativeProbe: true })) })
   t.is(withRoster.privacyTransports[0].auth.mode, 'client-auth-v3')
   t.alike(withRoster.privacyTransports[0].auth.enrollment, ['pairing-channel'])
+  t.is(withRoster.privacyTransports[0].negativeProbe, true)
 
-  const withKeys = buildCapabilityDoc({ relay: relayWithTor(readyTor({ clientAuthKeys: ['a'.repeat(52)] })) })
+  const withKeys = buildCapabilityDoc({ relay: relayWithTor(readyTor({ clientAuthKeys: ['a'.repeat(52)], negativeProbe: true })) })
   t.is(withKeys.privacyTransports[0].auth.mode, 'client-auth-v3')
 
   const emptyButRestricted = buildCapabilityDoc({
-    relay: relayWithTor(readyTor({ isRestrictedDiscoveryActive: () => true }))
+    relay: relayWithTor(readyTor({ isRestrictedDiscoveryActive: () => true, negativeProbe: true }))
   })
   t.is(emptyButRestricted.privacyTransports[0].auth.mode, 'client-auth-v3')
   t.alike(emptyButRestricted.privacyTransports[0].auth.enrollment, ['pairing-channel'])
 
   const noCustody = buildCapabilityDoc({ relay: relayWithTor(readyTor(), { custody: { enabled: false } }) })
   t.absent(noCustody.privacyTransports[0].supports.includes('custody.commit'))
+})
+
+test('privacyTransports — restricted discovery requires a successful negative probe', async (t) => {
+  for (const negativeProbe of [null, false, undefined]) {
+    const doc = buildCapabilityDoc({
+      relay: relayWithTor(readyTor({
+        rosterFile: '/x/roster.json',
+        negativeProbe
+      }))
+    })
+    t.absent('privacyTransports' in doc, `negativeProbe=${negativeProbe} must not advertise`)
+    t.is(doc.onionGatewayUrl, null)
+  }
+
+  const proved = buildCapabilityDoc({
+    relay: relayWithTor(readyTor({
+      rosterFile: '/x/roster.json',
+      negativeProbe: true
+    }))
+  })
+  t.is(proved.privacyTransports[0].negativeProbe, true)
 })
 
 test('privacyTransports — dual vports map to roles; pow reported', async (t) => {

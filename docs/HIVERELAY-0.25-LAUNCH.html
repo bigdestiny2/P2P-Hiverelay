@@ -275,7 +275,7 @@ footer{border-top:1px solid var(--card-border);padding:2.5rem 0;margin-top:3rem;
     <div class="card h-accent">
       <div class="ico">🧅</div>
       <h3>Tor as a packaging default</h3>
-      <p>Docker Compose, the systemd unit, and the Umbrel appliance <em>express</em> a Tor default as <code>HIVERELAY_TOR=1</code>, with full SOCKS / control / key-file wiring. <strong>The Node runtime those packagings launch does not read that variable</strong> — enabling Tor is <code>config.transports.tor</code> or <code>--tor</code>. Verified: with every <code>HIVERELAY_*</code> var exported, <code>loadConfig()</code> still returns <code>transports.tor = false</code>. Live endpoints additionally need host Tor ≥ 0.4.9 with cookie control.</p>
+      <p>Docker Compose, the systemd unit, and the Umbrel appliance set <code>HIVERELAY_TOR=1</code> with SOCKS, control, persistent-key, and minimum-daemon wiring. The Node CLI translates those values into first-boot config defaults; explicit CLI flags and persisted <code>config.transports.tor</code> / <code>config.tor.*</code> win. A configured default is not proof of a live onion: signed advertisement still requires daemon readiness, descriptor health, and the restricted-endpoint negative probe.</p>
       <div class="unlocks">
         <span class="lbl">Capability path</span>
         <span class="rung">G4-T route separation</span>
@@ -285,7 +285,7 @@ footer{border-top:1px solid var(--card-border);padding:2.5rem 0;margin-top:3rem;
     <div class="card h-green">
       <div class="ico">⚙️</div>
       <h3>Utility services, declared in packaging</h3>
-      <p>Outboxlog, notify, storage-proof, VRF, witnesslog and repairticket are <em>declared</em> in the unit / compose path as <code>HIVERELAY_*</code> env vars. Those are read by the <strong>Bare/Pear runtime only</strong>; the unit, compose and Umbrel paths all launch the Node CLI, which takes services from <code>&lt;storage&gt;/services.json</code> or <code>config.plugins</code>. A fresh appliance on the Node runtime still starts as an empty seeder — verified: with all eight vars exported, <code>loadConfig()</code> returns <code>enableServices: false, plugins: []</code>. <code>shard-store</code> stays opt-in for disks that can carry it.</p>
+      <p>Outboxlog, notify, storage-proof, VRF, witnesslog and repairticket can be selected by <code>HIVERELAY_*</code> first-boot defaults on both Node and Bare paths. Persisted <code>config.json</code> wins over environment defaults, and <code>&lt;storage&gt;/services.json</code> is the final authority, including an explicit disable. Packaged OutboxLog uses a finite partitioned-Hypercore journal; notify remains non-live until an operator supplies a private APNs/FCM/WebPush descriptor; <code>shard-store</code> stays opt-in for disks that can carry it.</p>
       <ul class="tags"><li>outboxlog</li><li>notify</li><li>vrf</li><li>witnesslog</li><li>repairticket</li><li>storage-proof</li></ul>
     </div>
 

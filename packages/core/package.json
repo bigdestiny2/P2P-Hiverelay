@@ -25,6 +25,10 @@
     "./*": "./*"
   },
   "imports": {
+    "fs": {
+      "bare": "bare-fs",
+      "default": "fs"
+    },
     "events": {
       "bare": "bare-events",
       "default": "events"

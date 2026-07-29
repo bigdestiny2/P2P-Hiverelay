@@ -12,6 +12,7 @@ export const BUILTIN_SERVICE_PLUGINS = Object.freeze([
   'witnesslog',
   'repairticket',
   'notify',
+  'storage-proof',
   'shard-store'
 ])
 

@@ -91,8 +91,8 @@ test('dashboard notify panel fetches /api/manage/notify and maps real status fie
   const fetchFn = html.slice(html.indexOf('async function fetchNotifyPanel'))
   const end = fetchFn.indexOf('async function fetchVrfPanel')
   const body = end > 0 ? fetchFn.slice(0, end) : fetchFn
-  t.absent(body.includes("/api/v1/notify/status"), 'does not GET public status')
-  t.absent(body.includes("/api/v1/notify/capabilities"), 'does not fall back to capabilities')
+  t.absent(body.includes('/api/v1/notify/status'), 'does not GET public status')
+  t.absent(body.includes('/api/v1/notify/capabilities'), 'does not fall back to capabilities')
 
   // applyNotifyPanel maps counts.deliveryEvents / limits.egress / flat fields.
   t.ok(html.includes('counts.deliveryEvents') || html.includes('status.deliveryAttempts') || html.includes('deliveryAttempts'),

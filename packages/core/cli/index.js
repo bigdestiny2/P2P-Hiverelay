@@ -27,6 +27,7 @@ import {
   STORAGE_DIR,
   deriveTokenFromSeed,
   applyOutboxlogNamespaceEnv,
+  applyRuntimeEnvDefaults,
   getStorageCapProvenance,
   markStorageCapExplicit,
   resolveStorageCap
@@ -489,19 +490,15 @@ async function start () {
     hasPersistedOutboxlogNamespace()
   )
 
-  // Atomic-writer deployment controls. Legacy create/append stay enabled by
-  // default for wire compatibility; production Peerit relays set this to 0 so
-  // replayable signed rows can only enter through CAS-protected /sync/commit.
-  const legacyWrites = process.env.HIVERELAY_OUTBOXLOG_LEGACY_WRITES
-  if (legacyWrites === '0' || legacyWrites === 'false' || legacyWrites === '1' || legacyWrites === 'true') {
-    if (!cliOverrides.outboxlog || typeof cliOverrides.outboxlog !== 'object' || Array.isArray(cliOverrides.outboxlog)) cliOverrides.outboxlog = {}
-    cliOverrides.outboxlog.legacyWrites = legacyWrites === '1' || legacyWrites === 'true'
-  }
-  // A durable commit is acknowledged only with a synchronous journal. This
-  // container-friendly path selects the fsynced JSONL journal implementation.
-  if (process.env.HIVERELAY_OUTBOXLOG_JOURNAL_PATH) {
-    if (!cliOverrides.outboxlog || typeof cliOverrides.outboxlog !== 'object' || Array.isArray(cliOverrides.outboxlog)) cliOverrides.outboxlog = {}
-    cliOverrides.outboxlog.journalPath = process.env.HIVERELAY_OUTBOXLOG_JOURNAL_PATH
+  // Docker/systemd/appliance environment is a first-boot default only. CLI,
+  // config.json and the storage-local services.json remain authoritative.
+  // Also loads an optional push-provider descriptor from a file path so real
+  // credentials never need to appear in compose/systemd source or argv.
+  try {
+    applyRuntimeEnvDefaults(cliOverrides, process.env)
+  } catch (err) {
+    console.error(err && err.message ? err.message : 'Invalid HiveRelay runtime environment')
+    process.exit(1)
   }
 
   const config = loadConfig(cliOverrides)
@@ -1656,6 +1653,15 @@ Environment:
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
   HIVERELAY_STORAGE             Storage path used when --storage is absent
   HIVERELAY_MAX_STORAGE         Storage cap until maxStorageBytes is persisted
+  HIVERELAY_ENABLE_SERVICES     First-boot service default: 1/0 or true/false
+  HIVERELAY_{SERVICE}=1         Select VRF, NOTIFY, OUTBOXLOG, STORAGE_PROOF,
+                                WITNESSLOG, REPAIRTICKET, or SHARD_STORE
+  HIVERELAY_OUTBOXLOG_JOURNAL   Use hypercore or hypercore-outboxes persistence
+  HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE
+                                Required finite journal bound (for example 512MB)
+  HIVERELAY_NOTIFY_PUSH_CONFIG  Owner-readable APNs/FCM/WebPush descriptor path
+  HIVERELAY_TOR                 First-boot Tor default: 1/0 or true/false
+  HIVERELAY_TOR_*               SOCKS/control/key/min-version/roster defaults
 
 Examples:
   npx p2p-hiverelay setup                              # Interactive setup wizard

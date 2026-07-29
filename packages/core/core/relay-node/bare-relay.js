@@ -37,7 +37,7 @@
  */
 
 import Hyperswarm from 'hyperswarm'
-import Corestore from 'corestore'
+import { openCorestore } from '../persistence/storage-root-restore.js'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 // Use Node-shaped names. Under Bare/Pear they get remapped via the
@@ -359,7 +359,7 @@ export class BareRelay extends EventEmitter {
       await this.storageAdmission.activatePhysicalEnforcement({ purpose: 'bare-relay-startup' })
 
       // 1. Corestore — persistent hypercore storage
-      this.store = new Corestore(this.config.storage)
+      this.store = openCorestore(this.config.storage)
       await this.store.ready()
 
       // 2. App registry — tracks what we're seeding.

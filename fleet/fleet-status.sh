@@ -7,6 +7,12 @@
 # expose it; we shell in and query locally).
 #
 #   bash fleet/fleet-status.sh
+#   HIVERELAY_FLEET_INCLUDE=utah,bern bash fleet/fleet-status.sh
+#
+# HIVERELAY_FLEET_INCLUDE and HIVERELAY_FLEET_EXCLUDE are comma-separated
+# relay-name lists. They are applied before any SSH connection is opened, so an
+# operator can prove a maintenance scan cannot touch an independently owned or
+# held lane.
 #
 # StrictHostKeyChecking=accept-new is deliberate so a rotated host key never
 # masquerades as "server down" (the 2026-06-16 bern false alarm).
@@ -18,6 +24,8 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # at a private copy (e.g. fleet/relays.local.json, gitignored) to supply them.
 RELAYS="${HIVERELAY_FLEET_INVENTORY:-$HERE/relays.json}"
 [ -f "$RELAYS" ] || { echo "fleet inventory not found: $RELAYS"; exit 1; }
+INCLUDE="${HIVERELAY_FLEET_INCLUDE:-}"
+EXCLUDE="${HIVERELAY_FLEET_EXCLUDE:-}"
 
 CH="$(curl -fsS --max-time 15 https://raw.githubusercontent.com/bigdestiny2/P2P-Hiverelay/main/fleet/channels.json 2>/dev/null || cat "$HERE/channels.json")"
 
@@ -50,9 +58,17 @@ valid_key_path() {
     ! printf '%s' "$value" | LC_ALL=C grep -q '[[:cntrl:]]'
 }
 
+valid_name_list() {
+  local value="${1:-}"
+  [ -z "$value" ] || [[ "$value" =~ ^[A-Za-z0-9._-]+(,[A-Za-z0-9._-]+)*$ ]]
+}
+
+valid_name_list "$INCLUDE" || { echo "invalid HIVERELAY_FLEET_INCLUDE relay list" >&2; exit 1; }
+valid_name_list "$EXCLUDE" || { echo "invalid HIVERELAY_FLEET_EXCLUDE relay list" >&2; exit 1; }
+
 # Remote probe, delivered verbatim over stdin (bash -s) — no quote escaping.
 read -r -d '' REMOTE <<'REMOTE_EOF' || true
-V="v$(grep -m1 '"version"' "$HOME/hiverelay/package.json" | tr -dc '0-9.')"
+V="v$(node -p 'require(process.env.HOME + "/hiverelay/package.json").version' 2>/dev/null || printf '?')"
 read_api_key() {
   local key
   key="$(systemctl show hiverelay -p Environment 2>/dev/null | awk 'BEGIN{RS=" "} /^HIVERELAY_API_KEY=/{sub(/^HIVERELAY_API_KEY=/,""); print; exit}' || true)"
@@ -87,27 +103,34 @@ curl_with_optional_key() {
 }
 K="$(read_api_key)"
 H=$(curl_with_optional_key "$K" -fsS --max-time 10 http://127.0.0.1:9100/health 2>/dev/null || true)
-R=$(printf '%s' "$H" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d.get("running"),d.get("seededApps","?"),d.get("connections","?"))' 2>/dev/null || echo "? ? ?")
+S=$(curl_with_optional_key "$K" -fsS --max-time 10 http://127.0.0.1:9100/status 2>/dev/null || true)
+R=$(HEALTH="$H" STATUS="$S" python3 -c 'import os,json;h=json.loads(os.environ["HEALTH"]);s=json.loads(os.environ["STATUS"]);print(h.get("running"),s.get("seededApps","?"),s.get("connections","?"))' 2>/dev/null || echo "? ? ?")
 D=$(df -h / | awk 'NR==2{print $5}')
-echo "$V|$R|$D"
+U_ENABLED="$(systemctl is-enabled hiverelay-updater.timer 2>/dev/null || true)"
+[ -n "$U_ENABLED" ] || U_ENABLED=missing
+U_ACTIVE="$(systemctl is-active hiverelay-updater.timer 2>/dev/null || true)"
+[ -n "$U_ACTIVE" ] || U_ACTIVE=inactive
+C=$(awk -F= '/^[[:space:]]*CHANNEL[[:space:]]*=/ { sub(/^[^=]*=/,""); sub(/^[[:space:]]*/,""); sub(/[[:space:]]*$/,""); print; exit }' /etc/hiverelay-updater.conf 2>/dev/null || true)
+[ -n "$C" ] || C=?
+echo "$V|$R|$D|$U_ENABLED/$U_ACTIVE|$C"
 REMOTE_EOF
 
-printf '%-11s %-9s %-8s %-6s %-6s %-6s %s\n' RELAY VERSION RUNNING APPS CONNS DISK TARGET
-printf '%-11s %-9s %-8s %-6s %-6s %-6s %s\n' ───── ─────── ─────── ──── ───── ──── ──────
+printf '%-12s %-14s %-8s %-6s %-6s %-6s %-14s %-10s %s\n' RELAY VERSION RUNNING APPS CONNS DISK UPDATER CONFIGURED ASSIGNED
+printf '%-12s %-14s %-8s %-6s %-6s %-6s %-14s %-10s %s\n' ───── ─────── ─────── ──── ───── ──── ─────── ────────── ────────
 
 while IFS='|' read -r name host keyspec channel; do
   safe_name="$(clean_field "$name")"
   safe_channel="$(clean_field "$channel")"
   if ! valid_host "$host"; then
-    printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$safe_name" BADHOST - - - - "$safe_channel"
+    printf '%-12s %-14s %-8s %-6s %-6s %-6s %-14s %-10s %s\n' "$safe_name" BADHOST - - - - - - "$safe_channel"
     continue
   fi
   if ! valid_channel "$channel"; then
-    printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$safe_name" BADCHAN - - - - "$safe_channel"
+    printf '%-12s %-14s %-8s %-6s %-6s %-6s %-14s %-10s %s\n' "$safe_name" BADCHAN - - - - - - "$safe_channel"
     continue
   fi
   if ! valid_key_path "$keyspec"; then
-    printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$safe_name" BADKEY - - - - "$safe_channel"
+    printf '%-12s %-14s %-8s %-6s %-6s %-6s %-14s %-10s %s\n' "$safe_name" BADKEY - - - - - - "$safe_channel"
     continue
   fi
   keyarg=(); [ -n "$keyspec" ] && keyarg=(-i "${keyspec/#\~/$HOME}")
@@ -117,11 +140,11 @@ while IFS='|' read -r name host keyspec channel; do
   # on bash <4.4 (macOS ships 3.2) with "unbound variable".
   out="$(ssh ${keyarg[@]+"${keyarg[@]}"} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o BatchMode=yes "root@$host" bash -s <<<"$REMOTE" 2>/dev/null || true)"
   if [ -z "$out" ]; then
-    printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' "$safe_name" UNREACH - - - - "$safe_target"
+    printf '%-12s %-14s %-8s %-6s %-6s %-6s %-14s %-10s %s\n' "$safe_name" UNREACH - - - - - - "$safe_target"
     continue
   fi
   out="$(printf '%s\n' "$out" | tail -n 1)"
-  IFS='|' read -r ver rest disk <<<"$out"
+  IFS='|' read -r ver rest disk updater configured <<<"$out"
   read -r run apps conns <<<"${rest:-? ? ?}"
   # Flag disk pressure so a filling box is caught BEFORE it wedges (a full disk
   # hangs the relay → public 502). ! at >=75%, !! at >=90%.
@@ -131,17 +154,25 @@ while IFS='|' read -r name host keyspec channel; do
     if [ "$disk_pct" -ge 90 ] 2>/dev/null; then disk_display="${disk}!!"
     elif [ "$disk_pct" -ge 75 ] 2>/dev/null; then disk_display="${disk}!"; fi
   fi
-  printf '%-9s %-9s %-8s %-6s %-6s %-6s %s\n' \
+  printf '%-12s %-14s %-8s %-6s %-6s %-6s %-14s %-10s %s\n' \
     "$safe_name" \
     "$(clean_field "${ver:-?}")" \
     "$(clean_field "${run:-?}")" \
     "$(clean_field "${apps:-?}")" \
     "$(clean_field "${conns:-?}")" \
     "$(clean_field "${disk_display}")" \
+    "$(clean_field "${updater:-?}")" \
+    "$(clean_field "${configured:-?}")" \
     "$safe_target"
-done < <(python3 -c '
-import json,sys
+done < <(INCLUDE="$INCLUDE" EXCLUDE="$EXCLUDE" python3 -c '
+import json,os,sys
+include = set(filter(None, os.environ.get("INCLUDE", "").split(",")))
+exclude = set(filter(None, os.environ.get("EXCLUDE", "").split(",")))
 for r in json.load(open(sys.argv[1]))["relays"]:
+    if include and r["name"] not in include:
+        continue
+    if r["name"] in exclude:
+        continue
     host = r["tailnet"] or r["publicIp"]
     key  = "" if r.get("sshKey") in (None,"default") else r["sshKey"]
     print("{}|{}|{}|{}".format(r["name"], host, key, r.get("channel", "stable")))

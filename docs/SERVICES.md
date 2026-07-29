@@ -1,5 +1,5 @@
 > [!NOTE]
-> Refreshed for the next relay update: the core builtin services remain opt-in, with new app-facing service providers for encrypted wake notifications (`notify`) and single-writer signed outboxes (`outboxlog`). Services are opt-in (`enableServices` / selected `plugins`); `vrf` is production-ready (RFC 9381, validated against the spec's own test vectors), while `ai`/`zk`/`sla`/`arbitration`, `notify`, and `outboxlog` remain experimental. Notify and outboxlog now have local JSON state, but production provider adapters, billing gates, and operational hardening are still incomplete. See the [CHANGELOG](../CHANGELOG.md) for the authoritative architecture.
+> Refreshed for the next relay update: the core builtin services remain opt-in, with app-facing providers for encrypted wake notifications (`notify`) and single-writer signed outboxes (`outboxlog`). Services are opt-in (`enableServices` / selected `plugins`); `vrf` is production-ready (RFC 9381, validated against the spec's own test vectors), while `ai`/`zk`/`sla`/`arbitration`, `notify`, and `outboxlog` remain experimental. Notify has real APNs, FCM, and Web Push adapters but advertises wake only when an operator configures one; outboxlog uses bounded Hypercore persistence on storage-authority relays. See the [CHANGELOG](../CHANGELOG.md) for the authoritative architecture.
 
 # HiveRelay Services Layer
 
@@ -216,16 +216,26 @@ model.
   meter attempts without leaking wake payloads.
 - Watch mode stores opaque Hypercore/feed heads only; app-defined filtering and
   message truth stay in the application.
+- `notify-outbox-lane` is the preferred mailbox trigger: it observes only the
+  sender-owned opaque recipient lane. `notify-feed-head` remains accepted for
+  older clients, but is marked deprecated and omitted from preferred signed
+  watch sources once exact-lane wiring is present because a global head can
+  wake unrelated recipients sharing the same outbox.
 
 **Current implementation status:** the v0.1.0 provider has signed object
 verification, Node relay JSON persistence under `<storage>/notify-service-state.json`,
 quota/replay/dedupe guards, redacted signed delivery events, capability-doc
-advertising, a lightweight HTTP facade, Bare-safe client signing helpers, and a
-memory push provider for tests. Production APNs/FCM/Web Push adapters and
-pricing/billing enforcement are follow-up gates.
+advertising, a lightweight HTTP facade, Bare-safe client signing helpers, real
+APNs/FCM/Web Push adapters, and a non-live memory provider for tests. Provider
+credentials and pricing/billing enforcement are operator deployment gates; a
+relay using the memory provider is deliberately omitted from the signed
+`notify-v1` capability surface.
 
-Enable it explicitly through `config.plugins` / `services.json` (`notify`) or,
-on the Bare/appliance path, with `HIVERELAY_NOTIFY=1`.
+Enable it explicitly through `config.plugins` / `services.json` (`notify`) or
+with the first-boot default `HIVERELAY_NOTIFY=1` on Node and Bare runtimes.
+Real egress additionally needs `config.notify.push`, or an owner-readable JSON
+descriptor selected by `HIVERELAY_NOTIFY_PUSH_CONFIG`; without that descriptor
+the memory provider stays non-live and is not signed-advertised.
 
 See [PUSH-NOTIFICATION-SERVICE-SPEC.md](./PUSH-NOTIFICATION-SERVICE-SPEC.md).
 
@@ -251,7 +261,11 @@ keeps entries opaque, and exposes a token-gated HTTP/SSE bridge for sync.
   with `OUTBOXLOG_BOUNDED_PERSISTENCE_REQUIRED` until migrated or disabled.
 
 Enable it explicitly through `config.plugins` / `services.json` (`outboxlog`)
-or, on the Bare/appliance path, with `HIVERELAY_OUTBOXLOG=1`.
+or with the first-boot default `HIVERELAY_OUTBOXLOG=1` on Node and Bare
+runtimes. On storage-authority relays, packaged installs also set
+`HIVERELAY_OUTBOXLOG_JOURNAL=hypercore-outboxes` and a finite
+`HIVERELAY_OUTBOXLOG_MAX_JOURNAL_STORAGE`; both are required for bounded
+persistence.
 
 For a Hypercore-backed journal, configure a finite aggregate local bound with
 `config.outboxlog.maxJournalStorageBytes`. This single authority commitment
@@ -277,7 +291,7 @@ namespace to admit. Register it one of two ways:
 
 - config: `config.outboxlog.namespace = "peerit"` (or a `config.outboxlog.namespaces`
   map to register several at once)
-- env (Bare/appliance): `HIVERELAY_OUTBOXLOG_NAMESPACE=peerit`
+- env (Node/Bare packaging default): `HIVERELAY_OUTBOXLOG_NAMESPACE=peerit`
 
 The env var is a **default, not an override**: a `outboxlog.namespace` persisted
 in `config.json` wins over it (matching `HIVERELAY_ACCEPT_MODE`). When neither is
@@ -372,7 +386,7 @@ only the exact token succeeds (constant-time compare). Configure the credential
 with:
 
 - config: `config.outboxlog.adminKey = "<operator-secret>"`
-- env (Bare/appliance): `HIVERELAY_OUTBOXLOG_ADMIN_KEY=<operator-secret>`
+- env (Node/Bare): `HIVERELAY_OUTBOXLOG_ADMIN_KEY=<operator-secret>`
 
 There is no default — provision this only on relays where you intend to enable
 takedown. Outboxlog claims exactly these three `/api/admin/*` routes and does not
@@ -391,8 +405,8 @@ Signed challenge-response proof that this relay genuinely holds a seeded app. A 
 **Access:** route `storage-proof.prove` is policy `public` (anonymous-callable) in `packages/core/core/router/index.js`.
 
 **Opt-in (default OFF):** a stock node does not run it.
-- Node runtime: select `storage-proof` via `config.plugins` / `services.json` (Services tab; persisted under `<storage>/services.json`).
-- Bare/appliance runtime: select `storage-proof` via `config.services` (or `config.plugins`), or set env `HIVERELAY_STORAGE_PROOF=1`.
+- Node runtime: select `storage-proof` via `config.plugins` / `services.json` (Services tab; persisted under `<storage>/services.json`), or use the first-boot default `HIVERELAY_STORAGE_PROOF=1`.
+- Bare runtime: select `storage-proof` via `config.services` (or `config.plugins`), or set `HIVERELAY_STORAGE_PROOF=1`.
 
 **What it proves (v1):** the drive **metadata** core only — the head the client learns from `open()`, so the `minLength` pin lines up. Blobs-core proofs are a follow-up.
 
@@ -444,7 +458,7 @@ const weather = await protocol.request(relayPubkey, 'weather', 'current', { loca
 
 ## Configuration
 
-Services are **opt-in**, not automatic. A relay starts with none: `config/default.js` ships `enableServices: false` and `plugins: []`, and `relay-node/index.js` only constructs the registry when `enableServices` is set. To run services, either set `enableServices` and list `plugins` in the config, or write `<storage>/services.json` — which is the **runtime authority** and overrides config. A plugin name that does not match a registered builtin fails to load silently, so verify with `GET /api/v1/services` (or `node scripts/probe-fleet-services.mjs`) rather than trusting the config. The SLA service requires proof-of-relay to be active for automated enforcement.
+Services are **opt-in**, not automatic. The library default is none: `config/default.js` ships `enableServices: false` and `plugins: []`, and `relay-node/index.js` only constructs the registry when `enableServices` is set. Packaged Node/Bare deployments may express first-boot selections with `HIVERELAY_ENABLE_SERVICES` plus individual `HIVERELAY_*` service flags. Persisted `config.json` values win over those defaults, and `<storage>/services.json` is the **final runtime authority**, including an explicit `enabled: false`. A plugin name that does not match a registered builtin fails to load silently, so verify with `GET /api/v1/services` (or `node scripts/probe-fleet-services.mjs`) rather than trusting configuration. The SLA service requires proof-of-relay to be active for automated enforcement.
 
 Service lifecycle is controlled by:
 

@@ -147,6 +147,9 @@ Merge these from the local Core3 README draft:
   service manager, restart/status, measured stored/served counters.
 - Accept policy contract: `review`, `allowlist`, `open`, `closed`, with
   `HIVERELAY_ACCEPT_MODE=review` as the first-boot home-server default.
+- Preserved the first-boot-only Umbrel storage-cap behavior:
+  `HIVERELAY_MAX_STORAGE=10GB` applies until the operator persists an explicit
+  `maxStorageBytes` value.
 - Management API hardening: bearer auth, strict JSON content type, bounded
   object-only body handling, live `/api/manage/services` disable/restart
   actions, and durable service disable persistence before unregister;

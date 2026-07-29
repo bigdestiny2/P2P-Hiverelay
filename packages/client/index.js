@@ -791,8 +791,12 @@ export class HiveRelayClient extends EventEmitter {
 
     // Wire replication for all connections
     this._connectionHandler = (conn, info) => {
-      if (this.store) this.store.replicate(conn)
+      // Attach the peer error sink before Corestore/Protomux can schedule any
+      // stream work. NoiseSecretStream may emit a late ECONNRESET while a
+      // swarm is being destroyed; attaching only after protocol setup leaves
+      // a race that can become an unhandled EventEmitter error.
       this._onConnection(conn, info)
+      if (this.store) this.store.replicate(conn)
     }
     this.swarm.on('connection', this._connectionHandler)
 
@@ -4588,9 +4592,20 @@ export class HiveRelayClient extends EventEmitter {
   // ─── Internal ────────────────────────────────────────────────────
 
   _onConnection (conn, info) {
-    const pubkeyHex = info.publicKey
+    const pubkeyHex = info && info.publicKey
       ? b4a.toString(info.publicKey, 'hex')
       : null
+
+    // This listener is deliberately connection-scoped and installed before
+    // any early return or protocol setup. It therefore also covers inbound
+    // streams whose identity metadata is incomplete and late shutdown errors
+    // after channel state has already been torn down.
+    conn.on('error', () => {
+      if (!pubkeyHex) return
+      this.relays.delete(pubkeyHex)
+      const errorScores = this._relayScores.get(pubkeyHex)
+      if (errorScores) errorScores.failures++
+    })
 
     if (!pubkeyHex) return
 
@@ -4796,12 +4811,6 @@ export class HiveRelayClient extends EventEmitter {
       if (this.relays.size === 0 && this._started) {
         this._attemptReconnect()
       }
-    })
-
-    conn.on('error', () => {
-      this.relays.delete(pubkeyHex)
-      const errorScores = this._relayScores.get(pubkeyHex)
-      if (errorScores) errorScores.failures++
     })
 
     this._resetReconnect()

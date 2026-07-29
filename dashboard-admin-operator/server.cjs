@@ -56,8 +56,8 @@ function presentedToken (req) {
     return ''
   }
 }
-const POLICY_PATH = process.env.HIVERELAY_CONTROL_POLICY
-  || path.join(__dirname, 'control-policy.json')
+const POLICY_PATH = process.env.HIVERELAY_CONTROL_POLICY ||
+  path.join(__dirname, 'control-policy.json')
 
 function expandHome (p) {
   if (!p) return p
@@ -120,7 +120,7 @@ function probeNode (relay) {
       : []
 
     const remote = [
-      'V=$(grep -m1 \'"version"\' ~/hiverelay/package.json 2>/dev/null | tr -dc \'0-9.\' || echo \'none\')',
+      'V=$(node -p \'require(process.env.HOME + "/hiverelay/package.json").version\' 2>/dev/null || echo \'none\')',
       'D=$(df -h / | awk \'NR==2{print $5}\' | tr -dc \'0-9\')',
       'DG=$(df -h / | awk \'NR==2{print $2}\' | tr -dc \'0-9.\')',
       'SW=$(free -m 2>/dev/null | awk \'/Swap/{print $2}\' | head -1)',
@@ -142,6 +142,8 @@ function probeNode (relay) {
       'HEALTH=$(curl -fsS --max-time 4 http://127.0.0.1:9100/health 2>/dev/null || echo \'\')',
       'WD=$(systemctl is-enabled hiverelay-health-watchdog.timer 2>/dev/null || echo missing)',
       'HO=0; echo "$HEALTH" | grep -q \'"ok"[[:space:]]*:[[:space:]]*true\' && HO=1',
+      // Shell parameter expansions, not JavaScript template placeholders.
+      // eslint-disable-next-line no-template-curly-in-string
       'printf \'{"version":"%s","diskPct":%s,"diskGB":%s,"swapMB":%s,"ramUsedPct":%s,"loadAvg":%s,"uptime":"%s","restarts":%s,"memCurrentMB":%s,"tasks":%s,"env":"%s","watchdog":"%s","healthOk":%s,"config":%s,"status":%s,"cap":%s}\\n\' "$V" "${D:-0}" "${DG:-0}" "${SW:-0}" "${RM:-0}" "${LA:-0}" "$UP" "${RT:-0}" "${MC:-0}" "${TS:-0}" "$ENV" "$WD" "$HO" "$CFG" "$STATUS" "$CAP"'
     ].join('\n')
 
@@ -379,7 +381,7 @@ const server = http.createServer(async (req, res) => {
 
   // SSE
   if (req.url === '/api/events') {
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', 'connection': 'keep-alive' })
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache', connection: 'keep-alive' })
     res.write(`data: ${JSON.stringify({ type: 'fleet', data: fleetState, timestamp: lastProbe })}\n\n`)
     res.write(`data: ${JSON.stringify({ type: 'actions', data: actionLog })}\n\n`)
     sseClients.push(res)
@@ -554,7 +556,6 @@ const server = http.createServer(async (req, res) => {
         if (idx >= 0) fleetState[idx] = updated
         broadcast({ type: 'fleet', data: fleetState, timestamp: new Date().toISOString() })
         return sendJson(res, 200, { ok: true, state: updated })
-
       } else if (action === 'update') {
         const output = await sshAction(relay, 'cd ~/hiverelay && git pull --ff-only 2>&1 && npm install --production 2>&1 | tail -5 && systemctl restart hiverelay && sleep 5 && systemctl is-active hiverelay', 'update relay')
         const updated = await probeNode(relay)
@@ -562,7 +563,6 @@ const server = http.createServer(async (req, res) => {
         if (idx >= 0) fleetState[idx] = updated
         broadcast({ type: 'fleet', data: fleetState, timestamp: new Date().toISOString() })
         return sendJson(res, 200, { ok: true, output: output.slice(0, 500), state: updated })
-
       } else if (action === 'doctor') {
         const cmds = [
           'echo "=== Swap ===" && free -m | grep Swap',
@@ -574,7 +574,6 @@ const server = http.createServer(async (req, res) => {
         ].join('; ')
         const output = await sshAction(relay, cmds, 'doctor relay')
         return sendJson(res, 200, { ok: true, output })
-
       } else if (action === 'toggle') {
         const body = await readBody(req)
         const { feature, enabled } = body
@@ -728,12 +727,17 @@ function computeSummary () {
     else regions[r].degraded++
   }
   return {
-    total: nodes.length, healthy: nodes.filter(n => n.status === 'healthy').length,
+    total: nodes.length,
+    healthy: nodes.filter(n => n.status === 'healthy').length,
     degraded: nodes.filter(n => n.status === 'degraded').length,
     offline: nodes.filter(n => n.status === 'offline').length,
     running: nodes.filter(n => n.running === true).length,
     diskWarnings: nodes.filter(n => n.diskPct && n.diskPct > 75).length,
-    totalRamGB: Math.round(totalRamGB), totalDiskGB, totalSeeded, totalConns, regions
+    totalRamGB: Math.round(totalRamGB),
+    totalDiskGB,
+    totalSeeded,
+    totalConns,
+    regions
   }
 }
 
@@ -760,7 +764,7 @@ async function main () {
     })
     server.on('error', reject)
   })
-  console.log(`[admin-operator] Running initial probe...`)
+  console.log('[admin-operator] Running initial probe...')
   await probeAll()
   const s = computeSummary()
   console.log(`[admin-operator] Done: ${s.healthy} healthy, ${s.degraded} degraded, ${s.offline} offline`)

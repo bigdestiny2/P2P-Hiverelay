@@ -181,13 +181,34 @@ class JournalStorageController {
     for (const core of this.cores) {
       if (!core || typeof core.info !== 'function') throw new Error('OutboxLog exact core storage info unavailable')
       const info = await core.info({ storage: true })
-      if (!info || !info.storage) throw new Error('OutboxLog exact core storage info unavailable')
-      for (const value of Object.values(info.storage)) {
-        const bytes = Number(value)
-        if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('OutboxLog exact core storage info invalid')
-        actual += bytes
-        if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
+      if (!info) throw new Error('OutboxLog exact core storage info unavailable')
+      if (info.storage) {
+        for (const value of Object.values(info.storage)) {
+          const bytes = Number(value)
+          if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('OutboxLog exact core storage info invalid')
+          actual += bytes
+          if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
+        }
+        continue
       }
+
+      // Corestore 7 multiplexes cores into one shared database, so Hypercore
+      // cannot attribute allocated files per core and reports storage:null.
+      // Use the signed logical byteLength for this core in that layout. This
+      // never releases capacity: the journal's monotonic durable ledger keeps
+      // the conservative per-operation debt, the full aggregate commitment
+      // remains charged, and StorageAdmissionAuthority independently measures
+      // and enforces the complete Corestore tree's allocated bytes.
+      const before = Number(core.byteLength ?? info.byteLength)
+      const lengthBefore = Number(core.length ?? info.length)
+      const after = Number(core.byteLength ?? info.byteLength)
+      const lengthAfter = Number(core.length ?? info.length)
+      if (!Number.isSafeInteger(before) || before < 0 || before !== after ||
+          !Number.isSafeInteger(lengthBefore) || lengthBefore < 0 || lengthBefore !== lengthAfter) {
+        throw new Error('OutboxLog exact core storage info invalid')
+      }
+      actual += after
+      if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
     }
     return actual
   }
@@ -769,6 +790,20 @@ async function readyCore (core) {
 }
 
 async function tryOpenExistingCore (store, opts) {
+  // Corestore's `get({ createIfMissing: false })` still allocates a Hypercore
+  // session before its async existence check settles. When the core is absent,
+  // ready() and close() both reject with STORAGE_EMPTY and that rejected
+  // session can make the root Corestore's later close reject as well. Consult
+  // Corestore's durable alias/index first so a normal first boot creates no
+  // doomed session.
+  if (opts?.name && store?.storage && typeof store.storage.getAlias === 'function') {
+    if (typeof store.ready === 'function') await store.ready()
+    const discoveryKey = await store.storage.getAlias({ name: opts.name, namespace: store.ns })
+    if (!discoveryKey) return null
+  } else if (opts?.discoveryKey && store?.storage && typeof store.storage.hasCore === 'function') {
+    if (typeof store.ready === 'function') await store.ready()
+    if (!await store.storage.hasCore(opts.discoveryKey)) return null
+  }
   const core = store.get({ ...opts, createIfMissing: false })
   try {
     await readyCore(core)

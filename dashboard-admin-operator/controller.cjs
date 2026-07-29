@@ -6,7 +6,6 @@
  */
 
 const fs = require('fs')
-const path = require('path')
 
 function defaultPolicy () {
   return {
@@ -200,6 +199,8 @@ const REMOTE = {
     'set +e',
     'echo "=== doctor ==="',
     'SW=$(free -m | awk "/Swap/{print \\$2}")',
+    // Shell parameter expansion, not a JavaScript template placeholder.
+    // eslint-disable-next-line no-template-curly-in-string
     'if [ "${SW:-0}" = "0" ]; then',
     '  fallocate -l 2G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=2048',
     '  chmod 600 /swapfile; mkswap /swapfile; swapon /swapfile',
@@ -232,8 +233,12 @@ const REMOTE = {
     '  cat > /usr/local/bin/hiverelay-health-watchdog.sh << "WATCH"',
     '#!/usr/bin/env bash',
     'set -uo pipefail',
+    // Shell parameter expansions, not JavaScript template placeholders.
+    // eslint-disable-next-line no-template-curly-in-string
     'URL="${HIVERELAY_HEALTH_URL:-http://127.0.0.1:9100/health}"',
+    // eslint-disable-next-line no-template-curly-in-string
     'TIMEOUT="${HIVERELAY_HEALTH_TIMEOUT:-5}"',
+    // eslint-disable-next-line no-template-curly-in-string
     'NEED_FAILS="${HIVERELAY_HEALTH_FAILS:-2}"',
     'STATE_FILE=/run/hiverelay-health-watchdog.failcount',
     'UNIT=hiverelay',

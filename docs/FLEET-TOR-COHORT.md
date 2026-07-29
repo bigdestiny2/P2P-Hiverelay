@@ -19,7 +19,10 @@
 
 ## Enablement note
 
-Fleet CLI enables Tor via **`config.transports.tor`**, not only `HIVERELAY_TOR=1`. Packaging env alone is not sufficient on these boxes.
+The Node CLI now translates `HIVERELAY_TOR=1` and the bounded `HIVERELAY_TOR_*`
+host/port/key/min-version/roster fields into first-boot defaults. Persisted
+`config.transports.tor` and `config.tor.*` still win, so the fleet cohort keeps
+its explicit config and verifies readiness from the signed capability document.
 
 ## Not in cohort
 

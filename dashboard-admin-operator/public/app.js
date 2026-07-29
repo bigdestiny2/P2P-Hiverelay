@@ -1,3 +1,4 @@
+/* global EventSource, alert, confirm */
 /* HiveRelay · Dashboard Admin Operator — live fleet control plane */
 
 let state = null
@@ -6,18 +7,28 @@ let expandedNode = null
 
 const REGION_NAMES = { NA: 'North America', EU: 'Europe', APAC: 'Asia-Pacific', ME: 'Middle East' }
 const FEATURE_LABELS = {
-  coreRelay: 'Core Relay', seeding: 'Seeding', services: 'Service Layer',
-  dhtRelayWs: 'DHT Relay (WS)', tor: 'Tor Transport', holesail: 'Holesail',
-  outboxlog: 'OutboxLog', forwardRelay: 'Forward Relay', signedDirectory: 'Signed Directory',
-  vrf: 'VRF (RFC 9381)', poker: 'Poker Substrate', zk: 'ZK Proofs',
-  arbitration: 'Arbitration', payment: 'Payments', eviction: 'Auto-Eviction',
-  autoHeal: 'Auto-Heal', distributedDrive: 'Distributed Drive'
+  coreRelay: 'Core Relay',
+  seeding: 'Seeding',
+  services: 'Service Layer',
+  dhtRelayWs: 'DHT Relay (WS)',
+  tor: 'Tor Transport',
+  holesail: 'Holesail',
+  outboxlog: 'OutboxLog',
+  forwardRelay: 'Forward Relay',
+  signedDirectory: 'Signed Directory',
+  vrf: 'VRF (RFC 9381)',
+  poker: 'Poker Substrate',
+  zk: 'ZK Proofs',
+  arbitration: 'Arbitration',
+  payment: 'Payments',
+  eviction: 'Auto-Eviction',
+  autoHeal: 'Auto-Heal',
+  distributedDrive: 'Distributed Drive'
 }
 const TOGGLEABLE = ['dhtRelayWs', 'outboxlog', 'forwardRelay', 'signedDirectory', 'services', 'eviction']
 
 async function fetchState () {
-  try { state = await (await fetch('/api/state')).json(); render() }
-  catch { document.getElementById('app').innerHTML = '<div class="loading">Connection lost...</div>' }
+  try { state = await (await fetch('/api/state')).json(); render() } catch { document.getElementById('app').innerHTML = '<div class="loading">Connection lost...</div>' }
 }
 
 function connectSSE () {
@@ -63,7 +74,8 @@ function computeSummary (nodes) {
     else regions[r].degraded++
   }
   return {
-    total: nodes.length, healthy: nodes.filter(n => n.status === 'healthy').length,
+    total: nodes.length,
+    healthy: nodes.filter(n => n.status === 'healthy').length,
     degraded: nodes.filter(n => n.status === 'degraded').length,
     offline: nodes.filter(n => n.status === 'offline').length,
     running: nodes.filter(n => n.running === true).length,
@@ -78,7 +90,7 @@ function computeSummary (nodes) {
 
 function fmtBytes (b) {
   if (!b || b === 0) return '0 B'
-  const u = ['B','KB','MB','GB','TB','PB']
+  const u = ['B', 'KB', 'MB', 'GB', 'TB', 'PB']
   const i = Math.floor(Math.log(b) / Math.log(1024))
   return (b / Math.pow(1024, i)).toFixed(1) + ' ' + u[i]
 }
@@ -112,13 +124,13 @@ function render () {
       ${renderActionLog(state.actions)}
     </div>
     <div id="toast-container"></div>
-    <div class="footer"><div class="footer-meta">Admin Operator · full fleet control · probe ${state.interval||60}s · auto-control ${state.control?.autoControl ? 'ON' : 'OFF'} · ${new Date().toISOString()}</div></div>
+    <div class="footer"><div class="footer-meta">Admin Operator · full fleet control · probe ${state.interval || 60}s · auto-control ${state.control?.autoControl ? 'ON' : 'OFF'} · ${new Date().toISOString()}</div></div>
   `
 }
 
 function renderControlPanel (ctrl) {
   if (!ctrl) {
-    return `<div class="control-panel"><div class="control-panel-head"><strong>Fleet control</strong><span class="dim">waiting for first probe…</span></div></div>`
+    return '<div class="control-panel"><div class="control-panel-head"><strong>Fleet control</strong><span class="dim">waiting for first probe…</span></div></div>'
   }
   const auto = !!ctrl.autoControl
   const cycle = ctrl.lastCycle
@@ -153,21 +165,25 @@ function renderControlPanel (ctrl) {
       <span class="range-chip">large ≥4GB: mem≤4.8GB</span>
       <span class="range-chip">swap ≥256MB · watchdog required · disk warn 75%</span>
     </div>
-    ${violators.length ? `
+    ${violators.length
+? `
     <div class="violations">
       <div class="section-title" style="margin:8px 0 6px">Out of range <span class="count">${violators.length}</span></div>
       ${violators.map(v => `
         <div class="violation-row">
           <strong>${esc(v.name)}</strong>
-          <span class="badge ${esc(v.tier||'')}">${esc(v.tier||'?')}</span>
-          ${(v.violations||[]).map(x => `<span class="vchip ${x.severity}">${esc(x.code)}: ${esc(x.msg)}</span>`).join('')}
-          ${(v.actions||[]).map(a => `<span class="auto-act">→ ${esc(a.type)}</span>`).join('')}
+          <span class="badge ${esc(v.tier || '')}">${esc(v.tier || '?')}</span>
+          ${(v.violations || []).map(x => `<span class="vchip ${x.severity}">${esc(x.code)}: ${esc(x.msg)}</span>`).join('')}
+          ${(v.actions || []).map(a => `<span class="auto-act">→ ${esc(a.type)}</span>`).join('')}
         </div>`).join('')}
-    </div>` : `<div class="in-range-ok">All reachable nodes within healthy ranges (or offline only).</div>`}
-    ${remediations.length ? `
+    </div>`
+: '<div class="in-range-ok">All reachable nodes within healthy ranges (or offline only).</div>'}
+    ${remediations.length
+? `
     <div class="remed-log">
-      ${remediations.map(r => `<div class="remed-item ${r.ok?'ok':'fail'}">${esc(r.node)} · auto:${esc(r.type)} · ${esc(r.reason)} · ${r.ok?'ok':'fail'} ${esc(r.detail||'')}</div>`).join('')}
-    </div>` : ''}
+      ${remediations.map(r => `<div class="remed-item ${r.ok ? 'ok' : 'fail'}">${esc(r.node)} · auto:${esc(r.type)} · ${esc(r.reason)} · ${r.ok ? 'ok' : 'fail'} ${esc(r.detail || '')}</div>`).join('')}
+    </div>`
+: ''}
   </div>`
 }
 
@@ -190,7 +206,7 @@ async function runControlNow () {
     const res = await fetch('/api/control/run', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ force: true }) })
     const data = await res.json()
     if (data.error) alert(data.error)
-    else showToast({ node: 'fleet', action: 'control cycle', detail: `done · ${data.cycle?.remediations?.length||0} remediations` })
+    else showToast({ node: 'fleet', action: 'control cycle', detail: `done · ${data.cycle?.remediations?.length || 0} remediations` })
     await fetchState()
   } catch (e) { alert(e.message) }
 }
@@ -225,14 +241,14 @@ function renderKPIs (s) {
 function renderRegions (regions) {
   if (!regions) return ''
   return `<div class="regions">${Object.entries(regions).map(([code, r]) => `
-    <div class="region-card"><div class="region-name">${REGION_NAMES[code]||code}</div>
-    <div class="region-stats"><span class="up">${r.healthy} up</span>${r.degraded?`<span class="deg">${r.degraded} deg</span>`:''}${r.offline?`<span class="down">${r.offline} down</span>`:''}<span class="total">${r.total}</span></div></div>`).join('')}</div>`
+    <div class="region-card"><div class="region-name">${REGION_NAMES[code] || code}</div>
+    <div class="region-stats"><span class="up">${r.healthy} up</span>${r.degraded ? `<span class="deg">${r.degraded} deg</span>` : ''}${r.offline ? `<span class="down">${r.offline} down</span>` : ''}<span class="total">${r.total}</span></div></div>`).join('')}</div>`
 }
 
 function renderNodeTable (nodes) {
   const sorted = [...nodes].sort((a, b) => {
     const order = { offline: 3, degraded: 2, healthy: 1 }
-    return (order[a.status]||3) - (order[b.status]||3) || a.name.localeCompare(b.name)
+    return (order[a.status] || 3) - (order[b.status] || 3) || a.name.localeCompare(b.name)
   })
   return `
       <div class="section">
@@ -257,19 +273,19 @@ function renderRow (n) {
     <td><span class="chevron ${isExpanded ? 'open' : ''}">&#9654;</span></td>
     <td><span class="indicator"><span class="dot ${n.status}"></span></span> <strong>${esc(n.name)}</strong></td>
     <td class="mono">${esc(n.publicIp)}</td>
-    <td class="${verOk?'version-ok':'version-bad'} mono-val">${esc(n.version||'—')}</td>
-    <td>${n.running&&n.healthOk!==false?'<span class="ok-text">running</span>':(n.running?'<span class="err-text">hung?</span>':'<span class="err-text">stopped</span>')}</td>
+    <td class="${verOk ? 'version-ok' : 'version-bad'} mono-val">${esc(n.version || '—')}</td>
+    <td>${n.running && n.healthOk !== false ? '<span class="ok-text">running</span>' : (n.running ? '<span class="err-text">hung?</span>' : '<span class="err-text">stopped</span>')}</td>
     <td>${renderDiskBar(n)}</td>
-    <td class="mono-val">${mem!=null?mem+'M':'—'}</td>
+    <td class="mono-val">${mem != null ? mem + 'M' : '—'}</td>
     <td>${renderRamBar(n)}</td>
-    <td class="mono">${n.loadAvg!=null?Number(n.loadAvg).toFixed(2):'—'}</td>
-    <td class="mono-val">${n.seededApps||'—'}</td>
-    <td class="mono-val">${n.connections||'—'}</td>
-    <td>${wdOk?'<span class="ok-text">on</span>':'<span class="err-text">off</span>'}</td>
-    <td>${svcCount?`<span class="svc-count">${svcCount}</span>`:'—'}</td>
-    <td><span class="badge ${esc(n.channel||'stable')}">${esc(n.channel||'stable')}</span></td>
-    <td>${esc(n.region||'—')}</td>
-    <td class="mono">${n.vcpu||'?'}c/${n.ramGB||'?'}G/${n.diskGB||'?'}G</td>
+    <td class="mono">${n.loadAvg != null ? Number(n.loadAvg).toFixed(2) : '—'}</td>
+    <td class="mono-val">${n.seededApps || '—'}</td>
+    <td class="mono-val">${n.connections || '—'}</td>
+    <td>${wdOk ? '<span class="ok-text">on</span>' : '<span class="err-text">off</span>'}</td>
+    <td>${svcCount ? `<span class="svc-count">${svcCount}</span>` : '—'}</td>
+    <td><span class="badge ${esc(n.channel || 'stable')}">${esc(n.channel || 'stable')}</span></td>
+    <td>${esc(n.region || '—')}</td>
+    <td class="mono">${n.vcpu || '?'}c/${n.ramGB || '?'}G/${n.diskGB || '?'}G</td>
   </tr>`
 }
 
@@ -287,13 +303,13 @@ function renderDetailRow (n) {
             const feat = f[key] || {}
             const isOn = feat.enabled === true
             const canToggle = TOGGLEABLE.includes(key) && !offline
-            return `<div class="feature-item ${isOn?'on':'off'}">
-              <span class="feat-status ${isOn?'on':'off'}">${isOn?'ON':'OFF'}</span>
+            return `<div class="feature-item ${isOn ? 'on' : 'off'}">
+              <span class="feat-status ${isOn ? 'on' : 'off'}">${isOn ? 'ON' : 'OFF'}</span>
               <span class="feat-label">${label}</span>
-              ${feat.running != null ? `<span class="feat-extra">${feat.running?'running':'stopped'}</span>` : ''}
+              ${feat.running != null ? `<span class="feat-extra">${feat.running ? 'running' : 'stopped'}</span>` : ''}
               ${feat.count != null ? `<span class="feat-extra">${feat.count} svc</span>` : ''}
               ${feat.coresSeeded != null ? `<span class="feat-extra">${feat.coresSeeded} cores</span>` : ''}
-              ${canToggle ? `<button class="feat-toggle ${isOn?'off':'on'}" onclick="toggleFeature('${esc(n.name)}','${key}',${!isOn})">${isOn?'Disable':'Enable'}</button>` : ''}
+              ${canToggle ? `<button class="feat-toggle ${isOn ? 'off' : 'on'}" onclick="toggleFeature('${esc(n.name)}','${key}',${!isOn})">${isOn ? 'Disable' : 'Enable'}</button>` : ''}
             </div>`
           }).join('')}
         </div>
@@ -315,31 +331,35 @@ function renderDetailRow (n) {
           ${renderStat('Blocks served', n.blocksServed)}
         </div>
 
-        ${n.services && n.services.length > 0 ? `
+        ${n.services && n.services.length > 0
+? `
         <div class="detail-section-title" style="margin-top:16px">Service Layer (${n.services.length})</div>
         <div class="svc-list">
-          ${n.services.map(s => `<div class="svc-item"><span class="svc-name">${esc(s.name)}</span><span class="svc-ver">v${esc(s.version)}</span><span class="svc-caps">${(s.capabilities||[]).length} caps</span></div>`).join('')}
-        </div>` : ''}
+          ${n.services.map(s => `<div class="svc-item"><span class="svc-name">${esc(s.name)}</span><span class="svc-ver">v${esc(s.version)}</span><span class="svc-caps">${(s.capabilities || []).length} caps</span></div>`).join('')}
+        </div>`
+: ''}
 
-        ${n.transports ? `
+        ${n.transports
+? `
         <div class="detail-section-title" style="margin-top:16px">Transports</div>
         <div class="stats-grid">
           ${renderTransport('DHT WS', n.transports.dhtRelayWs)}
           ${renderTransport('Tor', n.transports.tor)}
           ${renderTransport('Holesail', n.transports.holesail)}
-        </div>` : ''}
+        </div>`
+: ''}
       </div>
       <div class="detail-col">
         <div class="detail-section-title">Controls</div>
         <div class="control-list">
-          <button class="ctrl-btn" onclick="nodeAction('${esc(n.name)}','restart')" ${offline?'disabled':''}>Restart Relay</button>
-          <button class="ctrl-btn" onclick="nodeAction('${esc(n.name)}','update')" ${offline?'disabled':''}>Update (git pull + restart)</button>
-          <button class="ctrl-btn" onclick="nodeAction('${esc(n.name)}','doctor')" ${offline?'disabled':''}>Doctor (swap + locks + cleanup)</button>
+          <button class="ctrl-btn" onclick="nodeAction('${esc(n.name)}','restart')" ${offline ? 'disabled' : ''}>Restart Relay</button>
+          <button class="ctrl-btn" onclick="nodeAction('${esc(n.name)}','update')" ${offline ? 'disabled' : ''}>Update (git pull + restart)</button>
+          <button class="ctrl-btn" onclick="nodeAction('${esc(n.name)}','doctor')" ${offline ? 'disabled' : ''}>Doctor (swap + locks + cleanup)</button>
         </div>
 
         <div class="detail-section-title" style="margin-top:16px">Environment</div>
         <div class="env-list">
-          ${Object.entries(n.env||{}).map(([k,v]) => `<div class="env-item"><span class="env-key">${esc(k)}</span><span class="env-val">${esc(k.includes('KEY')?'[redacted]':v)}</span></div>`).join('') || '<div class="env-empty">No env vars</div>'}
+          ${Object.entries(n.env || {}).map(([k, v]) => `<div class="env-item"><span class="env-key">${esc(k)}</span><span class="env-val">${esc(k.includes('KEY') ? '[redacted]' : v)}</span></div>`).join('') || '<div class="env-empty">No env vars</div>'}
         </div>
       </div>
     </div>
@@ -352,13 +372,13 @@ function renderStat (label, value) {
 
 function renderTransport (name, t) {
   if (!t) return `<div class="stat-item"><span class="stat-label">${name}</span><span class="stat-value">disabled</span></div>`
-  return `<div class="stat-item"><span class="stat-label">${name}</span><span class="stat-value">${t.running?'running':'stopped'} ${t.activeConnections!=null?`(${t.activeConnections} active)`:''}</span></div>`
+  return `<div class="stat-item"><span class="stat-label">${name}</span><span class="stat-value">${t.running ? 'running' : 'stopped'} ${t.activeConnections != null ? `(${t.activeConnections} active)` : ''}</span></div>`
 }
 
 function renderActionLog (actions) {
   if (!actions || actions.length === 0) return ''
-  return `<div class="section"><div class="section-title">Action Log <span class="count">last ${Math.min(actions.length,10)}</span></div>
-  <div class="action-log">${actions.slice(0,10).map(a => `<div class="action-item"><span class="action-time">${new Date(a.timestamp).toLocaleTimeString()}</span><span class="action-node">${esc(a.node)}</span><span class="action-type">${esc(a.action)}</span><span class="action-detail">${esc(a.detail||'')}</span></div>`).join('')}</div></div>`
+  return `<div class="section"><div class="section-title">Action Log <span class="count">last ${Math.min(actions.length, 10)}</span></div>
+  <div class="action-log">${actions.slice(0, 10).map(a => `<div class="action-item"><span class="action-time">${new Date(a.timestamp).toLocaleTimeString()}</span><span class="action-node">${esc(a.node)}</span><span class="action-type">${esc(a.action)}</span><span class="action-detail">${esc(a.detail || '')}</span></div>`).join('')}</div></div>`
 }
 
 function renderDiskBar (n) {
@@ -397,10 +417,10 @@ async function nodeAction (name, action) {
 }
 
 async function toggleFeature (name, feature, enabled) {
-  if (!confirm(`${enabled?'Enable':'Disable'} ${feature} on ${name}?`)) return
+  if (!confirm(`${enabled ? 'Enable' : 'Disable'} ${feature} on ${name}?`)) return
   try {
-    showToast({ node: name, action: `${enabled?'enable':'disable'} ${feature}`, detail: 'applying...' })
-    const res = await fetch(`/api/node/${name}/toggle`, { method: 'POST', headers: {'content-type':'application/json'}, body: JSON.stringify({ feature, enabled }) })
+    showToast({ node: name, action: `${enabled ? 'enable' : 'disable'} ${feature}`, detail: 'applying...' })
+    const res = await fetch(`/api/node/${name}/toggle`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ feature, enabled }) })
     const data = await res.json()
     if (data.error) alert(data.error)
     await fetchState()
@@ -487,9 +507,21 @@ async function submitAddRelay () {
 function showToast (data) {
   const el = document.createElement('div')
   el.className = 'toast'
-  el.innerHTML = `<strong>${esc(data.node)}</strong> · ${esc(data.action)} · ${esc(data.detail||'')}`
+  el.innerHTML = `<strong>${esc(data.node)}</strong> · ${esc(data.action)} · ${esc(data.detail || '')}`
   document.getElementById('toast-container')?.appendChild(el)
   setTimeout(() => el.remove(), 5000)
 }
+
+Object.assign(globalThis, {
+  setAutoControl,
+  runControlNow,
+  stabilizeAll,
+  toggleDetail,
+  nodeAction,
+  toggleFeature,
+  reprobe,
+  showAddRelay,
+  submitAddRelay
+})
 
 fetchState().then(() => connectSSE())

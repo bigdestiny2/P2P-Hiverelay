@@ -1,9 +1,11 @@
 # Fleet management
 
 Tooling for the **raw systemd fleet** — the relay boxes we operate
-directly (utah, utah-us, utah-2gb-a, utah-0.5gb, utah-8gb, sing-1, sing-2, bern, dubai). The Umbrel and StartOS
-packaged relays auto-update through their own registries and are *not*
-managed here.
+directly. [`relays.json`](relays.json), rather than a duplicated list in this
+document, is the authoritative public inventory. A private
+`relays.local.json` may add operator-only connection details or isolated lanes.
+The Umbrel and StartOS packaged relays auto-update through their own registries
+and are *not* managed here.
 
 It exists because hand-SSHing five boxes from one laptop is fragile: a
 stale `known_hosts` entry looks identical to "we lost a server" (it cost
@@ -20,8 +22,8 @@ for boxes we don't control.
 
 ```
 fleet/channels.json   ──(raw.githubusercontent)──▶  each box's updater
-   stable: v0.20.1                                   reads its channel,
-   canary: v0.20.1                                   checks out the tag,
+   stable: <signed tag>                              reads its channel,
+   canary: <signed tag>                              checks out the tag,
                                                       health-gates, and
                                                       rolls back on failure
 ```
@@ -86,6 +88,20 @@ For a quick table without waiting for convergence, run:
 bash fleet/fleet-status.sh
 ```
 
+Scope a scan before it opens SSH connections with comma-separated relay-name
+allow/deny lists. This is required when another operator owns a lane:
+
+```bash
+HIVERELAY_FLEET_INVENTORY=fleet/relays.local.json \
+HIVERELAY_FLEET_INCLUDE=utah,utah-us,bern \
+bash fleet/fleet-status.sh
+```
+
+`HIVERELAY_FLEET_EXCLUDE` uses the same syntax and is applied after the
+allowlist. Invalid list syntax fails closed before any SSH connection. The
+runtime service-catalogue probe accepts the same environment variables, or
+equivalent `--include` / `--exclude` options.
+
 To **hold** a box, point its channel at the version it already runs. To
 **roll the whole channel back**, set the tag back — boxes check out the
 older tag exactly like a forward update (health-gated the same way).
@@ -141,11 +157,10 @@ name automatically.
 ```bash
 # On each box (repo already cloned at ~/hiverelay):
 sudo bash fleet/tailscale-enroll.sh
-sudo bash fleet/install-updater.sh canary   # utah
-sudo bash fleet/install-updater.sh stable   # the other four
+sudo bash fleet/install-updater.sh canary   # only boxes assigned canary in relays.json
+sudo bash fleet/install-updater.sh stable   # only boxes assigned stable in relays.json
 hiverelay-updater --dry-run                  # confirm the decision, no changes
 ```
 
-`channels.json` ships with `stable: v0.20.1` and `canary: v0.20.1`, so
-installing the agent on a box already at the current release is a
-**no-op** until you promote the channel to a newer tag.
+Installing the agent on a box already at its channel's current signed tag is a
+**no-op** until that channel is promoted or rolled back.
