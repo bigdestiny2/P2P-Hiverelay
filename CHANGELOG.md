@@ -66,6 +66,9 @@ canary promotion remain required before deployment.**
 - The exact-target updater repair command defaults to a read-only probe and
   requires repeated relay confirmation before atomically applying a pin; it
   refuses application-version changes and restores updater state on failure.
+- The release cutter now distinguishes a locked vault from an absent signing
+  key, refuses setup while key presence is unknowable, and rejects a signer
+  principal not trusted by the fleet before it can create a tag.
 - StartOS and Umbrel metadata, release-evidence tests, and operator docs are
   synchronized to the current prerelease baseline and distinguish configured
   defaults from signed runtime proof.

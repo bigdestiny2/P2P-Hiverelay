@@ -1,5 +1,19 @@
 export const AUDIT_OWNED_DIFF_SLICES = Object.freeze([
   {
+    id: 'release-signer-authority-preflight',
+    title: 'Release signer vault and trusted-principal preflight',
+    files: [
+      'CHANGELOG.md',
+      'docs/LADDER-SHIP-MAP.md',
+      'docs/RELEASE.md',
+      'docs/RELEASE-RUNBOOK-0.25.0-rc.5.md',
+      'scripts/lib/audit-owned-diff.mjs',
+      'scripts/release.sh',
+      'test/unit/audit-owned-diff.test.js',
+      'test/unit/release-cutter-status.test.js'
+    ]
+  },
+  {
     id: 'release-blocker-closure',
     title: 'Release blocker closure board',
     files: [

@@ -43,6 +43,23 @@ die()  { printf '\033[31mrelease: ERROR:\033[0m %s\n' "$*" >&2; exit 1; }
 
 need() { command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"; }
 
+allowed_signer_count() {
+  [ -r "$ALLOWED_SIGNERS" ] || { printf '0\n'; return 0; }
+  grep -cvE '^[[:space:]]*(#|$)' "$ALLOWED_SIGNERS" 2>/dev/null || true
+}
+
+signer_principal_is_trusted() {
+  [ -n "${SIGNER_EMAIL:-}" ] && [ -r "$ALLOWED_SIGNERS" ] || return 1
+  awk -v principal="$SIGNER_EMAIL" '
+    /^[[:space:]]*(#|$)/ { next }
+    {
+      count = split($1, principals, ",")
+      for (i = 1; i <= count; i++) if (principals[i] == principal) found = 1
+    }
+    END { exit(found ? 0 : 1) }
+  ' "$ALLOWED_SIGNERS"
+}
+
 # Any secret material written to disk is tracked here and removed on EVERY exit
 # path — success, error under `set -e`, or interrupt. A function-local trap would
 # miss the errexit path and strand a private key in the temp dir.
@@ -61,7 +78,12 @@ get_signing_key() {
   if [ -n "${SIGNING_KEY_FILE:-}" ]; then cat "$SIGNING_KEY_FILE"; return 0; fi
   if command -v keyvault >/dev/null 2>&1; then
     keyvault get "$VAULT_SCOPE/$VAULT_KEY_NAME" 2>/dev/null && return 0
-    die "keyvault has no '$VAULT_SCOPE/$VAULT_KEY_NAME' — run: $0 setup  (and unlock the agent)"
+    local vault_state
+    vault_state="$(keyvault status 2>/dev/null | head -1 || true)"
+    if [[ "$vault_state" == locked:* ]]; then
+      die "keyvault is locked, so signing-key presence is unknown — run: keyvault agent --daemonize"
+    fi
+    die "unlocked keyvault has no '$VAULT_SCOPE/$VAULT_KEY_NAME' — run: $0 setup"
   fi
   die "no signing key available: set $KEY_ENV_VAR (via 'keyvault exec --scope $VAULT_SCOPE'), install keyvault, or set SIGNING_KEY_FILE"
 }
@@ -70,6 +92,11 @@ get_signing_key() {
 cmd_setup() {
   need ssh-keygen; need keyvault; need awk
   [ -n "$SIGNER_EMAIL" ] || die "no signer email — set HIVERELAY_RELEASE_SIGNER_EMAIL or 'git config user.email'"
+  local vault_state
+  vault_state="$(keyvault status 2>/dev/null | head -1 || true)"
+  if [[ "$vault_state" == locked:* ]]; then
+    die "keyvault is locked, so setup cannot prove the signing key is absent — unlock it before setup"
+  fi
   if keyvault get "$VAULT_SCOPE/$VAULT_KEY_NAME" >/dev/null 2>&1; then
     die "'$VAULT_SCOPE/$VAULT_KEY_NAME' already exists in the vault — refusing to overwrite (rotate deliberately with 'keyvault rm' first)"
   fi
@@ -117,6 +144,11 @@ cmd_cut() {
   [ -n "$version" ] || die "usage: $0 cut <vX.Y.Z> [<ref>] [--stable] [--promote-canary] [-y]"
   [[ "$version" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || die "version must look like v0.24.0 (got '$version')"
   [ -n "$SIGNER_EMAIL" ] || die "no signer email — set HIVERELAY_RELEASE_SIGNER_EMAIL or 'git config user.email'"
+  local signer_lines
+  signer_lines="$(allowed_signer_count)"
+  if [ "${signer_lines:-0}" -gt 0 ] && ! signer_principal_is_trusted; then
+    die "signer principal '$SIGNER_EMAIL' is not trusted by fleet/allowed-signers — set HIVERELAY_RELEASE_SIGNER_EMAIL to an allowed principal"
+  fi
 
   # FOOTGUN GUARD: the fleet updater health-gate compares the tag (minus 'v') to
   # the running /health version, which is package.json's version. A mismatch
@@ -171,10 +203,7 @@ cmd_cut() {
   # Self-verify against the shipped allowed-signers BEFORE pushing, so we never
   # publish a tag the fleet's verify_tag would reject — but only when the file
   # has at least one real (non-comment) signer line.
-  local signer_lines=0
-  if [ -r "$ALLOWED_SIGNERS" ]; then
-    signer_lines="$(grep -cvE '^[[:space:]]*(#|$)' "$ALLOWED_SIGNERS" 2>/dev/null || true)"
-  fi
+  signer_lines="$(allowed_signer_count)"
   if [ "${signer_lines:-0}" -gt 0 ]; then
     if git -C "$REPO_ROOT" -c gpg.format=ssh -c "gpg.ssh.allowedSignersFile=$ALLOWED_SIGNERS" \
          verify-tag "$version" >/dev/null 2>&1; then
@@ -226,14 +255,35 @@ cmd_status() {
   printf 'git:            %s\n' "$(git --version 2>/dev/null || echo MISSING)"
   printf 'gpg:            %s\n' "$(command -v gpg >/dev/null 2>&1 && gpg --version | head -1 || echo 'absent (fine — SSH signing used)')"
   printf 'gh:             %s\n' "$(command -v gh >/dev/null 2>&1 && echo present || echo 'absent (release step skipped)')"
-  printf 'keyvault:       %s\n' "$(command -v keyvault >/dev/null 2>&1 && (keyvault status 2>/dev/null | head -1 || echo installed) || echo absent)"
-  printf 'signer email:   %s\n' "${SIGNER_EMAIL:-<unset>}"
-  if command -v keyvault >/dev/null 2>&1 && keyvault get "$VAULT_SCOPE/$VAULT_KEY_NAME" >/dev/null 2>&1; then
-    printf 'signing key:    present in vault (%s/%s)\n' "$VAULT_SCOPE" "$VAULT_KEY_NAME"
-  else
-    printf 'signing key:    NOT in vault — run: %s setup\n' "$0"
+  local vault_state="absent"
+  if command -v keyvault >/dev/null 2>&1; then
+    vault_state="$(keyvault status 2>/dev/null | head -1 || true)"
+    [ -n "$vault_state" ] || vault_state="installed; status unavailable"
   fi
-  local as_n=0; [ -r "$ALLOWED_SIGNERS" ] && as_n="$(grep -cvE '^[[:space:]]*(#|$)' "$ALLOWED_SIGNERS" 2>/dev/null || true)"
+  printf 'keyvault:       %s\n' "$vault_state"
+  local signer_trust="unverifiable (no allowed signers)"
+  if [ "$(allowed_signer_count)" -gt 0 ]; then
+    if signer_principal_is_trusted; then
+      signer_trust="trusted by fleet/allowed-signers"
+    else
+      signer_trust="NOT trusted by fleet/allowed-signers"
+    fi
+  fi
+  printf 'signer email:   %s (%s)\n' "${SIGNER_EMAIL:-<unset>}" "$signer_trust"
+  if [ -n "${!KEY_ENV_VAR:-}" ]; then
+    printf 'signing key:    available via %s\n' "$KEY_ENV_VAR"
+  elif [ -n "${SIGNING_KEY_FILE:-}" ] && [ -r "$SIGNING_KEY_FILE" ]; then
+    printf 'signing key:    available via SIGNING_KEY_FILE\n'
+  elif command -v keyvault >/dev/null 2>&1 && [[ "$vault_state" == locked:* ]]; then
+    printf 'signing key:    unavailable while vault is locked — run: keyvault agent --daemonize\n'
+  elif command -v keyvault >/dev/null 2>&1 && keyvault get "$VAULT_SCOPE/$VAULT_KEY_NAME" >/dev/null 2>&1; then
+    printf 'signing key:    present in vault (%s/%s)\n' "$VAULT_SCOPE" "$VAULT_KEY_NAME"
+  elif command -v keyvault >/dev/null 2>&1; then
+    printf 'signing key:    NOT found in unlocked vault — run: %s setup\n' "$0"
+  else
+    printf 'signing key:    unavailable — keyvault is not installed\n'
+  fi
+  local as_n; as_n="$(allowed_signer_count)"
   printf 'allowed-signers:%s\n' "$([ "${as_n:-0}" -gt 0 ] && echo " ${as_n} signer(s)" || echo ' none — run: setup')"
   printf 'package.json:    v%s (a fleet tag MUST be exactly this)\n' "$(node -p "require('$REPO_ROOT/package.json').version" 2>/dev/null || echo '?')"
 }

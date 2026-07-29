@@ -60,8 +60,8 @@ Two prerequisites, both currently unmet:
 
 **The vault is locked.** `status` reports
 `locked: no agent running for ~/.keyvault/secrets.vault`, and consequently cannot
-see the key (`signing key: NOT in vault` is what a locked vault looks like — it is
-not proof the key is absent). Unlock first:
+see the key. Current tooling reports this as `unavailable while vault is locked`;
+it never treats a locked vault as proof the key is absent. Unlock first:
 
 ```bash
 keyvault agent --daemonize

@@ -55,7 +55,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Item | State |
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
-| Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3564/3564**, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
+| Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3570/3570** with **17954/17954** assertions, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
 | Scoped live health (2026-07-29) | Latest operator scan excludes Sydney/Dallas and covers 12 inventory entries: service catalogues reached **10/12**, hosts **11/12**, and active relay applications **10/12**. Bern remains unreachable; Dubai-2GB is reachable but blank/inactive with no relay repo, service, updater, config, or health endpoint. `utah-8gb` is healthy on signed RC4 with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active |
 | Wake runtime | `notify` loaded on **10/10** service-reachable relays, but signed live egress **0/10** and exact-lane wake **0/10**; eight stable relays still carry the old false `notify-v1` feature claim, while Utah and Utah-8GB correctly report loaded-not-live |
 | Agent mailbox | `outboxlog` is signed-advertised on **8/10** service-reachable relays; Utah and Utah-8GB have mailbox off |
@@ -442,7 +442,8 @@ You can call the **product ladder complete for honest marketing** when:
 ## 9. Immediate next three moves (in order)
 
 1. **Sign and ship the prepared RC8 candidate:** unlock the existing release
-   signer, cut and push the signed `v0.25.0-rc.8` tag, and let CI build and prove
+   signer, select the principal already shipped in `fleet/allowed-signers`, cut
+   and push the signed `v0.25.0-rc.8` tag, and let CI build and prove
    the digest-pinned image. Promote only the permitted canary in a separate
    health-gated change. Utah-8GB's exact RC4 updater pin and timer repair is
    complete; do not fold a downgrade into the canary promotion.

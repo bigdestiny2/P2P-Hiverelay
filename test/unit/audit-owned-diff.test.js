@@ -259,6 +259,24 @@ test('audit-owned diff assigns fleet runtime evidence surfaces', (t) => {
   }
 })
 
+test('audit-owned diff assigns release signer authority surfaces', (t) => {
+  const paths = [
+    'CHANGELOG.md',
+    'docs/LADDER-SHIP-MAP.md',
+    'docs/RELEASE.md',
+    'docs/RELEASE-RUNBOOK-0.25.0-rc.5.md',
+    'scripts/release.sh',
+    'test/unit/release-cutter-status.test.js'
+  ]
+  const report = buildOwnedDiffReport(paths.map(file => ` M ${file}`).join('\n'))
+
+  t.is(report.status, 'pass')
+  t.is(report.totals.unknown, 0)
+  for (const entry of report.entries) {
+    t.ok(entry.owners.some(owner => owner.id === 'release-signer-authority-preflight'), entry.path)
+  }
+})
+
 test('audit-owned diff blocks unknown development paths', async (t) => {
   const fixture = await tempFile(t, '?? stray-release-note.txt\n')
   const res = await runAudit(['--json', '--status-file', fixture])

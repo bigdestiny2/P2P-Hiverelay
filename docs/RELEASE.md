@@ -55,8 +55,11 @@ agent is down):
 keyvault exec --scope hiverelay-release -- scripts/release.sh cut v0.24.0
 ```
 
-`scripts/release.sh status` shows what's configured (vault key present, signer
-email, allowed-signers count, package.json version).
+`scripts/release.sh status` shows what's configured (vault state, key
+availability, whether the signer principal is trusted by `allowed-signers`,
+allowed-signers count, and package.json version). A locked vault is reported as
+unknown/unavailable, never as proof that the signing key is absent; unlock it
+before considering the one-time `setup` command.
 
 ## Guards the script enforces
 
@@ -70,6 +73,10 @@ email, allowed-signers count, package.json version).
 - **Self-verify before push.** The signed tag is verified against
   `fleet/allowed-signers` locally; if your key isn't trusted there, the tag is
   deleted and nothing is pushed — you never publish a tag the fleet would reject.
+- **Trusted principal before signing.** If `git config user.email` is not an
+  allowed principal, `cut` fails before creating a tag. Set
+  `HIVERELAY_RELEASE_SIGNER_EMAIL` to the principal shipped in
+  `fleet/allowed-signers`; do not rotate a key merely to repair an email mismatch.
 - **No key on disk.** The signing key is materialized only to a `0600` temp file
   that is removed on every exit path (success, error, or interrupt).
 
