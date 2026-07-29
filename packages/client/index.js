@@ -758,6 +758,14 @@ export class HiveRelayClient extends EventEmitter {
     this._lifecycleAbort = new AbortController()
     // Create store if we own it (only when storage path was given)
     if (this._ownsStore && !this.store && this._storagePath) {
+      // openCorestore, not `new Corestore`: Corestore 7 sweeps every
+      // unrecognised top-level entry of a pre-7 root into db/ inside the
+      // constructor. The client keeps forks.json, pending-seeds.json,
+      // app-drives.json and bootstrap-cache.json at exactly that level, and
+      // every one of their loaders treats a missing file as "start fresh" —
+      // so an upgrading client would silently forget its fork evidence,
+      // seed retry queue, app→drive map and cached peers. See
+      // storage-root-restore.js.
       this.store = openCorestore(this._storagePath)
     }
     if (this._ownsStore && this.store) {

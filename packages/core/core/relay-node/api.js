@@ -157,6 +157,16 @@ import {
   resolveCapabilityRoute
 } from './api-capabilities.js'
 import {
+  buildX402PriceManifestRoutePayload,
+  resolveX402PriceManifestRoute,
+  runX402ServiceRequest
+} from './api-x402.js'
+import {
+  X402_PRICE_MANIFEST_PATH,
+  isX402ServicePath
+} from '../../incentive/x402/config.js'
+import { X402ServiceFacade } from '../../incentive/x402/service-facade.js'
+import {
   resolveAIModelManagementRoute,
   runAIModelManagementRouteAction
 } from './api-ai-models.js'
@@ -417,6 +427,9 @@ export class RelayAPI extends EventEmitter {
       requireLifecycleDriveAuthority: true
     })
     this._retrievabilityProofProvider = new RetrievabilityProofProvider()
+    this._x402Facade = opts.x402Facade || new X402ServiceFacade({
+      config: relayNode && relayNode.config ? relayNode.config.x402 : {}
+    })
   }
 
   async start () {
@@ -693,16 +706,27 @@ export class RelayAPI extends EventEmitter {
     // returned without X-Pear-Token, breaking every authenticated browser call.
     // buildCorsDecision already extends the same public treatment to poker.
     const publicOutboxLog = isOutboxLogHttpRoute(requestPath)
-    if (cors.allowedOrigin || publicOutboxLog) {
-      res.setHeader('Access-Control-Allow-Origin', publicOutboxLog ? '*' : cors.allowedOrigin)
+    const publicX402 = isX402ServicePath(requestPath) || requestPath === X402_PRICE_MANIFEST_PATH
+    if (cors.allowedOrigin || publicOutboxLog || publicX402) {
+      res.setHeader('Access-Control-Allow-Origin', (publicOutboxLog || publicX402) ? '*' : cors.allowedOrigin)
     }
-    res.setHeader('Access-Control-Allow-Headers', publicOutboxLog
-      ? 'Content-Type, X-Pear-Token, X-Pear-Admin-Token'
-      : 'Content-Type, Authorization')
+    res.setHeader('Access-Control-Allow-Headers',
+      publicOutboxLog
+        ? 'Content-Type, X-Pear-Token, X-Pear-Admin-Token'
+        : publicX402
+          ? 'Content-Type, PAYMENT-SIGNATURE, X-HiveRelay-Idempotency-Key'
+          : 'Content-Type, Authorization')
+    if (publicOutboxLog) res.setHeader('Access-Control-Expose-Headers', 'Retry-After')
+    if (publicX402) {
+      res.setHeader(
+        'Access-Control-Expose-Headers',
+        'PAYMENT-REQUIRED, PAYMENT-RESPONSE, Retry-After'
+      )
+    }
 
     // Handle CORS preflight
     if (req.method === 'OPTIONS') {
-      if (cors.preflightDenied && !publicOutboxLog) {
+      if (cors.preflightDenied && !publicOutboxLog && !publicX402) {
         return this._json(res, { error: 'CORS origin denied' }, 403)
       }
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
@@ -736,6 +760,30 @@ export class RelayAPI extends EventEmitter {
     }
 
     try {
+      const x402PriceRoute = resolveX402PriceManifestRoute(req.method, path)
+      if (x402PriceRoute) {
+        const result = buildX402PriceManifestRoutePayload({
+          route: x402PriceRoute,
+          node: this.node
+        })
+        return this._json(res, result.payload, result.status || 200, result.headers || null)
+      }
+
+      if (isX402ServicePath(path)) {
+        const result = await runX402ServiceRequest({
+          facade: this._x402Facade,
+          req,
+          url,
+          readBody: () => this._readBody(req),
+          router: this.node.router,
+          registry: this.node.serviceRegistry
+        })
+        if (result.handled) {
+          return this._json(res, result.payload, result.status || 200, result.headers || null)
+        }
+        return this._json(res, { error: 'not found' }, 404)
+      }
+
       // Hyper Gateway — serve Hyperdrive content over HTTP
       if (isHyperGatewayRoute(path)) {
         return this._gateway.handle(req, res)

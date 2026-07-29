@@ -206,6 +206,14 @@ const DEFAULT_CONFIG = {
     settlementInterval: 24 * 60 * 60 * 1000,
     minSettlementSats: 1000
   },
+  x402: {
+    enabled: false,
+    facilitatorUrl: 'https://x402.org/facilitator',
+    publicBaseUrl: null,
+    claimTtlMs: 10 * 60 * 1000,
+    maxClaims: 50_000,
+    routes: {}
+  },
   signedDirectory: {
     enabled: false,
     maxEntryBytes: 8 * 1024,
@@ -474,6 +482,16 @@ function buildConfig (mode, opts) {
       ...(preset.payment || {}),
       ...(opts.payment || {})
     },
+    x402: {
+      ...(DEFAULT_CONFIG.x402 || {}),
+      ...(preset.x402 || {}),
+      ...(opts.x402 || {}),
+      routes: {
+        ...(DEFAULT_CONFIG.x402?.routes || {}),
+        ...(preset.x402?.routes || {}),
+        ...(opts.x402?.routes || {})
+      }
+    },
     subsidy: {
       ...(DEFAULT_CONFIG.subsidy || {}),
       ...(preset.subsidy || {}),
@@ -521,6 +539,11 @@ function enforceRelayKernelProfile (config) {
     payment: {
       ...(config.payment || {}),
       enabled: false
+    },
+    x402: {
+      ...(config.x402 || {}),
+      enabled: false,
+      routes: {}
     },
     subsidy: {
       ...(config.subsidy || {}),

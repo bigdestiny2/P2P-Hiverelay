@@ -348,6 +348,19 @@ export default {
     minSettlementSats: 1000
   },
 
+  // x402 v2 machine-payment facade. Node HTTP API only; OFF by default.
+  // Operators must explicitly map each paid /svc/* route to one service
+  // capability and use atomic token amounts. No management, gateway, or
+  // existing /api/* route is charged implicitly.
+  x402: {
+    enabled: false,
+    facilitatorUrl: 'https://x402.org/facilitator', // testnet-only default
+    publicBaseUrl: null,
+    claimTtlMs: 10 * 60 * 1000,
+    maxClaims: 50_000,
+    routes: {}
+  },
+
   // Shutdown
   shutdownTimeoutMs: 10_000
 }
