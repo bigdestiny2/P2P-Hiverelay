@@ -62,6 +62,12 @@ and additional readback/operator evidence raises only the durability label.
 It keeps workload placement separate from network privacy, durability, cost,
 and semantic-service disclosure:
 
+This policy export is not added to the executable v1 browser-control bundle.
+That bundle remains byte-frozen; its manifest and browser evidence are refreshed
+only to bind the already-current bundle and exact source closure. The policy SDK
+is part of the unpublished private `1.0.0-rc.1` replacement workspace and is
+not an npm publication claim.
+
 ```js
 import {
   RUNTIME,
