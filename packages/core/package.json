@@ -81,6 +81,8 @@
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
+    "@x402/core": "^2.20.0",
+    "@x402/evm": "^2.20.0",
     "b4a": "^1.8.1",
     "bare-crypto": "^1.15.3",
     "bare-events": "^2.9.1",

@@ -139,6 +139,11 @@ export function buildCapabilityDoc (opts = {}) {
   const paymentEnabled = !!(relay && relay.paymentManager && relay.paymentManager.paymentProvider) &&
     !relayKernelProfile &&
     !moduleDisabled(config.payment)
+  const x402Enabled = runtime === 'node' &&
+    config.x402 &&
+    config.x402.enabled === true &&
+    config.x402.routes &&
+    Object.keys(config.x402.routes).length > 0
   const servicesEnabled = !!(relay && relay.serviceRegistry) &&
     !relayKernelProfile &&
     config.enableServices !== false
@@ -215,6 +220,7 @@ export function buildCapabilityDoc (opts = {}) {
   if (relay && typeof relay.createAccountingReceipt === 'function') features.push('accounting-receipts')
   if (servicesEnabled && hasRunningService(relay, 'notify')) features.push('notify-v1')
   if (servicesEnabled && hasRunningService(relay, 'outboxlog')) features.push('outboxlog-v1')
+  if (x402Enabled) features.push('x402-v2')
   features.push('capability-doc') // we're advertising this doc, so always set
   // Revocability — this build understands and enforces the v0.8 seed-request
   // revocability fields (revocable + unseedFreezeMs). Clients querying the
@@ -315,6 +321,7 @@ export function buildCapabilityDoc (opts = {}) {
       federationEnabled,
       signedDirectoryEnabled,
       paymentEnabled,
+      x402Enabled,
       circuitRelayEnabled,
       circuitLimitsProfile,
       relay
@@ -330,6 +337,15 @@ export function buildCapabilityDoc (opts = {}) {
     federation,
     catalog,
     fees,
+    ...(x402Enabled
+      ? {
+          x402: {
+            version: 2,
+            prices: '/.well-known/x402-prices',
+            servicePrefix: '/svc/'
+          }
+        }
+      : {}),
     // gatewayUrl — the relay's public HTTP base URL, advertised so a directory
     // index (and clients) can reach this relay without a hardcoded address.
     // Additive (schemaVersion stays 1). null when the operator hasn't set a
@@ -392,6 +408,7 @@ function buildProtocolProfile ({
   federationEnabled,
   signedDirectoryEnabled,
   paymentEnabled,
+  x402Enabled,
   circuitRelayEnabled,
   circuitLimitsProfile,
   relay
@@ -412,6 +429,7 @@ function buildProtocolProfile ({
   if (federationEnabled) appSurfaces.push('federation')
   if (signedDirectoryEnabled) appSurfaces.push('signed-directory')
   if (paymentEnabled) appSurfaces.push('payment')
+  if (x402Enabled) appSurfaces.push('x402')
   if (moduleEnabled(config.lease)) appSurfaces.push('lease')
   if (moduleEnabled(config.subsidy)) appSurfaces.push('subsidy')
 

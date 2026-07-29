@@ -9072,7 +9072,10 @@ const updaterRollbackHealthGate = 'if healthy "' + '$' + '{CUR_VER#v}"; then'
 if (
   fleetUpdaterScript.includes('rollback_to_previous') &&
   fleetUpdaterScript.includes('deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous') &&
-  fleetUpdaterScript.includes('if ! git checkout --quiet "$CUR_SHA"; then') &&
+  // --force is load-bearing: npm ci dirties package-lock.json before a deps
+  // failure, so a plain checkout refuses and strands the box on the broken
+  // tree (see fleet/updater.sh rollback_to_previous, added in 935b0e4).
+  fleetUpdaterScript.includes('if ! git checkout --quiet --force "$CUR_SHA"; then') &&
   fleetUpdaterScript.includes('if ! deps_if_changed "$TARGET_SHA" "$CUR_SHA"; then') &&
   fleetUpdaterScript.includes(updaterExpectedVersionArg) &&
   fleetUpdaterScript.includes(updaterTargetHealthGate) &&

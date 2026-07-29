@@ -358,7 +358,11 @@ export class BareRelay extends EventEmitter {
       this.storageAdmission.refreshFilesystem()
       await this.storageAdmission.activatePhysicalEnforcement({ purpose: 'bare-relay-startup' })
 
-      // 1. Corestore — persistent hypercore storage
+      // 1. Corestore — persistent hypercore storage.
+      // openCorestore, not `new Corestore`: Corestore 7 sweeps every
+      // unrecognised top-level entry of a pre-7 root into db/ *inside its
+      // constructor*, which would strand app-registry.json and evicted.json
+      // before load() below can migrate them. See storage-root-restore.js.
       this.store = openCorestore(this.config.storage)
       await this.store.ready()
 
