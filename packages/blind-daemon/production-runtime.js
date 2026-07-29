@@ -319,18 +319,69 @@ function vnextManifestFloorAssembled () {
 // (engine WAL recovery, the frozen generation floor, the two-slot floor
 // enforcement) before anything serves, and readiness keeps a restored daemon
 // unready until the live recovered store reports fullStoreVerified.
+function authorizedEmergencyGapIndex (descriptorBytes, authority) {
+  if (authority == null) return -1
+  let previous = null
+  let authorizedIndex = -1
+  try {
+    for (let index = 0; index < descriptorBytes.length; index++) {
+      const descriptor = decodeCanonical(blindServiceDescriptorV1, descriptorBytes[index], { copyBytes: true })
+      const descriptorHash = serviceDescriptorHash(descriptorBytes[index])
+      if (previous != null && descriptor.issuedEpoch >= previous.descriptor.expiresEpoch) {
+        const matches = previous.descriptor.descriptorSequence === authority.predecessorSequence &&
+          b4a.equals(previous.hash, authority.predecessorHash) &&
+          descriptor.descriptorSequence === authority.successorSequence &&
+          b4a.equals(descriptorHash, authority.successorHash)
+        if (!matches || authorizedIndex !== -1) {
+          throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+            'the configured chain contains an unauthorized readiness gap')
+        }
+        authorizedIndex = index
+      }
+      previous = Object.freeze({ descriptor, hash: descriptorHash })
+    }
+  } catch (error) {
+    if (error instanceof DescriptorStateError) throw error
+    throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+      'the emergency-gap chain is not canonically decodable')
+  }
+  if (authorizedIndex === -1) {
+    throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+      'the emergency-gap authority was not consumed by one exact configured transition')
+  }
+  return authorizedIndex
+}
+
+function assertEmergencyGapSnapshot (snapshot, emergencyGapIndex) {
+  if (emergencyGapIndex !== -1 &&
+      (snapshot.hadReadinessGap !== true || snapshot.fullStoreVerificationRequired !== true)) {
+    throw new DescriptorStateError(DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+      'the authorized emergency gap did not retain the full-store verification fence')
+  }
+}
+
 async function activateVnextBootDescriptorChain ({ descriptorBytes, config, requireManifestFloor }) {
-  const descriptorState = new DescriptorState({ verifySignature: verifyDetached })
+  const emergencyGapIndex = authorizedEmergencyGapIndex(
+    descriptorBytes, config.emergencyGapAuthority)
+  const descriptorState = new DescriptorState({
+    verifySignature: verifyDetached,
+    allowEmergencyGaps: emergencyGapIndex !== -1
+  })
   try {
     let snapshot
-    for (const bytes of descriptorBytes) snapshot = await descriptorState.activate(bytes)
+    for (let index = 0; index < descriptorBytes.length; index++) {
+      snapshot = await descriptorState.activate(descriptorBytes[index], {
+        emergencyGap: index === emergencyGapIndex
+      })
+    }
+    assertEmergencyGapSnapshot(snapshot, emergencyGapIndex)
     return Object.freeze({ descriptorState, snapshot, restoredFromFloor: false })
   } catch (error) {
     if (requireManifestFloor !== true || !(error instanceof DescriptorStateError) ||
         error.code !== DESCRIPTOR_CLOSED_REASON.EXPIRED) {
       throw error
     }
-    return restoreVnextBootDescriptorChain({ descriptorBytes, config })
+    return restoreVnextBootDescriptorChain({ descriptorBytes, config, emergencyGapIndex })
   }
 }
 
@@ -340,7 +391,7 @@ async function activateVnextBootDescriptorChain ({ descriptorBytes, config, requ
 // allowed case; never mutates the store. Secret hygiene: the manifest key and
 // owner fence hash are consumed (MAC verification) and zeroed here; the
 // manifest store zeroes its internal key copy on close.
-async function restoreVnextBootDescriptorChain ({ descriptorBytes, config }) {
+async function restoreVnextBootDescriptorChain ({ descriptorBytes, config, emergencyGapIndex }) {
   let head
   try {
     head = decodeCanonical(blindServiceDescriptorV1, descriptorBytes[descriptorBytes.length - 1],
@@ -415,6 +466,7 @@ async function restoreVnextBootDescriptorChain ({ descriptorBytes, config }) {
     }
     const descriptorState = new DescriptorState({
       verifySignature: verifyDetached,
+      allowEmergencyGaps: emergencyGapIndex !== -1,
       verifyRestoration: async input => {
         // The restoration evidence: the manifest bytes handed to
         // DescriptorState.restore() must be the live MAC-verified two-slot
@@ -451,11 +503,15 @@ async function restoreVnextBootDescriptorChain ({ descriptorBytes, config }) {
       manifestBytes: sealed.bytes
     })
     for (let index = floorIndex + 1; index < descriptorBytes.length; index++) {
-      await descriptorState.activate(descriptorBytes[index])
+      await descriptorState.activate(descriptorBytes[index], {
+        emergencyGap: index === emergencyGapIndex
+      })
     }
+    const snapshot = descriptorState.requireCurrent()
+    assertEmergencyGapSnapshot(snapshot, emergencyGapIndex)
     return Object.freeze({
       descriptorState,
-      snapshot: descriptorState.requireCurrent(),
+      snapshot,
       restoredFromFloor: true
     })
   } finally {
@@ -598,6 +654,31 @@ function requiredHash (environment, name) {
   return b4a.from(raw, 'hex')
 }
 
+function optionalEmergencyGapAuthority (environment) {
+  const name = 'HIVERELAY_BLIND_EMERGENCY_GAP_AUTHORITY'
+  const raw = environment[name]
+  if (raw == null) return null
+  if (typeof raw !== 'string' || raw.length > 172 ||
+      !/^(0|[1-9][0-9]{0,19})\/[0-9a-f]{64}\/(0|[1-9][0-9]{0,19})\/[0-9a-f]{64}$/.test(raw)) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID',
+      `${name} must be predecessor-sequence/hash/successor-sequence/hash in canonical form`)
+  }
+  const [predecessorSequenceRaw, predecessorHash, successorSequenceRaw, successorHash] = raw.split('/')
+  const predecessorSequence = BigInt(predecessorSequenceRaw)
+  const successorSequence = BigInt(successorSequenceRaw)
+  if (predecessorSequence > MAX_U64 || successorSequence > MAX_U64 ||
+      successorSequence !== predecessorSequence + 1n) {
+    runtimeFailure('BLIND_RUNTIME_CONFIG_INVALID',
+      `${name} must bind one exact +1 descriptor transition inside u64`)
+  }
+  return Object.freeze({
+    predecessorSequence,
+    predecessorHash: b4a.from(predecessorHash, 'hex'),
+    successorSequence,
+    successorHash: b4a.from(successorHash, 'hex')
+  })
+}
+
 function endpointSupportBindings (environment, endpointIds) {
   const raw = environment.HIVERELAY_BLIND_ENDPOINT_SUPPORT_BITS
   if (typeof raw !== 'string' || raw.length === 0 || raw.length > 2039 ||
@@ -644,6 +725,7 @@ export function loadProductionRuntimeConfig (environment = process.env, endpoint
     mapGeneration: canonicalU64(environment, 'HIVERELAY_BLIND_MAP_GENERATION'),
     expectedDescriptorSequence: canonicalU64(environment, 'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_SEQUENCE', 0n),
     expectedDescriptorHash: requiredHash(environment, 'HIVERELAY_BLIND_EXPECTED_DESCRIPTOR_HASH'),
+    emergencyGapAuthority: optionalEmergencyGapAuthority(environment),
     endpointSupportBindings: endpointSupportBindings(environment, endpointIds),
     resourceBudget: Object.freeze({
       maxItems: canonicalUnsigned(environment, 'HIVERELAY_BLIND_MAX_INFLIGHT_ITEMS', 1024, 1, 1_000_000),
