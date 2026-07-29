@@ -58,6 +58,7 @@ import {
   PRODUCTION_DESCRIBE_AND_CELL_OPERATION_BITS,
   assembleProductionBlindDaemon
 } from '../packages/blind-daemon/production-runtime.js'
+import { BLIND_STORE_READER_MODE } from '../packages/blind-daemon/storage-generation-v12.js'
 import {
   REAL_BLIND_RELAY_FAMILY_SCOPE,
   REAL_BLIND_RELAY_CANONICALIZATION,
@@ -438,7 +439,7 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls, 
   descriptor.admissionProfiles[0].roleBits = admission.roleBits
   descriptor.admissionProfiles[0].parameterHash = b4a.from(parameterHash)
   descriptor.durability.storeFormatMajor = 1
-  descriptor.durability.storeFormatMinor = 1
+  descriptor.durability.storeFormatMinor = 2
   descriptor.durability.storeFormatHash = hashStoreFormat(authorityBytes)
   descriptor.build.storeFormatHash = b4a.from(descriptor.durability.storeFormatHash)
   bindDurability(descriptor)
@@ -528,6 +529,7 @@ async function createRelayFixture (root, relayIndex, port, authorityBytes, tls, 
       storeManifestKeyFile,
       ownerFenceTokenHashFile: ownerFenceFile,
       mapGeneration: 1n,
+      storeReaderMode: BLIND_STORE_READER_MODE.BLIND_ONLY,
       expectedDescriptorSequence: descriptor.descriptorSequence,
       expectedDescriptorHash: b4a.from(descriptorHash),
       endpointSupportBindings: Object.freeze([Object.freeze({
