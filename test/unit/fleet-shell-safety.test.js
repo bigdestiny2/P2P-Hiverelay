@@ -19,6 +19,19 @@ test('fleet scripts pass channel names into JSON parsing as data', (t) => {
   t.absent(fleetStatus.includes('python3 -c "import sys,json;print(json.load(sys.stdin).get('))
 })
 
+test('fleet updater supports an exact signed-tag pin without changing shared channels', (t) => {
+  t.ok(updater.includes('PINNED_TAG=""'))
+  t.ok(updater.includes('PINNED_TAG[[:space:]]*=[[:space:]]*'))
+  t.ok(updater.includes("invalid pinned tag '$PINNED_TAG' in $CONF"))
+  t.ok(updater.includes('TARGET="$PINNED_TAG"'))
+  t.ok(updater.includes('pinned=$PINNED_TAG'))
+  t.ok(updater.indexOf('verify_tag "$TARGET"') > updater.indexOf('TARGET="$PINNED_TAG"'),
+    'a pinned tag still crosses the signed-tag gate')
+  t.absent(updater.includes('source "$CONF"'))
+  t.ok(fleetStatus.includes('PINNED_TAG[[:space:]]*='))
+  t.ok(fleetStatus.includes('C="$C@$P"'))
+})
+
 test('fleet updater routes dependency-install failures through rollback', (t) => {
   t.ok(updater.includes('rollback_to_previous'))
   t.ok(updater.includes('deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous'))

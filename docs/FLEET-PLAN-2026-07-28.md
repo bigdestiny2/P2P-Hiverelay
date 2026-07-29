@@ -121,7 +121,7 @@ exists, every enablement is a manual, unrepeatable, undocumented act.
 | 0.1 | `kill 51423`; bind `127.0.0.1`, add a shared secret, replace `exec` with `execFile(argv)`, drop wildcard CORS | R-1 — remote root on 13 relays from any network the laptop joins |
 | 0.2 | Recover **utah-0.5gb**: `npm rebuild` (or reinstall deps) and confirm the addon resolves; if it will not, revert it to `v0.24.3` | Box is down; it is a seed holder |
 | 0.3 | Fix **C-1**: `config/default.js:205` `serviceDefaultPeerRole: 'authenticated-user'` → `'anonymous'` | Silently reverts commit `9125f3c`; opens `arbitration.submit` (uncapped Map) to any anonymous swarm peer on 10 boxes |
-| 0.4 | Pin **utah-8gb** to `hold` before its timer is ever armed | R-3 — it runs rc.4 on `channel: stable` (pinned 0.24.3); arming converges it *backwards*, logged as success |
+| 0.4 | Pin **utah-8gb** to exact signed tag `v0.25.0-rc.4` with `PINNED_TAG` before its timer is ever armed; retain `CHANNEL=stable` for its eventual destination | R-3 — it runs rc.4 while stable and the shared `hold` target are both 0.24.3; arming either unpinned channel converges it *backwards* across its Corestore-7 remigration, logged as success |
 
 **Gate out of Phase 0:** utah-0.5gb green, admin operator on loopback with auth, C-1 shipped.
 

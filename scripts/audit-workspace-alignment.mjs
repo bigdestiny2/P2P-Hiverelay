@@ -9185,11 +9185,17 @@ if (
   fleetUpdaterScript.includes(updaterExpectedVersionArg) &&
   fleetUpdaterScript.includes(updaterTargetHealthGate) &&
   fleetUpdaterScript.includes(updaterRollbackHealthGate) &&
+  fleetUpdaterScript.includes('TARGET="$PINNED_TAG"') &&
+  fleetUpdaterScript.indexOf('verify_tag "$TARGET" ||') <
+    fleetUpdaterScript.indexOf('if [ "$CUR_SHA" = "$TARGET_SHA" ]') &&
+  fleetUpdaterScript.indexOf('verify_tag "$TARGET" ||') <
+    fleetUpdaterScript.indexOf('if [ "$DRY_RUN" = 1 ]') &&
+  fleetShellSafetyTest.includes('fleet updater supports an exact signed-tag pin') &&
   fleetShellSafetyTest.includes('fleet updater health-gates target and rollback runtime versions')
 ) {
-  pass('fleet updater rolls back dependency-install failures, stops on failed rollback checkout, and verifies runtime versions')
+  pass('fleet updater verifies exact pins before early exits, rolls back dependency-install failures, stops on failed rollback checkout, and verifies runtime versions')
 } else {
-  fail('fleet updater can exit before rollback, continue after failed rollback checkout, or accept a stale runtime version')
+  fail('fleet updater can accept an unverified pin, exit before rollback, continue after failed rollback checkout, or accept a stale runtime version')
 }
 
 if (

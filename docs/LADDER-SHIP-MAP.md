@@ -440,8 +440,9 @@ You can call the **product ladder complete for honest marketing** when:
 
 1. **Name and ship the repair candidate:** finish release gates, cut a new signed
    post-RC7 prerelease, and deploy it to the permitted canary only. Correct
-   Utah-8GB's disabled stable updater separately; do not fold a downgrade into
-   a canary promotion.
+   Utah-8GB's disabled stable updater separately: install the repaired updater,
+   set `CHANNEL=stable` plus `PINNED_TAG=v0.25.0-rc.4`, prove a no-op dry run,
+   then arm its timer. Do not fold a downgrade into a canary promotion.
 2. **Prove the claims on live canary:** configure operator-owned push egress if
    wake is a release claim; verify exact-lane wake, outboxlog persistence,
    restricted-Tor negative probe, and the 100 MB onion transfer. Observe for

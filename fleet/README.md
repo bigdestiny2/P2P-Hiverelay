@@ -102,9 +102,23 @@ allowlist. Invalid list syntax fails closed before any SSH connection. The
 runtime service-catalogue probe accepts the same environment variables, or
 equivalent `--include` / `--exclude` options.
 
-To **hold** a box, point its channel at the version it already runs. To
-**roll the whole channel back**, set the tag back — boxes check out the
-older tag exactly like a forward update (health-gated the same way).
+To **hold one box** on the exact signed tag it already runs, set a per-host
+pin while preserving its intended channel:
+
+```bash
+sudo bash fleet/install-updater.sh stable v0.25.0-rc.4
+hiverelay-updater --dry-run
+```
+
+The installer writes `PINNED_TAG=` as data in
+`/etc/hiverelay-updater.conf`. A valid pin bypasses the moving channel target,
+but still goes through fetch, signed-tag verification, runtime preflight, and
+the health gate. Remove the `PINNED_TAG` line only when that box is ready to
+rejoin its channel. Do not use the shared `hold` channel to freeze a box that
+runs a different version: `hold` has one fleet-wide target and may serve other
+operator-owned lanes. To **roll a whole channel back**, set its shared tag back
+— boxes check out the older tag exactly like a forward update (health-gated the
+same way).
 
 ## Safety properties
 
@@ -117,8 +131,9 @@ older tag exactly like a forward update (health-gated the same way).
   version. See "Signed releases" above and `docs/SUPPLY-CHAIN.md`.
 - **Dirty-tree guard:** the agent refuses to act if the repo has
   uncommitted changes — it never clobbers a hand-edit.
-- **Config treated as data:** `/etc/hiverelay-updater.conf` is parsed for a
-  single validated `CHANNEL=` value; the updater does not source it as shell.
+- **Config treated as data:** `/etc/hiverelay-updater.conf` is parsed for
+  validated `CHANNEL=` and optional `PINNED_TAG=` values; the updater does not
+  source it as shell.
 - **Single-flight:** `flock`; overlapping ticks can't collide.
 - **Jittered:** boxes update on randomized offsets — no thundering herd
   on GitHub and no fleet-wide simultaneous restart.

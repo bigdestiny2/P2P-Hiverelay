@@ -5,8 +5,9 @@
 # Run by a systemd timer (every ~15 min). Each box owns its own lifecycle:
 # no inbound SSH, no orchestrator, works behind NAT. The flow:
 #
-#   1. Read this box's channel (/etc/hiverelay-updater.conf, default stable).
-#   2. Fetch fleet/channels.json from the repo and resolve the target tag.
+#   1. Read this box's channel and optional exact signed-tag pin
+#      (/etc/hiverelay-updater.conf, default stable).
+#   2. Resolve the pin, or fetch fleet/channels.json and resolve the channel.
 #   3. If already on the target -> no-op.
 #   4. Otherwise: snapshot current SHA, fetch + checkout the target tag,
 #      reinstall deps only if package-lock changed, restart the relay.
@@ -147,6 +148,7 @@ fi
 
 # ── channel ────────────────────────────────────────────────────────
 CHANNEL="stable"
+PINNED_TAG=""
 if [ -r "$CONF" ]; then
   # Treat config as data, not shell. The installer writes CHANNEL=<name>;
   # sourcing this file would make a writable config path code-executable.
@@ -156,16 +158,29 @@ if [ -r "$CONF" ]; then
   CONF_CHANNEL="${CONF_CHANNEL%\'}"
   CONF_CHANNEL="${CONF_CHANNEL#\'}"
   [ -n "$CONF_CHANNEL" ] && CHANNEL="$CONF_CHANNEL"
+  CONF_PINNED_TAG="$(sed -n 's/^[[:space:]]*PINNED_TAG[[:space:]]*=[[:space:]]*//p' "$CONF" | head -n 1)"
+  CONF_PINNED_TAG="${CONF_PINNED_TAG%\"}"
+  CONF_PINNED_TAG="${CONF_PINNED_TAG#\"}"
+  CONF_PINNED_TAG="${CONF_PINNED_TAG%\'}"
+  CONF_PINNED_TAG="${CONF_PINNED_TAG#\'}"
+  [ -n "$CONF_PINNED_TAG" ] && PINNED_TAG="$CONF_PINNED_TAG"
 fi
 if [[ ! "$CHANNEL" =~ ^[A-Za-z0-9._-]{1,32}$ ]]; then
   die "invalid channel '$CHANNEL' in $CONF"
 fi
+if [ -n "$PINNED_TAG" ] && [[ ! "$PINNED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+  die "invalid pinned tag '$PINNED_TAG' in $CONF"
+fi
 
 # ── resolve target tag ─────────────────────────────────────────────
-JSON="$(curl -fsS --max-time 20 "$CHANNELS_URL")" || die "cannot fetch channels.json"
-TARGET="$(printf '%s' "$JSON" | CHANNEL="$CHANNEL" python3 -c 'import os,sys,json; print(json.load(sys.stdin).get(os.environ["CHANNEL"], ""))')" \
-  || die "cannot parse channels.json"
-[ -n "$TARGET" ] || die "no target tag for channel '$CHANNEL'"
+if [ -n "$PINNED_TAG" ]; then
+  TARGET="$PINNED_TAG"
+else
+  JSON="$(curl -fsS --max-time 20 "$CHANNELS_URL")" || die "cannot fetch channels.json"
+  TARGET="$(printf '%s' "$JSON" | CHANNEL="$CHANNEL" python3 -c 'import os,sys,json; print(json.load(sys.stdin).get(os.environ["CHANNEL"], ""))')" \
+    || die "cannot parse channels.json"
+  [ -n "$TARGET" ] || die "no target tag for channel '$CHANNEL'"
+fi
 if [[ ! "$TARGET" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   die "invalid target tag '$TARGET' for channel '$CHANNEL'"
 fi
@@ -183,10 +198,24 @@ CUR_SHA="$(git rev-parse HEAD)"
 git fetch --tags --quiet origin || die "git fetch failed"
 TARGET_SHA="$(git rev-parse -q --verify "refs/tags/$TARGET^{}")" || die "target tag $TARGET not found after fetch"
 
+# Verify even when the target already equals HEAD or this is a dry run. A
+# no-op decision proves only commit equality; it must not let an unsigned or
+# untrusted pin masquerade as a safe installed release.
+verify_tag "$TARGET" || die "refusing to update: tag $TARGET is not signed by a trusted key (see fleet/README.md 'Signed releases')"
+
 if [ "$CUR_SHA" = "$TARGET_SHA" ]; then
-  log "channel=$CHANNEL up-to-date at $TARGET ($TARGET_SHA)"; exit 0
+  if [ -n "$PINNED_TAG" ]; then
+    log "channel=$CHANNEL pinned=$PINNED_TAG up-to-date at $TARGET ($TARGET_SHA)"
+  else
+    log "channel=$CHANNEL up-to-date at $TARGET ($TARGET_SHA)"
+  fi
+  exit 0
 fi
-log "channel=$CHANNEL current=$CUR_VER/$CUR_SHA target=$TARGET/$TARGET_SHA"
+if [ -n "$PINNED_TAG" ]; then
+  log "channel=$CHANNEL pinned=$PINNED_TAG current=$CUR_VER/$CUR_SHA target=$TARGET/$TARGET_SHA"
+else
+  log "channel=$CHANNEL current=$CUR_VER/$CUR_SHA target=$TARGET/$TARGET_SHA"
+fi
 if [ "$DRY_RUN" = 1 ]; then log "dry-run: would update $CUR_SHA -> $TARGET_SHA"; exit 0; fi
 
 # ── helpers ────────────────────────────────────────────────────────
@@ -300,13 +329,6 @@ rollback_to_previous() {
 }
 
 # ── update ─────────────────────────────────────────────────────────
-# SUPPLY-CHAIN GATE (fail closed): never check out a tag we can't verify was
-# signed by a trusted key. This runs AFTER fetch (so the tag object + its
-# signature are local) and BEFORE checkout (so a forged/moved tag can never
-# reach the working tree, deps install, or a service restart). A failure
-# here leaves the box exactly where it was — no rollback needed.
-verify_tag "$TARGET" || die "refusing to update: tag $TARGET is not signed by a trusted key (see fleet/README.md 'Signed releases')"
-
 git checkout --quiet "$TARGET" || die "checkout $TARGET failed"
 deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous "dependency install failed on $TARGET"
 preflight_runtime || rollback_to_previous "runtime preflight failed on $TARGET (native addon or Node ABI)"

@@ -112,6 +112,8 @@ U_ACTIVE="$(systemctl is-active hiverelay-updater.timer 2>/dev/null || true)"
 [ -n "$U_ACTIVE" ] || U_ACTIVE=inactive
 C=$(awk -F= '/^[[:space:]]*CHANNEL[[:space:]]*=/ { sub(/^[^=]*=/,""); sub(/^[[:space:]]*/,""); sub(/[[:space:]]*$/,""); print; exit }' /etc/hiverelay-updater.conf 2>/dev/null || true)
 [ -n "$C" ] || C=?
+P=$(awk -F= '/^[[:space:]]*PINNED_TAG[[:space:]]*=/ { sub(/^[^=]*=/,""); sub(/^[[:space:]]*/,""); sub(/[[:space:]]*$/,""); print; exit }' /etc/hiverelay-updater.conf 2>/dev/null || true)
+[ -z "$P" ] || C="$C@$P"
 echo "$V|$R|$D|$U_ENABLED/$U_ACTIVE|$C"
 REMOTE_EOF
 

@@ -31,6 +31,10 @@ test('updater defines a tag-signature gate wired before checkout', (t) => {
   t.ok(gateIdx !== -1, 'target tag is gated by verify_tag')
   t.ok(checkoutIdx !== -1, 'target checkout still present')
   t.ok(gateIdx < checkoutIdx, 'verify_tag gate precedes the checkout')
+  t.ok(gateIdx < updater.indexOf('if [ "$CUR_SHA" = "$TARGET_SHA" ]'),
+    'signature gate also precedes the up-to-date early exit')
+  t.ok(gateIdx < updater.indexOf('if [ "$DRY_RUN" = 1 ]'),
+    'signature gate also precedes the dry-run early exit')
 
   // Fail-closed building blocks.
   t.ok(updater.includes('ALLOWED_SIGNERS='), 'allowed-signers path is configurable')
@@ -75,7 +79,8 @@ test('updater --verify-only accepts a trusted-signed tag and rejects everything 
   git(['config', 'user.email', 'good@hiverelay'])
   git(['config', 'gpg.format', 'ssh'])
   writeFileSync(path.join(repo, 'a'), 'hi\n')
-  git(['add', 'a'])
+  writeFileSync(path.join(repo, 'package.json'), '{"version":"1.0.0"}\n')
+  git(['add', 'a', 'package.json'])
   git(['commit', '-qm', 'init'])
 
   // 1. annotated tag signed by the TRUSTED key
@@ -104,4 +109,30 @@ test('updater --verify-only accepts a trusted-signed tag and rejects everything 
   // Break-glass override is honored but loud (documented emergency escape).
   t.is(verify('v2.0.0-unsigned', { HIVERELAY_REQUIRE_SIGNED_TAGS: '0' }).status, 0,
     'HIVERELAY_REQUIRE_SIGNED_TAGS=0 disables the gate (break-glass)')
+
+  // A per-host pin must bypass the moving channel document, but it must not
+  // bypass trust. Use a bare origin because the normal updater always fetches
+  // tags before deciding whether the installed commit is already current.
+  const origin = path.join(work, 'origin.git')
+  run('git', ['clone', '--bare', '-q', repo, origin])
+  git(['remote', 'add', 'origin', origin])
+  const conf = path.join(work, 'updater.conf')
+  const pinnedDryRun = (tag) => {
+    writeFileSync(conf, `CHANNEL=stable\nPINNED_TAG=${tag}\n`)
+    return spawnSync('bash', [updaterPath, '--dry-run'], {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        HIVERELAY_REPO_DIR: repo,
+        HIVERELAY_UPDATER_CONF: conf,
+        HIVERELAY_ALLOWED_SIGNERS: allowedSigners,
+        HIVERELAY_CHANNELS_URL: 'file:///definitely-not-a-channel-document'
+      }
+    })
+  }
+
+  const trustedPin = pinnedDryRun('v1.0.0-trusted')
+  t.is(trustedPin.status, 0, 'trusted exact pin succeeds without reading the channel document')
+  t.ok(trustedPin.stdout.includes('pinned=v1.0.0-trusted'), 'pin decision is visible to the operator')
+  t.not(pinnedDryRun('v9.9.9-forged').status, 0, 'untrusted exact pin fails even when it resolves to current HEAD')
 })
