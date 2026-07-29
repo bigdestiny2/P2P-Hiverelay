@@ -1831,6 +1831,15 @@ export class RelayNode extends EventEmitter {
               if (event && event.key === 'head!' + source.key && !event.replay) onChange(event)
             })
           })
+          // Sender-owned outboxes multiplex recipients into opaque virtual
+          // lanes. Watching the global outbox head would wake every recipient
+          // for every message, so lane watches observe only the exact signed
+          // `lane-head!<opaque-tag>` mutation committed for that recipient.
+          notifyEntry.provider.attachWatchSource('notify-outbox-lane', (source, onChange) => {
+            return outboxApp.subscribe(source.key, {}, (event) => {
+              if (event && event.key === 'lane-head!' + source.lane && !event.replay) onChange(event)
+            })
+          })
         }
 
         // Set up seeded apps callback for catalog broadcast

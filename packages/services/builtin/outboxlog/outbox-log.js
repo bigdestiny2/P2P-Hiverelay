@@ -70,6 +70,20 @@ const BLIND_FORBIDDEN_FIELDS = new Set(['plaintext', 'plainText', 'cleartext', '
 const BLIND_BODY_FIELDS = new Set(['sealed'])
 const BLIND_SEAL_FIELDS = new Set(['version', 'alg', 'nonce', 'ciphertext', 'keyId'])
 const BLIND_SEAL_ALG = /^[a-z0-9][a-z0-9._+-]{0,63}$/
+const BLIND_CONTROL_FIELDS = Object.freeze({
+  head: new Set(['id', 'version', 'count', 'root', 'updatedAt', ...SIG_FIELDS]),
+  commit: new Set([
+    'id',
+    'appId',
+    'expectedVersion',
+    'expectedRoot',
+    'mutationSigs',
+    'headSig',
+    'createdAt',
+    ...SIG_FIELDS
+  ]),
+  'lane-head': new Set(['id', 'version', 'updatedAt', ...SIG_FIELDS])
+})
 
 const hex = (n) => randomBytes(n).toString('hex')
 
@@ -214,7 +228,7 @@ export function createOutboxLog ({
       assertJournalMutationAllowed()
       if (!op || typeof op.type !== 'string' || op.type.length > 64 || !op.data || op.data.id == null) throw fail('bad op', 400)
       assertNoNestedSignatureFields(op.data)
-      const namespaceInfo = namespaceInfoForAppend(op.data)
+      const namespaceInfo = namespaceInfoForAppend(op.type, op.data)
       const id = String(op.data.id)
       if (id.length > maxIdLength) throw fail('id too long', 400)
 
@@ -1101,13 +1115,13 @@ export function createOutboxLog ({
     return info
   }
 
-  function namespaceInfoForAppend (data) {
+  function namespaceInfoForAppend (type, data) {
     const ns = recordNamespace(data)
     if (!ns && customVerifyAppend && !namespaceRegistry.configured) return null
     if (!ns) throw fail('missing namespace', 400)
     const info = namespaceRegistry.get(ns)
     if (!info) throw fail('unknown namespace', 400)
-    if (!namespaceRecordAllowed(info, data)) throw fail('namespace policy rejected record', 400)
+    if (!namespaceRecordAllowed(info, type, data)) throw fail('namespace policy rejected record', 400)
     return info
   }
 
@@ -2705,7 +2719,7 @@ export function verifyOutboxRecordSignature ({ appId, type, data }, { namespace 
   if (!isHex(driveKey, 64) || !isHex(sigHex, 128)) return false
   if (algorithm !== 'ed25519') return false
   if (!namespaceInfo) return false
-  if (!namespaceRecordAllowed(namespaceInfo, data)) return false
+  if (!namespaceRecordAllowed(namespaceInfo, type, data)) return false
 
   const signed = `pear.app.${driveKey}:${ns}:${canonicalOutboxRecord(type, data)}`
   const signature = b4a.from(sigHex, 'hex')
@@ -2751,10 +2765,40 @@ function recordNamespace (data) {
   return data && typeof data._ns === 'string' ? normalizeNamespaceName(data._ns) : null
 }
 
-function namespaceRecordAllowed (namespaceInfo, data) {
+function namespaceRecordAllowed (namespaceInfo, type, data) {
   if (!namespaceInfo) return false
   if (!namespaceInfo.blind) return true
-  return isOutboxBlindRecord(data) && !hasBlindForbiddenField(data)
+  if (hasBlindForbiddenField(data)) return false
+  if (isOutboxBlindRecord(data)) return true
+  return isBlindControlRecord(type, data)
+}
+
+// Blind namespaces still need a small authenticated control plane. Atomic
+// commits cannot work if their signed `head` and `commit` authorization rows
+// are required to contain an application ciphertext body; targeted push also
+// needs an opaque per-lane cursor. Admit only these three exact metadata shapes
+// so the exception cannot become a plaintext side channel for application data.
+function isBlindControlRecord (type, data) {
+  const allowed = BLIND_CONTROL_FIELDS[type]
+  if (!allowed || !data || typeof data !== 'object' || Array.isArray(data)) return false
+  const keys = Object.keys(data)
+  if (keys.some(key => !allowed.has(key))) return false
+  if (type === 'head') {
+    return typeof data.id === 'string' &&
+      Number.isSafeInteger(data.version) && data.version >= 1 &&
+      Number.isSafeInteger(data.count) && data.count >= 0 &&
+      isHex(data.root, 64) && Number.isSafeInteger(data.updatedAt) && data.updatedAt >= 0
+  }
+  if (type === 'commit') {
+    return typeof data.id === 'string' && typeof data.appId === 'string' &&
+      Number.isSafeInteger(data.expectedVersion) && data.expectedVersion >= 0 &&
+      isHex(data.expectedRoot, 64) && Array.isArray(data.mutationSigs) &&
+      data.mutationSigs.every(sig => isHex(sig, 128)) &&
+      isHex(data.headSig, 128) && Number.isSafeInteger(data.createdAt) && data.createdAt >= 0
+  }
+  return isHex(data.id, 64) &&
+    Number.isSafeInteger(data.version) && data.version >= 1 &&
+    Number.isSafeInteger(data.updatedAt) && data.updatedAt >= 0
 }
 
 export function createOutboxBlindSealedBody ({

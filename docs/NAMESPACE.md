@@ -10,7 +10,11 @@ The OutboxLog is a relay-hosted, single-writer, append-only signed log — one "
 
 - A **namespace registry** (operator-owned) admits named namespaces, each with its own capability profile.
 - Every record is labeled (`_ns`) and every outbox group binds to exactly one namespace — a group can never straddle two.
-- A **blind namespace** forbids plaintext fields: the relay stores only sealed ciphertext (blind sealing in `blind-seal.js`).
+- A **blind namespace** forbids plaintext application fields: data rows store
+  only sealed ciphertext (blind sealing in `blind-seal.js`). Three exact signed
+  control shapes are admitted without a sealed body: global `head`, atomic
+  `commit` authorization, and `lane-head {id,version,updatedAt}`. Unknown or
+  additional fields on those shapes are rejected.
 - An **opaque-id takedown** primitive lets the operator mark individual records do-not-serve without learning anything about their content.
 
 It also fixed a fleet footgun: ENV-provisioned boxes had no way to register a namespace, so *every* append was refused `unknown namespace` — the `HIVERELAY_OUTBOXLOG_NAMESPACE` env var now seeds the registry (persisted config still wins).
@@ -110,7 +114,9 @@ The operator's takedown is gated by the admin key and references records by opaq
 
 - **Writer authentication**: per-record ed25519 signatures, `_k` must equal `appId`, namespace inside the signature domain.
 - **Operator allowlist**: unregistered namespaces reject at create, append, and verify time.
-- **Blind mode**: `BLIND_FORBIDDEN_FIELDS` hard-blocks plaintext fields on blind namespaces.
+- **Blind mode**: `BLIND_FORBIDDEN_FIELDS` hard-blocks plaintext fields on blind
+  namespaces. `head`, `commit`, and `lane-head` use exact field allowlists so
+  atomic control metadata works without becoming a plaintext smuggling channel.
 - **Caps**: enforced per namespace — `maxOutboxes`, `maxEntriesPerOutbox`, `maxValueBytes`, `bytesPerDay` (each resolved as min of namespace cap and global fallback).
 - **Takedown**: admin-key-only, opaque-id, do-not-serve.
 
@@ -145,7 +151,10 @@ flowchart LR
 ```
 
 - **Service Contract**: app releases never require relay updates — admission is config, not code.
-- **Notify Mode-2** composes with the co-resident outboxlog.
+- **Notify Mode-2** composes with the co-resident outboxlog. Global
+  `notify-feed-head` remains available; sender-owned virtual mailboxes use
+  `notify-outbox-lane`, which observes only `lane-head!<opaque tag>` and emits a
+  payload-free wake.
 - **Privacy transports**: encrypted wake/head hints are exactly the bounded control messages the Tor/Nym privacy lanes carry; the log bodies themselves stay on native paths (or Tor bulk).
 
 ## 7. Honest limits

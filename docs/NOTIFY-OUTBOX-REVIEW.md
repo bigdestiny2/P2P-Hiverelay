@@ -115,3 +115,20 @@ full-snapshot write would have dominated append latency at this state size.
 - **Coalescing limiter is in-memory** (noted above): a relay restart inside a
   `minIntervalSeconds` window can emit one extra wake. Accepted for V1; persisting
   last-fire timestamps is trivial if it ever matters.
+
+## 2026-07-29 sender-owned lane addendum
+
+Pear Bots exposed a fanout problem in the original global-head composition: one
+sender outbox can multiplex many recipients, so watching `head!<writer>` wakes
+all of them. HiveRelay now also supports `notify-outbox-lane` with an opaque
+32-byte `source.lane`. Relay-node subscribes to the same OutboxLog event stream
+but forwards only the exact `lane-head!<lane>` mutation. Watch renewal replaces
+the prior subscription under the deterministic watch id and does not consume a
+second slot.
+
+Blind atomic commits required a corresponding namespace correction. Blind data
+rows still require an exact sealed body, while signed global head, commit
+authorization, and lane-head records are accepted only under exact control-field
+allowlists. Extra plaintext on a control row is rejected. The integration test
+uses the real signature verifier and durable atomic commit journal, asserts
+lane isolation/coalescing, and confirms the provider receives an empty wake.

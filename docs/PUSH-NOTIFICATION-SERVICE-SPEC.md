@@ -148,6 +148,7 @@ Example capability profile:
         "providers": ["runtime", "apns", "fcm", "webpush"],
         "credential_modes": ["runtime-owned", "app-owned"],
         "modes": ["direct", "watch", "presence-fallback"],
+        "watch_sources": ["notify-feed-head", "notify-outbox-lane"],
         "payload": {
           "max_ciphertext_bytes": 3072,
           "plaintext_allowed": false,
@@ -622,6 +623,14 @@ V1 watch source kinds:
 |---|---|---|
 | `hypercore-head` | Core key and length only | Head length increases. |
 | `notify-feed-head` | Dedicated app notification feed key and length only | Head length increases. |
+| `notify-outbox-lane` | Sender OutboxLog key and opaque 32-byte lane tag | Exact signed `lane-head!<lane>` mutation advances. |
+
+`notify-outbox-lane` is the sender-owned mailbox form. The source is
+`{kind, key:<outbox signing key>, lane:<opaque tag>, start}`. The co-resident
+OutboxLog observer matches only that lane-head key, never the global writer
+head, so unrelated recipients are not fanned out. The resulting provider
+delivery has an empty `payloadCiphertext`; the application fetches and verifies
+the lane after wake. Deterministic watch ids may be renewed idempotently.
 
 Relay-side watch rules in v1 are intentionally primitive. They can detect new
 append-only activity but cannot run app code or decrypt app messages. The app
@@ -793,8 +802,9 @@ Output:
   "ok": true,
   "watchId": "32-byte-hex",
   "source": {
-    "kind": "hypercore-head",
-    "key": "32-byte-hex-core-key"
+    "kind": "notify-outbox-lane",
+    "key": "32-byte-hex-outbox-writer-key",
+    "lane": "32-byte-hex-opaque-lane"
   }
 }
 ```

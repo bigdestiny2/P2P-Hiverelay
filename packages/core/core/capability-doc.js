@@ -547,6 +547,7 @@ function buildServicesProtocolProfile (relay, servicesEnabled) {
       providers: notifyLimits.providers || ['runtime', 'apns', 'fcm', 'webpush'],
       credential_modes: notifyLimits.credentialModes || ['runtime-owned', 'app-owned'],
       modes: notifyLimits.modes || ['direct', 'watch', 'presence-fallback'],
+      watch_sources: notifyLimits.watchSources || [],
       payload: {
         max_ciphertext_bytes: notifyLimits.maxCiphertextBytes || 3072,
         plaintext_allowed: false,
@@ -557,7 +558,7 @@ function buildServicesProtocolProfile (relay, servicesEnabled) {
         // `max_devices_per_user_app` used to be advertised here but was never
         // enforced anywhere in the service — it is dropped rather than kept as
         // a promise the relay doesn't keep.
-        max_watches_per_receive_cap: notifyLimits.maxChannelsPerReceiveCap || 128,
+        max_watches_per_receive_cap: notifyLimits.maxWatchesPerReceiveCap || 128,
         default_channel_per_hour: notifyLimits.defaultChannelPerHour || 30
       },
       // Published so a client can tell a delivering relay from a running one.

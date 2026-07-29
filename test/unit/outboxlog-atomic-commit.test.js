@@ -71,6 +71,48 @@ test('outboxlog atomic commit: durable genesis is one journal transaction and re
   t.is(journal.entries().length, 1)
 })
 
+test('outboxlog atomic commit: blind namespace admits only sealed data and exact control rows', (t) => {
+  const writer = keyPair(68)
+  const journal = durableMemoryJournal()
+  const namespace = 'pear-bots'
+  const lane = 'a'.repeat(64)
+  const body = {
+    sealed: {
+      version: 1,
+      alg: 'xchacha20poly1305',
+      nonce: 'opaque-nonce',
+      ciphertext: 'opaque-ciphertext'
+    }
+  }
+  const log = createOutboxLog({
+    journal,
+    namespaces: { [namespace]: { blind: true } }
+  })
+  const built = transition(writer, {
+    namespace,
+    includeAuthor: false,
+    expected: { version: 0, root: EMPTY_ROOT },
+    mutations: [
+      { type: 'mailbox', fields: { id: lane + '!m1', body } },
+      { type: 'lane-head', fields: { id: lane, version: 1, updatedAt: 1000 } }
+    ]
+  })
+
+  const receipt = log.sync.commit(writer.publicKeyHex, built.commit)
+  t.is(receipt.durable, true)
+  t.is(log.sync.get(writer.publicKeyHex, 'mailbox!' + lane + '!m1').body.sealed.ciphertext, 'opaque-ciphertext')
+  t.is(log.sync.get(writer.publicKeyHex, 'lane-head!' + lane).version, 1)
+
+  const leaked = transition(writer, {
+    namespace,
+    includeAuthor: false,
+    expected: { version: 1, root: built.head.root },
+    base: built.census,
+    mutations: [{ type: 'lane-head', fields: { id: lane, version: 2, updatedAt: 2000, message: 'plaintext leak' } }]
+  })
+  t.is(throws(() => log.sync.commit(writer.publicKeyHex, leaked.commit)).status, 400, 'extra lane-head fields cannot bypass blind sealing')
+})
+
 test('outboxlog signatures: nested reserved metadata is rejected even when signature verification is disabled', (t) => {
   const writer = keyPair(69)
   const journal = durableMemoryJournal()
@@ -892,9 +934,9 @@ function transition (writer, opts) {
   const census = new Map(opts.base || [])
   const mutations = opts.mutations.map((mutation) => {
     const data = mutation.data || signRecord(writer, mutation.type, {
-      author: writer.publicKeyHex,
+      ...(opts.includeAuthor === false ? {} : { author: writer.publicKeyHex }),
       ...mutation.fields
-    })
+    }, opts.namespace)
     const key = mutation.type.replace(':', '!') + '!' + data.id
     census.set(key, key + '\x00' + data._sig)
     return { type: mutation.type, data, timestamp: '2026-07-10T00:00:00.000Z' }
@@ -903,12 +945,12 @@ function transition (writer, opts) {
   const computedRoot = sha256(censusValues.join('\x01'))
   const head = signRecord(writer, 'head', {
     id: writer.publicKeyHex,
-    author: writer.publicKeyHex,
+    ...(opts.includeAuthor === false ? {} : { author: writer.publicKeyHex }),
     version: opts.headVersion === undefined ? expected.version + 1 : opts.headVersion,
     count: opts.headCount === undefined ? censusValues.length : opts.headCount,
     root: opts.headRoot || computedRoot,
     updatedAt: opts.createdAt || 1000
-  })
+  }, opts.namespace)
   const fields = {
     appId: writer.publicKeyHex,
     expectedVersion: expected.version,
@@ -918,7 +960,7 @@ function transition (writer, opts) {
     createdAt: opts.createdAt || 1000
   }
   const commitId = sha256(canonicalOutboxRecord('commit-id', fields))
-  const authorization = signRecord(writer, 'commit', { id: commitId, ...fields })
+  const authorization = signRecord(writer, 'commit', { id: commitId, ...fields }, opts.namespace)
   return {
     head,
     census,
@@ -972,12 +1014,12 @@ function keyPair (seedByte) {
   return { publicKey, secretKey, publicKeyHex: b4a.toString(publicKey, 'hex') }
 }
 
-function signRecord (writer, type, fields) {
+function signRecord (writer, type, fields, namespace = DEFAULT_OUTBOXLOG_NAMESPACE) {
   const data = {
     ...fields,
     _k: writer.publicKeyHex,
     _dk: 'd'.repeat(64),
-    _ns: DEFAULT_OUTBOXLOG_NAMESPACE,
+    _ns: namespace,
     _alg: 'ed25519'
   }
   const message = `pear.app.${data._dk}:${data._ns}:${canonicalOutboxRecord(type, data)}`

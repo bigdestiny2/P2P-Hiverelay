@@ -159,7 +159,7 @@ test('capability doc advertises notify and outboxlog service profiles when runni
     config: { enableServices: true },
     serviceRegistry: {
       services: new Map([
-        ['notify', { status: 'running', version: '0.1.0', provider: { limits: () => ({ providers: ['runtime', 'apns', 'fcm', 'webpush'], credentialModes: ['runtime-owned', 'app-owned'], modes: ['direct', 'watch', 'presence-fallback'], egress: { live: true } }) } }],
+        ['notify', { status: 'running', version: '0.1.0', provider: { limits: () => ({ providers: ['runtime', 'apns', 'fcm', 'webpush'], credentialModes: ['runtime-owned', 'app-owned'], modes: ['direct', 'watch', 'presence-fallback'], watchSources: ['notify-feed-head', 'notify-outbox-lane'], maxWatchesPerReceiveCap: 64, egress: { live: true } }) } }],
         ['outboxlog', { status: 'running', version: '0.1.0' }]
       ]),
       catalog: () => [
@@ -174,6 +174,8 @@ test('capability doc advertises notify and outboxlog service profiles when runni
   t.ok(doc.features.includes('outboxlog-v1'))
   t.is(doc.protocol_profile.services.notify.version, '0.1.0')
   t.is(doc.protocol_profile.services.notify.payload.plaintext_allowed, false)
+  t.alike(doc.protocol_profile.services.notify.watch_sources, ['notify-feed-head', 'notify-outbox-lane'])
+  t.is(doc.protocol_profile.services.notify.limits.max_watches_per_receive_cap, 64)
   t.is(doc.protocol_profile.services.outboxlog.model, 'single-writer-signed-outbox')
 })
 

@@ -45,6 +45,12 @@ export const NOTIFY_MODES = Object.freeze([
   'presence-fallback'
 ])
 
+export const NOTIFY_WATCH_SOURCE_KINDS = Object.freeze([
+  'hypercore-head',
+  'notify-feed-head',
+  'notify-outbox-lane'
+])
+
 const HEX_32 = /^[0-9a-f]{64}$/i
 const HEX_16 = /^[0-9a-f]{32}$/i
 const HEX_SIG = /^[0-9a-f]{128}$/i
@@ -552,12 +558,13 @@ export class NotifyService extends ServiceProvider {
     verifySignedAny(params, NOTIFY_DOMAINS.watch, [params.signatureKey, receiveCap.user, receiveCap.device])
 
     const source = objectOr(params.source, null)
-    if (!source || (source.kind !== 'hypercore-head' && source.kind !== 'notify-feed-head')) throw fail('SOURCE_DENIED', 'unsupported watch source')
+    if (!source || !NOTIFY_WATCH_SOURCE_KINDS.includes(source.kind)) throw fail('SOURCE_DENIED', 'unsupported watch source')
     // A watch is accepted only when an observer for the source kind is
     // actually attached — never bill for a watch that cannot fire. (#142)
     if (!this._watchSources.has(source.kind)) throw fail('SOURCE_UNAVAILABLE', 'no observer attached for watch source kind ' + source.kind)
     requireHex(source.key, 'source.key')
-    const existingForCap = [...this.watches.values()].filter(w => w.receiveCap === receiveCap.capId).length
+    if (source.kind === 'notify-outbox-lane') requireHex(source.lane, 'source.lane')
+    const existingForCap = [...this.watches.values()].filter(w => w.receiveCap === receiveCap.capId && w.watchId !== params.watchId).length
     if (existingForCap >= this.maxWatchesPerReceiveCap) throw fail('WATCH_LIMIT', 'receive capability watch limit reached')
 
     const watch = freezeClone({
@@ -572,6 +579,7 @@ export class NotifyService extends ServiceProvider {
       source: {
         kind: source.kind,
         key: source.key,
+        ...(source.kind === 'notify-outbox-lane' ? { lane: source.lane } : {}),
         start: Number.isSafeInteger(source.start) && source.start >= 0 ? source.start : 0
       },
       channel: params.channel,
@@ -582,6 +590,10 @@ export class NotifyService extends ServiceProvider {
       signatureKey: params.signatureKey || receiveCap.user,
       lastSeq: Number.isSafeInteger(source.start) && source.start >= 0 ? source.start : 0
     })
+    // Deterministic watch ids let clients safely renew after a lost response.
+    // Replace the old observer before installing the new signed lease so a
+    // renewal never leaks a duplicate subscription or consumes another slot.
+    this._unsubscribeWatch(watch.watchId)
     this.watches.set(watch.watchId, watch)
     this._subscribeWatch(watch)
     await this._saveState()
@@ -723,6 +735,7 @@ export class NotifyService extends ServiceProvider {
       providers: NOTIFY_PROVIDERS,
       credentialModes: NOTIFY_CREDENTIAL_MODES,
       modes: NOTIFY_MODES,
+      watchSources: [...this._watchSources.keys()].sort(),
       // The capability doc reads this to decide whether to advertise notify-v1.
       egress: pushEgressProfile(this.provider)
     }

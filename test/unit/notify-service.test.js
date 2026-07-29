@@ -63,6 +63,45 @@ test('notify service: signed direct wake path stores redacted delivery event', a
   t.ok(verifyNotifySignature(events.events[0], NOTIFY_DOMAINS.deliveryEvent, relay.hex))
 })
 
+test('notify service: lane watch preserves and validates the opaque lane selector', async (t) => {
+  const relay = keyPair(71)
+  const user = keyPair(72)
+  const device = keyPair(73)
+  const sender = keyPair(74)
+  const notify = new NotifyService({ keyPair: relay, clock: () => NOW })
+  notify.attachWatchSource('notify-outbox-lane', () => () => {})
+  await installHappyPath(notify, { relay, user, device, sender, modes: ['watch'] })
+
+  const lane = hex(75)
+  const installed = await notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
+    type: 'hiverelay.notify.watch.v1',
+    watchId: hex(76),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    audience: relay.hex,
+    source: { kind: 'notify-outbox-lane', key: sender.hex, lane, start: 0 },
+    channel: 'message',
+    policy: { minIntervalSeconds: 30 },
+    createdAt: NOW,
+    expiresAt: NOW + HOUR
+  }))
+  t.alike(installed.source, { kind: 'notify-outbox-lane', key: sender.hex, lane, start: 0 })
+
+  await t.exception(notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
+    type: 'hiverelay.notify.watch.v1',
+    watchId: hex(77),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    audience: relay.hex,
+    source: { kind: 'notify-outbox-lane', key: sender.hex, lane: 'short' },
+    channel: 'message',
+    createdAt: NOW,
+    expiresAt: NOW + HOUR
+  })), /source.lane must be 32-byte hex/)
+})
+
 test('notify service: abuse limits are configurable and zero disables a scope (quota_exhausted)', async (t) => {
   const relay = keyPair(1)
   const user = keyPair(2)

@@ -1,6 +1,6 @@
 /**
- * End-to-end wake loop: a mailbox record lands on an outbox → the head row
- * bumps → the notify watch fires → a real push adapter signs an APNS request.
+ * End-to-end wake loops for both sender-owned virtual lanes and the legacy
+ * global-head compatibility watch.
  *
  * This exists because the loop was broken in a way no single-component test
  * could see. The relay bridge only fires on a row keyed `head!<appId>`, and
@@ -11,7 +11,7 @@
  */
 
 import test from 'brittle'
-import { generateKeyPairSync, createPublicKey, verify as cryptoVerify } from 'node:crypto'
+import { createHash, generateKeyPairSync, createPublicKey, verify as cryptoVerify } from 'node:crypto'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import {
@@ -19,7 +19,12 @@ import {
   NOTIFY_DOMAINS,
   notifySignaturePayload
 } from '../../packages/services/builtin/notify-service.js'
-import { OutboxLogApp } from '../../packages/services/builtin/outboxlog/index.js'
+import {
+  OutboxLogApp,
+  canonicalOutboxRecord,
+  createMemoryOutboxJournal,
+  createOutboxBlindSealedBody
+} from '../../packages/services/builtin/outboxlog/index.js'
 import { sealDeviceToken } from '../../packages/services/builtin/notify-push/index.js'
 
 const NOW = 1782864000000
@@ -28,74 +33,102 @@ const PB_NAMESPACE = 'pear-bots'
 
 const tick = () => new Promise(resolve => setImmediate(resolve))
 
-test('wake loop: a pear-bots mailbox enqueue wakes the recipient device', async (t) => {
+test('wake loop: a signed atomic pear-bots lane commit wakes only that opaque lane', async (t) => {
   const relay = keyPair(51)
   const user = keyPair(52)
   const device = keyPair(53)
   const sender = keyPair(54)
-  // pear-bots uses the recipient's own key as the outbox appId, and the same
-  // value as the notify watch source key. That equality is what closes the loop.
-  const ownerKey = hex(60)
+  const laneA = hex(60)
+  const laneB = hex(61)
 
   const provider = { attempts: [], async send (d) { this.attempts.push(d); return { status: 'accepted_by_provider' } } }
-  const outbox = new OutboxLogApp({ verifyAppend: () => true, persistence: false })
-  // A relay only accepts records tagged `_ns: 'pear-bots'` if that namespace is
-  // registered. Without this, every enqueue is rejected 400 "unknown namespace"
-  // — so this line is a real operator prerequisite, not test scaffolding.
-  await outbox.start({ config: { outboxlog: { namespaces: { [PB_NAMESPACE]: { blind: false } } } } })
+  const outbox = new OutboxLogApp({
+    journal: createMemoryOutboxJournal([], { durableSync: true }),
+    persistence: false
+  })
+  await outbox.start({ config: { outboxlog: { namespaces: { [PB_NAMESPACE]: { blind: true } } } } })
   const notify = new NotifyService({ keyPair: relay, provider, clock: () => NOW })
 
-  // Verbatim the closure relay-node/index.js installs at startup.
-  notify.attachWatchSource('notify-feed-head', (source, onChange) => {
+  // Verbatim the virtual-lane closure relay-node/index.js installs at startup.
+  notify.attachWatchSource('notify-outbox-lane', (source, onChange) => {
     return outbox.subscribe(source.key, {}, (event) => {
-      if (event && event.key === 'head!' + source.key && !event.replay) onChange(event)
+      if (event && event.key === 'lane-head!' + source.lane && !event.replay) onChange(event)
     })
   })
 
-  await installHappyPath(notify, { relay, user, device, sender, modes: ['direct', 'watch'] })
-  const installed = await notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
+  await installHappyPath(notify, { relay, user, device, sender, modes: ['watch'] })
+  const watchA = await notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
     type: 'hiverelay.notify.watch.v1',
     watchId: hex(59),
     receiveCap: hex(6),
     sendCap: hex(7),
     app: hex(5),
     audience: relay.hex,
-    source: { kind: 'notify-feed-head', key: ownerKey, start: 0 },
+    source: { kind: 'notify-outbox-lane', key: sender.hex, lane: laneA, start: 0 },
     channel: 'message',
     policy: { minIntervalSeconds: 30 },
     createdAt: NOW,
     expiresAt: NOW + HOUR
   }))
-  t.is(installed.ok, true, 'watch installed against the recipient outbox')
+  const watchB = await notify.watch(signed(user, NOTIFY_DOMAINS.watch, {
+    type: 'hiverelay.notify.watch.v1',
+    watchId: hex(58),
+    receiveCap: hex(6),
+    sendCap: hex(7),
+    app: hex(5),
+    audience: relay.hex,
+    source: { kind: 'notify-outbox-lane', key: sender.hex, lane: laneB, start: 0 },
+    channel: 'message',
+    policy: { minIntervalSeconds: 30 },
+    createdAt: NOW,
+    expiresAt: NOW + HOUR
+  }))
+  t.is(watchA.ok, true)
+  t.is(watchB.ok, true)
 
-  outbox.create({ appId: ownerKey })
-
-  // 1. The mailbox row alone — this is all pear-bots used to write.
-  outbox.append({
-    appId: ownerKey,
-    op: { type: 'mailbox', data: { id: 'c'.repeat(32), _ns: PB_NAMESPACE, payload: 'sealed-ciphertext', createdAt: NOW } }
+  const sealed = createOutboxBlindSealedBody({
+    nonce: b4a.toString(b4a.alloc(24, 1), 'base64url'),
+    ciphertext: b4a.toString(b4a.alloc(48, 2), 'base64url'),
+    keyId: 'epoch-1'
   })
-  await tick()
-  t.is(provider.attempts.length, 0, 'a mailbox row on its own wakes nobody — this was the whole bug')
-
-  // 2. The head row pear-bots now writes immediately after it.
-  outbox.append({
-    appId: ownerKey,
-    op: { type: 'head', data: { id: ownerKey, _ns: PB_NAMESPACE, bumpedAt: NOW } }
+  const first = atomicTransition(sender, {
+    expected: { version: 0, root: sha256('') },
+    mutations: [
+      { type: 'mailbox', fields: { id: laneA + '!op-1', body: sealed, expiresAt: NOW + HOUR } },
+      { type: 'lane-head', fields: { id: laneA, version: 1, updatedAt: NOW } }
+    ]
   })
+  outbox.commit(sender.hex, first.commit)
   await tick()
-  t.is(provider.attempts.length, 1, 'head row wakes the recipient device')
+  t.is(provider.attempts.length, 1, 'the exact lane A cursor wakes its watch')
 
   const wake = provider.attempts[0]
   t.is(wake.payloadCiphertext, '', 'the wake is an opaque poke, not a message')
-  t.absent(JSON.stringify(wake).includes('sealed-ciphertext'), 'no record content reaches the push provider')
+  t.is(wake.watch.watchId, hex(59), 'lane B did not fan out')
+  t.absent(JSON.stringify(wake).includes(sealed.sealed.ciphertext), 'no record content reaches the push provider')
   t.absent('intent' in wake, 'watch wakes carry no intent — adapters must not require one')
 
-  // 3. Coalescing: a second enqueue inside minIntervalSeconds must not
-  //    double-spend the device's push budget.
-  outbox.append({ appId: ownerKey, op: { type: 'head', data: { id: ownerKey, _ns: PB_NAMESPACE, bumpedAt: NOW + 1000 } } })
+  const second = atomicTransition(sender, {
+    expected: { version: first.head.version, root: first.head.root },
+    base: first.census,
+    mutations: [
+      { type: 'mailbox', fields: { id: laneB + '!op-2', body: sealed, expiresAt: NOW + HOUR } },
+      { type: 'lane-head', fields: { id: laneB, version: 1, updatedAt: NOW } }
+    ]
+  })
+  outbox.commit(sender.hex, second.commit)
   await tick()
-  t.is(provider.attempts.length, 1, 'a second head bump inside the coalescing window is dropped')
+  t.is(provider.attempts.length, 2, 'lane B independently wakes its exact watch')
+  t.is(provider.attempts[1].watch.watchId, hex(58))
+
+  const third = atomicTransition(sender, {
+    expected: { version: second.head.version, root: second.head.root },
+    base: second.census,
+    mutations: [{ type: 'lane-head', fields: { id: laneA, version: 2, updatedAt: NOW + 1000 } }]
+  })
+  outbox.commit(sender.hex, third.commit)
+  await tick()
+  t.is(provider.attempts.length, 2, 'same-lane bumps coalesce inside minIntervalSeconds')
 })
 
 test('wake loop: the wake reaches a real signing adapter', async (t) => {
@@ -182,6 +215,64 @@ test('wake loop: the wake reaches a real signing adapter', async (t) => {
 
   await notify.stop()
 })
+
+function atomicTransition (writer, opts) {
+  const census = new Map(opts.base || [])
+  const mutations = opts.mutations.map(mutation => {
+    const data = signOutboxRecord(writer, mutation.type, mutation.fields)
+    const key = mutation.type + '!' + data.id
+    census.set(key, key + '\x00' + data._sig)
+    return { type: mutation.type, data }
+  })
+  const values = [...census.values()].sort()
+  const createdAt = opts.createdAt == null ? NOW : opts.createdAt
+  const head = signOutboxRecord(writer, 'head', {
+    id: writer.hex,
+    version: opts.expected.version + 1,
+    count: values.length,
+    root: sha256(values.join('\x01')),
+    updatedAt: createdAt
+  })
+  const fields = {
+    appId: writer.hex,
+    expectedVersion: opts.expected.version,
+    expectedRoot: opts.expected.root,
+    mutationSigs: mutations.map(mutation => mutation.data._sig),
+    headSig: head._sig,
+    createdAt
+  }
+  const commitId = sha256(canonicalOutboxRecord('commit-id', fields))
+  return {
+    head,
+    census,
+    commit: {
+      schema: 1,
+      commitId,
+      expected: { ...opts.expected },
+      mutations,
+      head: { type: 'head', data: head },
+      authorization: signOutboxRecord(writer, 'commit', { id: commitId, ...fields })
+    }
+  }
+}
+
+function signOutboxRecord (writer, type, fields) {
+  const data = {
+    ...fields,
+    _k: writer.hex,
+    _dk: writer.hex,
+    _ns: PB_NAMESPACE,
+    _alg: 'ed25519'
+  }
+  const message = 'pear.app.' + data._dk + ':' + data._ns + ':' + canonicalOutboxRecord(type, data)
+  const signature = b4a.alloc(64)
+  sodium.crypto_sign_detached(signature, b4a.from(message, 'utf8'), writer.secretKey)
+  return { ...data, _sig: b4a.toString(signature, 'hex') }
+}
+
+function sha256 (value) {
+  return createHash('sha256').update(String(value), 'utf8').digest('hex')
+}
 
 async function installHappyPath (notify, { relay, user, device, sender, modes = ['direct'], tokenCiphertext = 'encrypted-provider-token' }) {
   const app = hex(5)
