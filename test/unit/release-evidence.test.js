@@ -1084,7 +1084,8 @@ test('release evidence writer rejects successful full releases without artifact 
   try {
     await runEvidence(missingStartosRegistryUrl, completeFullReleaseEnv({
       HIVERELAY_STARTOS_REGISTRY_URL: '',
-      HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL: ''
+      HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL: '',
+      STARTOS_REGISTRY_URL: ''
     }))
   } catch (e) {
     startosRegistryUrlErr = e

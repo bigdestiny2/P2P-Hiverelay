@@ -6,7 +6,7 @@ import { VersionInfo, IMPOSSIBLE } from '@start9labs/start-sdk'
 // (the 0.3.x YAML package is a separate distribution channel), so `up` is a
 // no-op and `down` is impossible.
 export const current = VersionInfo.of({
-  version: '0.25.0-rc.7:0',
+  version: '0.25.0-rc.9:0',
   releaseNotes: {
     en_US:
       'Initial StartOS 0.4 (start-sdk 2.x) build of Blindspark — the HiveRelay ' +

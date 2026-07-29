@@ -13,10 +13,10 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.25.0-rc.7
+version: 0.25.0-rc.9
 release-notes: |
-  HiveRelay v0.25.0-rc.4: complete canary fix on the wiring branch. Gateway
-  modules, loader fix, ETIMEDOUT recoverable. Prefer over rc.1–rc.3.
+  HiveRelay v0.25.0-rc.9: portable release-gate repair for bounded Hyperdrive
+  admission and hermetic release evidence. RC8 remains unpromoted.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"

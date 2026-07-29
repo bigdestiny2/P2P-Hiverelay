@@ -6,6 +6,24 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.9] — 2026-07-29
+
+**Release-gate repair prerelease. RC8 remains immutable and is not promoted.**
+
+### Fixed — portable release verification
+
+- The bounded-Hyperdrive admission regression fixture now derives its finite
+  storage cap from the real initialized Corestore baseline. This preserves the
+  same exact admission and residue assertions on Linux, where Corestore's
+  baseline metadata is larger than on macOS, without weakening fail-closed
+  runtime behavior.
+- Release-evidence negative tests now explicitly clear the workflow's fallback
+  StartOS registry variable when exercising a missing-URL case. The assertion
+  is hermetic even when the release workflow supplies real registry secrets.
+- Dev-only lint transitive dependencies are pinned above the current
+  `brace-expansion` and `js-yaml` denial-of-service advisories, so the complete
+  dependency audit is clean as well as the production-only release gate.
+
 ## [0.25.0-rc.8] — 2026-07-29
 
 **Post-RC7 repair prerelease. The signed tag, image evidence, and separate

@@ -6415,7 +6415,7 @@ if (pearBrowserDemoHtml.includes('<h1>HiveRelay Marketplace Demo</h1>') && pearB
 }
 
 const rootReadme = readText(hiverelayRoot, 'README.md')
-const statusMatch = rootReadme.match(/Status:\s*v(\d+\.\d+\.\d+)/)
+const statusMatch = rootReadme.match(/Status:\s*v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/)
 if (!statusMatch) warn('README status line is missing a parseable version badge')
 else if (statusMatch[1] !== expectedVersion) warn(`README status badge is ${statusMatch[1]} while monorepo version is ${expectedVersion}`)
 else pass(`README status badge matches monorepo version (${expectedVersion})`)

@@ -1,6 +1,6 @@
 # Ladder ship map (chronological)
 
-**Date:** 2026-07-29 · **Status:** living operator/product plan · **Baseline:** fleet canary `v0.25.0-rc.7` · stable `v0.24.3` · `v0.25.0-rc.8` repair candidate prepared in `codex/hiverelay-release-fleet-20260729`
+**Date:** 2026-07-29 · **Status:** living operator/product plan · **Baseline:** fleet canary `v0.25.0-rc.7` · stable `v0.24.3` · signed `v0.25.0-rc.8` preserved as failed prerelease · `v0.25.0-rc.9` successor candidate in preparation
 
 > Two parallel tracks, one honesty ladder. **Version tags and claim badges stay separate until a deliberate merge.** Do not call the blind public-test pilot “fleet v0.25.0,” and do not claim rungs the current ship has not evidenced.
 
@@ -55,8 +55,8 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Item | State |
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
-| Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3570/3570** with **17954/17954** assertions, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
-| Scoped live health (2026-07-29 21:19Z) | Latest operator scan excludes Sydney/Dallas and covers 12 inventory entries: service catalogues reached **10/12**, hosts **10/12**, and active relay applications **10/12**. Bern and Dubai-2GB are currently unreachable; the last successful Dubai-2GB SSH diagnostic found a blank/inactive host with no relay repo, service, updater, config, or health endpoint. `utah-8gb` is healthy on signed RC4 with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active |
+| Release candidate | Signed `v0.25.0-rc.8` is immutable but failed the exact tagged-source workflow on two portable test-fixture assertions (3568/3570 tests; runtime remained fail-closed). `v0.25.0-rc.9` carries the baseline-sized Hyperdrive admission fixture and hermetic StartOS release-evidence negative case; full successor proof and a fresh signing authorization remain pending |
+| Scoped live health (2026-07-29) | Sydney/Dallas remain excluded. Utah canary is healthy on signed RC7 with its updater enabled/active. The Utah-8GB drift repair reinstalled the verified updater, preserved exact signed `stable@v0.25.0-rc.4`, enabled/started its timer, and did not restart the application; post-repair proof shows matching HEAD/package/health version and a clean checkout |
 | Wake runtime | `notify` loaded on **10/10** service-reachable relays, but signed live egress **0/10** and exact-lane wake **0/10**; eight stable relays still carry the old false `notify-v1` feature claim, while Utah and Utah-8GB correctly report loaded-not-live |
 | Agent mailbox | `outboxlog` is signed-advertised on **8/10** service-reachable relays; Utah and Utah-8GB have mailbox off |
 | Privacy runtime | two restricted Tor endpoints are signed-advertised, but signed-ready is **0/10** because neither has the required anonymous rejection proof. Post-RC7 code suppresses readiness until that probe succeeds |
@@ -441,12 +441,12 @@ You can call the **product ladder complete for honest marketing** when:
 
 ## 9. Immediate next three moves (in order)
 
-1. **Sign and ship the prepared RC8 candidate:** unlock the existing release
-   signer, select the principal already shipped in `fleet/allowed-signers`, cut
-   and push the signed `v0.25.0-rc.8` tag, and let CI build and prove
-   the digest-pinned image. Promote only the permitted canary in a separate
-   health-gated change. Utah-8GB's exact RC4 updater pin and timer repair is
-   complete; do not fold a downgrade into the canary promotion.
+1. **Prove and authorize the RC9 successor:** preserve the signed RC8 tag at its
+   original commit, run RC9's exact source through unit/integration/lint/audit,
+   package and image gates, then obtain a fresh explicit authorization before
+   signing and pushing `v0.25.0-rc.9`. Promote only the permitted canary in a
+   separate health-gated change. Utah-8GB's exact RC4 updater pin and timer
+   repair is complete; do not fold a downgrade into the canary promotion.
 2. **Prove the claims on live canary:** configure operator-owned push egress if
    wake is a release claim; verify exact-lane wake, outboxlog persistence,
    restricted-Tor negative probe, and the 100 MB onion transfer. Observe for
