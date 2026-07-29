@@ -8,20 +8,38 @@ import {
   CELL_SIZE_CLASS,
   CORE_SESSION_CLASS,
   DISPATCH_LIMITS,
+  FAMILY,
   FORWARD_CIRCUIT_CLASS,
   INBOX_FRAME_CLASS,
-  STREAM_WIRE_CLASS
-} from '../packages/blind-protocol/registry.js'
+  OPERATION,
+  OUTER_CLASS,
+  PROTOCOL,
+  STREAM_WIRE_CLASS,
+  WIRE_RUNTIME_AUTHORITY,
+  operationProfile
+} from '../packages/blind-protocol/wire-runtime-authority.js'
 
-export const CAPACITY_LAB_SCHEMA = 'hiverelay/blind-capacity-lab-report/v2'
+export const CAPACITY_LAB_SCHEMA = 'hiverelay/blind-capacity-lab-report/v3'
 export const CAPACITY_LAB_CONFIG_SCHEMA = 'hiverelay/blind-capacity-lab-config/v2'
 export const BLIND_SCENARIO_MANIFEST_SCHEMA = 'hiverelay/blind-scenario-manifest/v1'
+export const CAPACITY_LAB_MODEL_REVISION = 'hiverelay/blind-capacity-model/v3-cell-envelope'
 
 const KIB = 1024
 const MIB = 1024 * KIB
 const GIB = 1024 * MIB
 const TIB = 1024 * GIB
 const YEAR_SECONDS = 365.25 * 24 * 60 * 60
+const OUTER_ENVELOPE_HEADER_BYTES = 6
+const CELL_GET_RESULT_BODY_OVERHEAD_BYTES = 2
+const CELL_PUT_PROFILE = operationProfile(FAMILY.CELL, OPERATION.CELL.PUT)
+const MAX_ADMISSION_TOKEN_BYTES = 4096
+const COMPACT_BYTES_4096_PREFIX_BYTES = 3
+const ADMISSION_V1_MAX_BYTES = 2 + 2 + 32 + COMPACT_BYTES_4096_PREFIX_BYTES + MAX_ADMISSION_TOKEN_BYTES
+const CELL_PUT_REQUEST_FIXED_BYTES = 1 + 32 + 4 + 1 + 1 + 32 + 32 + 32 + 32 + 32 + 64
+const CELL_PUT_REQUEST_BODY_OVERHEAD_BYTES = CELL_PUT_REQUEST_FIXED_BYTES + ADMISSION_V1_MAX_BYTES
+const CELL_GET_REQUEST_FIXED_BYTES = 1 + 32 + 32 + 1
+const CELL_GET_MAX_REQUEST_BODY_BYTES = CELL_GET_REQUEST_FIXED_BYTES + ADMISSION_V1_MAX_BYTES
+const OUTER_CLASS_BYTES = Object.values(OUTER_CLASS).sort((left, right) => left - right)
 
 export const DEFAULT_CAPACITY_LAB_CONFIG = deepFreeze({
   schema: CAPACITY_LAB_CONFIG_SCHEMA,
@@ -244,6 +262,7 @@ export function runCapacityLab (input = {}) {
     schema: CAPACITY_LAB_SCHEMA,
     status,
     modelKind: 'deterministic-placement-simulation-and-analytical-resource-model',
+    modelProvenance: clone(scenarioManifest.model),
     evidenceClass: 'modeled-not-benchmarked',
     disclaimer: 'All throughput and latency values are model estimates derived from supplied costs. Placement/failure counts are deterministic simulation results. This report is not a hardware benchmark and is not production performance evidence.',
     configDigest: sha256(stableStringify(config)),
@@ -278,7 +297,7 @@ export function runCapacityLab (input = {}) {
     limitations: [
       'Storage projections honor each relay disk budget and deterministic replica count; throughput still assumes homogeneous disk speed, network, CPU, WAL, and memory limits across relays.',
       'Relay placement is uniform over distinct relays; operator, region, correlated failure, and adversarial selection policies need a separate topology simulation.',
-      'Resource queues are approximated independently and do not model kernel, filesystem, garbage-collector, DHT, TLS, transport framing implementation, or lock contention.',
+      'CELL unary network bytes include the exact minimum-fitting public v1 symmetric outer-envelope classes selected by the current client default. Deliberate privacy up-classing, other-family transport framing, kernel, filesystem, garbage-collector, DHT, TLS, and lock contention remain outside the model.',
       'The effective WAL group size is an input, not a claim that the runtime achieves that batch size.',
       'Configured WAL payload sizes are planning allowances; format-2 encoded record sizes must be measured and substituted before a release claim.',
       'Successful mutation paths are charged two or three WAL records by family; error, retry, terminal, floor, map, and compaction records are not included in foreground averages.',
@@ -325,6 +344,7 @@ function buildCapacityScenarioManifest (config, scenario) {
   return {
     schema: BLIND_SCENARIO_MANIFEST_SCHEMA,
     source: 'capacity-model',
+    model: capacityModelProvenance(),
     relayCount: config.fleet.relayCount,
     storageBytesByRelay: relayDiskBytes(config),
     performanceShape: {
@@ -356,6 +376,22 @@ function buildCapacityScenarioManifest (config, scenario) {
       familyProbability: scenario.operationModel.familyProbability
     },
     objectives: clone(config.objectives)
+  }
+}
+
+function capacityModelProvenance () {
+  return {
+    revision: CAPACITY_LAB_MODEL_REVISION,
+    cellWireAccounting: 'exact-minimum-v1-symmetric-outer-envelope',
+    wireAuthority: {
+      profile: WIRE_RUNTIME_AUTHORITY.profile,
+      protocolFamily: PROTOCOL.family,
+      protocolMajor: PROTOCOL.major,
+      protocolMinor: PROTOCOL.minor,
+      specHash: WIRE_RUNTIME_AUTHORITY.specHash,
+      abiHash: WIRE_RUNTIME_AUTHORITY.abiHash,
+      vectorSetHash: WIRE_RUNTIME_AUTHORITY.vectorSetHash
+    }
   }
 }
 
@@ -498,21 +534,33 @@ function buildOperationModel (config, objectModel) {
 
     if (item.family === 'CELL') {
       const cell = resolveCellCost(item.storageClass, objectModel)
+      const wire = resolveCellWireCost(item.storageClass, objectModel, item.operation)
       base.exactClassSemantics = item.storageClass
+      base.wireAccounting = 'exact-minimum-v1-symmetric-outer-envelope'
+      base.meanOuterClassBytesPerDirection = wire.outerBytesPerDirection
+      base.meanOuterRoundTripBytesPerTouch = wire.outerRoundTripBytes
+      base.meanUsefulPayloadBytesPerLogicalOperation = wire.usefulPayloadBytes
+      base.usefulByteAmplificationPerTouch = wire.usefulByteAmplification
       if (item.operation === 'PUT') {
         setWalCost(base, item, 2, config)
         base.relayTouches = config.fleet.replicationFactor
         base.diskWriteBytesPerTouch = cell.storedBytes + base.walBytesPerTouch
         base.diskIopsPerTouch = 1 + base.walRecordsPerTouch
-        base.networkIngressBytesPerTouch = cell.opaqueBytes + requestBytes
-        base.networkEgressBytesPerTouch = config.workload.ackBytes
+        base.networkIngressBytesPerTouch = wire.outerBytesPerDirection
+        base.networkEgressBytesPerTouch = wire.outerBytesPerDirection
       } else {
         base.relayTouches = config.workload.readFanout
         base.diskReadBytesPerTouch = cell.readBytes
         base.diskIopsPerTouch = 1
-        base.networkIngressBytesPerTouch = requestBytes
-        base.networkEgressBytesPerTouch = cell.opaqueBytes + responseBytes
+        base.networkIngressBytesPerTouch = wire.outerBytesPerDirection
+        base.networkEgressBytesPerTouch = wire.outerBytesPerDirection
       }
+      base.meanOuterIngressBytesPerLogicalOperation = fixed(wire.outerBytesPerDirection * base.relayTouches)
+      base.meanOuterEgressBytesPerLogicalOperation = fixed(wire.outerBytesPerDirection * base.relayTouches)
+      base.meanOuterRoundTripBytesPerLogicalOperation = fixed(wire.outerRoundTripBytes * base.relayTouches)
+      base.usefulByteAmplificationPerLogicalOperation = fixed(
+        wire.outerRoundTripBytes * base.relayTouches / wire.usefulPayloadBytes
+      )
     } else if (item.family === 'INBOX') {
       const frameBytes = INBOX_FRAME_CLASS[item.frameClass]
       const frameResidentBytes = roundUp(
@@ -622,6 +670,14 @@ function buildOperationModel (config, objectModel) {
     ])),
     exactWireLimits: {
       cellSizeClasses: { ...CELL_SIZE_CLASS },
+      outerClasses: { ...OUTER_CLASS },
+      cellBodyBounds: {
+        maximumAdmissionBytes: ADMISSION_V1_MAX_BYTES,
+        maximumPutFixedBytes: CELL_PUT_REQUEST_FIXED_BYTES,
+        maximumPutOverheadBytes: CELL_PUT_REQUEST_BODY_OVERHEAD_BYTES,
+        maximumGetRequestBytes: CELL_GET_MAX_REQUEST_BODY_BYTES,
+        getResultOverheadBytes: CELL_GET_RESULT_BODY_OVERHEAD_BYTES
+      },
       inboxFrameClasses: { ...INBOX_FRAME_CLASS },
       coreSessionClasses: clone(CORE_SESSION_CLASS),
       forwardCircuitClasses: clone(FORWARD_CIRCUIT_CLASS),
@@ -648,6 +704,49 @@ function resolveCellCost (storageClass, objectModel) {
     storedBytes: item.storedBytesPerReplica,
     readBytes: item.readBytesPerReplica
   }
+}
+
+function resolveCellWireCost (storageClass, objectModel, operation) {
+  const mix = storageClass === 'weighted-cell-mix'
+    ? objectModel.mix
+    : objectModel.mix.filter(candidate => candidate.name === storageClass)
+  if (mix.length === 0) throw new CapacityConfigError([`CELL operation references unknown storageClass ${storageClass}`])
+  const totalProbability = sum(mix.map(item => item.probability))
+  let outerBytesPerDirection = 0
+  let usefulPayloadBytes = 0
+  for (const item of mix) {
+    const probability = item.probability / totalProbability
+    outerBytesPerDirection += probability * cellOuterBytesPerDirection(operation, item.opaqueCellBytes)
+    usefulPayloadBytes += probability * item.payloadBytes
+  }
+  const outerRoundTripBytes = outerBytesPerDirection * 2
+  return {
+    outerBytesPerDirection: fixed(outerBytesPerDirection),
+    outerRoundTripBytes: fixed(outerRoundTripBytes),
+    usefulPayloadBytes: fixed(usefulPayloadBytes),
+    usefulByteAmplification: fixed(outerRoundTripBytes / usefulPayloadBytes)
+  }
+}
+
+function cellOuterBytesPerDirection (operation, cellBytes) {
+  let requestBodyBytes
+  let resultBodyBytes
+  if (operation === 'PUT') {
+    requestBodyBytes = cellBytes + CELL_PUT_REQUEST_BODY_OVERHEAD_BYTES
+    resultBodyBytes = CELL_PUT_PROFILE.maxResultBodyBytes
+  } else if (operation === 'GET') {
+    requestBodyBytes = CELL_GET_MAX_REQUEST_BODY_BYTES
+    resultBodyBytes = cellBytes + CELL_GET_RESULT_BODY_OVERHEAD_BYTES
+  } else {
+    throw new CapacityConfigError([`unsupported modeled CELL operation ${operation}`])
+  }
+  const innerBytes = DISPATCH_LIMITS.PREFIX_BYTES + DISPATCH_LIMITS.HEADER_BYTES +
+    Math.max(requestBodyBytes, resultBodyBytes)
+  const requiredBytes = OUTER_ENVELOPE_HEADER_BYTES + innerBytes
+  for (const bytes of OUTER_CLASS_BYTES) {
+    if (requiredBytes <= bytes) return bytes
+  }
+  throw new CapacityConfigError([`CELL ${operation} requires ${requiredBytes} bytes and exceeds every public outer class`])
 }
 
 function setWalCost (target, item, recordCount, config) {

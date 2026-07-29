@@ -55,3 +55,50 @@ coarse epoch remains current.
 Applications sign and journal their own event before publication; zero relays
 means queued delivery, one compatible unregistered relay is one remote replica,
 and additional readback/operator evidence raises only the durability label.
+
+## Draft workload and privacy planning
+
+`@hiverelay/blind-client/policy` is a pure, side-effect-free planning surface.
+It keeps workload placement separate from network privacy, durability, cost,
+and semantic-service disclosure:
+
+```js
+import {
+  RUNTIME,
+  WORKLOAD,
+  draftWorkloadPlan,
+  privacy
+} from '@hiverelay/blind-client/policy'
+
+const draft = draftWorkloadPlan({
+  workload: { kind: WORKLOAD.RECORDS, byteLength: encoded.byteLength },
+  runtime: RUNTIME.BROWSER,
+  privacy: privacy.private(),
+  inventory: { ohttp: true },
+  costBudget: { maxBlindEnvelopeAmplification: 32 }
+})
+```
+
+A `draft` is never executable. Inventory booleans are deployment hints, not
+endpoint or privacy evidence. The future high-level client must qualify the
+exact endpoint, operation, signed transport-profile hash, fresh health,
+adapter, and capture evidence before it can issue a `ready` plan. Missing
+background paths return `queueable`; incompatible workloads, privacy axes,
+costs, or disclosures return `blocked` with a stable code.
+
+Fixed presets are immutable. `custom` supplies every constraint axis directly
+or inherits a fixed base before overriding it. Pure drafts report requested,
+planned, required-evidence, assumptions, and claim-ceiling fields; they never
+claim evidence-dependent `actual` or `satisfied` state. OHTTP, split-native,
+and Tor remain unavailable for execution until concrete adapters and their
+conformance evidence ship.
+
+The intended production developer experience is a Pear Deploy integration.
+`pear.deploy.json` will declare named application routes and minimum policies;
+the Deploy compiler will call this pure policy surface, pin its deterministic
+route plan and conformance inputs, and block `ship` when a required adapter or
+application test is unevidenced. Deploy-time coverage never becomes an
+executable app operation: the future `BlindClient.prepare()` must still bind
+fresh endpoint, consent, capability, cost, and request evidence at runtime.
+The proposed contract is specified in
+`docs/protocol/HIVERELAY-APPLICATION-PRIVACY-SDK-V1.md` section 13.

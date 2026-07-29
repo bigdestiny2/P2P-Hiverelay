@@ -28,6 +28,7 @@
     "./direct-http": "./direct-http.js",
     "./forward": "./forward.js",
     "./inbox": "./inbox.js",
+    "./policy": "./policy.js",
     "./intent": "./intent.js",
     "./qualification": "./qualification.js",
     "./runtime/node": "./runtime/node.js",

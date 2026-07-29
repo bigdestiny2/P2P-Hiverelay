@@ -18,6 +18,15 @@ maps existing semantic relay patterns onto generic cells, encrypted cores,
 opaque inboxes, signed discovery, and client-owned validation/repair without an
 operator install or per-application configuration.
 
+The draft [`@hiverelay/blind-client` policy SDK](packages/blind-client/README.md)
+adds pure workload, privacy, durability, and cost planning without manufacturing
+runtime evidence. Its complete contract is the
+[Application Privacy SDK v1](docs/protocol/HIVERELAY-APPLICATION-PRIVACY-SDK-V1.md),
+and the exact current-wire cost model plus safe protocol evolution plan is the
+[Blind Envelope Efficiency Plan](docs/protocol/HIVERELAY-BLIND-ENVELOPE-EFFICIENCY-PLAN.md).
+Both are candidate replacement surfaces, not claims about the published legacy
+fleet.
+
 The currently published `v0.24.3` fleet is still the application-aware legacy
 implementation. It must not be described as the blind substrate. This branch is
 building its complete replacement and intentionally refuses to bind production
@@ -84,6 +93,12 @@ The repo has moved from a relay prototype into a Core3 infrastructure stack:
 - **Blind substrate for encrypted workloads**: atomic custody processes
   ciphertext only, rejects plaintext/key-material fields at the schema boundary,
   and can prove non-serving after expiry without decrypting content.
+- **Application privacy policy SDK and exact capacity accounting**: the draft
+  blind client routes records, rendezvous, history, live traffic, and semantic
+  work through explicit privacy/durability/cost constraints; the capacity lab
+  reports exact minimum-fitting v1 Cell outer-envelope classes and provenance.
+  Draft plans remain non-executable until endpoint, adapter, health, capture,
+  consent, and conformance evidence is qualified.
 - **Verified durability and repair**: Ed25519 anchor proofs decide whether a
   peer counts toward archive replication; AutoHeal recruits diverse relays and
   repairs missing blocks peer-to-peer once a publisher has been online once.

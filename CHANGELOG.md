@@ -6,6 +6,23 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [Unreleased]
+
+### Added
+- **Draft application privacy policy SDK.** `@hiverelay/blind-client/policy`
+  provides pure workload placement, privacy presets, durability and cost
+  constraints, stable blocked/queueable outcomes, and explicit evidence
+  requirements without treating inventory hints as executable qualification.
+- **Exact Cell envelope capacity accounting.** Capacity report schema v3 binds
+  the current wire-authority hashes and charges the minimum-fitting symmetric
+  v1 outer class for each Cell request/result direction, replica, and fanout.
+
+### Documentation
+- Added the complete Application Privacy SDK v1 contract, including the
+  proposed Pear Deploy compiler boundary, and the staged Blind Envelope
+  Efficiency Plan. The root README now links both candidate replacement
+  surfaces and keeps them distinct from the published legacy fleet.
+
 ## [0.24.3] — 2026-07-08
 
 ### Added

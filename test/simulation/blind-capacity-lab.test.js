@@ -1,7 +1,12 @@
 import test from 'brittle'
+import b4a from 'b4a'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { encodeCanonical } from '../../packages/blind-protocol/codec.js'
+import { blake2b256, cellStorageSlot } from '../../packages/blind-protocol/hashes.js'
+import { getCellV1, putCellV1 } from '../../packages/blind-protocol/schemas.js'
 import {
+  CAPACITY_LAB_MODEL_REVISION,
   CAPACITY_LAB_SCHEMA,
   CapacityConfigError,
   runCapacityLab
@@ -16,6 +21,7 @@ test('blind capacity lab is deterministic and labels every performance value as 
 
   t.alike(first, second)
   t.is(first.schema, CAPACITY_LAB_SCHEMA)
+  t.is(first.modelProvenance.revision, CAPACITY_LAB_MODEL_REVISION)
   t.is(first.status, 'pass')
   t.is(first.evidenceClass, 'modeled-not-benchmarked')
   t.ok(first.disclaimer.includes('not a hardware benchmark'))
@@ -105,6 +111,114 @@ test('CELL storage uses exact frozen classes and application framing stays insid
   t.is(maximum.opaqueCellBytes, 1048576)
   t.is(maximum.payloadBytes, 1048576 - 33)
   t.is(maximum.opaquePaddingBytes, 0)
+})
+
+test('CELL network accounting applies exact v1 symmetric outer-envelope cliffs', t => {
+  const report = runCapacityLab(compactConfig())
+  const put = report.operationModel.operations.find(operation => operation.name === 'cell-put')
+  const get = report.operationModel.operations.find(operation => operation.name === 'cell-get')
+
+  t.alike(report.operationModel.exactWireLimits.outerClasses, {
+    1: 4096,
+    2: 16384,
+    3: 65536,
+    4: 262144,
+    5: 1048576,
+    6: 8388608
+  })
+  t.alike(report.operationModel.exactWireLimits.cellBodyBounds, {
+    maximumAdmissionBytes: 4135,
+    maximumPutFixedBytes: 263,
+    maximumPutOverheadBytes: 4398,
+    maximumGetRequestBytes: 4201,
+    getResultOverheadBytes: 2
+  })
+  t.is(put.wireAccounting, 'exact-minimum-v1-symmetric-outer-envelope')
+  t.is(put.meanOuterClassBytesPerDirection, 530841.6)
+  t.is(put.meanOuterRoundTripBytesPerTouch, 1061683.2)
+  t.is(put.networkIngressBytesPerTouch, put.meanOuterClassBytesPerDirection)
+  t.is(put.networkEgressBytesPerTouch, put.meanOuterClassBytesPerDirection)
+  t.is(put.meanOuterIngressBytesPerLogicalOperation, 1592524.8)
+  t.is(put.meanOuterEgressBytesPerLogicalOperation, 1592524.8)
+  t.is(put.meanOuterRoundTripBytesPerLogicalOperation, 3185049.6)
+  t.is(put.usefulByteAmplificationPerLogicalOperation, 45.347499)
+  t.is(get.meanOuterClassBytesPerDirection, 496435.2)
+  t.is(get.meanOuterRoundTripBytesPerTouch, 992870.4)
+  t.is(get.networkIngressBytesPerTouch, get.meanOuterClassBytesPerDirection)
+  t.is(get.networkEgressBytesPerTouch, get.meanOuterClassBytesPerDirection)
+  t.is(get.meanOuterRoundTripBytesPerLogicalOperation, get.meanOuterRoundTripBytesPerTouch)
+  t.is(get.usefulByteAmplificationPerLogicalOperation, get.usefulByteAmplificationPerTouch)
+  t.ok(put.usefulByteAmplificationPerTouch > 14)
+  t.ok(get.usefulByteAmplificationPerTouch > 13)
+})
+
+test('CELL wire accounting matches canonical maximum bodies at every frozen class cliff', t => {
+  const rows = [
+    { sizeClass: 1, cellBytes: 4096, putOuterBytes: 65536, getOuterBytes: 16384 },
+    { sizeClass: 2, cellBytes: 16384, putOuterBytes: 65536, getOuterBytes: 65536 },
+    { sizeClass: 3, cellBytes: 65536, putOuterBytes: 262144, getOuterBytes: 262144 },
+    { sizeClass: 4, cellBytes: 262144, putOuterBytes: 1048576, getOuterBytes: 1048576 },
+    { sizeClass: 5, cellBytes: 1048576, putOuterBytes: 8388608, getOuterBytes: 8388608 }
+  ]
+  const admission = maximumAdmission()
+
+  t.is(encodeCanonical(getCellV1, {
+    version: 1,
+    storageSlot: b4a.alloc(32),
+    clientNonce: b4a.alloc(32),
+    admission: null
+  }).byteLength, 66)
+  t.is(encodeCanonical(getCellV1, {
+    version: 1,
+    storageSlot: b4a.alloc(32),
+    clientNonce: b4a.alloc(32),
+    admission
+  }).byteLength, 4201)
+
+  for (const row of rows) {
+    const cellBlob = b4a.alloc(row.cellBytes)
+    const createPublicKey = b4a.alloc(32)
+    const putBody = encodeCanonical(putCellV1, {
+      version: 1,
+      storageSlot: cellStorageSlot({ allocationEpoch: 0, createPublicKey }),
+      allocationEpoch: 0,
+      sizeClass: row.sizeClass,
+      leaseClass: 1,
+      clientNonce: b4a.alloc(32),
+      createPublicKey,
+      renewPublicKey: b4a.alloc(32),
+      dropPublicKey: b4a.alloc(32),
+      declaredBlobHash: blake2b256(cellBlob),
+      createSignature: b4a.alloc(64),
+      admission,
+      cellBlob
+    })
+    const report = runCapacityLab(compactConfig({
+      objects: {
+        mix: [{
+          name: `cell-class-${row.sizeClass}`,
+          family: 'CELL',
+          sizeClass: row.sizeClass,
+          weight: 1,
+          payloadBytes: row.cellBytes - 33
+        }]
+      }
+    }))
+    const put = report.operationModel.operations.find(operation => operation.name === 'cell-put')
+    const get = report.operationModel.operations.find(operation => operation.name === 'cell-get')
+
+    t.is(putBody.byteLength, row.cellBytes + 4398, `class ${row.sizeClass} PUT canonical maximum`)
+    t.is(put.meanOuterClassBytesPerDirection, row.putOuterBytes, `class ${row.sizeClass} PUT outer class`)
+    t.is(get.meanOuterClassBytesPerDirection, row.getOuterBytes, `class ${row.sizeClass} GET outer class`)
+  }
+
+  const classOne = runCapacityLab(compactConfig({
+    objects: {
+      mix: [{ name: 'cell-class-1', family: 'CELL', sizeClass: 1, weight: 1, payloadBytes: 4096 - 33 }]
+    }
+  })).operationModel.operations.find(operation => operation.name === 'cell-put')
+  t.is(classOne.meanOuterRoundTripBytesPerLogicalOperation, 384 * 1024)
+  t.is(classOne.usefulByteAmplificationPerLogicalOperation, 96.779719)
 })
 
 test('family surfaces distinguish retained frames/corpora from transient streams', t => {
@@ -297,6 +411,13 @@ test('release evidence requires explicit offered load, complete family coverage,
 test('scenario manifest binds explicit workload, quorum, and heterogeneous capacity assumptions', t => {
   const report = runCapacityLab(compactConfig())
   t.is(report.scenarioManifest.schema, 'hiverelay/blind-scenario-manifest/v1')
+  t.is(report.scenarioManifest.model.revision, CAPACITY_LAB_MODEL_REVISION)
+  t.is(report.scenarioManifest.model.cellWireAccounting, 'exact-minimum-v1-symmetric-outer-envelope')
+  t.is(report.scenarioManifest.model.wireAuthority.profile, 'wire-authority-v1')
+  t.is(report.scenarioManifest.model.wireAuthority.specHash, 'c9ddd235c3963461174e3de13c25a4c995b53ff320be822d8304f870766b6592')
+  t.is(report.scenarioManifest.model.wireAuthority.abiHash, '199ba15d94d4d112cfac520a67055ce15ec870f0f6f7bd9adaaf47d552334567')
+  t.is(report.scenarioManifest.model.wireAuthority.vectorSetHash, 'fa54012cd0d7e4e620878c67e61f435ecb31ddec05a6283917987cc84279ee05')
+  t.alike(report.modelProvenance, report.scenarioManifest.model)
   t.is(report.scenarioManifest.offeredLoad.logicalOperationsPerSecond, 40)
   t.is(report.scenarioManifest.offeredLoad.source, 'explicit-config')
   t.is(report.scenarioManifest.durability.replicationFactor, 3)
@@ -336,6 +457,15 @@ function compactConfig (override = {}) {
       unavailableRelays: 0
     }
   }, override)
+}
+
+function maximumAdmission () {
+  return {
+    profileId: 1,
+    schemeId: 1,
+    parameterHash: b4a.alloc(32),
+    token: b4a.alloc(4096)
+  }
 }
 
 function merge (left, right) {
