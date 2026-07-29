@@ -100,6 +100,19 @@ export const AUDIT_OWNED_DIFF_SLICES = Object.freeze([
     ]
   },
   {
+    id: 'fleet-runtime-evidence',
+    title: 'Fleet runtime, application, and host evidence separation',
+    files: [
+      'CHANGELOG.md',
+      'docs/LADDER-SHIP-MAP.md',
+      'scripts/lib/audit-owned-diff.mjs',
+      'scripts/probe-fleet-services.mjs',
+      'test/unit/audit-owned-diff.test.js',
+      'test/unit/fleet-shell-safety.test.js',
+      'test/unit/probe-fleet-services.test.js'
+    ]
+  },
+  {
     id: 'hyperdrive-release-lifecycle',
     title: 'Bounded Hyperdrive release rotation and scoped reclamation',
     files: [

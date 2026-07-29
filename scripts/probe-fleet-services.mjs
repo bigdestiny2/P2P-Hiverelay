@@ -23,6 +23,7 @@
  *   node scripts/probe-fleet-services.mjs --include utah,bern
  *   node scripts/probe-fleet-services.mjs --exclude sydney,dallas
  *   node scripts/probe-fleet-services.mjs --no-ssh      # HTTP only
+ *   node scripts/probe-fleet-services.mjs --ssh-only    # loopback API + host status
  */
 
 import { readFileSync, existsSync } from 'node:fs'
@@ -35,8 +36,14 @@ const execFileAsync = promisify(execFile)
 const REPO = join(dirname(fileURLToPath(import.meta.url)), '..')
 
 const args = process.argv.slice(2)
+if (args.includes('--help')) {
+  process.stdout.write('Usage: node scripts/probe-fleet-services.mjs [--json] [--relays path] [--include names] [--exclude names] [--no-ssh|--ssh-only]\n')
+  process.exit(0)
+}
 const asJson = args.includes('--json')
 const allowSsh = !args.includes('--no-ssh')
+const allowHttp = !args.includes('--ssh-only')
+if (!allowSsh && !allowHttp) throw new Error('--no-ssh and --ssh-only cannot be combined')
 const relaysArg = args[args.indexOf('--relays') + 1]
 const include = parseNameList(optionValue('--include') || process.env.HIVERELAY_FLEET_INCLUDE || '', '--include')
 const exclude = parseNameList(optionValue('--exclude') || process.env.HIVERELAY_FLEET_EXCLUDE || '', '--exclude')
@@ -75,35 +82,49 @@ function expandHome (p) {
   return typeof p === 'string' ? p.replace(/^~(?=\/|$)/, process.env.HOME || '') : p
 }
 
+function relayHost (relay) {
+  return relay.tailnet || relay.publicIp
+}
+
+function sshArgs (relay) {
+  const host = relayHost(relay)
+  if (!isSafeHost(host)) throw new Error('unsafe host in inventory')
+  const key = expandHome(relay.sshKey)
+  const keyArgs = key && key !== 'default' ? ['-i', key] : []
+  return [
+    ...keyArgs,
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=8',
+    '-o', 'StrictHostKeyChecking=accept-new',
+    `root@${host}`
+  ]
+}
+
 async function probeHttp (relay) {
-  const base = `http://${relay.publicIp}:9100`
+  const host = relay.publicIp || relay.tailnet
+  if (!isSafeHost(host)) throw new Error('unsafe host in inventory')
+  const base = `http://${host}:9100`
   const [services, capability] = await Promise.all([
     fetch(`${base}/api/v1/services`, { signal: AbortSignal.timeout(6000) }),
     fetch(`${base}/.well-known/hiverelay.json`, { signal: AbortSignal.timeout(6000) })
+      .catch(() => null)
   ])
   return {
     body: await services.json(),
-    capability: capability.ok ? await capability.json() : null,
+    capability: capability?.ok ? await capability.json() : null,
     status: services.status,
     via: 'http'
   }
 }
 
 async function probeSsh (relay) {
-  if (!isSafeHost(relay.publicIp)) throw new Error('unsafe host in inventory')
-  const key = expandHome(relay.sshKey)
-  const keyArgs = key && key !== 'default' ? ['-i', key] : []
   const remote = [
     'S=$(curl -fsS --max-time 6 http://127.0.0.1:9100/api/v1/services) || exit $?',
     'C=$(curl -fsS --max-time 6 http://127.0.0.1:9100/.well-known/hiverelay.json 2>/dev/null || printf \'{}\')',
     'printf \'%s\\n__HIVERELAY_CAP__\\n%s\\n\' "$S" "$C"'
   ].join('\n')
   const { stdout } = await execFileAsync('ssh', [
-    ...keyArgs,
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=8',
-    '-o', 'StrictHostKeyChecking=accept-new',
-    `root@${relay.publicIp}`,
+    ...sshArgs(relay),
     remote
   ], { timeout: 25000 })
   const parts = stdout.split('\n__HIVERELAY_CAP__\n')
@@ -115,17 +136,57 @@ async function probeSsh (relay) {
   }
 }
 
+async function probeSshHostStatus (relay) {
+  const remote = [
+    'app=$(systemctl is-active hiverelay 2>/dev/null || true)',
+    '[ -n "$app" ] || app=unknown',
+    'repo=absent; [ -d "$HOME/hiverelay/.git" ] && repo=present',
+    'version="v$(node -p \'require(process.env.HOME + "/hiverelay/package.json").version\' 2>/dev/null || printf \'?\')"',
+    'updater=absent; [ -x /usr/local/bin/hiverelay-updater ] && updater=present',
+    'timer_enabled=$(systemctl is-enabled hiverelay-updater.timer 2>/dev/null || true)',
+    '[ -n "$timer_enabled" ] || timer_enabled=unknown',
+    'timer_active=$(systemctl is-active hiverelay-updater.timer 2>/dev/null || true)',
+    '[ -n "$timer_active" ] || timer_active=unknown',
+    'printf \'HIVERELAY_HOST_STATUS|%s|%s|%s|%s|%s|%s\\n\' "$app" "$repo" "$version" "$updater" "$timer_enabled" "$timer_active"'
+  ].join('\n')
+  const { stdout } = await execFileAsync('ssh', [
+    ...sshArgs(relay),
+    remote
+  ], { timeout: 25000 })
+  const line = stdout.split(/\r?\n/).find(entry => entry.startsWith('HIVERELAY_HOST_STATUS|'))
+  if (!line) throw new Error('host status unavailable')
+  const [, appStateRaw, repoRaw, versionRaw, updaterRaw, timerEnabledRaw, timerActiveRaw] = line.split('|')
+  const appState = safeStatusToken(appStateRaw)
+  const version = /^v[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?$/.test(versionRaw || '') ? versionRaw : '?'
+  return {
+    hostReachable: true,
+    appRunning: appState === 'active',
+    appState,
+    version,
+    repoPresent: repoRaw === 'present',
+    updaterPresent: updaterRaw === 'present',
+    updaterTimer: `${safeStatusToken(timerEnabledRaw)}/${safeStatusToken(timerActiveRaw)}`
+  }
+}
+
+function safeStatusToken (value) {
+  return /^[A-Za-z0-9_.-]{1,32}$/.test(value || '') ? value : '?'
+}
+
 async function probe (relay) {
   const base = { name: relay.name, region: relay.region ?? null, ramGB: relay.ramGB ?? null }
-  if (!isSafeHost(relay.publicIp)) {
-    return { ...base, reachable: false, error: 'unsafe host in inventory', services: [] }
+  if (!isSafeHost(relayHost(relay))) {
+    return { ...base, reachable: false, serviceCatalogueReachable: false, hostReachable: false, error: 'unsafe host in inventory', services: [] }
   }
-  for (const attempt of allowSsh ? [probeHttp, probeSsh] : [probeHttp]) {
+  const attempts = []
+  if (allowHttp) attempts.push(probeHttp)
+  if (allowSsh) attempts.push(probeSsh)
+  for (const attempt of attempts) {
     try {
       const { body, capability, via } = await attempt(relay)
       // 503 {"error":"Services not enabled"} is a real answer, not a failure.
       if (body && body.error) {
-        return { ...base, reachable: true, via, servicesEnabled: false, services: [], note: body.error }
+        return { ...base, reachable: true, serviceCatalogueReachable: true, hostReachable: true, appRunning: true, via, servicesEnabled: false, services: [], note: body.error }
       }
       const services = Array.isArray(body?.services)
         ? body.services.map(s => (typeof s === 'string' ? s : s?.name)).filter(Boolean).sort()
@@ -136,10 +197,15 @@ async function probe (relay) {
       const supportedTransports = Array.isArray(capability?.supported_transports) ? capability.supported_transports : []
       const privacyTransports = Array.isArray(capability?.privacyTransports) ? capability.privacyTransports : []
       const torPrivacy = privacyTransports.find(entry => entry?.network === 'tor') || null
+      const torRestricted = torPrivacy?.auth?.mode === 'client-auth-v3'
+      const torNegativeProbe = torPrivacy?.negativeProbe === true
       const notifyWatchSources = Array.isArray(notifyProfile?.watch_sources) ? notifyProfile.watch_sources : []
       return {
         ...base,
         reachable: true,
+        serviceCatalogueReachable: true,
+        hostReachable: true,
+        appRunning: true,
         via,
         servicesEnabled: true,
         services,
@@ -152,16 +218,32 @@ async function probe (relay) {
         outboxlogLoaded: services.includes('outboxlog'),
         outboxlogAdvertised: !!serviceProfile.outboxlog,
         torRuntime: supportedTransports.includes('tor'),
-        torSignedReady: !!torPrivacy,
-        torRestricted: torPrivacy?.auth?.mode === 'client-auth-v3',
-        torNegativeProbe: torPrivacy?.negativeProbe === true,
+        torAdvertised: !!torPrivacy,
+        torSignedReady: !!torPrivacy && (!torRestricted || torNegativeProbe),
+        torRestricted,
+        torNegativeProbe,
         forwardRelayAdvertised: supportedTransports.includes('hiverelay-forward')
       }
     } catch (err) {
       base.error = safeProbeError(err)
     }
   }
-  return { ...base, reachable: false, services: [] }
+  if (allowSsh) {
+    try {
+      const status = await probeSshHostStatus(relay)
+      return { ...base, ...status, reachable: false, serviceCatalogueReachable: false, services: [] }
+    } catch (err) {
+      return {
+        ...base,
+        reachable: false,
+        serviceCatalogueReachable: false,
+        hostReachable: false,
+        error: safeProbeError(err),
+        services: []
+      }
+    }
+  }
+  return { ...base, reachable: false, serviceCatalogueReachable: false, hostReachable: null, services: [] }
 }
 
 function safeProbeError (err) {
@@ -198,7 +280,11 @@ if (asJson) {
   console.log('Source: GET /api/v1/services (what is LOADED, not what is configured)\n')
   const w = Math.max(...results.map(r => r.name.length), 6)
   for (const r of results) {
-    const status = !r.reachable ? 'unreachable' : r.servicesEnabled === false ? 'services off' : `${r.services.length} loaded`
+    const status = r.reachable
+      ? (r.servicesEnabled === false ? 'services off' : `${r.services.length} loaded`)
+      : r.hostReachable
+        ? (r.appRunning ? 'catalogue n/a' : 'relay inactive')
+        : 'host unreachable'
     const wake = !r.notifyLoaded
       ? 'wake=off'
       : r.notifyEgressLive
@@ -210,13 +296,19 @@ if (asJson) {
       ? (r.outboxlogAdvertised ? 'mailbox=advertised' : 'mailbox=loaded-not-advertised')
       : 'mailbox=off'
     const privacy = privacyLabel(r)
-    const detail = !r.reachable ? (r.error || '') : `${wake} ${mailbox} ${privacy}; ${r.services.join(', ') || (r.note || '')}`
+    const detail = !r.reachable
+      ? hostStatusDetail(r)
+      : `${wake} ${mailbox} ${privacy}; ${r.services.join(', ') || (r.note || '')}`
     console.log(`  ${r.name.padEnd(w)}  ${String(r.region ?? '-').padEnd(5)} ${status.padEnd(13)} ${detail}`)
   }
 
   const reachable = results.filter(r => r.reachable)
+  const hostReachable = results.filter(r => r.hostReachable === true)
+  const appRunning = results.filter(r => r.appRunning === true)
   const union = [...new Set(reachable.flatMap(r => r.services))].sort()
-  console.log(`\n  reachable: ${reachable.length}/${results.length}`)
+  console.log(`\n  service catalogue reachable: ${reachable.length}/${results.length}`)
+  console.log(`  host reachable: ${hostReachable.length}/${results.length}`)
+  console.log(`  relay application active: ${appRunning.length}/${results.length}`)
   console.log(`  distinct services running across the fleet: ${union.length}${union.length ? ' — ' + union.join(', ') : ''}`)
 
   // The number that actually matters for diversity: a service on one box is a
@@ -229,15 +321,29 @@ if (asJson) {
   console.log(`  signed exact-lane wake: ${reachable.filter(r => r.exactLaneWake).length}/${reachable.length}`)
   console.log(`  unsafe legacy wake advertisements: ${reachable.filter(r => r.notifyFeatureAdvertised && !r.notifyEgressLive).length}/${reachable.length}`)
   console.log(`  advertised outbox mailbox: ${reachable.filter(r => r.outboxlogAdvertised).length}/${reachable.length}`)
+  console.log(`  signed Tor advertisements: ${reachable.filter(r => r.torAdvertised).length}/${reachable.length}`)
   console.log(`  signed ready Tor endpoints: ${reachable.filter(r => r.torSignedReady).length}/${reachable.length}`)
   console.log(`  restricted Tor endpoints with negative proof: ${reachable.filter(r => r.torRestricted && r.torNegativeProbe).length}/${reachable.length}`)
   console.log(`  advertised one-hop forward relays: ${reachable.filter(r => r.forwardRelayAdvertised).length}/${reachable.length}`)
   console.log()
 }
 
+function hostStatusDetail (relay) {
+  if (!relay.hostReachable) return relay.error || 'probe failed'
+  const fields = [
+    'host=reachable',
+    `app=${relay.appState || '?'}`,
+    `version=${relay.version || '?'}`,
+    `repo=${relay.repoPresent ? 'present' : 'absent'}`,
+    `updater=${relay.updaterPresent ? 'present' : 'absent'}`,
+    `timer=${relay.updaterTimer || '?'}`
+  ]
+  return fields.join(' ')
+}
+
 function privacyLabel (relay) {
   if (!relay.torRuntime) return relay.forwardRelayAdvertised ? 'privacy=forward-only' : 'privacy=clearnet'
-  if (!relay.torSignedReady) return 'privacy=tor-loaded-not-ready'
+  if (!relay.torAdvertised) return 'privacy=tor-loaded-not-advertised'
   if (!relay.torRestricted) return 'privacy=tor-public-ready'
   return relay.torNegativeProbe ? 'privacy=tor-restricted-proved' : 'privacy=tor-restricted-unproved'
 }

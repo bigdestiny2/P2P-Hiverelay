@@ -55,19 +55,19 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Item | State |
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
-| Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3561/3561**, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
-| Scoped live health (2026-07-29) | Latest operator scan excludes Sydney/Dallas and covers 12 inventory entries: runtime service evidence reached **8/12**. Dubai is healthy on `v0.24.3` despite its public service probe failing; Bern remains unreachable; Dubai-2GB is a blank/inactive host with no relay repo, service, updater, config, or health endpoint. `utah-8gb` is healthy on signed RC4 with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active |
-| Wake runtime | `notify` loaded on **8/8** service-reachable relays, but signed live egress **0/8** and exact-lane wake **0/8**; seven stable relays still carry the old false `notify-v1` feature claim, while Utah-8GB correctly reports loaded-not-live |
-| Agent mailbox | `outboxlog` is signed-advertised on **7/8** service-reachable relays; Utah-8GB has mailbox off, while the canary Utah service endpoint was unreachable in this scan |
-| Privacy runtime | one signed ready Tor endpoint across the eight service-reachable relays; no deployed restricted endpoint has the required anonymous rejection proof. Post-RC7 code suppresses the restricted claim until that probe succeeds |
-| One-hop forward | advertised on **0/8** service-reachable relays; the bounded compatibility route exists in code but is not live split-transport/OHTTP evidence |
+| Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3564/3564**, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
+| Scoped live health (2026-07-29) | Latest operator scan excludes Sydney/Dallas and covers 12 inventory entries: service catalogues reached **10/12**, hosts **11/12**, and active relay applications **10/12**. Bern remains unreachable; Dubai-2GB is reachable but blank/inactive with no relay repo, service, updater, config, or health endpoint. `utah-8gb` is healthy on signed RC4 with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active |
+| Wake runtime | `notify` loaded on **10/10** service-reachable relays, but signed live egress **0/10** and exact-lane wake **0/10**; eight stable relays still carry the old false `notify-v1` feature claim, while Utah and Utah-8GB correctly report loaded-not-live |
+| Agent mailbox | `outboxlog` is signed-advertised on **8/10** service-reachable relays; Utah and Utah-8GB have mailbox off |
+| Privacy runtime | two restricted Tor endpoints are signed-advertised, but signed-ready is **0/10** because neither has the required anonymous rejection proof. Post-RC7 code suppresses readiness until that probe succeeds |
+| One-hop forward | advertised on **1/10** service-reachable relays; the bounded compatibility route exists live, but it is not split-transport/OHTTP evidence |
 | Packaging truth | Node/Bare now translate bounded service/Tor env into first-boot defaults; persisted config and `services.json` remain authoritative, while `/api/v1/services` plus the signed capability doc are runtime proof |
 | App release storage | Bounded Hyperdrive publishing is integrated in the repair candidate: exact tree mirroring, signed monotonic releases, budget-triggered drive rotation, pinned-tree verification, and exact app/publisher rollback reclamation; not deployed until the new prerelease ships |
 | Track B | Blind public-test pilot (syd/dal) — **parallel** version line, not this fleet tag |
 | Boot-restore | Worktree only — **not on main** until Track C |
 | Blind packages on main | **Absent** (`blind-daemon` / edge only in vNext worktrees) |
 
-**Badge today (honest):** G0 + **partial G1** (mailbox present; push wake not live) + **partial G2-S/G3** (shard-store code exists; not fleet-wide) + **partial G4-T** (one signed-ready endpoint; no deployed restricted endpoint has the required negative proof).
+**Badge today (honest):** G0 + **partial G1** (mailbox present; push wake not live) + **partial G2-S/G3** (shard-store code exists; not fleet-wide) + **partial G4-T** (two restricted endpoints advertised; zero ready until negative proof lands).
 
 ### Retiring or becoming redundant
 
@@ -75,7 +75,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 |---------|-----------------|-----|
 | `v0.25.0-rc.5` | Retired; never deploy | Its updater install path cannot complete. |
 | RC4 / RC6 fleet targets | Retired by RC7 and the next repair prerelease | They lack the complete updater/security/health corrections. |
-| Stable `v0.24.3` `notify-v1` claim | Must be retired by a health-gated stable promotion | Seven live relays advertise wake while using a non-live memory sink. |
+| Stable `v0.24.3` `notify-v1` claim | Must be retired by a health-gated stable promotion | Eight live relays advertise wake while using a non-live memory sink. |
 | `notify-feed-head` | Compatibility-only; deprecated in signed capabilities when exact lanes are wired | Global sender-head changes can wake unrelated recipients; `notify-outbox-lane` is precise and opaque. |
 | Config-derived fleet service reports | Replaced by runtime `/api/v1/services` plus signed capability evidence | Config can be overridden by `services.json` and previously reported services that never loaded. |
 | Grep-and-strip package version parsing | Replaced by exact package JSON parsing | It changed `v0.25.0-rc.7` into the misleading `v0.25.0.7`. |

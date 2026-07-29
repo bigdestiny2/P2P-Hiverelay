@@ -243,6 +243,22 @@ test('audit-owned diff assigns lockstep prerelease version surfaces', (t) => {
   }
 })
 
+test('audit-owned diff assigns fleet runtime evidence surfaces', (t) => {
+  const paths = [
+    'CHANGELOG.md',
+    'docs/LADDER-SHIP-MAP.md',
+    'scripts/probe-fleet-services.mjs',
+    'test/unit/probe-fleet-services.test.js'
+  ]
+  const report = buildOwnedDiffReport(paths.map(file => ` M ${file}`).join('\n'))
+
+  t.is(report.status, 'pass')
+  t.is(report.totals.unknown, 0)
+  for (const entry of report.entries) {
+    t.ok(entry.owners.some(owner => owner.id === 'fleet-runtime-evidence'), entry.path)
+  }
+})
+
 test('audit-owned diff blocks unknown development paths', async (t) => {
   const fixture = await tempFile(t, '?? stray-release-note.txt\n')
   const res = await runAudit(['--json', '--status-file', fixture])

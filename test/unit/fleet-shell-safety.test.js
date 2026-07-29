@@ -179,6 +179,7 @@ test('fleet service probe scopes relay ownership before opening connections', (t
   t.ok(fleetServiceProbe.includes('signed exact-lane wake:'))
   t.ok(fleetServiceProbe.includes('advertised outbox mailbox:'))
   t.ok(fleetServiceProbe.includes("privacyTransports.find(entry => entry?.network === 'tor')"))
+  t.ok(fleetServiceProbe.includes('signed Tor advertisements:'))
   t.ok(fleetServiceProbe.includes('restricted Tor endpoints with negative proof:'))
   t.ok(fleetServiceProbe.includes('advertised one-hop forward relays:'))
 })

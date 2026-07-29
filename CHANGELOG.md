@@ -57,6 +57,9 @@ canary promotion remain required before deployment.**
 - Fleet health and service probes support exact include/exclude scopes before
   SSH, report exact prerelease versions and updater/channel drift, inspect
   signed capability evidence, and avoid exposing private inventory/key paths.
+  The service probe now distinguishes catalogue reachability, host reachability,
+  and an active relay application, and counts restricted Tor advertisements as
+  ready only after their anonymous-rejection proof succeeds.
 - Fleet updater config supports a validated per-host `PINNED_TAG`, allowing a
   remigrated box to restore its timer without following an older shared channel
   target. Signature verification now also precedes up-to-date and dry-run exits.
