@@ -76,8 +76,8 @@ safe_absolute_path() {
 }
 
 stat_record() {
-  stat -f '%u|%Lp|%l|%z|%d|%i|%m|%c' "$1" 2>/dev/null || \
-    stat -c '%u|%a|%h|%s|%d|%i|%Y|%Z' "$1" 2>/dev/null
+  stat -c '%u|%a|%h|%s|%d|%i|%Y|%Z' "$1" 2>/dev/null || \
+    stat -f '%u|%Lp|%l|%z|%d|%i|%m|%c' "$1" 2>/dev/null
 }
 
 trusted_parent_chain() {
