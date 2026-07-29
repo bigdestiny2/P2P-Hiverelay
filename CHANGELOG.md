@@ -23,6 +23,12 @@ The packages are versioned in lockstep.
   Efficiency Plan. The root README now links both candidate replacement
   surfaces and keeps them distinct from the published legacy fleet.
 
+### Fixed
+- Preserved the byte-for-byte executable v1 browser-control bundle while
+  refreshing its manifest, Chromium evidence, cross-host evidence, and pinned
+  compatibility hashes to bind the already-current bundle and source closure.
+  The vNext policy export is not part of the executable v1 bundle.
+
 ## [0.24.3] — 2026-07-08
 
 ### Added
