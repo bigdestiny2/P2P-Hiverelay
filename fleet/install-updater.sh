@@ -16,7 +16,7 @@ unset BASH_ENV ENV CDPATH GLOBIGNORE LD_PRELOAD LD_LIBRARY_PATH NODE_OPTIONS NOD
 set -euo pipefail
 
 stat_record() {
-  stat -f '%u|%Lp|%l|%z' "$1" 2>/dev/null || stat -c '%u|%a|%h|%s' "$1" 2>/dev/null
+  stat -c '%u|%a|%h|%s' "$1" 2>/dev/null || stat -f '%u|%Lp|%l|%z' "$1" 2>/dev/null
 }
 
 unsafe_name() {

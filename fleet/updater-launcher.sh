@@ -41,8 +41,8 @@ log() { echo "[updater-launcher $(date -u +%FT%TZ)] $*"; }
 die() { log "ERR $*" >&2; exit 1; }
 
 stat_record() {
-  stat -f '%u|%Lp|%l|%z|%d|%i|%m|%c' "$1" 2>/dev/null || \
-    stat -c '%u|%a|%h|%s|%d|%i|%Y|%Z' "$1" 2>/dev/null
+  stat -c '%u|%a|%h|%s|%d|%i|%Y|%Z' "$1" 2>/dev/null || \
+    stat -f '%u|%Lp|%l|%z|%d|%i|%m|%c' "$1" 2>/dev/null
 }
 
 safe_parent() {

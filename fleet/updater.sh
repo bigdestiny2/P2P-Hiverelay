@@ -133,8 +133,8 @@ log() { echo "[updater $(date -u +%FT%TZ)] $*"; }
 die() { log "ERR $*"; exit 1; }
 
 stat_record() {
-  stat -f '%u|%Lp|%l|%z|%d|%i|%m|%c' "$1" 2>/dev/null || \
-    stat -c '%u|%a|%h|%s|%d|%i|%Y|%Z' "$1" 2>/dev/null
+  stat -c '%u|%a|%h|%s|%d|%i|%Y|%Z' "$1" 2>/dev/null || \
+    stat -f '%u|%Lp|%l|%z|%d|%i|%m|%c' "$1" 2>/dev/null
 }
 
 trusted_executable_parent_chain() {
