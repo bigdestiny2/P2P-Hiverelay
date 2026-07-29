@@ -32,7 +32,8 @@ const FLEET_RELAYS = Object.freeze([
   ['sing-2', 'stable'],
   ['bern', 'canary'],
   ['amsterdam', 'stable'],
-  ['dubai', 'stable']
+  ['dubai', 'stable'],
+  ['dubai-2gb', 'canary']
 ])
 
 function runVerify (argv) {
