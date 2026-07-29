@@ -32,6 +32,35 @@ export const BLIND_CLIENT_BROWSER_ARTIFACT_STATUS = Object.freeze({
   ])
 })
 
+export const BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS = Object.freeze({
+  artifactPath: 'browser-artifacts/blind-client-cell-get-v1.mjs',
+  manifestPath: 'browser-artifacts/blind-client-cell-get-v1.manifest.cenc',
+  chromiumEvidencePath: 'browser-artifacts/blind-client-cell-get-v1.chromium-evidence.json',
+  crossHostEvidencePath: 'browser-artifacts/blind-client-cell-get-v1.cross-host-evidence.json',
+  tupleBound: true,
+  sourceClosureBound: true,
+  deterministicGeneratorReady: true,
+  sameHostByteEqualityProven: true,
+  crossHostByteEqualityProven: false,
+  realBrowserImportProven: false,
+  packageSubpathsExported: true,
+  maxArtifactBytes: MAX_ARTIFACT_BYTES,
+  maxArtifactGzipBytes: MAX_ARTIFACT_GZIP_BYTES,
+  finalTupleBound: true,
+  clientCompositionTupleBound: true,
+  releaseReady: false,
+  releaseBlockers: Object.freeze([
+    'REAL_CHROMIUM_HASH_BOUND_EVIDENCE_NOT_VERIFIED',
+    'CROSS_HOST_HASH_BOUND_EVIDENCE_NOT_VERIFIED'
+  ])
+})
+
+const ARTIFACT_STATUS_BY_PATH = new Map([
+  [BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath, BLIND_CLIENT_BROWSER_ARTIFACT_STATUS],
+  [BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS.artifactPath,
+    BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS]
+])
+
 const CHROMIUM_EVIDENCE_CHECKS = Object.freeze([
   'STANDALONE_ESM_IMPORT',
   'REQUIRED_CONTROL_EXPORTS',
@@ -40,12 +69,27 @@ const CHROMIUM_EVIDENCE_CHECKS = Object.freeze([
   'SIGNED_CAPABILITY_CELL_COMPOSITION',
   'PLAINTEXT_SENTINEL_ABSENT_FROM_REQUEST'
 ])
+const CELL_GET_CHROMIUM_EVIDENCE_CHECKS = Object.freeze([
+  'STANDALONE_ESM_IMPORT',
+  'EXACT_CELL_GET_ONLY_EXPORTS',
+  'WEBCRYPTO_AES_256_GCM_ROUNDTRIP',
+  'FIXED_CELL_GET_OPERATION_BOUNDARY',
+  'FORWARD_CANDIDATE_CODE_ABSENT'
+])
 const CROSS_HOST_EVIDENCE_CHECKS = Object.freeze([
   'CLEAN_LINUX_DEPENDENCY_INSTALL',
   'FROZEN_GENERATOR_CHECK',
   'ARTIFACT_BYTE_EQUALITY',
   'MANIFEST_BYTE_EQUALITY'
 ])
+
+function artifactStatusForPath (artifactPath) {
+  const status = ARTIFACT_STATUS_BY_PATH.get(artifactPath)
+  if (!status) {
+    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'browser artifact path is not a frozen v1 package path')
+  }
+  return status
+}
 
 function fail (code, message) {
   const error = new Error(message)
@@ -159,9 +203,7 @@ function exactManifestInput (value) {
     fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'browser artifact length exceeds its fixed budget')
   }
   const artifactPath = b4a.toString(textBytes(value.artifactPath, 'artifactPath'), 'utf8')
-  if (artifactPath !== BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath) {
-    fail('BAD_BLIND_CLIENT_BROWSER_ARTIFACT', 'browser artifact path is not the frozen v1 package path')
-  }
+  artifactStatusForPath(artifactPath)
   return {
     version: 1,
     draft: false,
@@ -379,7 +421,7 @@ function exactChecks (actual, expected, field) {
 function commonEvidence (value, fields, expected, field) {
   exactObject(value, fields, field)
   if (value.version !== 1 || value.passed !== true ||
-      value.artifactPath !== BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath ||
+      value.artifactPath !== expected.artifactPath ||
       value.artifactLength !== expected.artifactLength ||
       value.artifactHash !== expected.artifactHash ||
       value.manifestHash !== expected.manifestHash ||
@@ -402,6 +444,7 @@ export function verifyBlindClientBrowserArtifactReleaseEvidenceV1 (input = {}) {
   })
   const manifest = verified.manifest
   const expected = Object.freeze({
+    artifactPath: manifest.artifactPath,
     artifactLength: Number(manifest.artifactLength),
     artifactHash: b4a.toString(manifest.artifactHash, 'hex'),
     manifestHash: b4a.toString(fixed(input.expectedManifestHash, 32, 'expected manifest hash'), 'hex'),
@@ -418,7 +461,11 @@ export function verifyBlindClientBrowserArtifactReleaseEvidenceV1 (input = {}) {
     fail('BAD_BLIND_CLIENT_BROWSER_RELEASE_EVIDENCE', 'Chromium evidence has the wrong authority class')
   }
   evidenceText(chromium.chromium, 'Chromium version')
-  exactChecks(chromium.checks, CHROMIUM_EVIDENCE_CHECKS, 'Chromium evidence checks')
+  const artifactStatus = artifactStatusForPath(manifest.artifactPath)
+  const chromiumChecks = artifactStatus === BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS
+    ? CELL_GET_CHROMIUM_EVIDENCE_CHECKS
+    : CHROMIUM_EVIDENCE_CHECKS
+  exactChecks(chromium.checks, chromiumChecks, 'Chromium evidence checks')
 
   const crossHost = canonicalEvidenceJson(input.crossHostEvidenceBytes, 'cross-host evidence')
   const crossHostFields = [
@@ -437,7 +484,7 @@ export function verifyBlindClientBrowserArtifactReleaseEvidenceV1 (input = {}) {
   exactChecks(crossHost.checks, CROSS_HOST_EVIDENCE_CHECKS, 'cross-host evidence checks')
 
   return Object.freeze({
-    ...BLIND_CLIENT_BROWSER_ARTIFACT_STATUS,
+    ...artifactStatus,
     crossHostByteEqualityProven: true,
     realBrowserImportProven: true,
     releaseReady: true,

@@ -17,25 +17,46 @@ import {
 } from '@hiverelay/blind-protocol/hashes'
 import {
   BLIND_CLIENT_BROWSER_ARTIFACT_STATUS,
+  BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS,
   hashBlindClientBrowserArtifactManifest,
   verifyBlindClientBrowserArtifactV1
 } from '@hiverelay/blind-client/browser-artifact'
 
 const execute = promisify(execFile)
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const cellGetOnly = process.argv.includes('--cell-get-only')
+const unknownArguments = process.argv.slice(2).filter(argument => argument !== '--cell-get-only')
+if (unknownArguments.length > 0) {
+  throw new Error(`unknown Chromium gate argument: ${unknownArguments.join(', ')}`)
+}
+const artifactStatus = cellGetOnly
+  ? BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS
+  : BLIND_CLIENT_BROWSER_ARTIFACT_STATUS
 const artifactFile = path.join(
-  root, 'packages/blind-client/browser-artifacts/blind-client-control-v1.mjs')
+  root, 'packages/blind-client', artifactStatus.artifactPath)
 const manifestFile = path.join(
-  root, 'packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc')
+  root, 'packages/blind-client', artifactStatus.manifestPath)
 const evidenceFile = path.join(
-  root, 'packages/blind-client', BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.chromiumEvidencePath)
-const evidenceChecks = Object.freeze([
+  root, 'packages/blind-client', artifactStatus.chromiumEvidencePath)
+const broadEvidenceChecks = Object.freeze([
   'STANDALONE_ESM_IMPORT',
   'REQUIRED_CONTROL_EXPORTS',
   'CLOSED_EXTERNAL_PROFILE_DECODER',
   'WEBCRYPTO_AES_256_GCM_ROUNDTRIP',
   'SIGNED_CAPABILITY_CELL_COMPOSITION',
   'PLAINTEXT_SENTINEL_ABSENT_FROM_REQUEST'
+])
+const cellGetEvidenceChecks = Object.freeze([
+  'STANDALONE_ESM_IMPORT',
+  'EXACT_CELL_GET_ONLY_EXPORTS',
+  'WEBCRYPTO_AES_256_GCM_ROUNDTRIP',
+  'FIXED_CELL_GET_OPERATION_BOUNDARY',
+  'FORWARD_CANDIDATE_CODE_ABSENT'
+])
+const evidenceChecks = cellGetOnly ? cellGetEvidenceChecks : broadEvidenceChecks
+const cellGetOnlyExports = Object.freeze([
+  'createBlindCellGetControl',
+  'createBrowserCryptoRuntime'
 ])
 
 async function writeAtomic (file, bytes) {
@@ -123,7 +144,7 @@ async function exactTuple () {
   })
 }
 
-function page (manifestHash) {
+function broadPage (manifestHash) {
   return `<!doctype html>
 <meta charset="utf-8">
 <title>HiveRelay blind client real-browser gate</title>
@@ -216,11 +237,89 @@ try {
 </script>`
 }
 
+function cellGetPage (manifestHash) {
+  const artifactName = path.posix.basename(artifactStatus.artifactPath)
+  return `<!doctype html>
+<meta charset="utf-8">
+<title>HiveRelay blind Cell-GET client real-browser gate</title>
+<body data-status="running">running</body>
+<script type="module">
+const body = document.body
+const fail = message => {
+  body.dataset.status = 'fail'
+  body.textContent = JSON.stringify({ ok: false, message })
+}
+try {
+  const client = await import('/${artifactName}')
+  const expectedExports = ${JSON.stringify(cellGetOnlyExports)}
+  const actualExports = Object.keys(client).sort()
+  if (actualExports.length !== expectedExports.length ||
+      actualExports.some((value, index) => value !== expectedExports[index])) {
+    throw new Error('Cell-GET-only export set changed: ' + actualExports.join(','))
+  }
+  for (const name of expectedExports) {
+    if (typeof client[name] !== 'function') throw new Error('invalid export ' + name)
+  }
+  const runtime = client.createBrowserCryptoRuntime(globalThis.crypto)
+  const key = new Uint8Array(32).fill(0x21)
+  const nonce = new Uint8Array(12).fill(0x22)
+  const aad = new TextEncoder().encode('hiverelay-cell-get-browser-gate-v1')
+  const plaintext = new TextEncoder().encode('browser-webcrypto-roundtrip')
+  const sealed = await runtime.aes256GcmEncrypt({ key, nonce, aad, plaintext })
+  const opened = await runtime.aes256GcmDecrypt({ key, nonce, aad, sealed })
+  if (opened.length !== plaintext.length ||
+      !opened.every((value, index) => value === plaintext[index])) {
+    throw new Error('browser AES-GCM round trip failed')
+  }
+  const control = client.createBlindCellGetControl({
+    runtime,
+    nowEpoch: () => 300,
+    supportedProtocolProfiles: [{
+      protocolId: 1,
+      major: 1,
+      minimumMinor: 0,
+      profileHash: new Uint8Array(32).fill(0x0a)
+    }],
+    supportedTransportProfiles: [{
+      transportId: 1,
+      transportSupportBit: 1,
+      transportProfileHash: new Uint8Array(32).fill(0x0b)
+    }],
+    fetch: async () => { throw new Error('operation-selection rejection dialed the network') }
+  })
+  if (!Object.isFrozen(control) || Object.keys(control).length !== 0) {
+    throw new Error('Cell-GET control leaked mutable transport state')
+  }
+  for (const attempt of [
+    () => control.fetchDescriptorHead({ canonicalUrl: new Uint8Array([1]), familyId: 2 }),
+    () => control.qualifyCellGetCandidate({}, { operationId: 1 }),
+    () => control.readCell({ operationId: 1 })
+  ]) {
+    let rejected = false
+    try { await attempt() } catch (error) {
+      rejected = error && error.code === 'BAD_CLIENT_INPUT' &&
+        error.message.includes('cannot select')
+    }
+    if (!rejected) throw new Error('Cell-GET boundary accepted caller-selected operation metadata')
+  }
+  body.dataset.status = 'pass'
+  body.textContent = JSON.stringify({
+    ok: true,
+    manifestHash: '${manifestHash}',
+    exportCount: actualExports.length,
+    fixedOperationBoundary: true
+  })
+} catch (error) {
+  fail(error && error.message ? error.message : String(error))
+}
+</script>`
+}
+
 async function listen (artifactBytes, html) {
   const server = createServer((request, response) => {
     response.setHeader('Cache-Control', 'no-store')
     response.setHeader('X-Content-Type-Options', 'nosniff')
-    if (request.url === '/blind-client-control-v1.mjs') {
+    if (request.url === `/${path.posix.basename(artifactStatus.artifactPath)}`) {
       response.statusCode = 200
       response.setHeader('Content-Type', 'text/javascript; charset=utf-8')
       response.setHeader('Content-Length', String(artifactBytes.byteLength))
@@ -258,8 +357,22 @@ const verified = verifyBlindClientBrowserArtifactV1({
   expectedManifestHash: manifestHash,
   expectedTuple: tuple
 })
+if (cellGetOnly) {
+  const artifactText = b4a.toString(verified.artifactBytes, 'utf8')
+  for (const token of [
+    'BlindForwardRouteHopV1', 'BlindForwardRouteScopeV1',
+    'acceptedRouteScopeHash', 'parentRouteScopeHash',
+    'createCellReplica', 'createPutCellRequest', 'PutCellV1',
+    'VerifiedOperationResult'
+  ]) {
+    if (artifactText.includes(token)) {
+      throw new Error(`Cell-GET-only artifact contains forbidden candidate token: ${token}`)
+    }
+  }
+}
 const manifestHashHex = b4a.toString(manifestHash, 'hex')
-const server = await listen(verified.artifactBytes, page(manifestHashHex))
+const server = await listen(verified.artifactBytes,
+  cellGetOnly ? cellGetPage(manifestHashHex) : broadPage(manifestHashHex))
 const address = server.address()
 const profile = await fs.mkdtemp(path.join(os.tmpdir(), 'hiverelay-browser-gate-'))
 try {
@@ -294,7 +407,7 @@ try {
     schema: 'HiveRelayBlindClientBrowserArtifactChromiumEvidenceV1',
     version: 1,
     evidenceClass: 'real-chromium',
-    artifactPath: BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath,
+    artifactPath: artifactStatus.artifactPath,
     artifactLength: verified.artifactBytes.byteLength,
     artifactHash: b4a.toString(verified.manifest.artifactHash, 'hex'),
     manifestHash: manifestHashHex,

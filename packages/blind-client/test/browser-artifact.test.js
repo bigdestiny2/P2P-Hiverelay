@@ -293,7 +293,10 @@ test('browser artifact stays package-addressable while candidate authority block
 
 test('ordinary style lint excludes only the generated bundle and retains dedicated byte verification', t => {
   const ignored = fs.readFileSync(eslintIgnoreUrl, 'utf8').split(/\r?\n/).filter(Boolean)
-  t.alike(ignored, ['packages/blind-client/browser-artifacts/blind-client-control-v1.mjs'])
+  t.alike(ignored, [
+    'packages/blind-client/browser-artifacts/blind-client-control-v1.mjs',
+    'packages/blind-client/browser-artifacts/blind-client-cell-get-v1.mjs'
+  ])
   const rootPackage = JSON.parse(fs.readFileSync(rootPackageUrl, 'utf8'))
   t.is(rootPackage.scripts['generate:blind-client:browser-artifact'],
     'node scripts/generate-blind-client-browser-artifacts.mjs')

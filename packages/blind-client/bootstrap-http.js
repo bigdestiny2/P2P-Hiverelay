@@ -95,8 +95,10 @@ async function readExact (response, exactBytes, signal) {
 }
 
 // This is deliberately not a generic raw-endpoint transport. It can perform
-// only a hash-named DESCRIBE.GET and returns only after the descriptor signature,
-// exact expected hash and supported profile pins have all verified.
+// only DESCRIBE.GET. Hash-named history reads return only after exact hash,
+// signature and supported-profile verification. Current-head discovery omits
+// only the expected hash; it still verifies the signed current descriptor and
+// must be chained to an independently authenticated genesis pin by its caller.
 export class BlindDescriptorBootstrapHttpClient {
   constructor (options = {}) {
     this.runtime = options.runtime
@@ -109,6 +111,18 @@ export class BlindDescriptorBootstrapHttpClient {
     if (!options || typeof options !== 'object') fail('BAD_CLIENT_INPUT', 'descriptor bootstrap options are required')
     const expectedDescriptorHash = b4a.from(asBytes(
       options.expectedDescriptorHash, 'expectedDescriptorHash', 32))
+    return this._fetchVerifiedDescriptor(options, expectedDescriptorHash)
+  }
+
+  async fetchVerifiedDescriptorHead (options) {
+    if (!options || typeof options !== 'object') fail('BAD_CLIENT_INPUT', 'descriptor bootstrap options are required')
+    if (options.history === true) {
+      fail('BAD_CLIENT_INPUT', 'current descriptor head discovery cannot be a history read')
+    }
+    return this._fetchVerifiedDescriptor(options, null)
+  }
+
+  async _fetchVerifiedDescriptor (options, expectedDescriptorHash) {
     const describe = createDescribeGetRequest({
       runtime: this.runtime,
       descriptorHash: expectedDescriptorHash,
@@ -145,9 +159,9 @@ export class BlindDescriptorBootstrapHttpClient {
       const result = decodeUnaryResponse(bytes, encoded)
       if (!result.ok) fail('TRANSPORT_FAILURE', 'descriptor bootstrap returned a canonical relay error')
       return verifyDescriptorBytes(result.body, {
-        expectedDescriptorHash,
+        expectedDescriptorHash: expectedDescriptorHash == null ? undefined : expectedDescriptorHash,
         nowEpoch: options.nowEpoch,
-        history: options.history === true,
+        history: expectedDescriptorHash != null && options.history === true,
         supportedProtocolProfiles: options.supportedProtocolProfiles,
         supportedTransportProfiles: options.supportedTransportProfiles
       })

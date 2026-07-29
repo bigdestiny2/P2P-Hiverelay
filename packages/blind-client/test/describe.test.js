@@ -35,7 +35,10 @@ import {
   resultSignaturePayload,
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
-import { admissionParametersV1 } from '@hiverelay/blind-protocol/schemas'
+import {
+  admissionParametersV1,
+  blindDescribeGetV1
+} from '@hiverelay/blind-protocol/schemas'
 import {
   BlindDescriptorBootstrapHttpClient,
   BlindDirectHttpClient,
@@ -58,6 +61,7 @@ import {
   trustedDescriptorValidity,
   verifyAdmissionParametersBytes,
   verifyDescriptorBytes,
+  verifiedDescriptorLinkage,
   verifiedAdmissionParametersValidity,
   verifyHealthResultBytes,
   verifiedHealthValidity,
@@ -345,6 +349,57 @@ test('hash-pinned bootstrap fetch returns only a verified descriptor', async t =
     nowEpoch: 101,
     ...supportFor(fixture.descriptor.value)
   }), /expectedDescriptorHash/)
+})
+
+test('current-head bootstrap is signed/profile-verified and exposes only branded linkage', async t => {
+  const fixture = await trustedFixture(0x33)
+  let requestedHash = 'unset'
+  const client = new BlindDescriptorBootstrapHttpClient({
+    runtime,
+    fetch: async (_url, init) => {
+      const request = decodeOuterEnvelope(init.body, { copyBody: true })
+      const decodedRequest = decodeCanonical(blindDescribeGetV1, request.frame.body, { copyBytes: true })
+      requestedHash = decodedRequest.descriptorHash
+      const response = encodeOuterEnvelope({
+        outerClass: request.outerClass,
+        innerDispatch: encodeDispatchFrame({
+          frameKind: FRAME_KIND.RESPONSE,
+          familyId: FAMILY.DESCRIBE,
+          operationId: OPERATION.DESCRIBE.GET,
+          requestId: request.frame.requestId,
+          body: fixture.descriptor.bytes
+        })
+      })
+      return new Response(response, {
+        status: 200,
+        headers: new Headers([
+          ['content-type', PROTOCOL.mediaType],
+          ['content-length', String(response.byteLength)]
+        ])
+      })
+    }
+  })
+  const verified = await client.fetchVerifiedDescriptorHead({
+    canonicalUrl: fixture.descriptor.value.endpoints[0].canonicalUrl,
+    nowEpoch: 101,
+    ...supportFor(fixture.descriptor.value)
+  })
+  t.is(requestedHash, null)
+  const linkage = verifiedDescriptorLinkage(verified)
+  t.alike(linkage.descriptorHash, fixture.descriptor.hash)
+  t.is(linkage.descriptorSequence, 0n)
+  t.is(linkage.previousDescriptorHash, null)
+  t.alike(linkage.relayPublicKey, fixture.keys.publicKey)
+  t.alike(linkage.storeId, fixture.descriptor.value.storeId)
+  linkage.descriptorHash.fill(0)
+  t.alike(verified.descriptorHash, fixture.descriptor.hash)
+  t.exception(() => verifiedDescriptorLinkage({}), /VerifiedDescriptor/)
+  await t.exception(client.fetchVerifiedDescriptorHead({
+    canonicalUrl: fixture.descriptor.value.endpoints[0].canonicalUrl,
+    nowEpoch: 101,
+    history: true,
+    ...supportFor(fixture.descriptor.value)
+  }), /cannot be a history read/)
 })
 
 test('descriptor trust advances exact sequence/hash and quarantines a same-sequence fork', async t => {

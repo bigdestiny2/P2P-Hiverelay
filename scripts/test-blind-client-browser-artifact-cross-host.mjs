@@ -15,19 +15,28 @@ import {
 } from '@hiverelay/blind-protocol/hashes'
 import {
   BLIND_CLIENT_BROWSER_ARTIFACT_STATUS,
+  BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS,
   hashBlindClientBrowserArtifactManifest,
   verifyBlindClientBrowserArtifactV1
 } from '@hiverelay/blind-client/browser-artifact'
 
 const execute = promisify(execFile)
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+const cellGetOnly = process.argv.includes('--cell-get-only')
+const unknownArguments = process.argv.slice(2).filter(argument => argument !== '--cell-get-only')
+if (unknownArguments.length > 0) {
+  throw new Error(`unknown cross-host gate argument: ${unknownArguments.join(', ')}`)
+}
+const artifactStatus = cellGetOnly
+  ? BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS
+  : BLIND_CLIENT_BROWSER_ARTIFACT_STATUS
 const image = process.env.HIVERELAY_CROSS_HOST_NODE_IMAGE || 'node:22-bookworm-slim'
 const artifactFile = path.join(
-  root, 'packages/blind-client', BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath)
+  root, 'packages/blind-client', artifactStatus.artifactPath)
 const manifestFile = path.join(
-  root, 'packages/blind-client', BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.manifestPath)
+  root, 'packages/blind-client', artifactStatus.manifestPath)
 const evidenceFile = path.join(
-  root, 'packages/blind-client', BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.crossHostEvidencePath)
+  root, 'packages/blind-client', artifactStatus.crossHostEvidencePath)
 const evidenceChecks = Object.freeze([
   'CLEAN_LINUX_DEPENDENCY_INSTALL',
   'FROZEN_GENERATOR_CHECK',
@@ -109,7 +118,7 @@ cd /source
 tar --exclude='./node_modules' --exclude='./.git' --exclude='./.env' --exclude='./.env.*' -cf - . | tar -xf - -C /work
 cd /work
 npm ci --ignore-scripts --no-audit --no-fund
-node scripts/generate-blind-client-browser-artifacts.mjs --check
+node scripts/generate-blind-client-browser-artifacts.mjs ${cellGetOnly ? '--cell-get-only ' : ''}--check
 node -e "process.stdout.write('HIVERELAY_CROSS_HOST_ENV=' + JSON.stringify({node:process.version,platform:process.platform,architecture:process.arch}) + '\\n')"`
 const run = await execute('docker', [
   'run', '--rm', '--read-only',
@@ -132,6 +141,10 @@ const environmentLine = run.stdout.split('\n').find(line => line.startsWith('HIV
 if (!report || !environmentLine) {
   throw new Error(`clean Linux rebuild did not emit exact evidence markers:\n${run.stdout}\n${run.stderr}`)
 }
+if (report.artifactProfile !== (cellGetOnly ? 'cell-get-only-v1' : 'control-v1') ||
+    report.artifactPath !== path.posix.join('packages/blind-client', artifactStatus.artifactPath)) {
+  throw new Error('clean Linux rebuild emitted the wrong browser artifact profile')
+}
 const environment = JSON.parse(environmentLine.slice('HIVERELAY_CROSS_HOST_ENV='.length))
 if (environment.platform !== 'linux' || environment.architecture !== imageMetadata.architecture ||
     report.artifactBytes !== verified.artifactBytes.byteLength || report.manifestHash !==
@@ -143,7 +156,7 @@ const evidence = {
   schema: 'HiveRelayBlindClientBrowserArtifactCrossHostEvidenceV1',
   version: 1,
   evidenceClass: 'clean-linux-container',
-  artifactPath: BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath,
+  artifactPath: artifactStatus.artifactPath,
   artifactLength: verified.artifactBytes.byteLength,
   artifactHash: b4a.toString(verified.manifest.artifactHash, 'hex'),
   manifestHash: b4a.toString(manifestHash, 'hex'),

@@ -290,7 +290,7 @@ export const blindReceiptV1 = struct([
   }
 })
 
-export const putCellV1 = struct([
+export const putCellV1 = /* @__PURE__ */ struct([
   ['version', version1],
   ['storageSlot', bytes32],
   ['allocationEpoch', u32be],
@@ -929,7 +929,7 @@ export const blindTransportRouteV1 = struct([
   }
 })
 
-export const blindForwardRouteHopV1 = struct([
+export const blindForwardRouteHopV1 = /* @__PURE__ */ (() => struct([
   ['hopIndex', ranged(u8, 0, 3, 'hopIndex')],
   ['relayPublicKey', bytes32],
   ['descriptorSequence', u64be],
@@ -950,11 +950,12 @@ export const blindForwardRouteHopV1 = struct([
       fail('route-scope continuation requires a nonzero previousScopeHash')
     }
   }
-})
+}))()
 
-const blindForwardRouteHopsV1 = arrayOf(blindForwardRouteHopV1, 1, 4, 'forward route-scope hops')
+const blindForwardRouteHopsV1 = /* @__PURE__ */ (() => arrayOf(
+  blindForwardRouteHopV1, 1, 4, 'forward route-scope hops'))()
 
-export const blindForwardRouteScopeV1 = struct([
+export const blindForwardRouteScopeV1 = /* @__PURE__ */ (() => struct([
   ['version', version1],
   ['rootRouteId', bytes16],
   ['rootCircuitNonce', bytes32],
@@ -982,9 +983,9 @@ export const blindForwardRouteScopeV1 = struct([
       relayKeys.add(relayKey)
     }
   }
-})
+}))()
 
-export const blindForwardHopOpenV1 = struct([
+export const blindForwardHopOpenV1 = /* @__PURE__ */ (() => struct([
   ['version', version1],
   ['route', blindTransportRouteV1],
   ['routeScope', blindForwardRouteScopeV1],
@@ -1025,9 +1026,9 @@ export const blindForwardHopOpenV1 = struct([
       fail('BlindForwardHopOpenV1 route scope exceeds the signed route relay bound')
     }
   }
-})
+}))()
 
-export const blindForwardHopAcceptV1 = struct([
+export const blindForwardHopAcceptV1 = /* @__PURE__ */ (() => struct([
   ['version', version1],
   ['previousRelayKey', bytes32],
   ['previousDescriptorSequence', u64be],
@@ -1064,7 +1065,7 @@ export const blindForwardHopAcceptV1 = struct([
       fail('nextRelayBinding does not match the accepted next relay descriptor')
     }
   }
-})
+}))()
 
 export const coreOpenReplicationV1 = struct([
   ['version', version1],
@@ -1497,7 +1498,7 @@ const coreServeResultBaseV1 = struct([
 
 export const coreServeResultV1 = cappedEncoding(coreServeResultBaseV1, 4 * MiB, 'CoreServeResultV1')
 
-export const blindForwardOpenV1 = struct([
+export const blindForwardOpenV1 = /* @__PURE__ */ (() => struct([
   ['version', version1],
   ['routeId', bytes16],
   ['nextDescriptorSequence', u64be],
@@ -1515,9 +1516,9 @@ export const blindForwardOpenV1 = struct([
     assertNonzeroBytes(value.nextDescriptorHash, 'nextDescriptorHash')
     assertNonzeroBytes(value.circuitNonce, 'circuitNonce')
   }
-})
+}))()
 
-export const blindForwardOpenResultV1 = struct([
+export const blindForwardOpenResultV1 = /* @__PURE__ */ (() => struct([
   ['version', version1],
   ['relayBinding', relayResultBindingV1],
   ['routeId', bytes16],
@@ -1563,7 +1564,7 @@ export const blindForwardOpenResultV1 = struct([
       fail('forward open result does not match nextHopAccept')
     }
   }
-})
+}))()
 
 export const blindForwardDataV1 = struct([
   ['version', version1],
@@ -1773,7 +1774,7 @@ export const schemaCatalogEntryV1 = struct([
   }
 })
 
-export const PUBLIC_FAMILY_SCHEMA_CODECS = Object.freeze({
+export const PUBLIC_FAMILY_SCHEMA_CODECS = /* @__PURE__ */ Object.freeze({
   AdmissionParametersV1: admissionParametersV1,
   AdmissionProfileV1: admissionProfileV1,
   BlindCoreAckV1: blindCoreAckV1,

@@ -160,6 +160,24 @@ export class VerifiedDescriptor {
   snapshotBytes () { return b4a.from(descriptorInternals.get(this).bytes) }
 }
 
+// A descriptor's predecessor coordinate is needed to prove a current, unnamed
+// DESCRIBE head back to an independently authenticated genesis pin. Keep the
+// decoded descriptor private: this narrow snapshot exposes only immutable
+// linkage/identity fields from an already signature-verified descriptor.
+export function verifiedDescriptorLinkage (verified) {
+  const fields = verifiedFields(verified)
+  const descriptor = fields.value
+  return Object.freeze({
+    descriptorHash: b4a.from(fields.hash),
+    descriptorSequence: BigInt(descriptor.descriptorSequence),
+    previousDescriptorHash: descriptor.previousDescriptorHash == null
+      ? null
+      : b4a.from(descriptor.previousDescriptorHash),
+    relayPublicKey: b4a.from(descriptor.relayPublicKey),
+    storeId: b4a.from(descriptor.storeId)
+  })
+}
+
 function verifiedFields (value) {
   const fields = descriptorInternals.get(value)
   if (!fields) fail('BAD_CLIENT_INPUT', 'a VerifiedDescriptor is required')

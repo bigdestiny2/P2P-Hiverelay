@@ -19,6 +19,7 @@ import {
 } from '@hiverelay/blind-protocol/hashes'
 import {
   BLIND_CLIENT_BROWSER_ARTIFACT_STATUS,
+  BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS,
   encodeBlindClientBrowserArtifactManifestV1,
   hashBlindClientBrowserArtifact,
   hashBlindClientBrowserArtifactManifest,
@@ -32,18 +33,42 @@ const require = createRequire(import.meta.url)
 const esbuildVersion = require('esbuild/package.json').version
 const check = process.argv.includes('--check')
 const requireReleaseEvidence = process.argv.includes('--require-release-evidence')
+const cellGetOnly = process.argv.includes('--cell-get-only')
+const allowedArguments = new Set(['--check', '--require-release-evidence', '--cell-get-only'])
+const unknownArguments = process.argv.slice(2).filter(argument => !allowedArguments.has(argument))
+if (unknownArguments.length > 0) {
+  throw new Error(`unknown browser artifact generator argument: ${unknownArguments.join(', ')}`)
+}
+const artifactStatus = cellGetOnly
+  ? BLIND_CLIENT_CELL_GET_BROWSER_ARTIFACT_STATUS
+  : BLIND_CLIENT_BROWSER_ARTIFACT_STATUS
 const artifactRelative = path.posix.join(
-  'packages/blind-client', BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath)
+  'packages/blind-client', artifactStatus.artifactPath)
 const manifestRelative = path.posix.join(
-  'packages/blind-client', BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.manifestPath)
-const entrySource = [
-  "export * from './packages/blind-client/control.js'",
-  "export { createBrowserCryptoRuntime } from './packages/blind-client/runtime/browser.js'",
-  ''
-].join('\n')
+  'packages/blind-client', artifactStatus.manifestPath)
+const cellGetOnlyExports = Object.freeze([
+  'createBlindCellGetControl',
+  'createBrowserCryptoRuntime'
+])
+const entrySource = cellGetOnly
+  ? [
+      'export {',
+      ...cellGetOnlyExports.map(name => `  ${name},`),
+      "} from './packages/blind-client/cell-get-control.js'",
+      ''
+    ].join('\n')
+  : [
+      "export * from './packages/blind-client/control.js'",
+      "export { createBrowserCryptoRuntime } from './packages/blind-client/runtime/browser.js'",
+      ''
+    ].join('\n')
 const browserTarget = 'es2020'
-const buildProfile = 'esbuild;bundle=true;platform=browser;format=esm;target=es2020;minify=true;sourcemap=false;charset=utf8;legalComments=none'
-const virtualEntryPath = 'blind-client-control-browser-entry.mjs'
+const buildProfile = cellGetOnly
+  ? 'esbuild;bundle=true;platform=browser;format=esm;target=es2020;minify=true;sourcemap=false;charset=utf8;legalComments=none;surface=cell-get-only-v1'
+  : 'esbuild;bundle=true;platform=browser;format=esm;target=es2020;minify=true;sourcemap=false;charset=utf8;legalComments=none'
+const virtualEntryPath = cellGetOnly
+  ? 'blind-client-cell-get-browser-entry.mjs'
+  : 'blind-client-control-browser-entry.mjs'
 const allowedDisabledInput = '(disabled):crypto'
 const generatorRelative = 'scripts/generate-blind-client-browser-artifacts.mjs'
 const fixedAuthorityPaths = Object.freeze([
@@ -51,8 +76,11 @@ const fixedAuthorityPaths = Object.freeze([
   'package-lock.json',
   generatorRelative,
   'scripts/generate-blind-protocol-draft.mjs',
+  'scripts/verify-blind-published-wire-v1.mjs',
+  'scripts/lib/blind-published-wire-v1.mjs',
   'scripts/generate-blind-client-composition-authority.mjs',
   'docs/protocol/HIVERELAY-BLIND-WIRE-V1.md',
+  'docs/protocol/BLIND-APP-AGNOSTIC-HIVERELAY-MASTER-SPEC.md',
   'docs/protocol/HIVERELAY-BLIND-CLIENT-COMPOSITION-V1.md',
   'packages/blind-client/browser-artifact.js',
   'packages/blind-client/crypto.js',
@@ -60,7 +88,10 @@ const fixedAuthorityPaths = Object.freeze([
   'packages/blind-protocol/crypto.js',
   'packages/blind-protocol/errors.js',
   'packages/blind-protocol/hashes.js',
+  'packages/blind-protocol/master-schema-inventory.js',
   'packages/blind-protocol/package.json',
+  'packages/blind-protocol/registry.js',
+  'packages/blind-protocol/schema-meta.js',
   'packages/blind-protocol/schema-catalog-runtime-authority.js',
   'packages/blind-protocol/wire-runtime-authority.js',
   'packages/blind-protocol/hiverelay-blind-wire-authority-v1.json',
@@ -81,6 +112,23 @@ const forbiddenArtifactTokens = Object.freeze([
   'OutboxLog',
   'BlindShard',
   'EXECUTABLE_SCHEMA_CODECS'
+])
+const cellGetOnlyForbiddenArtifactTokens = Object.freeze([
+  'BlindForwardRouteHopV1',
+  'BlindForwardRouteScopeV1',
+  'acceptedRouteScopeHash',
+  'parentRouteScopeHash',
+  'createCellReplica',
+  'createPutCellRequest',
+  'PutCellV1',
+  'VerifiedOperationResult'
+])
+const cellGetOnlyForbiddenGraphInputs = Object.freeze([
+  'packages/blind-client/control.js',
+  'packages/blind-client/requests.js',
+  'packages/blind-client/results.js',
+  'packages/blind-client/attempt.js',
+  'packages/blind-client/forward.js'
 ])
 
 function u16 (value) {
@@ -248,6 +296,13 @@ function assertClosedBrowserGraph (metafile) {
   if (forbidden.length > 0) {
     throw new Error(`browser artifact contains forbidden native/server inputs: ${forbidden.join(', ')}`)
   }
+  if (cellGetOnly) {
+    const forbiddenCellGetInputs = inputs.filter(input =>
+      cellGetOnlyForbiddenGraphInputs.some(relative => input.endsWith(relative)))
+    if (forbiddenCellGetInputs.length > 0) {
+      throw new Error(`Cell-GET-only browser artifact contains a broad client input: ${forbiddenCellGetInputs.join(', ')}`)
+    }
+  }
   const unusedSodiumInputs = inputs.filter(input =>
     input.endsWith('node_modules/sodium-javascript/index.js') ||
     /node_modules\/sodium-javascript\/crypto_(?:aead|auth|box|hash_sha256|kdf|kx|onetimeauth|secretbox|secretstream|shorthash|stream(?:_chacha20)?)\.js$/.test(input) ||
@@ -289,13 +344,27 @@ function assertClosedBrowserGraph (metafile) {
   }
 }
 
+function assertExactCellGetOnlyExports (metafile) {
+  if (!cellGetOnly) return
+  const outputs = Object.values(metafile.outputs)
+  if (outputs.length !== 1) {
+    throw new Error('Cell-GET-only browser artifact did not produce exactly one output')
+  }
+  const actual = [...(outputs[0].exports || [])].sort()
+  const expected = [...cellGetOnlyExports].sort()
+  if (actual.length !== expected.length ||
+      actual.some((value, index) => value !== expected[index])) {
+    throw new Error(`Cell-GET-only browser artifact exports changed: ${actual.join(', ')}`)
+  }
+}
+
 async function buildOnce (output, snapshot = null) {
   const result = await build({
     absWorkingDir: root,
     stdin: {
       contents: entrySource,
       resolveDir: root,
-      sourcefile: 'blind-client-control-browser-entry.mjs',
+      sourcefile: virtualEntryPath,
       loader: 'js'
     },
     bundle: true,
@@ -312,32 +381,39 @@ async function buildOnce (output, snapshot = null) {
     plugins: snapshot == null ? [] : [frozenSourcePlugin(snapshot)]
   })
   assertClosedBrowserGraph(result.metafile)
+  assertExactCellGetOnlyExports(result.metafile)
   if (snapshot != null) assertSameGraph(result.metafile, snapshot)
   const artifactBytes = await fs.readFile(output)
   const artifactText = b4a.toString(artifactBytes, 'utf8')
-  const leakedTokens = forbiddenArtifactTokens.filter(token =>
+  const prohibitedTokens = cellGetOnly
+    ? [...forbiddenArtifactTokens, ...cellGetOnlyForbiddenArtifactTokens]
+    : forbiddenArtifactTokens
+  const leakedTokens = prohibitedTokens.filter(token =>
     artifactText.toLowerCase().includes(token.toLowerCase()))
   if (leakedTokens.length > 0) {
     throw new Error(`browser artifact contains forbidden application/internal vocabulary: ${leakedTokens.join(', ')}`)
   }
   const artifactGzipBytes = gzipSync(artifactBytes).byteLength
   if (artifactBytes.byteLength < 1 ||
-      artifactBytes.byteLength > BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.maxArtifactBytes) {
+      artifactBytes.byteLength > artifactStatus.maxArtifactBytes) {
     throw new Error(`browser artifact exceeds its raw limit: ${artifactBytes.byteLength}`)
   }
-  if (artifactGzipBytes > BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.maxArtifactGzipBytes) {
+  if (artifactGzipBytes > artifactStatus.maxArtifactGzipBytes) {
     throw new Error(`browser artifact exceeds its gzip limit: ${artifactGzipBytes}`)
   }
   return { artifactBytes, artifactGzipBytes, metafile: result.metafile }
 }
 
 function assertProtocolTupleCurrent () {
-  const protocolGenerator = path.join(root, 'scripts/generate-blind-protocol-draft.mjs')
+  const protocolGenerator = path.join(root, cellGetOnly
+    ? 'scripts/verify-blind-published-wire-v1.mjs'
+    : 'scripts/generate-blind-protocol-draft.mjs')
+  const protocolArguments = cellGetOnly
+    ? ['--check']
+    : ['--wire-only', '--forbid-non-wire-fixtures', '--check']
   const verified = spawnSync(process.execPath, [
     protocolGenerator,
-    '--wire-only',
-    '--forbid-non-wire-fixtures',
-    '--check'
+    ...protocolArguments
   ], {
     cwd: root,
     encoding: 'utf8',
@@ -346,7 +422,8 @@ function assertProtocolTupleCurrent () {
   if (verified.status !== 0) {
     const detail = (verified.stderr || verified.stdout ||
       `protocol generator terminated with ${verified.signal || verified.status}`).trim()
-    throw new Error(`browser artifact tuple authority is stale: ${detail}`)
+    const authority = cellGetOnly ? 'published WIRE v1' : 'tuple'
+    throw new Error(`browser artifact ${authority} authority is stale: ${detail}`)
   }
   const clientCompositionGenerator = path.join(
     root, 'scripts/generate-blind-client-composition-authority.mjs')
@@ -402,9 +479,9 @@ async function releaseEvidenceStatus (artifactBytes, manifestBytes, tuple) {
   try {
     const [chromiumEvidenceBytes, crossHostEvidenceBytes] = await Promise.all([
       fs.readFile(path.join(root, 'packages/blind-client',
-        BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.chromiumEvidencePath)),
+        artifactStatus.chromiumEvidencePath)),
       fs.readFile(path.join(root, 'packages/blind-client',
-        BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.crossHostEvidencePath))
+        artifactStatus.crossHostEvidencePath))
     ])
     return verifyBlindClientBrowserArtifactReleaseEvidenceV1({
       artifactBytes,
@@ -415,7 +492,7 @@ async function releaseEvidenceStatus (artifactBytes, manifestBytes, tuple) {
       crossHostEvidenceBytes
     })
   } catch {
-    return BLIND_CLIENT_BROWSER_ARTIFACT_STATUS
+    return artifactStatus
   }
 }
 
@@ -441,7 +518,7 @@ try {
     toolchain: `esbuild@${esbuildVersion}`,
     buildProfile,
     sourceClosureHash: hashBlindClientBrowserSourceClosure(closure),
-    artifactPath: BLIND_CLIENT_BROWSER_ARTIFACT_STATUS.artifactPath,
+    artifactPath: artifactStatus.artifactPath,
     artifactLength: BigInt(first.artifactBytes.byteLength),
     artifactHash: hashBlindClientBrowserArtifact(first.artifactBytes)
   })
@@ -459,6 +536,7 @@ try {
   }
   process.stdout.write(`${JSON.stringify({
     schema: 'HiveRelayBlindClientBrowserArtifactGenerationV1',
+    artifactProfile: cellGetOnly ? 'cell-get-only-v1' : 'control-v1',
     draft: false,
     releaseReady: evidenceStatus.releaseReady,
     releaseBlockers: evidenceStatus.releaseBlockers,
