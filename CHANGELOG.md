@@ -6,10 +6,10 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
-## [Unreleased] — 2026-07-29
+## [0.25.0-rc.8] — 2026-07-29
 
-**Post-RC7 release repair. Requires a new prerelease identity before any fleet
-deployment.**
+**Post-RC7 repair prerelease. The signed tag, image evidence, and separate
+canary promotion remain required before deployment.**
 
 ### Fixed — runtime and persistence
 

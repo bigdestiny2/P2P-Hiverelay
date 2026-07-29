@@ -222,6 +222,27 @@ test('audit-owned diff assigns the Hyperdrive release lifecycle surface', (t) =>
   }
 })
 
+test('audit-owned diff assigns lockstep prerelease version surfaces', (t) => {
+  const paths = [
+    'CHANGELOG.md',
+    'README.md',
+    'package.json',
+    'package-lock.json',
+    'packages/client/package.json',
+    'packages/core/package.json',
+    'packages/services/package.json',
+    'packages/verifier/package.json',
+    'startos/README.md'
+  ]
+  const report = buildOwnedDiffReport(paths.map(file => ` M ${file}`).join('\n'))
+
+  t.is(report.status, 'pass')
+  t.is(report.totals.unknown, 0)
+  for (const entry of report.entries) {
+    t.ok(entry.owners.some(owner => owner.id === 'prerelease-version-identity'), entry.path)
+  }
+})
+
 test('audit-owned diff blocks unknown development paths', async (t) => {
   const fixture = await tempFile(t, '?? stray-release-note.txt\n')
   const res = await runAudit(['--json', '--status-file', fixture])

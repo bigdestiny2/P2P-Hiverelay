@@ -83,6 +83,23 @@ export const AUDIT_OWNED_DIFF_SLICES = Object.freeze([
     ]
   },
   {
+    id: 'prerelease-version-identity',
+    title: 'Lockstep prerelease package version identity',
+    files: [
+      'CHANGELOG.md',
+      'README.md',
+      'package.json',
+      'package-lock.json',
+      'packages/client/package.json',
+      'packages/core/package.json',
+      'packages/services/package.json',
+      'packages/verifier/package.json',
+      'scripts/lib/audit-owned-diff.mjs',
+      'startos/README.md',
+      'test/unit/audit-owned-diff.test.js'
+    ]
+  },
+  {
     id: 'hyperdrive-release-lifecycle',
     title: 'Bounded Hyperdrive release rotation and scoped reclamation',
     files: [

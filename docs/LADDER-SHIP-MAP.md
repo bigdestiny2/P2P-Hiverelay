@@ -1,6 +1,6 @@
 # Ladder ship map (chronological)
 
-**Date:** 2026-07-29 · **Status:** living operator/product plan · **Baseline:** fleet canary `v0.25.0-rc.7` · stable `v0.24.3` · post-RC7 repair candidate in `codex/hiverelay-release-fleet-20260729`
+**Date:** 2026-07-29 · **Status:** living operator/product plan · **Baseline:** fleet canary `v0.25.0-rc.7` · stable `v0.24.3` · `v0.25.0-rc.8` repair candidate prepared in `codex/hiverelay-release-fleet-20260729`
 
 > Two parallel tracks, one honesty ladder. **Version tags and claim badges stay separate until a deliberate merge.** Do not call the blind public-test pilot “fleet v0.25.0,” and do not claim rungs the current ship has not evidenced.
 
@@ -55,8 +55,8 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Item | State |
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
-| Repair candidate | Post-RC7 tree: full Node unit **3559/3559**, integration **107/107**, lint, workspace audit, public-artifact audit, and npm package dry-runs green; requires a new prerelease identity before deployment |
-| Scoped live health (2026-07-29) | 9/10 permitted relays reachable; eight are healthy at their assigned target; `utah-8gb` is healthy but drifted at RC4 with its stable updater disabled; Bern is unreachable |
+| Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3561/3561**, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
+| Scoped live health (2026-07-29) | 9/10 permitted relays reachable; eight are healthy at their assigned target; `utah-8gb` is healthy on its signed RC4 hold with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active; Bern is unreachable |
 | Wake runtime | `notify` loaded 9/9 reachable, but signed live egress **0/9** and exact-lane wake **0/9**; seven stable relays still carry the old false `notify-v1` feature claim |
 | Agent mailbox | `outboxlog` loaded and signed-advertised on **7/9** reachable permitted relays; absent on canary Utah and drifted Utah-8GB |
 | Privacy runtime | two signed Tor endpoints, both restricted without a negative proof on their deployed versions; post-RC7 code suppresses that claim until the anonymous rejection probe succeeds |
@@ -440,11 +440,11 @@ You can call the **product ladder complete for honest marketing** when:
 
 ## 9. Immediate next three moves (in order)
 
-1. **Name and ship the repair candidate:** finish release gates, cut a new signed
-   post-RC7 prerelease, and deploy it to the permitted canary only. Correct
-   Utah-8GB's disabled stable updater separately: install the repaired updater,
-   set `CHANNEL=stable` plus `PINNED_TAG=v0.25.0-rc.4`, prove a no-op dry run,
-   then arm its timer. Do not fold a downgrade into a canary promotion.
+1. **Sign and ship the prepared RC8 candidate:** unlock the existing release
+   signer, cut and push the signed `v0.25.0-rc.8` tag, and let CI build and prove
+   the digest-pinned image. Promote only the permitted canary in a separate
+   health-gated change. Utah-8GB's exact RC4 updater pin and timer repair is
+   complete; do not fold a downgrade into the canary promotion.
 2. **Prove the claims on live canary:** configure operator-owned push egress if
    wake is a release claim; verify exact-lane wake, outboxlog persistence,
    restricted-Tor negative probe, and the 100 MB onion transfer. Observe for
