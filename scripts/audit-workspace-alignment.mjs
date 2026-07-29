@@ -203,6 +203,9 @@ const umbrelSmokePackage = readText(hiverelayRoot, 'scripts', 'smoke-umbrel-pack
 const fleetRolloutCheck = readText(hiverelayRoot, 'scripts', 'check-fleet-rollout.mjs')
 const fleetStatusScript = readText(hiverelayRoot, 'fleet', 'fleet-status.sh')
 const fleetUpdaterScript = readText(hiverelayRoot, 'fleet', 'updater.sh')
+const fleetUpdaterPinRepair = readText(hiverelayRoot, 'scripts', 'repair-fleet-updater-pin.mjs')
+const fleetUpdaterPinRepairApply = readText(hiverelayRoot, 'scripts', 'lib', 'repair-fleet-updater-apply.sh')
+const fleetUpdaterPinRepairTest = readText(hiverelayRoot, 'test', 'unit', 'fleet-updater-pin-repair.test.js')
 const deployVpsScript = readText(hiverelayRoot, 'scripts', 'deploy-vps.sh')
 const relayJanitorScript = readText(hiverelayRoot, 'scripts', 'relay-janitor.js')
 const rootDockerCompose = readText(hiverelayRoot, 'docker-compose.yml')
@@ -9196,6 +9199,24 @@ if (
   pass('fleet updater verifies exact pins before early exits, rolls back dependency-install failures, stops on failed rollback checkout, and verifies runtime versions')
 } else {
   fail('fleet updater can accept an unverified pin, exit before rollback, continue after failed rollback checkout, or accept a stale runtime version')
+}
+
+if (
+  fleetUpdaterPinRepair.includes('if (apply && confirmation !== relayName)') &&
+  fleetUpdaterPinRepair.includes('inventory.relays.filter(relay => relay?.name === relayName)') &&
+  fleetUpdaterPinRepair.includes('mode: \'dry-run\'') &&
+  fleetUpdaterPinRepair.includes('mutation: false') &&
+  fleetUpdaterPinRepairApply.includes('bash "$candidate" --verify-only "$pin"') &&
+  fleetUpdaterPinRepairApply.includes('git status --porcelain=v1 --untracked-files=normal') &&
+  fleetUpdaterPinRepairApply.includes('[ "$current_sha" = "$target_sha" ]') &&
+  fleetUpdaterPinRepairApply.includes('[ "$(git rev-parse HEAD)" = "$current_sha" ]') &&
+  !fleetUpdaterPinRepairApply.includes('systemctl restart hiverelay') &&
+  fleetUpdaterPinRepairTest.includes('Sydney is never contacted') &&
+  fleetUpdaterPinRepairTest.includes('Dallas is never contacted')
+) {
+  pass('fleet updater pin repair defaults read-only, requires exact relay confirmation, verifies immutable application state, and excludes unrelated relays')
+} else {
+  fail('fleet updater pin repair can mutate without exact confirmation, contact unrelated relays, or change the relay application')
 }
 
 if (

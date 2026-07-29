@@ -55,6 +55,9 @@ deployment.**
 - Fleet updater config supports a validated per-host `PINNED_TAG`, allowing a
   remigrated box to restore its timer without following an older shared channel
   target. Signature verification now also precedes up-to-date and dry-run exits.
+- The exact-target updater repair command defaults to a read-only probe and
+  requires repeated relay confirmation before atomically applying a pin; it
+  refuses application-version changes and restores updater state on failure.
 - StartOS and Umbrel metadata, release-evidence tests, and operator docs are
   synchronized to the current prerelease baseline and distinguish configured
   defaults from signed runtime proof.

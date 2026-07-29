@@ -120,6 +120,25 @@ operator-owned lanes. To **roll a whole channel back**, set its shared tag back
 — boxes check out the older tag exactly like a forward update (health-gated the
 same way).
 
+For a remotely operated box, use the exact-target repair command. It is a
+read-only probe unless both `--apply` and a matching `--confirm-relay` are
+present. The apply path verifies the transferred updater hash, verifies the
+signed pin, requires the current checkout and healthy runtime to already match
+that pin, atomically installs only the updater/config, restores prior state on
+failure, and refuses any application-version mutation:
+
+```bash
+HIVERELAY_FLEET_INVENTORY=fleet/relays.local.json \
+  npm run fleet:repair-updater-pin -- \
+  --relay utah-8gb --channel stable --pin v0.25.0-rc.4
+
+# Production authority boundary:
+HIVERELAY_FLEET_INVENTORY=fleet/relays.local.json \
+  npm run fleet:repair-updater-pin -- \
+  --relay utah-8gb --channel stable --pin v0.25.0-rc.4 \
+  --apply --confirm-relay utah-8gb
+```
+
 ## Safety properties
 
 - **Health-gated:** after restart the agent polls `/health` for
