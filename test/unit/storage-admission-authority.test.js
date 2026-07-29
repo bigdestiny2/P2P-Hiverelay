@@ -493,11 +493,14 @@ test('rejected core proof keeps its full reservation until late session settleme
 test('many rejected keys leave only bounded residue and exact admission charges it on retry', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'storage-rejected-residue-'))
   t.teardown(() => rm(dir, { recursive: true, force: true }))
-  const config = { storage: dir, maxStorageBytes: 4 * 1024 * 1024 }
-  markStorageCapExplicit(config, 'test')
-  resolveStorageCap(config)
   const store = new Corestore(dir)
   await store.ready()
+  const config = {
+    storage: dir,
+    maxStorageBytes: measureStorageTreeBytes(dir) + 4 * 1024 * 1024
+  }
+  markStorageCapExplicit(config, 'test')
+  resolveStorageCap(config)
   const admission = new StorageAdmissionAuthority(config, {
     getUsedBytes: () => measureStorageTreeBytes(dir),
     recoveryKinds: []
