@@ -56,7 +56,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
 | Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3570/3570** with **17954/17954** assertions, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
-| Scoped live health (2026-07-29) | Latest operator scan excludes Sydney/Dallas and covers 12 inventory entries: service catalogues reached **10/12**, hosts **11/12**, and active relay applications **10/12**. Bern remains unreachable; Dubai-2GB is reachable but blank/inactive with no relay repo, service, updater, config, or health endpoint. `utah-8gb` is healthy on signed RC4 with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active |
+| Scoped live health (2026-07-29 21:19Z) | Latest operator scan excludes Sydney/Dallas and covers 12 inventory entries: service catalogues reached **10/12**, hosts **10/12**, and active relay applications **10/12**. Bern and Dubai-2GB are currently unreachable; the last successful Dubai-2GB SSH diagnostic found a blank/inactive host with no relay repo, service, updater, config, or health endpoint. `utah-8gb` is healthy on signed RC4 with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active |
 | Wake runtime | `notify` loaded on **10/10** service-reachable relays, but signed live egress **0/10** and exact-lane wake **0/10**; eight stable relays still carry the old false `notify-v1` feature claim, while Utah and Utah-8GB correctly report loaded-not-live |
 | Agent mailbox | `outboxlog` is signed-advertised on **8/10** service-reachable relays; Utah and Utah-8GB have mailbox off |
 | Privacy runtime | two restricted Tor endpoints are signed-advertised, but signed-ready is **0/10** because neither has the required anonymous rejection proof. Post-RC7 code suppresses readiness until that probe succeeds |
@@ -83,7 +83,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Legacy one-hop byte bridge | Compatibility path pending replacement, not G2-W | It does not provide OHTTP role separation or BlindForward flow-control semantics. |
 | Nym full-data-path claims | Parked; bounded control-message candidate only | Coverage/cost do not support a general relay data path today. |
 | Unbounded in-place Hyperdrive release history | Replaced in the repair candidate by signed, budgeted drive rotation and scoped rollback retention | Rewriting one forever-growing drive makes historical release blocks accumulate without an enforceable per-drive ceiling. |
-| Dubai-2GB inventory assignment | Decide fresh deployment or inventory retirement; not an in-place repair | The host has no relay service, checkout, updater, updater config, or health endpoint, so installing only an updater would not restore an application. |
+| Dubai-2GB inventory assignment | Decide fresh deployment or inventory retirement; not an in-place repair | The host is currently unreachable, and its last successful SSH diagnostic found no relay service, checkout, updater, updater config, or health endpoint, so installing only an updater would not restore an application. |
 
 Split transport itself is **not redundant**: its vNext wire codecs are useful, but the runtime,
 `BlindTransportDescriptorV1`, OHTTP ingress/gateway, browser client, padding reconciliation, and
