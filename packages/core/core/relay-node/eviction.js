@@ -36,8 +36,7 @@ import { EventEmitter } from 'events'
 import b4a from 'b4a'
 import Hyperdrive from 'hyperdrive'
 import { raceTimeout } from './storage-accounting.js'
-import { buildDedupReport } from './dedup-report.js'
-import { compareVersions } from '../constants.js'
+import { buildDedupReport, compareSupersessionEntries } from './dedup-report.js'
 
 const DEFAULTS = {
   enabled: false,
@@ -245,12 +244,22 @@ export class EvictionManager extends EventEmitter {
    * @param {object} [opts]
    * @param {boolean} [opts.dryRun=true]  report-only (no deletes) by default
    * @param {number}  [opts.retainVersions=0] keep the N newest superseded versions per appId
+   * @param {string[]} [opts.retainKeys] exact signed rollback drive keys to retain
+   * @param {string} [opts.appId] limit reclamation to one exact app id
+   * @param {string} [opts.publisherPubkey] limit reclamation to one publisher
    * @param {number}  [opts.max=Infinity]  cap reclaims this pass
    * @returns {{dryRun, reclaimed:[], skipped:[], freedBytes, candidates}}
    */
   async reclaimSuperseded (opts = {}) {
     const dryRun = opts.dryRun !== false
     const retainVersions = Number.isFinite(opts.retainVersions) ? Math.max(0, opts.retainVersions) : 0
+    const retainKeys = Array.isArray(opts.retainKeys)
+      ? new Set(opts.retainKeys.filter(key => typeof key === 'string').map(key => key.toLowerCase()))
+      : null
+    const appId = typeof opts.appId === 'string' && opts.appId.length > 0 ? opts.appId : null
+    const publisherPubkey = typeof opts.publisherPubkey === 'string' && opts.publisherPubkey.length > 0
+      ? opts.publisherPubkey.toLowerCase()
+      : null
     const max = Number.isFinite(opts.max) ? opts.max : Infinity
     const now = Date.now()
 
@@ -260,9 +269,13 @@ export class EvictionManager extends EventEmitter {
     let freedBytes = 0
 
     for (const group of report.supersededVersions.groups) {
+      if (appId && group.appId !== appId) continue
+      if (publisherPubkey && group.publisherPubkey?.toLowerCase() !== publisherPubkey) continue
       const current = this.deps.appRegistry.get(group.current)
       let candidates = group.superseded
-      if (retainVersions > 0) {
+      if (retainKeys) {
+        candidates = group.superseded.filter(candidate => !retainKeys.has(candidate.appKey.toLowerCase()))
+      } else if (retainVersions > 0) {
         // Keep the retainVersions newest superseded versions; reclaim the rest.
         // Deterministic order: version desc, then born-time desc, then appKey —
         // so versionless/equal-version ties don't reclaim on iteration order.
@@ -271,7 +284,7 @@ export class EvictionManager extends EventEmitter {
             const e = this.deps.appRegistry.get(s.appKey) || {}
             return { ...s, version: e.version || '0.0.0', bornAt: e.seededAt || e.startedAt || 0 }
           })
-          .sort((a, b) => compareVersions(b.version, a.version) || (b.bornAt - a.bornAt) || (a.appKey < b.appKey ? -1 : a.appKey > b.appKey ? 1 : 0))
+          .sort((a, b) => compareSupersessionEntries(b, a) || (b.bornAt - a.bornAt) || (a.appKey < b.appKey ? -1 : a.appKey > b.appKey ? 1 : 0))
           .slice(retainVersions)
       }
       for (const s of candidates) {
@@ -285,7 +298,7 @@ export class EvictionManager extends EventEmitter {
         // against drift between report-build and now.
         if (!current ||
             !entry.publisherPubkey || entry.publisherPubkey !== current.publisherPubkey ||
-            compareVersions(entry.version || '0.0.0', current.version || '0.0.0') >= 0) {
+            compareSupersessionEntries(entry, current) >= 0) {
           skipped.push({ appKey: s.appKey, reason: 'supersession-unverified' })
           continue
         }

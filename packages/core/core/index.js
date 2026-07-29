@@ -9,6 +9,15 @@ export {
   parseSeedProtocolHandshake,
   evaluateSeedProtocolHandshake
 } from './protocol/seed-request.js'
+export {
+  APP_RELEASE_PROTOCOL_VERSION,
+  APP_RELEASE_SIGNATURE_DOMAIN,
+  MAX_RELEASE_ROLLBACK_WINDOW,
+  hashReleaseTree,
+  serializeAppReleaseForSigning,
+  signAppRelease,
+  verifyAppRelease
+} from './release-lifecycle.js'
 export { CircuitRelay } from './protocol/relay-circuit.js'
 export { ProofOfRelay } from './protocol/proof-of-relay.js'
 export { BandwidthReceipt } from './protocol/bandwidth-receipt.js'

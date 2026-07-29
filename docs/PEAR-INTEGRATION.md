@@ -62,7 +62,9 @@ The practical path is:
 1. Build a Hyperdrive.
 2. Include a root `manifest.json`.
 3. Publish with `HiveRelayClient.publish(...)` or
-   [`../scripts/publish-app.js`](../scripts/publish-app.js).
+   [`../scripts/publish-app.js`](../scripts/publish-app.js). App publishers can
+   bound append-only release history with the signed lifecycle described in
+   [`APP-RELEASE-LIFECYCLE.md`](APP-RELEASE-LIFECYCLE.md).
 4. Seed the resulting drive on one or more relays.
 5. Verify that the drive is reachable through both P2P and relay HTTP.
 

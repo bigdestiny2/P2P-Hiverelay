@@ -2,14 +2,15 @@
  * Dedup duplication report — read-only estimate of reclaimable bytes from
  * superseded versions still resident on disk.
  *
- * Supersession is decided by VERSION (not the last-writer-wins byAppId index)
+ * Supersession is decided by signed release sequence when present, otherwise
+ * VERSION (never the last-writer-wins byAppId index)
  * within a (appId, publisherPubkey) bucket, so an out-of-order boot-replay can
  * never flag the live version as superseded, and an appId collision across
  * different publishers never cross-supersedes. Blind entries never appear.
  */
 
 import test from 'brittle'
-import { buildDedupReport } from 'p2p-hiverelay/core/relay-node/dedup-report.js'
+import { buildDedupReport } from '../../packages/core/core/relay-node/dedup-report.js'
 
 const A = 'a'.repeat(64)
 const B = 'b'.repeat(64)
@@ -57,6 +58,15 @@ test('versionless entries are a TIE → never superseded', (t) => {
     [B, { type: 'app', appId: 'cool', publisherPubkey: PUB }]
   ]), acct({ [A]: 500, [B]: 600 }))
   t.is(r.supersededVersions.count, 0, 'no version → cannot prove supersession → keep both')
+})
+
+test('signed release sequence supersedes drives even when semver is unchanged', (t) => {
+  const r = buildDedupReport(reg([
+    [A, { type: 'app', appId: 'cool', version: '1.0.0', publisherPubkey: PUB, release: { sequence: 4 } }],
+    [B, { type: 'app', appId: 'cool', version: '1.0.0', publisherPubkey: PUB, release: { sequence: 5 } }]
+  ]), acct({ [A]: 500, [B]: 600 }))
+  t.is(r.supersededVersions.groups[0].current, B)
+  t.alike(r.supersededVersions.groups[0].superseded, [{ appKey: A, bytes: 500 }])
 })
 
 test('anonymous entries (no publisherPubkey) are never superseded', (t) => {

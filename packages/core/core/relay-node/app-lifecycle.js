@@ -9,6 +9,9 @@ import { isAbortError } from './lifecycle-scope.js'
 import { verifyShareBundleForRelay } from '../pvss.js'
 import { STORAGE_SHARE_BUNDLE_MAX_BYTES } from '../../config/storage-admission-authority.js'
 import { positiveStorageBound } from '../../config/storage-cap.js'
+import { hashReleaseTree, verifyAppRelease } from '../release-lifecycle.js'
+import { EvictionManager } from './eviction.js'
+import { compareSupersessionEntries } from './dedup-report.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -20,6 +23,46 @@ import {
 // Capability marker used only by durable registry recovery. A Symbol keeps
 // external callers from forging the serve-only path through JSON/options.
 const STORAGE_RECOVERY_INGRESS = Symbol('storage-recovery-ingress')
+
+function findManifestConflict (appRegistry, appId, appKey, version, release = null) {
+  let selected = null
+  for (const [candidateKey, entry] of appRegistry.apps) {
+    if (candidateKey === appKey || !entry || normalizeContentType(entry.type, 'app') !== 'app' || entry.appId !== appId) continue
+    const candidateVersion = entry.version || '0.0.0'
+    if (!selected || compareSupersessionEntries(entry, selected.entry) > 0) {
+      selected = { key: candidateKey, version: candidateVersion, entry }
+    }
+  }
+  if (!selected) return { conflict: false }
+  return {
+    conflict: true,
+    existingKey: selected.key,
+    existingVersion: selected.version,
+    existingEntry: selected.entry,
+    shouldReplace: compareSupersessionEntries({ version, release }, selected.entry) >= 0
+  }
+}
+
+function releaseContextError (release, context) {
+  if (release.driveKey !== context.appKey) return 'release driveKey does not match the seeded drive'
+  if (release.appId !== context.appId) return 'release appId does not match manifest id'
+  if (release.version !== context.version) return 'release version does not match manifest version'
+  if (context.seedPublisher && release.publisherPubkey !== context.seedPublisher.toLowerCase()) {
+    return 'release publisher does not match signed seed publisher'
+  }
+  if (context.maxStorage && release.storageBudgetBytes !== context.maxStorage) {
+    return 'release storage budget does not match seed storage bound'
+  }
+  if (context.priorRelease) {
+    const prior = context.priorRelease
+    if (release.signature === prior.signature) return null
+    if (release.publisherPubkey !== prior.publisherPubkey) return 'release publisher changed on the same drive'
+    if (release.sequence <= prior.sequence) return 'release sequence did not advance'
+    if (release.generation !== prior.generation) return 'release generation changed without key rotation'
+    if (release.previousDriveKey !== null) return 'same-drive release cannot declare a predecessor'
+  }
+  return null
+}
 
 function seedAdmissionTimeoutError (timeoutMs) {
   const err = new Error(`Seed admission timed out after ${timeoutMs}ms`)
@@ -89,6 +132,30 @@ export class AppLifecycle extends EventEmitter {
    */
   get seededApps () {
     return this.node.appRegistry.apps
+  }
+
+  async _reclaimReleaseRollback ({ appId, publisherPubkey, retainKeys }) {
+    const node = this.node
+    let manager = node.eviction || null
+    if (!manager && node.store) {
+      manager = new EvictionManager({
+        appRegistry: node.appRegistry,
+        seedingRegistry: node.seedingRegistry || {},
+        storageAccounting: node.storageAccounting || { getBytes: () => null },
+        diskMonitor: node.diskMonitor || {},
+        getReplicationHealth: () => new Map(),
+        myPubkeyHex: 'release-retention',
+        unseed: (appKeyHex, opts) => this.unseedApp(appKeyHex, opts),
+        store: node.store
+      })
+    }
+    if (!manager || typeof manager.reclaimSuperseded !== 'function') return null
+    return manager.reclaimSuperseded({
+      dryRun: false,
+      appId,
+      publisherPubkey,
+      retainKeys
+    })
   }
 
   _joinDriveDiscovery (appKeyHex, discoveryKey, handles = null) {
@@ -504,6 +571,7 @@ export class AppLifecycle extends EventEmitter {
           throw err
         }
         this._recordCustodyReceiptOnRepin(appKeyHex, existing, normalizedOpts)
+        this._refreshExistingSeed(appKeyHex, existing, normalizedOpts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through to seed properly.
@@ -547,6 +615,7 @@ export class AppLifecycle extends EventEmitter {
           throw err
         }
         this._recordCustodyReceiptOnRepin(appKeyHex, existing, opts)
+        this._refreshExistingSeed(appKeyHex, existing, opts)
         return { discoveryKey: dkHex, alreadySeeded: true }
       }
       // else: placeholder entry from load() — fall through.
@@ -751,6 +820,7 @@ export class AppLifecycle extends EventEmitter {
         retainUntil: Number.isFinite(opts.retainUntil) ? opts.retainUntil : null,
         shardIds: Array.isArray(opts.shardIds) ? opts.shardIds : null,
         publisherPubkey,
+        release: opts.release || null,
         revocable,
         unseedFreezeMs,
         durability,
@@ -912,6 +982,15 @@ export class AppLifecycle extends EventEmitter {
       })
     if (scope) scope.tracked(promise)
     return promise
+  }
+
+  _refreshExistingSeed (appKeyHex, existing, opts) {
+    const drive = existing?.drive
+    if (!drive || drive.closed || drive.closing || existing._replicating) return false
+    existing._replicating = true
+    this._trackEagerReplicate(appKeyHex, drive, opts, { source: 'repin-refresh' })
+      .finally(() => { existing._replicating = false })
+    return true
   }
 
   async _downloadProvedDriveRanges (drive, proof, opts = {}) {
@@ -1537,6 +1616,50 @@ export class AppLifecycle extends EventEmitter {
     }
   }
 
+  async _verifyReleaseTree (drive, release, proof = null) {
+    let snapshot = drive
+    let ownsSnapshot = false
+    const version = proof?.driveVersion ?? drive?.version
+    if (typeof drive?.checkout === 'function' && Number.isSafeInteger(version) && version > 0) {
+      snapshot = drive.checkout(version)
+      ownsSnapshot = true
+    }
+
+    try {
+      if (!snapshot || typeof snapshot.get !== 'function' || typeof snapshot.list !== 'function') {
+        return { ok: false, error: 'release tree cannot be inspected at the pinned drive version' }
+      }
+      if (typeof snapshot.ready === 'function') await snapshot.ready()
+
+      const pinnedManifest = await snapshot.get('/manifest.json', { wait: false })
+      if (!pinnedManifest) return { ok: false, error: 'release manifest is absent from the pinned drive version' }
+      const envelope = JSON.parse(pinnedManifest.toString())?.hiverelay?.release
+      if (!envelope || envelope.signature !== release.signature) {
+        return { ok: false, error: 'release manifest changed while its content tree was being verified' }
+      }
+
+      const files = []
+      for await (const entry of snapshot.list('/')) {
+        const path = entry?.key
+        if (typeof path !== 'string' || path === '/manifest.json' || path === '/.hiverelay/rotation.json') continue
+        const content = await snapshot.get(path, { wait: false })
+        if (content === null) return { ok: false, error: `release tree file is unavailable: ${path}` }
+        files.push({ path, content })
+      }
+      const actualTreeHash = hashReleaseTree(files)
+      if (actualTreeHash !== release.treeHash) {
+        return { ok: false, error: 'release treeHash does not match the pinned Hyperdrive contents' }
+      }
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: err.message || 'release tree verification failed' }
+    } finally {
+      if (ownsSnapshot && snapshot && typeof snapshot.close === 'function') {
+        try { await snapshot.close() } catch (_) {}
+      }
+    }
+  }
+
   /**
    * Read manifest.json from a drive and deduplicate by appId.
    * If an older version of the same app is already seeded, unseed it.
@@ -1580,7 +1703,78 @@ export class AppLifecycle extends EventEmitter {
         ? manifest.mountPath.trim()
         : existing?.mountPath || null
 
-      // Update this entry's metadata via the registry
+      // Signed release metadata is the only authority that can rotate an app
+      // onto a new drive without immediately retiring its predecessor. Bind it
+      // to the pinned manifest, seed-request publisher, and declared storage
+      // bound before persisting any manifest-derived fields.
+      const releaseEnvelope = manifest.hiverelay?.release
+      let signedRelease = null
+      if (releaseEnvelope !== undefined) {
+        const verified = verifyAppRelease(releaseEnvelope)
+        const releaseContext = {
+          appKey: appKeyHex,
+          appId,
+          version,
+          seedPublisher: existing?.publisherPubkey || null,
+          maxStorage: existing?.maxStorage || null,
+          priorRelease: existing?.release || null
+        }
+        let contextError = verified.ok
+          ? releaseContextError(verified.release, releaseContext)
+          : verified.error
+        if (verified.ok && !contextError) {
+          const treeVerification = await this._verifyReleaseTree(drive, verified.release, proof)
+          if (!treeVerification.ok) contextError = treeVerification.error
+        }
+        if (!verified.ok || contextError) {
+          this.emit('app-release-rejected', {
+            appId,
+            appKey: appKeyHex,
+            version,
+            reason: contextError || verified.error
+          })
+          await this.unseedApp(appKeyHex)
+          return
+        }
+        signedRelease = verified.release
+      }
+
+      // Scan the actual registry instead of trusting byAppId. seedApp may have
+      // already indexed the incoming appId, and byAppId is last-writer-wins;
+      // using it here can hide the predecessor we must validate and retain.
+      const conflict = contentType === 'app' && appId
+        ? findManifestConflict(node.appRegistry, appId, appKeyHex, version, signedRelease)
+        : { conflict: false }
+      const sameDriveContinuation = Boolean(signedRelease && existing?.release)
+
+      if (signedRelease && conflict.conflict && conflict.shouldReplace) {
+        const predecessorPublisher = conflict.existingEntry.publisherPubkey || conflict.existingEntry.release?.publisherPubkey || null
+        let transitionError = null
+        if (!predecessorPublisher || predecessorPublisher.toLowerCase() !== signedRelease.publisherPubkey) {
+          transitionError = 'release publisher does not match predecessor publisher'
+        } else if (!sameDriveContinuation && signedRelease.previousDriveKey !== conflict.existingKey) {
+          transitionError = 'signed release does not name the current predecessor drive'
+        } else if (!sameDriveContinuation && conflict.existingEntry.release) {
+          const prior = conflict.existingEntry.release
+          if (signedRelease.sequence <= prior.sequence) transitionError = 'rotated release sequence did not advance'
+          else if (signedRelease.generation !== prior.generation + 1) transitionError = 'rotated release generation must advance by one'
+        }
+        if (transitionError) {
+          this.emit('app-release-rejected', {
+            appId,
+            appKey: appKeyHex,
+            version,
+            reason: transitionError
+          })
+          await this.unseedApp(appKeyHex)
+          return
+        }
+      }
+
+      // A signed release becomes deletion authority for superseded drives, so
+      // capture the pre-index state and persist the accepted envelope before
+      // any reclamation can run.
+      const previousEntrySnapshot = existing ? { ...existing } : null
       node.appRegistry.update(appKeyHex, {
         type: contentType,
         parentKey,
@@ -1599,14 +1793,36 @@ export class AppLifecycle extends EventEmitter {
         name: manifest.name || appId,
         description: manifest.description || '',
         author: manifest.author || null,
-        categories: manifest.categories || null
-      })
+        categories: manifest.categories || null,
+        publisherPubkey: signedRelease?.publisherPubkey || existing?.publisherPubkey || null,
+        release: signedRelease || existing?.release || null
+      }, signedRelease ? { persist: false } : {})
+
+      if (signedRelease && typeof node.appRegistry.persistEntry === 'function') {
+        try {
+          await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })
+        } catch (err) {
+          if (sameDriveContinuation && previousEntrySnapshot) {
+            node.appRegistry.set(appKeyHex, previousEntrySnapshot, { persist: false })
+          }
+          this.emit('app-release-rejected', {
+            appId,
+            appKey: appKeyHex,
+            version,
+            reason: 'release registry persistence failed: ' + (err.message || String(err))
+          })
+          if (!sameDriveContinuation) await this.unseedApp(appKeyHex)
+          return
+        }
+      }
 
       if (contentType !== 'app') return
       if (!appId) return
 
-      // Check for version conflicts with existing apps
-      const conflict = node.appRegistry.checkConflict(appId, appKeyHex, version)
+      // Check for version conflicts with existing apps. Legacy unsigned
+      // releases preserve the old immediate-replacement behavior. A verified
+      // signed transition retains exactly the publisher-declared rollback set
+      // and asks the existing safe purge path to reclaim only older drives.
       if (conflict.conflict) {
         if (conflict.shouldReplace) {
           this.emit('app-replaced', {
@@ -1614,10 +1830,34 @@ export class AppLifecycle extends EventEmitter {
             oldKey: conflict.existingKey,
             oldVersion: conflict.existingVersion,
             newKey: appKeyHex,
-            newVersion: version
+            newVersion: version,
+            signedRotation: Boolean(signedRelease && !sameDriveContinuation)
           })
-          await this.unseedApp(conflict.existingKey)
+          if (signedRelease) {
+            await this._reclaimReleaseRollback({
+              appId,
+              publisherPubkey: signedRelease.publisherPubkey,
+              retainKeys: signedRelease.rollbackDriveKeys
+            })
+          } else {
+            await this.unseedApp(conflict.existingKey)
+          }
         } else {
+          const currentRelease = conflict.existingEntry.release
+          const rollbackProtected = currentRelease &&
+            currentRelease.publisherPubkey === (signedRelease?.publisherPubkey || existing?.publisherPubkey) &&
+            Array.isArray(currentRelease.rollbackDriveKeys) &&
+            currentRelease.rollbackDriveKeys.includes(appKeyHex)
+          if (rollbackProtected) {
+            // A retained predecessor can receive its signed rotation pointer
+            // after the successor is indexed. Re-indexing its older manifest
+            // must not accidentally unseed the rollback copy. AppRegistry's
+            // update above is last-writer-wins, so restore the canonical hint
+            // to the newer drive as well (catalog remains version/sequence
+            // ordered independently).
+            if (node.appRegistry.byAppId) node.appRegistry.byAppId.set(appId, conflict.existingKey)
+            return
+          }
           this.emit('app-version-rejected', {
             appId,
             rejectedKey: appKeyHex,

@@ -7,7 +7,7 @@
  */
 
 import test from 'brittle'
-import { EvictionManager } from 'p2p-hiverelay/core/relay-node/eviction.js'
+import { EvictionManager } from '../../packages/core/core/relay-node/eviction.js'
 
 const A = 'a'.repeat(64) // older
 const B = 'b'.repeat(64) // newer / current
@@ -117,6 +117,30 @@ test('retainVersions keeps the N newest superseded versions', async (t) => {
   const r = await ev.reclaimSuperseded({ dryRun: false, retainVersions: 1 })
   t.alike(r.reclaimed.map(x => x.appKey), [A], 'keep newest superseded (v2/C), reclaim older (v1/A)')
   t.alike(unseeds, [A])
+})
+
+test('signed retainKeys keeps the exact rollback set instead of guessing by count', async (t) => {
+  const { ev, unseeds } = harness([
+    [A, app('cool', '1.0.0')], [C, app('cool', '2.0.0')], [B, app('cool', '3.0.0')]
+  ], { [A]: 100, [C]: 200, [B]: 300 })
+  const r = await ev.reclaimSuperseded({ dryRun: false, retainKeys: [A] })
+  t.alike(r.reclaimed.map(x => x.appKey), [C], 'exact signed set keeps v1 even though v2 is newer')
+  t.alike(unseeds, [C])
+})
+
+test('signed release reclamation is scoped to one app and publisher', async (t) => {
+  const { ev, unseeds } = harness([
+    [A, app('cool', '1.0.0')], [B, app('cool', '2.0.0')],
+    [C, app('unrelated', '1.0.0')], [D, app('unrelated', '2.0.0')]
+  ], { [A]: 100, [B]: 200, [C]: 300, [D]: 400 })
+  const r = await ev.reclaimSuperseded({
+    dryRun: false,
+    appId: 'cool',
+    publisherPubkey: PUB,
+    retainKeys: []
+  })
+  t.alike(r.reclaimed.map(x => x.appKey), [A])
+  t.alike(unseeds, [A], 'unrelated superseded app is untouched')
 })
 
 test('no superseded versions → nothing reclaimed', async (t) => {

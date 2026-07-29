@@ -17,6 +17,8 @@
  *   --relays <urls>      Comma-separated relay API URLs to seed on
  *   --storage <path>     Corestore path (default: .publisher-storage)
  *   --key <hex>          Explicit drive key (overrides appId lookup)
+ *   --storage-budget <n> Rotate before the drive exceeds this size (default: 1GiB)
+ *   --rollback-window <n> Number of signed releases to retain (default: 3, max: 32)
  *   --bootstrap <nodes>  Comma-separated DHT bootstrap nodes (host:port)
  *   --api-key <key>      Shared operator API key sent to every relay
  *                        (fallback: HIVERELAY_API_KEY env var)
@@ -42,6 +44,22 @@ import sodium from 'sodium-universal'
 import { readdir, readFile, writeFile, stat, mkdir, rename } from 'fs/promises'
 import { join, relative, resolve } from 'path'
 import { existsSync } from 'fs'
+import { hashReleaseTree } from '../packages/core/core/release-lifecycle.js'
+import { planPublishedFiles, syncPublishedFiles } from './lib/publish-drive-sync.mjs'
+import {
+  DEFAULT_RELEASE_ROLLBACK_WINDOW,
+  DEFAULT_RELEASE_STORAGE_BUDGET,
+  createSignedSeedRequest,
+  createPublisherRelease,
+  driveLogicalBytes,
+  estimateReleaseAppendBytes,
+  formatStorageBytes,
+  loadReleaseState,
+  parseStorageBytes,
+  publisherKeyPairForApp,
+  saveReleaseState,
+  shouldRotateReleaseDrive
+} from './lib/release-publisher.mjs'
 
 const RELAY_DISCOVERY_TOPIC = b4a.alloc(32)
 sodium.crypto_generichash(RELAY_DISCOVERY_TOPIC, b4a.from('hiverelay-discovery-v1'))
@@ -63,6 +81,8 @@ function parseArgs (argv) {
     version: '1.0.0',
     relays: DEFAULT_RELAYS,
     storage: '.publisher-storage',
+    storageBudgetBytes: DEFAULT_RELEASE_STORAGE_BUDGET,
+    rollbackWindow: DEFAULT_RELEASE_ROLLBACK_WINDOW,
     key: null,
     bootstrap: DEFAULT_BOOTSTRAP,
     apiKey: process.env.HIVERELAY_API_KEY || null,
@@ -78,8 +98,26 @@ function parseArgs (argv) {
     if (arg === '--id') { opts.id = args[++i]; continue }
     if (arg === '--desc') { opts.description = args[++i]; continue }
     if (arg === '--version') { opts.version = args[++i]; continue }
-    if (arg === '--relays') { opts.relays = args[++i].split(',').map(s => s.trim()); continue }
+    if (arg === '--relays') { opts.relays = args[++i].split(',').map(s => s.trim()).filter(Boolean); continue }
     if (arg === '--storage') { opts.storage = args[++i]; continue }
+    if (arg === '--storage-budget') {
+      const bytes = parseStorageBytes(args[++i])
+      if (bytes === null) {
+        console.error('Error: --storage-budget must be a positive size such as 500MiB or 2GiB')
+        process.exit(1)
+      }
+      opts.storageBudgetBytes = bytes
+      continue
+    }
+    if (arg === '--rollback-window') {
+      const count = Number(args[++i])
+      if (!Number.isInteger(count) || count < 1 || count > 32) {
+        console.error('Error: --rollback-window must be an integer from 1 to 32')
+        process.exit(1)
+      }
+      opts.rollbackWindow = count
+      continue
+    }
     if (arg === '--key') { opts.key = args[++i]; continue }
     if (arg === '--bootstrap') {
       try {
@@ -164,6 +202,13 @@ function deriveAppId (name) {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 }
 
+function createReleaseDrive (store, driveOpts) {
+  const suffix = b4a.alloc(8)
+  sodium.randombytes_buf(suffix)
+  const namespace = store.namespace('app-release-' + Date.now() + '-' + b4a.toString(suffix, 'hex'))
+  return new Hyperdrive(namespace, null, driveOpts)
+}
+
 function parseBootstrapNodes (input) {
   if (!input) return null
   const nodes = String(input)
@@ -197,7 +242,9 @@ async function loadDriveMap (storagePath) {
 async function saveDriveMap (storagePath, map) {
   await mkdir(storagePath, { recursive: true })
   const mapPath = join(storagePath, 'app-drives.json')
-  await writeFile(mapPath, JSON.stringify(map, null, 2))
+  const temporary = mapPath + '.tmp'
+  await writeFile(temporary, JSON.stringify(map, null, 2))
+  await rename(temporary, mapPath)
 }
 
 async function walkDir (dir, base) {
@@ -268,15 +315,27 @@ async function resolveFromRelay (relays, appId) {
   return null
 }
 
-async function seedOnRelay (relayUrl, appKey, appId, version, blind, apiKey) {
+async function seedOnRelay (relayUrl, appKey, appId, version, blind, apiKey, maxStorageBytes, keyPair) {
   try {
-    const body = { appKey }
-    if (appId) body.appId = appId
-    if (version) body.version = version
-    if (blind) body.blind = true
+    const publisherRequest = createSignedSeedRequest({ appKey, maxStorageBytes, blind, keyPair })
+    const body = apiKey
+      ? {
+          appKey,
+          appId,
+          version,
+          blind,
+          maxStorageBytes,
+          opts: {
+            publisherPubkey: publisherRequest.publisherPubkey,
+            publisherSignature: publisherRequest.publisherSignature,
+            seedSignatureProfile: 'replay-v1'
+          }
+        }
+      : publisherRequest
     const headers = { 'Content-Type': 'application/json' }
     if (apiKey) headers.Authorization = `Bearer ${apiKey}`
-    const res = await fetch(relayUrl + '/seed', {
+    const route = apiKey ? '/seed' : '/api/v1/seed'
+    const res = await fetch(relayUrl + route, {
       method: 'POST',
       headers,
       body: JSON.stringify(body)
@@ -313,6 +372,8 @@ async function run () {
     console.error('  --version <version>  App version (default: 1.0.0)')
     console.error('  --storage <path>     Publisher storage path')
     console.error('  --key <hex>          Explicit drive key')
+    console.error('  --storage-budget <n> Per-drive budget before signed rotation (default: 1GiB)')
+    console.error('  --rollback-window <n> Signed releases to retain (default: 3, max: 32)')
     console.error('  --api-key <key>      Shared operator API key (env: HIVERELAY_API_KEY)')
     console.error('  --api-keys <map>     Per-relay keys url=key,url=key (env: HIVERELAY_API_KEYS)')
     console.error('  --blind              Encrypt content (relay can\'t read, P2P only)')
@@ -328,6 +389,10 @@ async function run () {
   }
 
   const appId = opts.id || (opts.name ? deriveAppId(opts.name) : null)
+  if (!appId) {
+    console.error('Error: --name or --id is required for signed, bounded app releases')
+    process.exit(1)
+  }
 
   console.log()
   console.log('=== HiveRelay App Publisher ===')
@@ -337,6 +402,8 @@ async function run () {
   console.log('  Relays:   ', opts.relays.length)
   if (opts.bootstrap) console.log('  Bootstrap:', opts.bootstrap.map(n => `${n.host}:${n.port}`).join(', '))
   if (appId) console.log('  App ID:   ', appId)
+  console.log('  Budget:   ', formatStorageBytes(opts.storageBudgetBytes), 'per drive')
+  console.log('  Rollback: ', opts.rollbackWindow, 'release' + (opts.rollbackWindow === 1 ? '' : 's'))
   if (opts.version !== '1.0.0') console.log('  Version:  ', opts.version)
   if (opts.blind) console.log('  Mode:      BLIND (encrypted, P2P only)')
   console.log()
@@ -353,8 +420,11 @@ async function run () {
   const store = new Corestore(opts.storage)
   await store.ready()
 
-  const swarm = opts.bootstrap ? new Hyperswarm({ bootstrap: opts.bootstrap }) : new Hyperswarm()
-  swarm.on('connection', (conn) => store.replicate(conn))
+  const networkEnabled = opts.stay || opts.relays.length > 0
+  const swarm = networkEnabled
+    ? (opts.bootstrap ? new Hyperswarm({ bootstrap: opts.bootstrap }) : new Hyperswarm())
+    : null
+  if (swarm) swarm.on('connection', (conn) => store.replicate(conn))
 
   // For blind mode: use explicit key, load saved key, or generate new one
   let encryptionKey = null
@@ -373,6 +443,14 @@ async function run () {
   // Hyperdrive constructor options (with optional encryption)
   const driveOpts = encryptionKey ? { encryptionKey } : {}
 
+  // One stable Ed25519 identity signs both seed requests and release-key
+  // transitions. Persist it before touching a drive so a crash cannot publish
+  // a release whose signing authority is immediately lost.
+  const releaseState = await loadReleaseState(opts.storage)
+  const releaseKeyPair = publisherKeyPairForApp(releaseState, appId)
+  await saveReleaseState(opts.storage, releaseState)
+  let appReleaseState = releaseState.apps[appId]
+
   // Resolve drive key: explicit --key > saved mapping > new drive
   let drive
   let isUpdate = false
@@ -385,9 +463,10 @@ async function run () {
   } else if (appId) {
     // Check saved appId → key mapping
     const driveMap = await loadDriveMap(opts.storage)
-    if (driveMap[appId]) {
-      console.log('  Found existing drive for "' + appId + '": ' + driveMap[appId].slice(0, 16) + '...')
-      drive = new Hyperdrive(store, Buffer.from(driveMap[appId], 'hex'), driveOpts)
+    const savedDriveKey = appReleaseState.currentDriveKey || driveMap[appId]
+    if (savedDriveKey) {
+      console.log('  Found existing drive for "' + appId + '": ' + savedDriveKey.slice(0, 16) + '...')
+      drive = new Hyperdrive(store, Buffer.from(savedDriveKey, 'hex'), driveOpts)
       isUpdate = true
     } else {
       // No local mapping — check relay registry (handles publisher storage loss)
@@ -414,26 +493,24 @@ async function run () {
 
   if (!drive) {
     console.log('  Creating new Hyperdrive...')
-    drive = new Hyperdrive(store, null, driveOpts)
+    drive = createReleaseDrive(store, driveOpts)
   }
 
   await drive.ready()
 
-  const driveKey = b4a.toString(drive.key, 'hex')
-  console.log('  Drive key:', driveKey)
-  console.log('  Mode:     ', isUpdate ? 'UPDATE (same key, new version)' : 'NEW DRIVE')
-  console.log()
-
-  // Save the appId → key mapping for future publishes
-  if (appId) {
-    const driveMap = await loadDriveMap(opts.storage)
-    driveMap[appId] = driveKey
-    await saveDriveMap(opts.storage, driveMap)
+  if (!drive.writable) {
+    throw new Error('publisher storage does not hold the secret key for this drive; restore the original publisher storage or publish a new app id')
   }
 
-  // Build manifest.json
-  const manifest = {
-    id: appId || driveKey.slice(0, 12),
+  let driveKey = b4a.toString(drive.key, 'hex')
+  if (appReleaseState.currentDriveKey && appReleaseState.currentDriveKey !== driveKey) {
+    throw new Error('explicit drive key does not match signed release state; automatic storage-budget rotation is the only supported key transition')
+  }
+
+  // Build the user-facing portion of manifest.json once. The signed release
+  // envelope is attached only after the final (possibly rotated) key is known.
+  const manifestBase = {
+    id: appId,
     name: opts.name || 'Unknown App',
     description: opts.description || (opts.name ? opts.name + ' — published via HiveRelay' : ''),
     version: opts.version,
@@ -449,44 +526,141 @@ async function run () {
     // Merge user's manifest with our fields (user fields take priority)
     try {
       const userManifest = JSON.parse(files.find(f => f.path === '/manifest.json').content.toString())
-      Object.assign(manifest, userManifest)
-      // But always ensure id is set
-      if (!manifest.id) manifest.id = appId || driveKey.slice(0, 12)
+      Object.assign(manifestBase, userManifest)
+      // The CLI app id is the stable publisher identity and cannot drift in a
+      // user-supplied manifest between releases.
+      manifestBase.id = appId
       console.log('  Using user-provided manifest.json (merged with publisher metadata)')
     } catch (_) {
       console.log('  Warning: could not parse user manifest.json, using generated one')
     }
   }
 
-  await drive.put('/manifest.json', b4a.from(JSON.stringify(manifest, null, 2)))
-  console.log('  Wrote manifest.json (id: ' + manifest.id + ', version: ' + manifest.version + ')')
-
-  // Write all files
-  console.log('  Writing files to Hyperdrive...')
-  let written = 0
-  for (const file of files) {
-    if (file.path === '/manifest.json') { written++; continue } // already written
-    await drive.put(file.path, file.content)
-    written++
-    if (written % 10 === 0 || written === files.length) {
-      process.stdout.write('\r  Progress: ' + written + '/' + files.length)
+  const contentFiles = files.filter(file => file.path !== '/manifest.json')
+  const treeHash = hashReleaseTree(contentFiles)
+  const buildRelease = (key, previousDriveKey = null) => createPublisherRelease({
+    appState: appReleaseState,
+    appId,
+    version: String(manifestBase.version),
+    driveKey: key,
+    previousDriveKey,
+    storageBudgetBytes: opts.storageBudgetBytes,
+    rollbackWindow: opts.rollbackWindow,
+    treeHash,
+    keyPair: releaseKeyPair
+  })
+  const buildFiles = (signedRelease) => {
+    const existingHiveRelay = manifestBase.hiverelay && typeof manifestBase.hiverelay === 'object' && !Array.isArray(manifestBase.hiverelay)
+      ? manifestBase.hiverelay
+      : {}
+    const manifest = {
+      ...manifestBase,
+      hiverelay: { ...existingHiveRelay, release: signedRelease }
+    }
+    return {
+      manifest,
+      releaseFiles: [
+        ...contentFiles,
+        { path: '/manifest.json', content: b4a.from(JSON.stringify(manifest, null, 2)) }
+      ]
     }
   }
-  console.log('\n  All files written. Drive version:', drive.version)
+
+  let previousDrive = null
+  let previousDriveKey = null
+  let builtRelease = buildRelease(driveKey)
+  let builtFiles = buildFiles(builtRelease.release)
+  let publishPlan = await planPublishedFiles(drive, builtFiles.releaseFiles)
+  const budgetPlan = shouldRotateReleaseDrive({
+    driveBytes: driveLogicalBytes(drive),
+    plan: publishPlan,
+    storageBudgetBytes: opts.storageBudgetBytes
+  })
+
+  if (budgetPlan.rotate) {
+    if (!isUpdate || drive.version === 0) {
+      const required = driveLogicalBytes(drive) + estimateReleaseAppendBytes(publishPlan)
+      throw new Error(`release needs approximately ${formatStorageBytes(required)}, above the ${formatStorageBytes(opts.storageBudgetBytes)} drive budget`)
+    }
+    previousDrive = drive
+    previousDriveKey = driveKey
+    console.log('  Storage budget reached at projected', formatStorageBytes(budgetPlan.projectedBytes))
+    console.log('  Rotating to a new publisher-signed release key...')
+    drive = createReleaseDrive(store, driveOpts)
+    await drive.ready()
+    driveKey = b4a.toString(drive.key, 'hex')
+    builtRelease = buildRelease(driveKey, previousDriveKey)
+    builtFiles = buildFiles(builtRelease.release)
+    publishPlan = await planPublishedFiles(drive, builtFiles.releaseFiles)
+    const freshBudgetPlan = shouldRotateReleaseDrive({
+      driveBytes: driveLogicalBytes(drive),
+      plan: publishPlan,
+      storageBudgetBytes: opts.storageBudgetBytes
+    })
+    if (freshBudgetPlan.rotate) {
+      throw new Error(`release plus rotation reserve needs ${formatStorageBytes(freshBudgetPlan.projectedBytes)}, above the ${formatStorageBytes(opts.storageBudgetBytes)} drive budget`)
+    }
+  }
+
+  const manifest = builtFiles.manifest
+  console.log('  Drive key:', driveKey)
+  console.log('  Mode:     ', previousDrive ? 'ROTATED (signed storage-budget transition)' : (isUpdate ? 'UPDATE (same key, delta)' : 'NEW DRIVE'))
+  console.log('  Release:  ', '#' + builtRelease.release.sequence, 'generation', builtRelease.release.generation)
   console.log()
 
+  // Mirror the release tree instead of blindly appending every file. This
+  // skips byte-identical files, block-deduplicates changed files, and removes
+  // paths that disappeared from the build.
+  console.log('  Synchronizing release files to Hyperdrive...')
+  const sync = await syncPublishedFiles(drive, builtFiles.releaseFiles, { plan: publishPlan })
+  console.log('  Added:', sync.added, 'Changed:', sync.changed, 'Removed:', sync.removed, 'Unchanged:', sync.unchanged)
+  console.log('  Drive version:', drive.version)
+  console.log()
+
+  if (previousDrive) {
+    await previousDrive.put(
+      '/.hiverelay/rotation.json',
+      b4a.from(JSON.stringify(builtRelease.release, null, 2))
+    )
+    console.log('  Signed rotation pointer written to predecessor:', previousDriveKey)
+    console.log()
+  }
+
+  // Commit publisher state only after the content and predecessor pointer are
+  // durable. A failed relay request can be retried without re-signing history.
+  appReleaseState = builtRelease.appState
+  releaseState.apps[appId] = appReleaseState
+  await saveReleaseState(opts.storage, releaseState)
+  const driveMap = await loadDriveMap(opts.storage)
+  driveMap[appId] = driveKey
+  await saveDriveMap(opts.storage, driveMap)
+
   // Join DHT
-  console.log('  Joining DHT...')
-  swarm.join(drive.discoveryKey, { server: true, client: true })
-  swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
-  await swarm.flush()
-  console.log('  Announced on DHT.')
+  if (swarm) {
+    console.log('  Joining DHT...')
+    swarm.join(drive.discoveryKey, { server: true, client: true })
+    if (previousDrive) swarm.join(previousDrive.discoveryKey, { server: true, client: true })
+    swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: false })
+    await swarm.flush()
+    console.log('  Announced on DHT.')
+  } else {
+    console.log('  Offline publish: DHT announcement skipped (no relays, --no-stay).')
+  }
   console.log()
 
   // Seed on relays (pass appId + version for deduplication)
   console.log('  Seeding on relays...')
   const seedResults = await Promise.all(
-    opts.relays.map(url => seedOnRelay(url, driveKey, manifest.id, manifest.version, opts.blind, resolveApiKey(url, opts)))
+    opts.relays.map(url => seedOnRelay(
+      url,
+      driveKey,
+      manifest.id,
+      manifest.version,
+      opts.blind,
+      resolveApiKey(url, opts),
+      opts.storageBudgetBytes,
+      releaseKeyPair
+    ))
   )
 
   let seeded = 0
@@ -507,7 +681,7 @@ async function run () {
     console.error('  ┌─────────────────────────────────────────────────────────────────┐')
     console.error('  │  AUTH FAILURE: ' + authFailures.length + '/' + opts.relays.length + ' relay(s) returned 401 Unauthorized.            │')
     console.error('  └─────────────────────────────────────────────────────────────────┘')
-    console.error('  /seed requires each relay\'s operator API key. Refused by:')
+    console.error('  The relay rejected both publisher ingress and operator authorization. Refused by:')
     for (const f of authFailures) {
       console.error('    ' + f.url + (f.keySent ? '  (a key WAS sent — wrong key for this relay?)' : '  (no key sent)'))
     }
@@ -559,13 +733,15 @@ async function run () {
 
   // Monitor replication
   let peerCount = 0
-  swarm.on('connection', () => {
-    peerCount++
-    console.log('  [' + new Date().toISOString().slice(11, 19) + '] Peer connected (total: ' + peerCount + ')')
-  })
-  swarm.on('connection', (conn) => {
-    conn.on('close', () => { peerCount-- })
-  })
+  if (swarm) {
+    swarm.on('connection', () => {
+      peerCount++
+      console.log('  [' + new Date().toISOString().slice(11, 19) + '] Peer connected (total: ' + peerCount + ')')
+    })
+    swarm.on('connection', (conn) => {
+      conn.on('close', () => { peerCount-- })
+    })
+  }
 
   if (opts.stay) {
     console.log('  Publisher staying online for replication. Ctrl+C to exit.')
@@ -584,12 +760,14 @@ async function run () {
   } else {
     console.log('  Waiting ' + opts.holdSeconds + 's for initial replication...')
     await new Promise(resolve => setTimeout(resolve, opts.holdSeconds * 1000))
-    await swarm.destroy()
+    if (swarm) await swarm.destroy()
     await store.close()
   }
 }
 
-run().catch(err => {
+try {
+  await run()
+} catch (err) {
   console.error('Fatal:', err)
   process.exit(1)
-})
+}

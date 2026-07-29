@@ -83,6 +83,33 @@ export const AUDIT_OWNED_DIFF_SLICES = Object.freeze([
     ]
   },
   {
+    id: 'hyperdrive-release-lifecycle',
+    title: 'Bounded Hyperdrive release rotation and scoped reclamation',
+    files: [
+      'docs/APP-RELEASE-LIFECYCLE.md',
+      'docs/PEAR-INTEGRATION.md',
+      'packages/core/core/app-registry.js',
+      'packages/core/core/index.js',
+      'packages/core/core/release-lifecycle.js',
+      'packages/core/core/relay-node/app-lifecycle.js',
+      'packages/core/core/relay-node/dedup-report.js',
+      'packages/core/core/relay-node/eviction.js',
+      'packages/core/core/relay-node/index.js',
+      'scripts/lib/audit-owned-diff.mjs',
+      'scripts/lib/publish-drive-sync.mjs',
+      'scripts/lib/release-publisher.mjs',
+      'scripts/publish-app.js',
+      'test/integration/publish-release-rotation.test.js',
+      'test/unit/app-release-rotation.test.js',
+      'test/unit/audit-owned-diff.test.js',
+      'test/unit/dedup-reclaim.test.js',
+      'test/unit/dedup-report.test.js',
+      'test/unit/publish-drive-sync.test.js',
+      'test/unit/release-lifecycle.test.js',
+      'test/unit/release-publisher.test.js'
+    ]
+  },
+  {
     id: 'dispatch-route-helper',
     title: 'HTTP dispatch route helper extraction',
     files: [

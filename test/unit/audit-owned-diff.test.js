@@ -189,6 +189,37 @@ test('audit-owned diff accepts known audit slice paths', async (t) => {
     .owners.some(owner => owner.id === 'outboxlog-blind-recipient-trust-root-helper'))
 })
 
+test('audit-owned diff assigns the Hyperdrive release lifecycle surface', (t) => {
+  const paths = [
+    'docs/APP-RELEASE-LIFECYCLE.md',
+    'docs/PEAR-INTEGRATION.md',
+    'packages/core/core/app-registry.js',
+    'packages/core/core/index.js',
+    'packages/core/core/release-lifecycle.js',
+    'packages/core/core/relay-node/app-lifecycle.js',
+    'packages/core/core/relay-node/dedup-report.js',
+    'packages/core/core/relay-node/eviction.js',
+    'packages/core/core/relay-node/index.js',
+    'scripts/lib/publish-drive-sync.mjs',
+    'scripts/lib/release-publisher.mjs',
+    'scripts/publish-app.js',
+    'test/integration/publish-release-rotation.test.js',
+    'test/unit/app-release-rotation.test.js',
+    'test/unit/dedup-reclaim.test.js',
+    'test/unit/dedup-report.test.js',
+    'test/unit/publish-drive-sync.test.js',
+    'test/unit/release-lifecycle.test.js',
+    'test/unit/release-publisher.test.js'
+  ]
+  const report = buildOwnedDiffReport(paths.map(file => `?? ${file}`).join('\n'))
+
+  t.is(report.status, 'pass')
+  t.is(report.totals.unknown, 0)
+  for (const entry of report.entries) {
+    t.ok(entry.owners.some(owner => owner.id === 'hyperdrive-release-lifecycle'), entry.path)
+  }
+})
+
 test('audit-owned diff blocks unknown development paths', async (t) => {
   const fixture = await tempFile(t, '?? stray-release-note.txt\n')
   const res = await runAudit(['--json', '--status-file', fixture])

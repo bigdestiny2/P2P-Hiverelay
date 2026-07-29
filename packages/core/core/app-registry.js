@@ -9,7 +9,7 @@
  *   - Disk persistence (auto-saves on every mutation)
  *   - Startup recovery (loads from disk, reseeds drives)
  *   - Catalog generation (for HTTP /catalog.json and P2P broadcast)
- *   - Version deduplication (only keep latest version per appId)
+ *   - Release deduplication (signed sequence, with legacy version fallback)
  */
 
 import { readFile, writeFile, rename, unlink } from 'fs/promises'
@@ -19,6 +19,7 @@ import Hyperbee from 'hyperbee'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES } from '../config/storage-admission-authority.js'
+import { verifyAppRelease } from './release-lifecycle.js'
 import {
   compareVersions,
   normalizeAvailabilityClass,
@@ -77,6 +78,36 @@ function sumBlockBytes (blocks) {
   return total
 }
 
+function compareAppReleaseRows (left, right) {
+  const leftSequence = left?.release?.sequence
+  const rightSequence = right?.release?.sequence
+  const leftSigned = Number.isSafeInteger(leftSequence) && leftSequence > 0
+  const rightSigned = Number.isSafeInteger(rightSequence) && rightSequence > 0
+  if (leftSigned && rightSigned) {
+    return leftSequence - rightSequence
+  }
+  if (leftSigned !== rightSigned) return leftSigned ? 1 : -1
+  return compareVersions(left?.version || '0.0.0', right?.version || '0.0.0')
+}
+
+function validatePersistedRelease (entry, appKey) {
+  if (entry.release == null) return null
+  const verified = verifyAppRelease(entry.release, { checkTime: false })
+  if (!verified.ok) throw registryInventoryError('invalid-release')
+  const release = verified.release
+  const publisherPubkey = typeof entry.publisherPubkey === 'string'
+    ? entry.publisherPubkey.toLowerCase()
+    : null
+  if (release.driveKey !== appKey ||
+      release.appId !== entry.appId ||
+      release.version !== entry.version ||
+      release.publisherPubkey !== publisherPubkey ||
+      release.storageBudgetBytes !== entry.maxStorage) {
+    throw registryInventoryError('release-context-mismatch')
+  }
+  return release
+}
+
 function validatedLegacyEntries (parsed) {
   if (!parsed || typeof parsed !== 'object') throw registryInventoryError('unsupported-json-shape')
   const entries = Array.isArray(parsed) ? parsed : Object.values(parsed)
@@ -92,6 +123,7 @@ function validatedLegacyEntries (parsed) {
     validatePersistedStorageBound(entry)
     validatePersistedStorageProof(entry)
     validatePersistedMetadataBudget(entry)
+    validatePersistedRelease(entry, appKey)
     if (b4a.byteLength(JSON.stringify(entry)) + APP_REGISTRY_LEGACY_ROW_PREFLIGHT_MARGIN_BYTES >
         STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES) {
       throw registryInventoryError('storage-metadata-row-exceeds-commitment')
@@ -153,7 +185,7 @@ const MAX_TOMBSTONES = 5000
 
 /**
  * Collapse already-built catalog rows: for `app`-type rows sharing an appId,
- * keep only the highest version. The same latest-version-wins rule catalog()
+ * keep the highest signed release sequence (or legacy version). The same rule catalog()
  * applies inline (see ~`if (type === 'app')` below); factored here so the P2P
  * broadcast can't drift from the HTTP view. Rows that are non-`app` or carry a
  * null id (redacted/blind) are never collapsed — they pass through untouched.
@@ -168,7 +200,7 @@ function dedupLatestByAppId (rows, idField = 'appId') {
     if (idx === undefined) {
       seen.set(id, out.length)
       out.push(r)
-    } else if (compareVersions(r.version || '0.0.0', out[idx].version || '0.0.0') > 0) {
+    } else if (compareAppReleaseRows(r, out[idx]) > 0) {
       out[idx] = r
     }
   }
@@ -991,12 +1023,12 @@ export class AppRegistry extends EventEmitter {
         custodyIntentId: entry.custodyIntentId || null
       }, entry, opts)
 
-      // Dedup app entries by appId — keep latest version
+      // Dedup app entries by appId — signed sequence, legacy version fallback.
       if (type === 'app') {
         const existingIdx = seen.get(appId)
         if (existingIdx !== undefined) {
           const existing = items[existingIdx]
-          if (compareVersions(catalogEntry.version, existing.version) > 0) {
+          if (compareAppReleaseRows(catalogEntry, existing) > 0) {
             items[existingIdx] = catalogEntry
           }
         } else {
@@ -1037,6 +1069,7 @@ export class AppRegistry extends EventEmitter {
         parentKey: redacted ? null : (entry.parentKey || null),
         mountPath: redacted ? null : (entry.mountPath || null),
         version: redacted ? null : (entry.version || null),
+        release: redacted ? null : (entry.release || null),
         discoveryKey: entry.discoveryKey
           ? (redacted ? null : (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex')))
           : null,
@@ -1067,7 +1100,7 @@ export class AppRegistry extends EventEmitter {
         retainUntil: redacted ? null : (entry.retainUntil || null)
       })
     }
-    // Dedup app-type rows by appId (keep highest version) — catalog() already
+    // Dedup app-type rows by appId (signed sequence, legacy version fallback) — catalog() already
     // does this for the HTTP view, but the P2P broadcast previously emitted one
     // row per registry entry, leaking superseded versions to peers. Redacted
     // rows (appId null) + non-'app' types pass through untouched.
@@ -1184,6 +1217,7 @@ export class AppRegistry extends EventEmitter {
       } else {
         validatePersistedStorageBound(entry)
         validatePersistedStorageProof(entry)
+        validatePersistedRelease(entry, appKey)
       }
       seen.add(appKey)
       inventory.push({ appKey, entry, metadataBudget, tombstone })
@@ -1534,6 +1568,7 @@ export class AppRegistry extends EventEmitter {
   _hydrateEntry (appKey, entry) {
     const hasStorageProof = STORAGE_PROOF_FIELDS.every(field => entry[field] != null)
     const metadataBudget = validatePersistedMetadataBudget(entry)
+    const release = validatePersistedRelease(entry, appKey)
     const hydrated = {
       startedAt: entry.startedAt || entry.seededAt || Date.now(),
       appId: entry.appId || entry.name || null,
@@ -1556,6 +1591,7 @@ export class AppRegistry extends EventEmitter {
       shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
       privacyTier: entry.privacyTier || 'public',
       publisherPubkey: entry.publisherPubkey || null,
+      release,
       durability: Number.isFinite(entry.durability) ? entry.durability : 0,
       revocable: entry.revocable !== false,
       categories: entry.categories || null,
@@ -1615,6 +1651,7 @@ export class AppRegistry extends EventEmitter {
       retainUntil: e.retainUntil || null,
       shardIds: Array.isArray(e.shardIds) ? e.shardIds : null,
       publisherPubkey: e.publisherPubkey || null,
+      release: e.release || null,
       durability: Number.isFinite(e.durability) ? e.durability : 0,
       revocable: e.revocable !== false,
       maxStorage: Number.isSafeInteger(e.maxStorage) && e.maxStorage > 0
@@ -1634,6 +1671,7 @@ export class AppRegistry extends EventEmitter {
     // field can be coerced to null below and silently turn a poisoned partial
     // proof into a legacy-looking row that fails only on the next restart.
     const hasStorageProof = validatePersistedStorageProof(entry)
+    const release = validatePersistedRelease(entry, appKey)
     const shape = {
       appKey,
       appId: entry.appId || null,
@@ -1656,6 +1694,7 @@ export class AppRegistry extends EventEmitter {
       shardIds: Array.isArray(entry.shardIds) ? entry.shardIds : null,
       privacyTier: entry.privacyTier || 'public',
       publisherPubkey: entry.publisherPubkey || null,
+      release,
       durability: Number.isFinite(entry.durability) ? entry.durability : 0,
       revocable: entry.revocable !== false,
       categories: entry.categories || null,

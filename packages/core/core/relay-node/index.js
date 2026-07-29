@@ -671,7 +671,7 @@ export class RelayNode extends EventEmitter {
     this.appRegistry = new AppRegistry(this.config.storage)
     this.appLifecycle = new AppLifecycle(this)
     // Forward lifecycle events so existing listeners on RelayNode keep working
-    for (const ev of ['seeding', 'unseeded', 'reseeded', 'reseed-error', 'app-replaced', 'app-version-rejected']) {
+    for (const ev of ['seeding', 'unseeded', 'reseeded', 'reseed-error', 'app-replaced', 'app-version-rejected', 'app-release-rejected']) {
       this.appLifecycle.on(ev, (payload) => this._emitSafely(ev, payload))
     }
     this.connections = new Map() // conn -> { lastActivity }
