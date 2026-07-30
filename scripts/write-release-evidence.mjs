@@ -285,7 +285,11 @@ async function validateSuccessfulRun (body) {
     requireOneOf('successful prerelease channel', body.release.channel, ['none'])
     requireOneOf('successful prerelease distribution preflight', body.gates.distributionPreflight, ['skipped'])
     requireOneOf('successful prerelease metadata surfaces', body.surfaces.metadataCommit, ['skipped'])
-    requireOneOf('successful prerelease npm packages', body.surfaces.npmPackages, ['skipped'])
+    requireOneOf(
+      'successful prerelease npm packages',
+      body.surfaces.npmPackages,
+      body.release.candidate ? ['skipped'] : ['published-next', 'current-next']
+    )
     requireOneOf('successful prerelease fleet rollout', body.surfaces.fleetRollout, ['skipped'])
     requireOneOf('successful prerelease fleet rollout channel', body.surfaces.fleetRolloutChannel || 'skipped', ['skipped'])
     requireOneOf('successful prerelease fleet rollout evidence path', body.surfaces.fleetRolloutEvidence.path || 'skipped', ['skipped'])

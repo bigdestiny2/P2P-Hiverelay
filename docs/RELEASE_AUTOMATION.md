@@ -424,11 +424,14 @@ release-candidate skips. The audit proves there are no new unclassified
    the authenticated service-management and usage telemetry APIs.
 9. Publishes `p2p-hiverelay`, `p2p-hiverelay-client`,
    `p2p-hiverelay-verifier`, and `p2p-hiveservices` to npm from the tagged
-   source, or leaves an already-published immutable tarball in place, then
-   verifies every `latest` dist-tag equals the release semver through
-   `npm run release:check-npm-latest`. This is the gate that lets PearBrowser,
-   PearPaste, anonGPT, and other app consumers safely move from local workspace
-   links to the published release line.
+   source, or leaves an already-published immutable tarball in place. Tagged
+   prereleases publish immutable package versions under npm `next` and verify
+   that selected dist-tag without moving `latest`; branch candidates publish
+   no npm packages. Stable releases publish under `latest` and verify every
+   `latest` dist-tag equals the release semver through
+   `npm run release:check-npm-latest`. The stable proof is the gate that lets
+   PearBrowser, PearPaste, anonGPT, and other app consumers safely move from
+   local workspace links to the published release line.
    `npm run release:check-npm-packages` has already dry-run packed the same
    four workspaces before this publish step, so README/license metadata and
    unsafe-path checks fail before npm side effects.

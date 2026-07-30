@@ -7624,12 +7624,15 @@ if (
   releaseWorkflow.includes('NODE_AUTH_TOKEN: $' + '{{ secrets.NPM_TOKEN }}') &&
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
-  releaseWorkflow.includes('npm publish "$pkg" --access public --tag latest') &&
-  releaseWorkflow.includes('npm dist-tag add "$name@$version" latest') &&
-  releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
+  releaseWorkflow.includes('if: $' + "{{ steps.rel.outputs.is_branch_candidate != 'true' }}") &&
+  releaseWorkflow.includes('dist_tag=next') &&
+  releaseWorkflow.includes('status_suffix=-next') &&
+  releaseWorkflow.includes('npm publish "$pkg" --access public --tag "$dist_tag"') &&
+  releaseWorkflow.includes('npm dist-tag add "$name@$version" "$dist_tag"') &&
+  releaseWorkflow.includes('npm view "$name" "dist-tags.$dist_tag"') &&
   releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
-  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
-  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published$status_suffix') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current$status_suffix') &&
   monorepoPkg.scripts['audit:ecosystem-consumers:release'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:sync:release'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:check-workspace'] === 'node scripts/check-ecosystem-workspace.mjs' &&
@@ -7656,7 +7659,8 @@ if (
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Upload StartOS package to GitHub Release') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Commit HiveRelay release surfaces') &&
   releaseAutomationDocs.includes('Publishes `p2p-hiverelay`, `p2p-hiverelay-client`') &&
-  releaseAutomationDocs.includes('verifies every `latest`') &&
+  releaseAutomationDocs.includes('prereleases publish immutable package versions under npm `next`') &&
+  releaseAutomationDocs.includes('verify every\n   `latest`') &&
   releaseAutomationDocs.includes('through\n   `npm run release:check-npm-latest`') &&
   releaseAutomationDocs.includes('app consumers safely move') &&
   releaseAutomationDocs.includes('local workspace') &&
@@ -7705,9 +7709,9 @@ if (
   auditRoadmap.includes('Ecosystem release-scope latest audit') &&
   auditRoadmap.includes('Release workflow npm-latest checker reuse')
 ) {
-  pass('release workflow preflights app workspace, then publishes npm packages and verifies latest dist-tags before downstream app consumers update')
+  pass('release workflow publishes tagged RC packages under next and verifies stable latest before downstream app consumers update')
 } else {
-  fail('release workflow is missing app-workspace preflight, npm publication, or latest dist-tag verification before downstream app consumers update')
+  fail('release workflow is missing isolated RC npm publication, app-workspace preflight, or stable latest verification')
 }
 
 const releaseSurfaceCommitStep = releaseWorkflow.slice(

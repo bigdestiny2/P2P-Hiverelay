@@ -55,7 +55,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Item | State |
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
-| Release candidate | Signed `v0.25.0-rc.8` is immutable but failed the exact tagged-source workflow on two portable test-fixture assertions (3568/3570 tests; runtime remained fail-closed). The `v0.25.0-rc.9` successor now passes local unit (3571/3571), integration (107/107), lint, workspace audit, package dry-run, Hyperdrive reclamation/rotation, OutboxLog benchmark, and ARM64/AMD64 image/Umbrel smoke gates. Its production-image review also fixed missing ARM64 `libatomic`, cross-filesystem Corestore migration journaling, and omitted dependency patches; PR CI and a fresh exact-head signing authorization remain pending |
+| Release candidate | Signed `v0.25.0-rc.8` is immutable but failed the exact tagged-source workflow on two portable test-fixture assertions (3568/3570 tests; runtime remained fail-closed). The `v0.25.0-rc.9` successor passes local unit (3571/3571), integration (107/107), lint, workspace audit, package dry-run, Hyperdrive reclamation/rotation, OutboxLog benchmark, and ARM64/AMD64 image/Umbrel smoke gates. Its review fixed missing ARM64 `libatomic`, cross-filesystem Corestore migration journaling, omitted dependency patches, and the RC/SDK release split: tagged prereleases now publish all four immutable npm versions under `next` without moving `latest`; branch candidates still publish nothing. Updated PR CI and a fresh exact-head signing authorization remain pending |
 | Scoped live health (2026-07-30) | Sydney/Dallas are excluded from the maintained scope. Runtime catalogues reached **10/12**, hosts **11/12**, and active relay applications **10/12**. Utah canary is healthy on signed RC7. The Utah-8GB repair reinstalled the verified updater, preserved exact signed `stable@v0.25.0-rc.4`, enabled/started its timer, and did not restart the app; its HEAD/package/health versions match and checkout is clean. Dubai-2GB is newly provisioned on exact signed RC7 (`383f333b…`) with a clean checkout, 10 GB cap, eight runtime-proven services, trusted canary updater, and health watchdog. Miami stable is host-reachable but crash-looping because its registered `peerit` OutboxLog namespace excludes six valid persisted `p2pbuilders` groups; a read-only dual-registration load proves the data-preserving repair, but the production config write/restart still needs a fleet lease. Bern is unreachable |
 | Wake runtime | `notify` is loaded on **10/10** service-reachable in-scope relays, but signed live egress **0/10** and exact-lane wake **0/10**; seven older relays still carry the false `notify-v1` feature claim, while Utah, Utah-8GB, and Dubai-2GB correctly report loaded-not-live |
 | Agent mailbox | `outboxlog` is signed-advertised on **7/10** service-reachable in-scope relays; Utah, Utah-8GB, and Dubai-2GB have mailbox off |
@@ -445,7 +445,8 @@ You can call the **product ladder complete for honest marketing** when:
    RC8 tag at its original commit, require the updated RC9 PR head (including
    production-image safeguards) to pass every GitHub gate, then obtain a fresh
    explicit authorization for that exact commit before signing and pushing
-   `v0.25.0-rc.9`. Promote only the permitted canary in a
+   `v0.25.0-rc.9`. The tag workflow must prove all four npm packages at `next`
+   while leaving `latest` unchanged. Promote only the permitted canary in a
    separate health-gated change. Utah-8GB's exact RC4 updater pin and timer
    repair is complete; do not fold a downgrade into the canary promotion.
 2. **Prove the claims on live canary:** configure operator-owned push egress if

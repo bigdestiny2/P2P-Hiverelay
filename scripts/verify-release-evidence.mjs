@@ -423,7 +423,11 @@ function verifyOptionalFleetRollout (body, opts) {
 function verifyPrereleaseSkips (body) {
   requireOneOf('prerelease distribution preflight', body.gates?.distributionPreflight, ['skipped'])
   requireOneOf('prerelease metadata surfaces', body.surfaces?.metadataCommit, ['skipped'])
-  requireOneOf('prerelease npm packages', body.surfaces?.npmPackages, ['skipped'])
+  requireOneOf(
+    'prerelease npm packages',
+    body.surfaces?.npmPackages,
+    body.release?.candidate ? ['skipped'] : ['published-next', 'current-next']
+  )
   requireOneOf('prerelease fleet rollout', body.surfaces?.fleetRollout, ['skipped'])
   requireOneOf('prerelease fleet rollout channel', body.surfaces?.fleetRolloutChannel || 'skipped', ['skipped'])
   requireOneOf('prerelease fleet rollout evidence path', body.surfaces?.fleetRolloutEvidence?.path || 'skipped', ['skipped'])

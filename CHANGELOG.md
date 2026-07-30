@@ -12,6 +12,11 @@ The packages are versioned in lockstep.
 
 ### Fixed — portable release verification
 
+- Tagged prereleases now publish all four immutable npm package versions under
+  the `next` dist-tag while leaving `latest` unchanged; source-only branch
+  candidates still publish nothing. Release evidence distinguishes
+  `published-next`/`current-next` from stable publication so the SDK and relay
+  candidate cannot silently diverge again.
 - The production Docker runtime now installs `libatomic1`, which the Linux
   ARM64 `rocksdb-native` prebuild links dynamically. Without it, an ARM64
   Umbrel image contained the addon but failed before `/health` with the
