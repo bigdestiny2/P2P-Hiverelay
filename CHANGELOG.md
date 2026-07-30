@@ -12,6 +12,22 @@ The packages are versioned in lockstep.
 
 ### Fixed — portable release verification
 
+- The production Docker runtime now installs `libatomic1`, which the Linux
+  ARM64 `rocksdb-native` prebuild links dynamically. Without it, an ARM64
+  Umbrel image contained the addon but failed before `/health` with the
+  misleading `ADDON_NOT_FOUND` wrapper error. Workspace alignment now guards
+  the runtime dependency explicitly.
+- The crash-safe Corestore 6→7 migration journal now lives inside the storage
+  volume and is explicitly excluded from Hypercore Storage's one-time layout
+  sweep. Legacy state moves therefore remain atomic on Docker bind mounts;
+  upgrades no longer fail with either `EACCES` or cross-device `EXDEV` while
+  preserving the existing `/data` layout.
+- Docker dependency builds now copy `patches/` before `npm ci`, so the audited
+  Hypercore Storage migration corrections are actually applied to release
+  images instead of `patch-package` reporting that no patch files were found.
+- Pull requests now build and boot the production image, exercise an
+  operator-key first boot plus Umbrel restart persistence, and fail on missing
+  native linkage. Source-only green tests can no longer mask image drift.
 - The bounded-Hyperdrive admission regression fixture now derives its finite
   storage cap from the real initialized Corestore baseline. This preserves the
   same exact admission and residue assertions on Linux, where Corestore's

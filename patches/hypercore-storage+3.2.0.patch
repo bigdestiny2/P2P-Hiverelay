@@ -1,3 +1,13 @@
+diff --git a/node_modules/hypercore-storage/index.js b/node_modules/hypercore-storage/index.js
+index 8878006..547c8ac 100644
+--- a/node_modules/hypercore-storage/index.js
++++ b/node_modules/hypercore-storage/index.js
+@@ -1317,4 +1317,5 @@ function tmpFixStorage(p) {
+   const notRocks = new Set([
+     'CORESTORE',
++    '.hiverelay-corestore7-state',
+     'primary-key',
+     'cores',
 diff --git a/node_modules/hypercore-storage/migrations/0/index.js b/node_modules/hypercore-storage/migrations/0/index.js
 index d2f8f8b..8582bd4 100644
 --- a/node_modules/hypercore-storage/migrations/0/index.js

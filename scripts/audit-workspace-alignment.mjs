@@ -7758,6 +7758,13 @@ if (
 if (
   dockerfile.includes('COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh') &&
   dockerfile.includes('RUN chmod +x /usr/local/bin/docker-entrypoint.sh') &&
+  dockerfile.includes('COPY patches patches/') &&
+  dockerfile.includes('tini wget ca-certificates gosu libatomic1') &&
+  testWorkflow.includes('container-smoke:') &&
+  testWorkflow.includes('docker build -t p2p-hiverelay:ci .') &&
+  testWorkflow.includes('npm run release:smoke-image -- p2p-hiverelay:ci') &&
+  testWorkflow.includes('npm run umbrel:smoke-package -- --image-ref p2p-hiverelay:ci') &&
+  releaseImageSmoke.includes('HIVERELAY_API_KEY=release-smoke-api-key-') &&
   dockerfile.includes('HIVERELAY_STORAGE=/data') &&
   dockerfile.includes('ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh", "node", "/app/packages/core/cli/index.js"]') &&
   dockerEntrypoint.startsWith('#!/bin/sh\nset -e\n') &&
@@ -7767,9 +7774,9 @@ if (
   configLoaderTest.includes('cli start uses HIVERELAY_STORAGE when --storage is absent') &&
   configLoaderTest.includes('cli start --storage overrides HIVERELAY_STORAGE')
 ) {
-  pass('Docker runtime copies LF-pinned entrypoint and routes default container storage to /data')
+  pass('Docker build applies dependency patches; PR smoke covers operator-state first boot, native linkage, Umbrel restart, and /data storage')
 } else {
-  fail('Docker runtime can lose its entrypoint or ignore the /data storage volume')
+  fail('Docker build or PR smoke can omit patches, native linkage, operator-state migration, entrypoint, Umbrel restart, or /data storage')
 }
 
 if (new RegExp(`^version:\\s*${escapeRegExp(expectedVersion)}\\s*$`, 'm').test(startOsManifest)) {
