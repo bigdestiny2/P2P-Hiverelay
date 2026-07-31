@@ -1,0 +1,13 @@
+[Unit]
+Description=HiveRelay health watchdog every 2 minutes
+Requires=hiverelay-health-watchdog.service
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=2min
+AccuracySec=30s
+Persistent=true
+Unit=hiverelay-health-watchdog.service
+
+[Install]
+WantedBy=timers.target
