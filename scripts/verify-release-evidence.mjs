@@ -475,10 +475,17 @@ function verifyPrereleaseSkips (body) {
   requireOneOf('prerelease official Umbrel PR head owner', body.surfaces?.umbrelOfficial?.headOwner || 'skipped', ['skipped'])
   requireOneOf('prerelease official Umbrel PR head ref', body.surfaces?.umbrelOfficial?.headRef || 'skipped', ['skipped'])
   requireOneOf('prerelease official Umbrel PR head OID', body.surfaces?.umbrelOfficial?.headOid || 'skipped', ['skipped'])
-  requireOneOf('prerelease Umbrel community validation', body.surfaces?.umbrelCommunityStore?.validation, ['skipped'])
-  requireOneOf('prerelease Umbrel community publish', body.surfaces?.umbrelCommunityStore?.publish, ['skipped'])
-  requireOneOf('prerelease Umbrel community commit', body.surfaces?.umbrelCommunityStore?.commit || 'skipped', ['skipped'])
-  requireOneOf('prerelease Umbrel community commit URL', body.surfaces?.umbrelCommunityStore?.commitUrl || 'skipped', ['skipped'])
+  // Community store is the deliberate prerelease exception: it syncs on
+  // every release, so the prerelease carries full store facts.
+  requireOneOf('prerelease Umbrel community validation', body.surfaces?.umbrelCommunityStore?.validation, ['passed', 'skipped-no-manifest', 'skipped'])
+  requireOneOf('prerelease Umbrel community publish', body.surfaces?.umbrelCommunityStore?.publish, ['pushed', 'current', 'skipped'])
+  if (body.surfaces?.umbrelCommunityStore?.publish !== 'skipped') {
+    requirePattern('prerelease Umbrel community commit', body.surfaces?.umbrelCommunityStore?.commit, /^[a-f0-9]{40}$/i)
+    requirePattern('prerelease Umbrel community commit URL', body.surfaces?.umbrelCommunityStore?.commitUrl, /^https:\/\/github\.com\/bigdestiny2\/blindspark-umbrel-store\/commit\/[a-f0-9]{40}$/i)
+  } else {
+    requireOneOf('prerelease Umbrel community commit', body.surfaces?.umbrelCommunityStore?.commit || 'skipped', ['skipped'])
+    requireOneOf('prerelease Umbrel community commit URL', body.surfaces?.umbrelCommunityStore?.commitUrl || 'skipped', ['skipped'])
+  }
 }
 
 function verifyImageManifestSidecar (release, file) {

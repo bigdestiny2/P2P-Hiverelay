@@ -332,10 +332,18 @@ async function validateSuccessfulRun (body) {
     requireOneOf('successful prerelease official Umbrel PR head owner', body.surfaces.umbrelOfficial.headOwner || 'skipped', ['skipped'])
     requireOneOf('successful prerelease official Umbrel PR head ref', body.surfaces.umbrelOfficial.headRef || 'skipped', ['skipped'])
     requireOneOf('successful prerelease official Umbrel PR head OID', body.surfaces.umbrelOfficial.headOid || 'skipped', ['skipped'])
-    requireOneOf('successful prerelease Umbrel community-store validation', body.surfaces.umbrelCommunityStore.validation, ['skipped'])
-    requireOneOf('successful prerelease Umbrel community-store publish', body.surfaces.umbrelCommunityStore.publish, ['skipped'])
-    requireOneOf('successful prerelease Umbrel community-store commit', body.surfaces.umbrelCommunityStore.commit || 'skipped', ['skipped'])
-    requireOneOf('successful prerelease Umbrel community-store commit URL', body.surfaces.umbrelCommunityStore.commitUrl || 'skipped', ['skipped'])
+    // The community Umbrel store is the ONE deliberate prerelease exception:
+    // it syncs on every release (RELEASE_AUTOMATION.md), so a successful
+    // prerelease carries the same store facts as a full release.
+    requireOneOf('successful prerelease Umbrel community-store validation', body.surfaces.umbrelCommunityStore.validation, ['passed', 'skipped-no-manifest', 'skipped'])
+    requireOneOf('successful prerelease Umbrel community-store publish', body.surfaces.umbrelCommunityStore.publish, ['pushed', 'current', 'skipped'])
+    if (body.surfaces.umbrelCommunityStore.publish !== 'skipped') {
+      requirePattern('successful prerelease Umbrel community-store commit', body.surfaces.umbrelCommunityStore.commit, /^[a-f0-9]{40}$/i)
+      requirePattern('successful prerelease Umbrel community-store commit URL', body.surfaces.umbrelCommunityStore.commitUrl, /^https:\/\/github\.com\/bigdestiny2\/blindspark-umbrel-store\/commit\/[a-f0-9]{40}$/i)
+    } else {
+      requireOneOf('successful prerelease Umbrel community-store commit', body.surfaces.umbrelCommunityStore.commit || 'skipped', ['skipped'])
+      requireOneOf('successful prerelease Umbrel community-store commit URL', body.surfaces.umbrelCommunityStore.commitUrl || 'skipped', ['skipped'])
+    }
     await verifyPresentEvidenceFiles(body, false)
     return
   }

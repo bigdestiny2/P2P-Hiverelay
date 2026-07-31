@@ -1223,11 +1223,7 @@ test('release evidence writer allows successful prereleases to skip distribution
     HIVERELAY_UMBREL_OFFICIAL_PR_BASE: '',
     HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OWNER: '',
     HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_REF: '',
-    HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID: '',
-    HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS: 'skipped',
-    HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS: 'skipped',
-    HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT: '',
-    HIVERELAY_UMBREL_COMMUNITY_STORE_COMMIT_URL: ''
+    HIVERELAY_UMBREL_OFFICIAL_PR_HEAD_OID: ''
   }))
 
   const body = JSON.parse(await readFile(outFile, 'utf8'))
@@ -1236,6 +1232,11 @@ test('release evidence writer allows successful prereleases to skip distribution
   t.is(body.surfaces.npmPackages, 'published-next')
   t.is(body.surfaces.startosReleaseAsset, 'uploaded')
   t.is(body.surfaces.fleetRollout, 'skipped')
+  // The community store is the deliberate prerelease exception: it syncs
+  // on every release, so the prerelease carries full store facts.
+  t.is(body.surfaces.umbrelCommunityStore.validation, 'passed')
+  t.is(body.surfaces.umbrelCommunityStore.publish, 'pushed')
+  t.is(body.surfaces.umbrelCommunityStore.commit, SHA)
 })
 
 test('release evidence writer allows branch candidates to skip release asset publication', async (t) => {
