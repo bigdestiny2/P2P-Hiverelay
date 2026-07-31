@@ -692,6 +692,13 @@ export class RelayNode extends EventEmitter {
       ? this.config.indexSidecarUrl.replace(/\/+$/, '')
       : null
     this.appRegistry = new AppRegistry(this.config.storage)
+    // AppRegistry emits 'error' via _emitSafely, which no-ops without a
+    // listener — writes stop with no attribution (N-6). Route to a logged
+    // event instead, same contract as storageAccounting and eviction.
+    this.appRegistry.on('error', (e) => this.emit('app-registry-error', {
+      context: e && e.context,
+      error: e && e.error && e.error.message ? e.error.message : String(e)
+    }))
     // Federated signed gateway denylist (takedown channel). Always-on as a
     // manager so the HTTP gateway, the federation gossip pull, and the
     // /api/gateway/denylist endpoint all share one store. An empty
