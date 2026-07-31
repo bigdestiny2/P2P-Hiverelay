@@ -1349,6 +1349,15 @@ export class RelayNode extends EventEmitter {
         firewall: (remotePubKey, payload) => this.swarmFirewall.check(remotePubKey, payload)
       })
 
+      // Attach the connection dispatcher immediately — before any topic join.
+      // Hyperswarm hands server-side Noise streams to the consumer with NO
+      // 'error' handler; a peer that connects before storage ingress is ready
+      // would otherwise hold a stream whose later ECONNRESET (or the destroy
+      // in swarm.destroy() at stop) surfaces as an unhandled 'error' event and
+      // crashes the process. _onConnection rejects connections until
+      // _storageIngressReady flips true once recovery seals below.
+      this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
+
       await this._syncAccessControl()
 
       this.bootstrapCache.start(this.swarm)
@@ -1631,10 +1640,10 @@ export class RelayNode extends EventEmitter {
       }
 
       // No externally reachable storage-producing ingress exists before both
-      // inventories seal. Attach the connection dispatcher and HTTP listeners
-      // only after the shared authority is fully recovered.
+      // inventories seal. The connection dispatcher is already attached (since
+      // swarm creation) and rejects peers via the _storageIngressReady guard;
+      // HTTP listeners attach only after the shared authority is recovered.
       this._storageIngressReady = true
-      this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
       const ingressStartups = []
       if (this.api) ingressStartups.push(this.api.start())
       if (this.gatewayServer) ingressStartups.push(this.gatewayServer.start())
@@ -3199,6 +3208,9 @@ export class RelayNode extends EventEmitter {
 
   _onConnection (conn, info) {
     if (!this._storageIngressReady) {
+      // Guard the destroy: the remote can reset while it lands, and a Noise
+      // stream erroring with no listener takes down the whole process.
+      conn.on('error', () => {})
       try { conn.destroy() } catch (_) {}
       return
     }
@@ -3213,6 +3225,7 @@ export class RelayNode extends EventEmitter {
           remotePubKey: remotePubKeyHex,
           info
         })
+        conn.on('error', () => {}) // a reset racing the destroy is transport noise
         try { conn.destroy() } catch {}
         return
       }
