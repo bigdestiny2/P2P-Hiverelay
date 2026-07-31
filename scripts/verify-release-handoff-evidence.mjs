@@ -444,7 +444,7 @@ function verifyPrereleaseSkips (release) {
   requireOneOf('prerelease release channel', release.release?.channel, ['none'])
   requireOneOf('prerelease distribution preflight', release.gates?.distributionPreflight, ['skipped'])
   requireOneOf('prerelease metadata surfaces', release.surfaces?.metadataCommit, ['skipped'])
-  requireOneOf('prerelease npm packages', release.surfaces?.npmPackages, ['skipped'])
+  requireOneOf('prerelease npm packages', release.surfaces?.npmPackages, release.release?.candidate ? ['skipped'] : ['published-next', 'current-next'])
   requireOneOf('prerelease fleet rollout', release.surfaces?.fleetRollout, ['skipped'])
   requireOneOf('prerelease fleet rollout channel', release.surfaces?.fleetRolloutChannel || 'skipped', ['skipped'])
   requireOneOf('prerelease fleet rollout evidence path', release.surfaces?.fleetRolloutEvidence?.path || 'skipped', ['skipped'])

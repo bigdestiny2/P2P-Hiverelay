@@ -191,7 +191,7 @@ function releaseEvidence (opts) {
     },
     surfaces: {
       metadataCommit: prerelease ? 'skipped' : 'committed',
-      npmPackages: prerelease ? 'skipped' : (opts.npmPackages || 'published'),
+      npmPackages: candidate ? 'skipped' : (prerelease ? (opts.npmPackages || 'published-next') : (opts.npmPackages || 'published')),
       startosReleaseAsset: candidate ? 'skipped' : 'uploaded',
       fleetRollout: prerelease ? 'skipped' : 'verified',
       fleetRolloutChannel: prerelease ? '' : 'both',
