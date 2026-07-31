@@ -28,7 +28,8 @@ const FLEET_RELAYS = Object.freeze([
   ['sing-2', 'stable', '53%'],
   ['bern', 'canary', '54%'],
   ['amsterdam', 'stable', '46%'],
-  ['dubai', 'stable', '47%']
+  ['dubai', 'stable', '47%'],
+  ['dubai-2gb', 'canary', '6%']
 ])
 
 function runVerify (argv) {
@@ -192,7 +193,7 @@ function releaseEvidence (opts) {
     },
     surfaces: {
       metadataCommit: prerelease ? 'skipped' : 'committed',
-      npmPackages: prerelease ? 'skipped' : (opts.npmPackages || 'published'),
+      npmPackages: candidate ? 'skipped' : (prerelease ? (opts.npmPackages || 'published-next') : (opts.npmPackages || 'published')),
       startosReleaseAsset: candidate ? 'skipped' : 'uploaded',
       fleetRollout: prerelease ? 'skipped' : 'verified',
       fleetRolloutChannel: prerelease ? '' : 'both',

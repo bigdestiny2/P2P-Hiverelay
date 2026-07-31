@@ -76,6 +76,7 @@ try {
     '--rm',
     '--name', containerName,
     '-e', 'APP_SEED=release-smoke-seed-00000000000000000000000000000000',
+    '-e', 'HIVERELAY_API_KEY=release-smoke-api-key-00000000000000000000000000000000',
     '-e', 'HIVERELAY_API_HOST=0.0.0.0',
     '-e', 'HIVERELAY_API_PORT=9100',
     '-e', 'HIVERELAY_UI_SIMPLE=true',

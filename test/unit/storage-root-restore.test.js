@@ -98,6 +98,7 @@ test('interruption after Corestore layout creation resumes sidecar restoration b
   await interrupted.close()
   t.ok(existsSync(join(a.dir, 'CORESTORE')), 'Corestore marker was written before interruption')
   t.absent(existsSync(join(a.dir, 'app-registry.json')), 'sidecar is staged, never mistaken for Corestore data')
+  t.ok(existsSync(join(a.dir, '.hiverelay-corestore7-state', 'journal.json')), 'journal remains on the storage filesystem')
 
   const resumed = openCorestore(a.dir)
   await resumed.ready()
@@ -106,7 +107,7 @@ test('interruption after Corestore layout creation resumes sidecar restoration b
   await resumed.close()
 })
 
-test('a trailing storage-path separator still journals beside, never inside, the Corestore root', async (t) => {
+test('a trailing storage-path separator keeps the journal in-volume and out of Corestore db', async (t) => {
   const a = tmpDir()
   t.teardown(a.cleanup)
   writeFileSync(join(a.dir, 'identity.key'), 'relay-secret')
@@ -115,6 +116,12 @@ test('a trailing storage-path separator still journals beside, never inside, the
   await store.ready()
   t.ok(existsSync(join(a.dir, 'identity.key')), 'sidecar is restored when storage has a trailing separator')
   t.absent(existsSync(join(a.dir, 'db', '.hiverelay-corestore7-state')), 'journal was not swept into Corestore db')
+  t.absent(existsSync(join(a.dir, '.hiverelay-corestore7-state')), 'completed journal is removed from the volume')
   t.is(readFileSync(join(a.dir, 'identity.key'), 'utf8'), 'relay-secret', 'sidecar contents remain intact')
   await store.close()
+})
+
+test('hypercore-storage patch preserves the in-volume migration journal', (t) => {
+  const patch = readFileSync(join(process.cwd(), 'patches', 'hypercore-storage+3.2.0.patch'), 'utf8')
+  t.ok(patch.includes("'.hiverelay-corestore7-state',"), 'dependency layout sweep explicitly excludes the journal')
 })

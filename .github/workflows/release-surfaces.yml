@@ -141,10 +141,10 @@ jobs:
           if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
             release_surfaces_status=skipped
             release_distribution_status=skipped
-            npm_publish_status=skipped
           fi
           if [ "${{ steps.rel.outputs.is_branch_candidate }}" = "true" ]; then
             startos_release_asset_status=skipped
+            npm_publish_status=skipped
           fi
           {
             echo "HIVERELAY_RELEASE_VERSION=${{ steps.rel.outputs.version }}"
@@ -253,8 +253,9 @@ jobs:
         run: git checkout --detach "$HIVERELAY_RELEASE_SHA"
 
       # Community store syncs on EVERY release (including prereleases) whenever
-      # the token is present, so it never lags the fleet. The OFFICIAL Umbrel
-      # fork PR + npm publish stay non-prerelease-gated below on purpose.
+      # the token is present, so it never lags the fleet. The official Umbrel
+      # fork PR remains stable-only. Tagged prereleases publish
+      # immutable SDK tarballs under npm `next`; branch candidates publish none.
       - name: Checkout Umbrel community store
         id: store_checkout
         if: ${{ env.UMBREL_STORE_TOKEN != '' }}
@@ -494,13 +495,19 @@ jobs:
           echo "HIVERELAY_RELEASE_IMAGE_SMOKE_STATUS=passed" >> "$GITHUB_ENV"
 
       - name: Publish npm packages
-        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
+        if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
         working-directory: hiverelay
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           set -euo pipefail
           expected="${{ steps.rel.outputs.semver }}"
+          dist_tag=latest
+          status_suffix=""
+          if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
+            dist_tag=next
+            status_suffix=-next
+          fi
           published=0
           for pkg in packages/core packages/client packages/verifier packages/services; do
             name="$(node -p "require('./${pkg}/package.json').name")"
@@ -512,24 +519,26 @@ jobs:
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "$name@$version already exists on npm; leaving tarball immutable."
             else
-              npm publish "$pkg" --access public --tag latest
+              npm publish "$pkg" --access public --tag "$dist_tag"
               published=1
             fi
-            latest="$(npm view "$name" dist-tags.latest 2>/dev/null || true)"
-            if [ "$latest" != "$version" ]; then
-              npm dist-tag add "$name@$version" latest
+            selected="$(npm view "$name" "dist-tags.$dist_tag" 2>/dev/null || true)"
+            if [ "$selected" != "$version" ]; then
+              npm dist-tag add "$name@$version" "$dist_tag"
             fi
-            latest="$(npm view "$name" dist-tags.latest)"
-            if [ "$latest" != "$version" ]; then
-              echo "$name latest dist-tag is $latest; expected $version" >&2
+            selected="$(npm view "$name" "dist-tags.$dist_tag")"
+            if [ "$selected" != "$version" ]; then
+              echo "$name $dist_tag dist-tag is $selected; expected $version" >&2
               exit 1
             fi
           done
-          npm run release:check-npm-latest -- --expected-version "$expected"
+          if [ "$dist_tag" = "latest" ]; then
+            npm run release:check-npm-latest -- --expected-version "$expected"
+          fi
           if [ "$published" = "1" ]; then
-            echo "HIVERELAY_NPM_PUBLISH_STATUS=published" >> "$GITHUB_ENV"
+            echo "HIVERELAY_NPM_PUBLISH_STATUS=published$status_suffix" >> "$GITHUB_ENV"
           else
-            echo "HIVERELAY_NPM_PUBLISH_STATUS=current" >> "$GITHUB_ENV"
+            echo "HIVERELAY_NPM_PUBLISH_STATUS=current$status_suffix" >> "$GITHUB_ENV"
           fi
 
       - name: Return to main for metadata sync

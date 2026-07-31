@@ -93,7 +93,9 @@ function completeFullReleaseEnv (overrides = {}) {
   }
   if (env.HIVERELAY_RELEASE_PRERELEASE === 'true') {
     if (!Object.prototype.hasOwnProperty.call(overrides, 'HIVERELAY_NPM_PUBLISH_STATUS')) {
-      env.HIVERELAY_NPM_PUBLISH_STATUS = 'skipped'
+      env.HIVERELAY_NPM_PUBLISH_STATUS = env.HIVERELAY_RELEASE_CANDIDATE === 'true'
+        ? 'skipped'
+        : 'published-next'
     }
     if (!Object.prototype.hasOwnProperty.call(overrides, 'HIVERELAY_FLEET_CHANNEL_CONFIG')) {
       env.HIVERELAY_FLEET_CHANNEL_CONFIG = ''
@@ -1084,7 +1086,8 @@ test('release evidence writer rejects successful full releases without artifact 
   try {
     await runEvidence(missingStartosRegistryUrl, completeFullReleaseEnv({
       HIVERELAY_STARTOS_REGISTRY_URL: '',
-      HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL: ''
+      HIVERELAY_STARTOS_REGISTRY_PACKAGE_URL: '',
+      STARTOS_REGISTRY_URL: ''
     }))
   } catch (e) {
     startosRegistryUrlErr = e
@@ -1142,7 +1145,7 @@ test('release evidence writer rejects successful full releases without artifact 
   t.ok(umbrelCommitErr.stderr.includes('successful full release Umbrel community-store commit'))
 })
 
-test('release evidence writer allows successful prereleases to skip distribution surfaces', async (t) => {
+test('release evidence writer requires tagged prerelease npm next while other distribution surfaces stay skipped', async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-evidence-'))
   t.teardown(async () => {
     await rm(dir, { recursive: true, force: true })
@@ -1187,7 +1190,7 @@ test('release evidence writer allows successful prereleases to skip distribution
   const body = JSON.parse(await readFile(outFile, 'utf8'))
   t.is(body.release.prerelease, true)
   t.is(body.gates.distributionPreflight, 'skipped')
-  t.is(body.surfaces.npmPackages, 'skipped')
+  t.is(body.surfaces.npmPackages, 'published-next')
   t.is(body.surfaces.startosReleaseAsset, 'uploaded')
   t.is(body.surfaces.fleetRollout, 'skipped')
 })

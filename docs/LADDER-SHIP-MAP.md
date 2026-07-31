@@ -1,6 +1,6 @@
 # Ladder ship map (chronological)
 
-**Date:** 2026-07-29 · **Status:** living operator/product plan · **Baseline:** fleet canary `v0.25.0-rc.7` · stable `v0.24.3` · `v0.25.0-rc.8` repair candidate prepared in `codex/hiverelay-release-fleet-20260729`
+**Date:** 2026-07-29 · **Status:** living operator/product plan · **Baseline:** fleet canary `v0.25.0-rc.7` · stable `v0.24.3` · signed `v0.25.0-rc.8` preserved as failed prerelease · `v0.25.0-rc.9` successor candidate in preparation
 
 > Two parallel tracks, one honesty ladder. **Version tags and claim badges stay separate until a deliberate merge.** Do not call the blind public-test pilot “fleet v0.25.0,” and do not claim rungs the current ship has not evidenced.
 
@@ -55,12 +55,12 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Item | State |
 |------|--------|
 | Fleet channel | **canary `v0.25.0-rc.7`** · **stable `v0.24.3`** · held `v0.24.3` |
-| Repair candidate | `v0.25.0-rc.8` package identity prepared: full Node unit **3570/3570** with **17954/17954** assertions, integration **107/107**, lint, public-artifact audit, release mailbox benchmark, and npm package dry-runs green; signed tag and CI image evidence remain pending |
-| Scoped live health (2026-07-29 21:19Z) | Latest operator scan excludes Sydney/Dallas and covers 12 inventory entries: service catalogues reached **10/12**, hosts **10/12**, and active relay applications **10/12**. Bern and Dubai-2GB are currently unreachable; the last successful Dubai-2GB SSH diagnostic found a blank/inactive host with no relay repo, service, updater, config, or health endpoint. `utah-8gb` is healthy on signed RC4 with `CHANNEL=stable`, exact `PINNED_TAG=v0.25.0-rc.4`, and updater timer enabled/active |
-| Wake runtime | `notify` loaded on **10/10** service-reachable relays, but signed live egress **0/10** and exact-lane wake **0/10**; eight stable relays still carry the old false `notify-v1` feature claim, while Utah and Utah-8GB correctly report loaded-not-live |
-| Agent mailbox | `outboxlog` is signed-advertised on **8/10** service-reachable relays; Utah and Utah-8GB have mailbox off |
+| Release candidate | Signed `v0.25.0-rc.8` is immutable but failed the exact tagged-source workflow on two portable test-fixture assertions (3568/3570 tests; runtime remained fail-closed). The `v0.25.0-rc.9` successor passes local unit (3571/3571), integration (107/107), lint, workspace audit, package dry-run, Hyperdrive reclamation/rotation, OutboxLog benchmark, and ARM64/AMD64 image/Umbrel smoke gates. Its review fixed missing ARM64 `libatomic`, cross-filesystem Corestore migration journaling, omitted dependency patches, and the RC/SDK release split: tagged prereleases now publish all four immutable npm versions under `next` without moving `latest`; branch candidates still publish nothing. Updated PR CI and a fresh exact-head signing authorization remain pending |
+| Scoped live health (2026-07-30) | Sydney/Dallas are excluded from the maintained scope. Runtime catalogues reached **10/12**, hosts **11/12**, and active relay applications **10/12**. Utah canary is healthy on signed RC7. The Utah-8GB repair reinstalled the verified updater, preserved exact signed `stable@v0.25.0-rc.4`, enabled/started its timer, and did not restart the app; its HEAD/package/health versions match and checkout is clean. Dubai-2GB is newly provisioned on exact signed RC7 (`383f333b…`) with a clean checkout, 10 GB cap, eight runtime-proven services, trusted canary updater, and health watchdog. Miami stable is host-reachable but crash-looping because its registered `peerit` OutboxLog namespace excludes six valid persisted `p2pbuilders` groups; a read-only dual-registration load proves the data-preserving repair, but the production config write/restart still needs a fleet lease. Bern is unreachable |
+| Wake runtime | `notify` is loaded on **10/10** service-reachable in-scope relays, but signed live egress **0/10** and exact-lane wake **0/10**; seven older relays still carry the false `notify-v1` feature claim, while Utah, Utah-8GB, and Dubai-2GB correctly report loaded-not-live |
+| Agent mailbox | `outboxlog` is signed-advertised on **7/10** service-reachable in-scope relays; Utah, Utah-8GB, and Dubai-2GB have mailbox off |
 | Privacy runtime | two restricted Tor endpoints are signed-advertised, but signed-ready is **0/10** because neither has the required anonymous rejection proof. Post-RC7 code suppresses readiness until that probe succeeds |
-| One-hop forward | advertised on **1/10** service-reachable relays; the bounded compatibility route exists live, but it is not split-transport/OHTTP evidence |
+| One-hop forward | advertised on **1/10** service-reachable in-scope relays; the bounded compatibility route exists live, but it is not split-transport/OHTTP evidence |
 | Packaging truth | Node/Bare now translate bounded service/Tor env into first-boot defaults; persisted config and `services.json` remain authoritative, while `/api/v1/services` plus the signed capability doc are runtime proof |
 | App release storage | Bounded Hyperdrive publishing is integrated in the repair candidate: exact tree mirroring, signed monotonic releases, budget-triggered drive rotation, pinned-tree verification, and exact app/publisher rollback reclamation; not deployed until the new prerelease ships |
 | Track B | Blind public-test pilot (syd/dal) — **parallel** version line, not this fleet tag |
@@ -75,7 +75,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 |---------|-----------------|-----|
 | `v0.25.0-rc.5` | Retired; never deploy | Its updater install path cannot complete. |
 | RC4 / RC6 fleet targets | Retired by RC7 and the next repair prerelease | They lack the complete updater/security/health corrections. |
-| Stable `v0.24.3` `notify-v1` claim | Must be retired by a health-gated stable promotion | Eight live relays advertise wake while using a non-live memory sink. |
+| Stable `v0.24.3` `notify-v1` claim | Must be retired by a health-gated stable promotion | Seven in-scope live relays advertise wake while using a non-live memory sink. |
 | `notify-feed-head` | Compatibility-only; deprecated in signed capabilities when exact lanes are wired | Global sender-head changes can wake unrelated recipients; `notify-outbox-lane` is precise and opaque. |
 | Config-derived fleet service reports | Replaced by runtime `/api/v1/services` plus signed capability evidence | Config can be overridden by `services.json` and previously reported services that never loaded. |
 | Grep-and-strip package version parsing | Replaced by exact package JSON parsing | It changed `v0.25.0-rc.7` into the misleading `v0.25.0.7`. |
@@ -83,7 +83,7 @@ Marketing one-liner when both are live: **“Fleet v0.25.0 + Blind public-test o
 | Legacy one-hop byte bridge | Compatibility path pending replacement, not G2-W | It does not provide OHTTP role separation or BlindForward flow-control semantics. |
 | Nym full-data-path claims | Parked; bounded control-message candidate only | Coverage/cost do not support a general relay data path today. |
 | Unbounded in-place Hyperdrive release history | Replaced in the repair candidate by signed, budgeted drive rotation and scoped rollback retention | Rewriting one forever-growing drive makes historical release blocks accumulate without an enforceable per-drive ceiling. |
-| Dubai-2GB inventory assignment | Decide fresh deployment or inventory retirement; not an in-place repair | The host is currently unreachable, and its last successful SSH diagnostic found no relay service, checkout, updater, updater config, or health endpoint, so installing only an updater would not restore an application. |
+| Dubai-2GB RC7 mailbox omission | Enable only after the RC9 bounded-journal repair is signed and promoted | RC7 correctly refuses unbounded JSON mailbox persistence, but its fresh bounded Hypercore journal path has the first-boot defect repaired in RC8/RC9; the new relay therefore runs healthy with eight services and no mailbox claim. |
 
 Split transport itself is **not redundant**: its vNext wire codecs are useful, but the runtime,
 `BlindTransportDescriptorV1`, OHTTP ingress/gateway, browser client, padding reconciliation, and
@@ -441,12 +441,14 @@ You can call the **product ladder complete for honest marketing** when:
 
 ## 9. Immediate next three moves (in order)
 
-1. **Sign and ship the prepared RC8 candidate:** unlock the existing release
-   signer, select the principal already shipped in `fleet/allowed-signers`, cut
-   and push the signed `v0.25.0-rc.8` tag, and let CI build and prove
-   the digest-pinned image. Promote only the permitted canary in a separate
-   health-gated change. Utah-8GB's exact RC4 updater pin and timer repair is
-   complete; do not fold a downgrade into the canary promotion.
+1. **Close PR CI and authorize the proven RC9 successor:** preserve the signed
+   RC8 tag at its original commit, require the updated RC9 PR head (including
+   production-image safeguards) to pass every GitHub gate, then obtain a fresh
+   explicit authorization for that exact commit before signing and pushing
+   `v0.25.0-rc.9`. The tag workflow must prove all four npm packages at `next`
+   while leaving `latest` unchanged. Promote only the permitted canary in a
+   separate health-gated change. Utah-8GB's exact RC4 updater pin and timer
+   repair is complete; do not fold a downgrade into the canary promotion.
 2. **Prove the claims on live canary:** configure operator-owned push egress if
    wake is a release claim; verify exact-lane wake, outboxlog persistence,
    restricted-Tor negative probe, and the 100 MB onion transfer. Observe for

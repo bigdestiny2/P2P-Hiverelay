@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay",
-  "version": "0.25.0-rc.8",
+  "version": "0.25.0-rc.9",
   "description": "HiveRelay Core — minimal always-on P2P availability infrastructure (seeding, circuit relay, proof-of-relay, gateway)",
   "type": "module",
   "main": "core/index.js",
@@ -41,6 +41,10 @@
       "bare": "bare-path",
       "default": "path"
     },
+    "crypto": {
+      "bare": "bare-crypto",
+      "default": "crypto"
+    },
     "http": {
       "bare": "bare-http1",
       "default": "http"
@@ -76,6 +80,7 @@
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
     "b4a": "^1.8.1",
+    "bare-crypto": "^1.15.3",
     "bare-events": "^2.9.1",
     "bare-fs": "^4.7.2",
     "bare-http1": "^4.5.7",

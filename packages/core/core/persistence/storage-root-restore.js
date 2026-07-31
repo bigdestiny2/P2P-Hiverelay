@@ -28,17 +28,19 @@ import {
   unlinkSync,
   writeFileSync
 } from 'fs'
-import { basename, dirname, join, resolve } from 'path'
+import { join, resolve } from 'path'
 
-const CORESTORE_OWNED = new Set(['CORESTORE', 'primary-key', 'cores', 'db'])
-const STAGING_SUFFIX = '.hiverelay-corestore7-state'
+const STAGING_NAME = '.hiverelay-corestore7-state'
+const CORESTORE_OWNED = new Set(['CORESTORE', 'primary-key', 'cores', 'db', STAGING_NAME])
 const JOURNAL_NAME = 'journal.json'
 
 function stageDir (storage) {
-  // `storage + suffix` makes a trailing-slash path place staging *inside* the
-  // Corestore root. Corestore would then sweep the journal itself into db/.
-  // Resolve once so all entrypoints use the same sibling directory.
-  return join(dirname(storage), `${basename(storage)}${STAGING_SUFFIX}`)
+  // The stage must live on the same filesystem as the storage root so every
+  // rename stays atomic. Container storage is commonly a bind mount at /data,
+  // which makes a sibling /data.* directory a different filesystem. The
+  // patch-package guard teaches hypercore-storage's one-time layout sweep to
+  // preserve this exact directory while the journal is active.
+  return join(storage, STAGING_NAME)
 }
 
 function journalFile (stage) {

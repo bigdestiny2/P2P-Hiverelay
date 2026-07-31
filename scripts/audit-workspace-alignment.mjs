@@ -6415,7 +6415,7 @@ if (pearBrowserDemoHtml.includes('<h1>HiveRelay Marketplace Demo</h1>') && pearB
 }
 
 const rootReadme = readText(hiverelayRoot, 'README.md')
-const statusMatch = rootReadme.match(/Status:\s*v(\d+\.\d+\.\d+)/)
+const statusMatch = rootReadme.match(/Status:\s*v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/)
 if (!statusMatch) warn('README status line is missing a parseable version badge')
 else if (statusMatch[1] !== expectedVersion) warn(`README status badge is ${statusMatch[1]} while monorepo version is ${expectedVersion}`)
 else pass(`README status badge matches monorepo version (${expectedVersion})`)
@@ -7624,12 +7624,15 @@ if (
   releaseWorkflow.includes('NODE_AUTH_TOKEN: $' + '{{ secrets.NPM_TOKEN }}') &&
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
-  releaseWorkflow.includes('npm publish "$pkg" --access public --tag latest') &&
-  releaseWorkflow.includes('npm dist-tag add "$name@$version" latest') &&
-  releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
+  releaseWorkflow.includes('if: $' + "{{ steps.rel.outputs.is_branch_candidate != 'true' }}") &&
+  releaseWorkflow.includes('dist_tag=next') &&
+  releaseWorkflow.includes('status_suffix=-next') &&
+  releaseWorkflow.includes('npm publish "$pkg" --access public --tag "$dist_tag"') &&
+  releaseWorkflow.includes('npm dist-tag add "$name@$version" "$dist_tag"') &&
+  releaseWorkflow.includes('npm view "$name" "dist-tags.$dist_tag"') &&
   releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
-  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
-  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published$status_suffix') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current$status_suffix') &&
   monorepoPkg.scripts['audit:ecosystem-consumers:release'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:sync:release'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:check-workspace'] === 'node scripts/check-ecosystem-workspace.mjs' &&
@@ -7656,7 +7659,8 @@ if (
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Upload StartOS package to GitHub Release') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Commit HiveRelay release surfaces') &&
   releaseAutomationDocs.includes('Publishes `p2p-hiverelay`, `p2p-hiverelay-client`') &&
-  releaseAutomationDocs.includes('verifies every `latest`') &&
+  releaseAutomationDocs.includes('prereleases publish immutable package versions under npm `next`') &&
+  releaseAutomationDocs.includes('verify every\n   `latest`') &&
   releaseAutomationDocs.includes('through\n   `npm run release:check-npm-latest`') &&
   releaseAutomationDocs.includes('app consumers safely move') &&
   releaseAutomationDocs.includes('local workspace') &&
@@ -7705,9 +7709,9 @@ if (
   auditRoadmap.includes('Ecosystem release-scope latest audit') &&
   auditRoadmap.includes('Release workflow npm-latest checker reuse')
 ) {
-  pass('release workflow preflights app workspace, then publishes npm packages and verifies latest dist-tags before downstream app consumers update')
+  pass('release workflow publishes tagged RC packages under next and verifies stable latest before downstream app consumers update')
 } else {
-  fail('release workflow is missing app-workspace preflight, npm publication, or latest dist-tag verification before downstream app consumers update')
+  fail('release workflow is missing isolated RC npm publication, app-workspace preflight, or stable latest verification')
 }
 
 const releaseSurfaceCommitStep = releaseWorkflow.slice(
@@ -7758,6 +7762,13 @@ if (
 if (
   dockerfile.includes('COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh') &&
   dockerfile.includes('RUN chmod +x /usr/local/bin/docker-entrypoint.sh') &&
+  dockerfile.includes('COPY patches patches/') &&
+  dockerfile.includes('tini wget ca-certificates gosu libatomic1') &&
+  testWorkflow.includes('container-smoke:') &&
+  testWorkflow.includes('docker build -t p2p-hiverelay:ci .') &&
+  testWorkflow.includes('npm run release:smoke-image -- p2p-hiverelay:ci') &&
+  testWorkflow.includes('npm run umbrel:smoke-package -- --image-ref p2p-hiverelay:ci') &&
+  releaseImageSmoke.includes('HIVERELAY_API_KEY=release-smoke-api-key-') &&
   dockerfile.includes('HIVERELAY_STORAGE=/data') &&
   dockerfile.includes('ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/docker-entrypoint.sh", "node", "/app/packages/core/cli/index.js"]') &&
   dockerEntrypoint.startsWith('#!/bin/sh\nset -e\n') &&
@@ -7767,9 +7778,9 @@ if (
   configLoaderTest.includes('cli start uses HIVERELAY_STORAGE when --storage is absent') &&
   configLoaderTest.includes('cli start --storage overrides HIVERELAY_STORAGE')
 ) {
-  pass('Docker runtime copies LF-pinned entrypoint and routes default container storage to /data')
+  pass('Docker build applies dependency patches; PR smoke covers operator-state first boot, native linkage, Umbrel restart, and /data storage')
 } else {
-  fail('Docker runtime can lose its entrypoint or ignore the /data storage volume')
+  fail('Docker build or PR smoke can omit patches, native linkage, operator-state migration, entrypoint, Umbrel restart, or /data storage')
 }
 
 if (new RegExp(`^version:\\s*${escapeRegExp(expectedVersion)}\\s*$`, 'm').test(startOsManifest)) {

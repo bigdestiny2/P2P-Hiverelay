@@ -14,7 +14,7 @@ and key-material fields at the schema boundary.
 a one-page dashboard, first-run setup, wallet destination, service selection,
 and persistent identity behind each platform's authenticated app proxy.
 
-**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.25.0-rc.8**
+**Open source (Apache 2.0)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Status: v0.25.0-rc.9**
 
 The four packages are versioned in lockstep:
 
@@ -34,7 +34,7 @@ and StartOS metadata so the published release surfaces agree.
 
 | Surface | Current source state | Publication/evidence boundary |
 |---|---|---|
-| Core3 packages | Monorepo and package manifests are prepared for `v0.25.0-rc.8`; its signed tag, multi-arch image, and release evidence are still pending | The prerelease workflow must build and verify the digest-pinned image before any separate canary promotion |
+| Core3 packages | Signed `v0.25.0-rc.8` is preserved as a failed prerelease: its release workflow exposed two Linux/release-environment test-fixture defects. The successor manifests are prepared for `v0.25.0-rc.9` | RC9 must pass the exact tagged-source workflow and prove its digest-pinned image before any separate canary promotion |
 | Blindspark on Umbrel | In-repo package uses app proxy, persistent `/data`, review-mode default, and guarded setup/add-wallet/service-manager smoke paths with visible in-flight state | Official App Store inclusion still needs the upstream `getumbrel/umbrel-apps` PR/review plus real-device `umbrel-runtime-review-evidence.json` |
 | StartOS | Source can build and verify a digest-pinned `.s9pk` from a published GHCR release image and publish to a configured registry | Current `v0.20.2` package proof is blocked until `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` resolves to a multi-arch digest; registry proof requires `startos-registry-evidence.json`; marketplace/community inclusion remains Start9 review-controlled |
 | Raw fleet | Pull updater, channel metadata, health gate, rollback, and rollout verifier are in-repo | A release is live on the selected fleet only when `fleet-rollout-evidence.json` proves target SHA, package version, `/health.version`, and relay health |

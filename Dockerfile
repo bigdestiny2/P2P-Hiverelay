@@ -66,6 +66,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
 COPY packages/verifier/package.json packages/verifier/
+COPY patches patches/
 
 # Install production deps across all workspaces. --workspaces installs deps
 # for every workspace; --include-workspace-root pulls in root devDeps if any
@@ -83,8 +84,11 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
 # ca-certificates so HTTPS to public registries / payment providers works.
+# libatomic1 is required by the Linux ARM64 rocksdb-native prebuild. Without it
+# require-addon reports a misleading ADDON_NOT_FOUND even though the prebuild is
+# present, and Umbrel ARM64 nodes fail before the relay can expose /health.
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends tini wget ca-certificates gosu && \
+    apt-get install -y --no-install-recommends tini wget ca-certificates gosu libatomic1 && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

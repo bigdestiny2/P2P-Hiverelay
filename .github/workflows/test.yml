@@ -45,6 +45,24 @@ jobs:
         # for the slowest-runner edge case.
         timeout-minutes: 15
 
+  container-smoke:
+    # A source-only test run cannot prove that native shared libraries and
+    # patch-package output survive the multi-stage production build. Boot the
+    # exact Dockerfile on every PR, including an operator-key first boot that
+    # exercises the Corestore 6→7 in-volume migration guard.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: docker build -t p2p-hiverelay:ci .
+      - run: npm run release:smoke-image -- p2p-hiverelay:ci --timeout-ms 180000
+      - run: npm run umbrel:smoke-package -- --image-ref p2p-hiverelay:ci --timeout-ms 180000
+      - run: docker run --rm --entrypoint /bin/sh p2p-hiverelay:ci -c '! ldd /app/node_modules/rocksdb-native/prebuilds/linux-x64/rocksdb-native.node | grep -q "not found"'
+
   bare-tests:
     # Executes the test suite under the REAL Bare runtime (not Node), so the
     # `bare` condition of the imports map resolves to bare-events / bare-fs /

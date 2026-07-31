@@ -6,6 +6,48 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.25.0-rc.9] — 2026-07-29
+
+**Release-gate repair prerelease. RC8 remains immutable and is not promoted.**
+
+### Fixed — portable release verification
+
+- Tagged prereleases now publish all four immutable npm package versions under
+  the `next` dist-tag while leaving `latest` unchanged; source-only branch
+  candidates still publish nothing. Release evidence distinguishes
+  `published-next`/`current-next` from stable publication so the SDK and relay
+  candidate cannot silently diverge again.
+- The production Docker runtime now installs `libatomic1`, which the Linux
+  ARM64 `rocksdb-native` prebuild links dynamically. Without it, an ARM64
+  Umbrel image contained the addon but failed before `/health` with the
+  misleading `ADDON_NOT_FOUND` wrapper error. Workspace alignment now guards
+  the runtime dependency explicitly.
+- The crash-safe Corestore 6→7 migration journal now lives inside the storage
+  volume and is explicitly excluded from Hypercore Storage's one-time layout
+  sweep. Legacy state moves therefore remain atomic on Docker bind mounts;
+  upgrades no longer fail with either `EACCES` or cross-device `EXDEV` while
+  preserving the existing `/data` layout.
+- Docker dependency builds now copy `patches/` before `npm ci`, so the audited
+  Hypercore Storage migration corrections are actually applied to release
+  images instead of `patch-package` reporting that no patch files were found.
+- Pull requests now build and boot the production image, exercise an
+  operator-key first boot plus Umbrel restart persistence, and fail on missing
+  native linkage. Source-only green tests can no longer mask image drift.
+- The bounded-Hyperdrive admission regression fixture now derives its finite
+  storage cap from the real initialized Corestore baseline. This preserves the
+  same exact admission and residue assertions on Linux, where Corestore's
+  baseline metadata is larger than on macOS, without weakening fail-closed
+  runtime behavior.
+- Release-evidence negative tests now explicitly clear the workflow's fallback
+  StartOS registry variable when exercising a missing-URL case. The assertion
+  is hermetic even when the release workflow supplies real registry secrets.
+- The core package restores the conditional `crypto` to `bare-crypto` mapping,
+  so the same storage-admission authority imports and constructs under the
+  genuine Bare runtime as well as Node.
+- Dev-only lint transitive dependencies are pinned above the current
+  `brace-expansion` and `js-yaml` denial-of-service advisories, so the complete
+  dependency audit is clean as well as the production-only release gate.
+
 ## [0.25.0-rc.8] — 2026-07-29
 
 **Post-RC7 repair prerelease. The signed tag, image evidence, and separate

@@ -160,8 +160,9 @@ cmd_cut() {
   if [ "$tagver" != "$pkgver" ]; then
     die "tag $version (=$tagver) != package.json version $pkgver. The fleet health-gate compares these; an -rc tag would auto-roll-back. Bump package.json to match, or tag exactly v$pkgver."
   fi
-  # FOOTGUN GUARD 2: a non-prerelease tag triggers the secret-gated npm/ecosystem
-  # release jobs. Prerelease (default) skips them. Require --stable to opt in.
+  # FOOTGUN GUARD 2: stable tags trigger npm `latest` plus ecosystem-consumer
+  # promotion. Prerelease tags publish immutable packages under npm `next` but
+  # do not move app defaults. Require --stable to opt into the broader train.
   if [ "$prerelease" = 0 ]; then
     warn "cutting a STABLE (non-prerelease) release — release-surfaces.yml will run the npm/ecosystem-consumer jobs (needs NPM_TOKEN/ECOSYSTEM_CONSUMER_TOKEN)."
   fi

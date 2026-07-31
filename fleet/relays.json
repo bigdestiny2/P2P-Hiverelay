@@ -126,7 +126,7 @@
       "publicIp": "144.172.88.9",
       "tailnet": null,
       "sshKey": "default",
-      "channel": "hold",
+      "channel": "canary",
       "region": "ME",
       "diskGB": 60,
       "role": "seed"
