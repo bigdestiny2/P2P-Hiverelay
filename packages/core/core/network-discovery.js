@@ -201,6 +201,8 @@ export class NetworkDiscovery extends EventEmitter {
 
   _onConnection (conn, info) {
     if (!this._acceptingWork) {
+      // Guard the destroy: a reset racing it would be an unhandled stream error.
+      conn.on('error', () => {})
       try { conn.destroy() } catch (_) {}
       return
     }

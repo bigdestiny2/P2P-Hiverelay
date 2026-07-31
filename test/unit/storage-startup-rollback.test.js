@@ -166,7 +166,7 @@ test('storage ingress stays closed until recovery inventories seal', async (t) =
     relay._storageIngressReady = false
     relay.store = { replicate () { throw new Error('must not replicate before inventory seal') } }
     let destroyed = 0
-    relay._onConnection({ destroy () { destroyed++ } }, {})
+    relay._onConnection({ on () {}, destroy () { destroyed++ } }, {})
     t.is(destroyed, 1, `${Relay.name} rejects a pre-seal connection`)
   }
 })
