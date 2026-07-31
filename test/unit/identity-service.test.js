@@ -123,8 +123,11 @@ test('IdentityService - verify valid signature', async (t) => {
 test('IdentityService - verify tampered signature', async (t) => {
   const { svc } = await createService()
   const signed = await svc.sign({ message: 'original' })
-  // Tamper with the signature
-  const tampered = 'ff' + signed.signature.slice(2)
+  // Tamper with the signature — XOR the first byte so the tampered value is
+  // ALWAYS different. A fixed replacement byte fails ~1/256 of runs (when
+  // the real signature happens to start with it).
+  const first = parseInt(signed.signature.slice(0, 2), 16) ^ 1
+  const tampered = first.toString(16).padStart(2, '0') + signed.signature.slice(2)
   const result = await svc.verify({
     message: 'original',
     signature: tampered,
