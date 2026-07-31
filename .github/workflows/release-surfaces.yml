@@ -519,7 +519,7 @@ jobs:
             if npm view "$name@$version" version >/dev/null 2>&1; then
               echo "$name@$version already exists on npm; leaving tarball immutable."
             else
-              npm publish "$pkg" --access public --tag "$dist_tag"
+              npm publish "./$pkg" --access public --tag "$dist_tag"
               published=1
             fi
             selected="$(npm view "$name" "dist-tags.$dist_tag" 2>/dev/null || true)"
