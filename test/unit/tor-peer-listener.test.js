@@ -110,6 +110,10 @@ test('listener upgrades inbound TCP to a Noise XK peer stream — protomux rides
     remotePublicKey: relayKP.publicKey,
     pattern: 'XK'
   })
+  // The suite runs every unit file in one process: an unhandled 'error' on
+  // this stream (e.g. ECONNRESET when listener.stop() drops the server side)
+  // would crash the whole run, not just this test.
+  client.on('error', () => {})
   t.teardown(() => { try { client.destroy() } catch {} })
   await new Promise((resolve) => client.on('handshake', resolve))
 

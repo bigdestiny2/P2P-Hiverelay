@@ -1108,6 +1108,9 @@ export class BareRelay extends EventEmitter {
 
   _onConnection (conn, info) {
     if (!this._storageIngressReady) {
+      // Guard the destroy: the remote can reset while it lands, and a Noise
+      // stream erroring with no listener takes down the whole process.
+      conn.on('error', () => {})
       try { conn.destroy() } catch (_) {}
       return
     }
