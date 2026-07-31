@@ -207,6 +207,8 @@ export class HiveRelayClient extends EventEmitter {
 
     this.store = config.store || null
     this.swarm = config.swarm || null
+    this._connectionHandler = null
+    this._connectionGuard = null
     this.keyPair = config.keyPair || (this.swarm && this.swarm.keyPair) || null
     // Ephemeral read identity: when true, the swarm (the identity a relay
     // actually sees on the wire) gets a FRESH random keypair every session,
@@ -799,6 +801,10 @@ export class HiveRelayClient extends EventEmitter {
     }
 
     // Wire replication for all connections
+    if (this._connectionGuard) {
+      this.swarm.removeListener('connection', this._connectionGuard)
+      this._connectionGuard = null
+    }
     this._connectionHandler = (conn, info) => {
       if (this.store) this.store.replicate(conn)
       this._onConnection(conn, info)
@@ -942,10 +948,7 @@ export class HiveRelayClient extends EventEmitter {
       await this._awaitOwnerOperation('pairing', pairing, () => pairing.destroy())
       if (this._pairing === pairing) this._pairing = null
     }
-    if (this._connectionHandler && this.swarm) {
-      this.swarm.removeListener('connection', this._connectionHandler)
-      this._connectionHandler = null
-    }
+    this._detachConnectionHandler()
     for (const pending of this._pendingServiceRequests.values()) {
       clearTimeout(pending.timer)
       pending.reject(new Error('CLIENT_START_FAILED'))
@@ -4451,12 +4454,36 @@ export class HiveRelayClient extends EventEmitter {
 
   // ─── Internal ────────────────────────────────────────────────────
 
+  // Detach the protocol connection handler without leaving a window where a
+  // late-opening connection carries no 'error' listener. Hyperswarm drops its
+  // own 'error' handler the moment a connection opens, so a handshake that
+  // completes after detach — while teardown is still awaiting discovery
+  // handles, drives, and caches before swarm.destroy() — would surface a
+  // remote reset as an unhandled 'error' and crash the whole process.
+  _detachConnectionHandler () {
+    if (!this._connectionHandler || !this.swarm) return
+    this.swarm.removeListener('connection', this._connectionHandler)
+    this._connectionHandler = null
+    if (!this._ownsSwarm) return // shared swarm: late connections are the owner's concern
+    const guard = (conn) => {
+      conn.on('error', () => {}) // a reset racing teardown is transport noise
+      try { conn.destroy() } catch (_) {}
+    }
+    this._connectionGuard = guard
+    this.swarm.on('connection', guard)
+  }
+
   _onConnection (conn, info) {
     const pubkeyHex = info.publicKey
       ? b4a.toString(info.publicKey, 'hex')
       : null
 
-    if (!pubkeyHex) return
+    if (!pubkeyHex) {
+      // No protocol wiring without a peer identity — but the stream still
+      // needs an error guard or a remote reset crashes the process.
+      conn.on('error', () => {})
+      return
+    }
 
     const mux = Protomux.from(conn)
     const channels = {}
@@ -5140,10 +5167,7 @@ export class HiveRelayClient extends EventEmitter {
     this._capabilityCache.clear()
 
     // Remove swarm connection listener (important for shared swarms)
-    if (this._connectionHandler && this.swarm) {
-      this.swarm.removeListener('connection', this._connectionHandler)
-      this._connectionHandler = null
-    }
+    this._detachConnectionHandler()
 
     // Stop epoch-discovery refresh before destroying the exact sessions.
     if (this._epochDiscoveryTimer) {
