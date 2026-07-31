@@ -875,7 +875,7 @@ function smokeCheckKeys (name) {
     case 'serviceCatalog': return ['name', 'status', 'builtIns', 'bundles']
     case 'walletWrite': return ['name', 'status', 'destinationSaved']
     case 'servicesSave': return ['name', 'status', 'plugins', 'restartRequired']
-    case 'composeSafety': return ['name', 'status', 'composePath']
+    case 'composeSafety': return ['name', 'status', 'composePath', 'packageImageRef']
     case 'firstBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'dynamicPayoutControls', 'serviceInlinePlanState', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
     case 'secondBoot': return ['name', 'status', 'dashboard', 'setup', 'serviceCatalog', 'dashboardUiHardening', 'dynamicPayoutControls', 'serviceInlinePlanState', 'appProxyWrites', 'leasePollingBounded', 'dashboardStaticMarkupSafe', 'setupUiHardening', 'dashboardLinkAppPath', 'setupStaticMarkupSafe', 'acceptMode', 'healthVersion']
     case 'identityPersistence': return ['name', 'status', 'publicKeyStable']
