@@ -233,3 +233,81 @@ test('relays missing region are bucketed as __unknown__', async (t) => {
   // Should still select both (different operators count as diversity)
   t.is(selected.length, 2)
 })
+
+// ── operator vs failure domain ───────────────────────────────────────────
+// These two were one field. The fleet deploy script gave each box a distinct
+// "operator" id (hive-foundation-utah, -utah-us, -singapore, -singapore-2 …)
+// with a comment stating they existed so the replica scheduler would treat the
+// boxes as separate nodes. Correct goal, wrong field: it made a single-owner
+// fleet report as many operators and clear any minOperators floor for free.
+
+test('one owner across many hosts counts as ONE operator', async (t) => {
+  // The real fleet shape: one owner, boxes in different datacenters.
+  const fleet = [
+    { pubkey: 'a1', region: 'NA', operator: 'hive-foundation', failureDomain: 'cloudzy-utah', score: 0.9 },
+    { pubkey: 'a2', region: 'NA', operator: 'hive-foundation', failureDomain: 'cloudzy-utah-us', score: 0.85 },
+    { pubkey: 'a3', region: 'APAC', operator: 'hive-foundation', failureDomain: 'cloudzy-singapore-1', score: 0.8 },
+    { pubkey: 'a4', region: 'APAC', operator: 'hive-foundation', failureDomain: 'cloudzy-singapore-2', score: 0.75 },
+    { pubkey: 'a5', region: 'ME', operator: 'hive-foundation', failureDomain: 'cloudzy-dubai', score: 0.7 }
+  ]
+  const selected = selectQuorum(fleet, { strategy: 'diverse', size: 5, minOperators: 3 })
+  const desc = describeQuorum(selected)
+
+  t.is(desc.operators.length, 1, 'one owner is one operator, however many boxes')
+  t.ok(desc.failureDomains.length >= 4, 'but replicas still spread across hosts')
+  t.ok(selected.diversityWarning, 'and the independence floor honestly fails')
+  t.is(selected.diversityWarning.reason, 'insufficient-operator-diversity')
+  t.is(selected.diversityWarning.observedOperators, 1)
+})
+
+test('spreading still works when only failure domains differ', async (t) => {
+  // Two boxes, same owner, same region, different hosts. Losing one host must
+  // not lose both replicas, so the scheduler must still treat them as distinct.
+  const pair = [
+    { pubkey: 'b1', region: 'NA', operator: 'hive-foundation', failureDomain: 'host-1', score: 0.9 },
+    { pubkey: 'b2', region: 'NA', operator: 'hive-foundation', failureDomain: 'host-1', score: 0.8 },
+    { pubkey: 'b3', region: 'NA', operator: 'hive-foundation', failureDomain: 'host-2', score: 0.7 }
+  ]
+  const selected = selectQuorum(pair, { strategy: 'diverse', size: 2, minRegions: 1, minOperators: 1 })
+  const domains = new Set(selected.map(s => s.failureDomain))
+  t.is(domains.size, 2, 'picks across two hosts rather than doubling up on one')
+})
+
+test('an undeclared operator is unknown, not independent', async (t) => {
+  // The old fallback was `operator || pubkey`, which minted a fresh operator
+  // identity from every relay key — manufacturing independence out of silence.
+  const anon = [
+    { pubkey: 'c1', region: 'NA', score: 0.9 },
+    { pubkey: 'c2', region: 'EU', score: 0.8 },
+    { pubkey: 'c3', region: 'APAC', score: 0.7 }
+  ]
+  const selected = selectQuorum(anon, { strategy: 'diverse', size: 3, minRegions: 3, minOperators: 3 })
+  const desc = describeQuorum(selected)
+
+  t.is(desc.operators.length, 1, 'three undeclared relays are not three operators')
+  t.ok(selected.diversityWarning, 'undeclared operators cannot satisfy an independence floor')
+  t.is(selected.diversityWarning.operatorsUndeclared, true)
+  t.is(desc.failureDomains.length, 3, 'they are still spread, falling back to pubkey')
+})
+
+test('an anonymous fleet forfeits diversity credit rather than leaking identity', async (t) => {
+  // This is an anonymity network, and the capability doc is unauthenticated.
+  // Declaring an operator publishes a linkage set naming every relay one party
+  // runs — the exact correlation the Tor path and blind cells exist to prevent.
+  // So the fleet declares nothing, and the selector must respond by refusing to
+  // credit independence, NOT by inventing it from relay keys.
+  const anonFleet = [
+    { pubkey: 'd1', region: 'NA', failureDomain: 'fd-a1', score: 0.9 },
+    { pubkey: 'd2', region: 'EU', failureDomain: 'fd-c1', score: 0.8 },
+    { pubkey: 'd3', region: 'APAC', failureDomain: 'fd-b1', score: 0.7 }
+  ]
+  const selected = selectQuorum(anonFleet, { strategy: 'diverse', size: 3, minRegions: 3, minOperators: 2 })
+  const desc = describeQuorum(selected)
+
+  t.is(desc.regions.length, 3, 'region diversity is real and still counted')
+  t.is(desc.failureDomains.length, 3, 'spreading still works with no operator declared')
+  t.is(desc.operators.length, 1, 'three anonymous relays are one unknown, not three operators')
+  t.is(selected.diversityWarning.reason, 'insufficient-operator-diversity')
+  t.is(selected.diversityWarning.operatorsUndeclared, true,
+    'the caller can tell "undeclared" from "declared but concentrated"')
+})
