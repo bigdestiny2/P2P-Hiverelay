@@ -93,7 +93,9 @@ function completeFullReleaseEnv (overrides = {}) {
   }
   if (env.HIVERELAY_RELEASE_PRERELEASE === 'true') {
     if (!Object.prototype.hasOwnProperty.call(overrides, 'HIVERELAY_NPM_PUBLISH_STATUS')) {
-      env.HIVERELAY_NPM_PUBLISH_STATUS = 'skipped'
+      env.HIVERELAY_NPM_PUBLISH_STATUS = env.HIVERELAY_RELEASE_CANDIDATE === 'true'
+        ? 'skipped'
+        : 'published-next'
     }
     if (!Object.prototype.hasOwnProperty.call(overrides, 'HIVERELAY_FLEET_CHANNEL_CONFIG')) {
       env.HIVERELAY_FLEET_CHANNEL_CONFIG = ''
@@ -1231,7 +1233,7 @@ test('release evidence writer allows successful prereleases to skip distribution
   const body = JSON.parse(await readFile(outFile, 'utf8'))
   t.is(body.release.prerelease, true)
   t.is(body.gates.distributionPreflight, 'skipped')
-  t.is(body.surfaces.npmPackages, 'skipped')
+  t.is(body.surfaces.npmPackages, 'published-next')
   t.is(body.surfaces.startosReleaseAsset, 'uploaded')
   t.is(body.surfaces.fleetRollout, 'skipped')
 })
