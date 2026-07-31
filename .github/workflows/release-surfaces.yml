@@ -960,11 +960,17 @@ jobs:
           fi
           git config user.name "hiverelay-release-bot"
           git config user.email "hiverelay-release-bot@users.noreply.github.com"
-          git add package.json README.md index.html \
-            hiverelay-blindspark/docker-compose.yml \
+          # Add only files that exist: the live store has no index.html, and
+          # package.json arrived only with the validation entrypoint. The
+          # compose pin and manifest version are the always-present targets.
+          git add hiverelay-blindspark/docker-compose.yml \
             hiverelay-blindspark/umbrel-app.yml
+          for f in package.json README.md index.html; do
+            [ -f "$f" ] && git add "$f" || true
+          done
           git commit -m "chore: publish Blindspark ${{ steps.rel.outputs.version }}"
-          git push
+          # actions/checkout leaves a detached HEAD; push it explicitly.
+          git push origin HEAD:main
           community_sha="$(git rev-parse HEAD)"
           if ! [[ "$community_sha" =~ ^[a-f0-9]{40}$ ]]; then
             echo "Umbrel community-store commit SHA is malformed." >&2
