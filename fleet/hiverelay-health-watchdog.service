@@ -1,0 +1,11 @@
+[Unit]
+Description=HiveRelay health watchdog (one-shot probe)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/hiverelay-health-watchdog.sh
+Nice=10
+# Do not block the host if curl hangs longer than expected
+TimeoutStartSec=30
