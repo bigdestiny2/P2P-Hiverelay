@@ -130,6 +130,47 @@ test('api health: diskHealthGate drains critical relays with stable fleet payloa
   })
 })
 
+test('api health: fail-closed storage authority reports 503 before the disk gate', (t) => {
+  // A fail-closed storage authority is terminal and restart-proof, so it must
+  // win over the (restartable) disk drain even when diskHealthGate is on.
+  const out = buildHealthResponse({
+    version: '3.0.0',
+    node: nodeFixture({
+      config: { diskHealthGate: true },
+      storageAdmission: { fatalReason: 'journal invariant violated' },
+      diskMonitor: {
+        getInfo () {
+          return { usedPct: 99, status: 'critical', mountPath: '/data' }
+        }
+      }
+    })
+  })
+
+  t.is(out.status, 503)
+  t.alike(out.payload, {
+    ok: false,
+    reason: 'storage-fail-closed',
+    storageFatalReason: 'journal invariant violated',
+    version: '3.0.0',
+    uptime: 1234,
+    running: true,
+    disk: { usedPct: 99, status: 'critical' }
+  })
+})
+
+test('api health: healthy storage authority does not perturb the 200 payload', (t) => {
+  const out = buildHealthResponse({
+    version: '3.0.1',
+    node: nodeFixture({
+      storageAdmission: { fatalReason: null }
+    })
+  })
+
+  t.is(out.status, 200)
+  t.is(out.payload.ok, true)
+  t.absent(out.payload.reason)
+})
+
 test('api health: missing metrics and disk monitor remain stable', (t) => {
   const out = buildHealthResponse({
     version: null,
