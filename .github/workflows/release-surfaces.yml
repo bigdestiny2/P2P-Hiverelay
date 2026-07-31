@@ -612,9 +612,16 @@ jobs:
           touch web/dist/static/.keep
           git rev-parse HEAD > GIT_HASH.txt
           rustup toolchain install 1.78.0
+          # Start9Labs/avahi-sys was deleted upstream; start-os v0.3.5.1's
+          # locked tree depends on its feature/dynamic-linking branch. The
+          # fedimint fork carries the same branch at the same pinned commit
+          # (12bef9e4), so rewrite the git URL instead of touching the lock.
+          git config --global url."https://github.com/fedimint/avahi-sys".insteadOf \
+            "https://github.com/Start9Labs/avahi-sys"
           cd core/startos
           cargo +1.78.0 install --path . --bin startbox \
             --no-default-features --features cli,sdk --locked
+          git config --global --unset url."https://github.com/fedimint/avahi-sys".insteadOf
           ln -sf "$HOME/.cargo/bin/startbox" "$HOME/.cargo/bin/start-sdk"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           start-sdk --version
