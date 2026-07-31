@@ -395,6 +395,12 @@ Service lifecycle is controlled by:
   // 'authenticated-user'.
   serviceDefaultPeerRole: 'anonymous',
   serviceAdminAllowlist: [],
+  // Fail-closed by default: if any enabled service fails to start, the relay
+  // refuses to boot (SERVICE_START_FAILED) rather than run degraded — a
+  // partially started relay can look healthy while silently missing services.
+  // Set true only for deliberate best-effort deployments, and alert on the
+  // logged startup failures if you do.
+  servicesFailOpen: false,
   serviceSupervision: {
     enabled: true,
     intervalMs: 30_000,

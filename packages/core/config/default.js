@@ -235,6 +235,10 @@ export default {
   serviceAdminAllowlist: [],
   enableServices: false,
   plugins: [],
+  // Fail-closed: if an enabled service fails to start, the relay refuses to
+  // boot (SERVICE_START_FAILED) instead of running degraded. Set true only
+  // for deliberate best-effort deployments.
+  servicesFailOpen: false,
   serviceSupervision: {
     enabled: true,
     intervalMs: 30_000,
