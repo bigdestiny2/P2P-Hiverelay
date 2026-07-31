@@ -73,6 +73,7 @@ COPY packages/core/package.json packages/core/
 COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
 COPY packages/verifier/package.json packages/verifier/
+COPY patches patches/
 
 # Install with build-time tooling so patch-package and native workspace builds
 # run against the exact lockfile, then prune development dependencies without
