@@ -35,6 +35,31 @@ test('config loader: saving nested default edits does not mutate defaults away',
   t.is(loadConfig().subsidy.payoutDestination, 'operator@example.com')
 })
 
+test('config loader: a default relay grants anonymous peers the anonymous role', async (t) => {
+  // Regression guard for a security default that silently reverted. Commit
+  // 9125f3c set 'anonymous' in relay-node/index.js and bare-relay.js but not in
+  // config/default.js — and config/default.js is the one the CLI loads, merged
+  // last, so it won. Every default install was back on 'authenticated-user',
+  // which hands any anonymous swarm peer the rights of a known user (notably
+  // arbitration.submit, whose pending Map is uncapped).
+  //
+  // Nothing asserted this value in either file, which is exactly why the
+  // revert went unnoticed. Assert the EFFECTIVE value, not the literal, so this
+  // still fails if the precedence between the two defaults changes again.
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-peer-role-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const { loadConfig } = await importLoaderWithHome(home)
+
+  t.is(loadConfig().serviceDefaultPeerRole, 'anonymous',
+    'default install must not grant authenticated-user to anonymous peers')
+  t.is(loadConfig({ serviceDefaultPeerRole: 'authenticated-user' }).serviceDefaultPeerRole,
+    'authenticated-user',
+    'an operator can still raise it deliberately')
+})
+
 test('cli start rejects invalid HIVERELAY_ACCEPT_MODE before boot', async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-env-'))
   t.teardown(async () => {
