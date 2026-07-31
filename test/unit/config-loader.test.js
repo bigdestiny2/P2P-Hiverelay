@@ -297,6 +297,55 @@ test('cli start --storage overrides HIVERELAY_STORAGE', async (t) => {
   t.absent(res.stdout.includes(`Storage:    ${envStorage}`))
 })
 
+test('cli start rejects invalid HIVERELAY_API_PORT before boot', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-env-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCli(['start'], {
+    ...process.env,
+    HOME: home,
+    HIVERELAY_API_PORT: 'not-a-port'
+  })
+
+  t.is(res.code, 1)
+  t.ok(res.stderr.includes('Invalid HIVERELAY_API_PORT'))
+})
+
+test('cli start uses HIVERELAY_API_PORT when --port is absent', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-apiport-env-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCliUntil(['start', '--no-relay', '--no-seeding', '--quiet'], {
+    ...process.env,
+    HOME: home,
+    HIVERELAY_API_PORT: '19191'
+  }, 'API:')
+
+  t.ok(res.sawNeedle)
+  t.ok(res.stdout.includes('API:        http://127.0.0.1:19191'))
+})
+
+test('cli start --port overrides HIVERELAY_API_PORT', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-apiport-flag-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCliUntil(['start', '--port', '19292', '--no-relay', '--no-seeding', '--quiet'], {
+    ...process.env,
+    HOME: home,
+    HIVERELAY_API_PORT: '19191'
+  }, 'API:')
+
+  t.ok(res.sawNeedle)
+  t.ok(res.stdout.includes('API:        http://127.0.0.1:19292'))
+  t.absent(res.stdout.includes(':19191'))
+})
+
 test('applyOutboxlogNamespaceEnv: env sets config.outboxlog.namespace on a fresh box', async (t) => {
   const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-outboxlog-ns-'))
   t.teardown(async () => {

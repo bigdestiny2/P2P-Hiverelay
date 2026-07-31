@@ -353,6 +353,7 @@ async function start () {
   if (args['max-bandwidth']) cliOverrides.maxRelayBandwidthMbps = parseInt(args['max-bandwidth'])
   if (args.bootstrap) cliOverrides.bootstrapNodes = parseBootstrapNodesOrExit(args.bootstrap)
   if (args['api-host']) cliOverrides.apiHost = String(args['api-host'])
+  else if (process.env.HIVERELAY_API_HOST) cliOverrides.apiHost = process.env.HIVERELAY_API_HOST
   if (args.relay === false) cliOverrides.enableRelay = false
   if (args.seeding === false) cliOverrides.enableSeeding = false
   if (args.metrics === false) cliOverrides.enableMetrics = false
@@ -360,6 +361,14 @@ async function start () {
   if (args['distributed-drive'] === true) cliOverrides.enableDistributedDriveBridge = true
   if (args['distributed-drive'] === false) cliOverrides.enableDistributedDriveBridge = false
   if (args.port) cliOverrides.apiPort = parseInt(args.port)
+  else if (process.env.HIVERELAY_API_PORT) {
+    const envPort = Number(process.env.HIVERELAY_API_PORT)
+    if (!Number.isInteger(envPort) || envPort < 1 || envPort > 65535) {
+      console.error(`Invalid HIVERELAY_API_PORT: ${process.env.HIVERELAY_API_PORT}`)
+      process.exit(1)
+    }
+    cliOverrides.apiPort = envPort
+  }
   if (args.region) cliOverrides.regions = [].concat(args.region)
   if (typeof args.operator === 'string' && args.operator.trim()) {
     cliOverrides.operator = args.operator.trim()
@@ -385,7 +394,7 @@ async function start () {
     if (!cliOverrides.tor) cliOverrides.tor = {}
     cliOverrides.tor.controlPort = parseInt(args['tor-control-port'])
   }
-  if (args.holesail) {
+  if (args.holesail || process.env.HIVERELAY_HOLESAIL === '1' || process.env.HIVERELAY_HOLESAIL === 'true') {
     if (!cliOverrides.transports) cliOverrides.transports = {}
     cliOverrides.transports.holesail = true
   }
@@ -1691,6 +1700,9 @@ Environment:
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
   HIVERELAY_STORAGE             Storage path used when --storage is absent
   HIVERELAY_MAX_STORAGE         Storage cap until maxStorageBytes is persisted
+  HIVERELAY_API_HOST            API bind host used when --api-host is absent
+  HIVERELAY_API_PORT            API port used when --port is absent
+  HIVERELAY_HOLESAIL            Set 1/true to enable the Holesail API tunnel
 
 Examples:
   npx p2p-hiverelay setup                              # Interactive setup wizard
