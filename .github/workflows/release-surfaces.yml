@@ -618,10 +618,13 @@ jobs:
           # (12bef9e4), so rewrite the git URL instead of touching the lock.
           git config --global url."https://github.com/fedimint/avahi-sys".insteadOf \
             "https://github.com/Start9Labs/avahi-sys"
+          git config --global url."https://github.com/fedimint/jsonpath".insteadOf \
+            "https://github.com/Start9Labs/jsonpath"
           cd core/startos
           cargo +1.78.0 install --path . --bin startbox \
             --no-default-features --features cli,sdk --locked
           git config --global --unset url."https://github.com/fedimint/avahi-sys".insteadOf
+          git config --global --unset url."https://github.com/fedimint/jsonpath".insteadOf
           ln -sf "$HOME/.cargo/bin/startbox" "$HOME/.cargo/bin/start-sdk"
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           start-sdk --version
