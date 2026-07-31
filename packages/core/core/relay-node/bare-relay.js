@@ -105,6 +105,14 @@ function identityTempPath (keyPath) {
   return keyPath + '.tmp-' + Date.now() + '-' + b4a.toString(suffix, 'hex')
 }
 
+// The shared shutdown deadline (_ownerDeadline) is a soft cap across ALL
+// sequential teardown steps. Late steps would otherwise inherit only the
+// crumbs left by earlier ones (observed in CI: "swarm.destroy timed out
+// after 21ms" with zero real work attempted). Every owner-serialized
+// operation gets at least this much of its own budget once it actually
+// starts. Keep in sync with relay-node/index.js.
+const MIN_OWNER_OPERATION_BUDGET_MS = 10_000
+
 function withTimeout (promise, ms, label) {
   let timer
   return Promise.race([
@@ -859,8 +867,15 @@ export class BareRelay extends EventEmitter {
   }
 
   _awaitOwnerOperation (owner, label, run, timeout) {
-    const budget = this._remainingOwnerBudget(timeout)
-    return withTimeout(this._ownerOperation(owner, label, run), budget, label)
+    // Arm the timeout when the owner-serialized operation actually STARTS,
+    // not when it is queued behind an in-flight operation on the same owner,
+    // and floor the budget so event-loop stalls between queueing and
+    // execution cannot consume it before run() begins.
+    return this._ownerOperation(owner, label, () => withTimeout(
+      Promise.resolve().then(run),
+      Math.max(MIN_OWNER_OPERATION_BUDGET_MS, this._remainingOwnerBudget(timeout)),
+      label
+    ))
   }
 
   _remainingOwnerBudget (timeout) {
