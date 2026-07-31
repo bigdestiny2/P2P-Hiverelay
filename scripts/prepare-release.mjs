@@ -460,9 +460,24 @@ function bumpPatchVersion (value, label = 'TrueNAS catalog') {
 }
 
 function syncCommunityUmbrelStore () {
-  updateJson(path.join(umbrelStoreRoot, 'package.json'), (json) => {
-    json.version = version
-  })
+  // The store checkout is best-effort in the workflow (continue-on-error with
+  // a warn step). If it produced no usable checkout — expired token, network —
+  // the directory can exist yet be empty, so guard on the app manifest, not
+  // the root. Skip honestly instead of crashing the whole metadata step.
+  const storeAppDir = path.join(umbrelStoreRoot, 'hiverelay-blindspark')
+  if (!fs.existsSync(storeAppDir)) {
+    console.warn(`community Umbrel store checkout unusable at ${umbrelStoreRoot} — skipping store sync`)
+    return
+  }
+  // The community store is an Umbrel app repo, not an npm package: older
+  // checkouts carried a package.json whose version we bumped, the live store
+  // has none. Bump it when present, never require it.
+  const storePkg = path.join(umbrelStoreRoot, 'package.json')
+  if (fs.existsSync(storePkg)) {
+    updateJson(storePkg, (json) => {
+      json.version = version
+    })
+  }
   replaceImagePin(path.join(umbrelStoreRoot, 'hiverelay-blindspark', 'docker-compose.yml'), 'community Umbrel store')
   const storeManifest = path.join(umbrelStoreRoot, 'hiverelay-blindspark', 'umbrel-app.yml')
   const oldVersion = readYamlScalar(storeManifest, 'version')
