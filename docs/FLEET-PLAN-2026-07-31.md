@@ -45,9 +45,13 @@ Open contributor PRs: #191 (poker open-join — request-changes posted, needs re
 | 3 | sing-1 at 75% disk — verify/set `maxStorageBytes` | fleet ops |
 | 4 | miami crash-looping on the peerit/p2pbuilders OutboxLog namespace registration (repair proven read-only; production write needs a fleet lease) | fleet ops |
 | 5 | `swarm.destroy`/`relayDiscovery.destroy` `OPERATION_TIMEOUT` uncaught flake class in unit teardown (issue #217) | code |
-| 6 | Phase 1.1 canary-of-one throwaway pre-flight host | infra decision |
-| 7 | Per-box `config.regions`/`config.operator` rollout (feeds the #230 operator counting) | fleet ops |
-| 8 | v0.25.0 stable promotion — gated on canary soak + the Phase 0/1 evidence, all now in place | decision |
+| 6 | rc.9 release-evidence certificate — publication artifacts are all live; the final full-green workflow run is still in flight against the tag's pre-flake-fix test gate | code |
+| 7 | Prove the live claims on canary before stable: signed wake egress 0/10, exact-lane wake 0/10, restricted-Tor ready 0/10 (LADDER-SHIP-MAP honesty rung — the code ships in rc.9, the *evidence* does not exist yet) | evidence |
+| 8 | Phase 1.1 canary-of-one throwaway pre-flight host | infra decision |
+| 9 | Per-box `config.regions`/`config.operator` rollout (feeds the #230 operator counting) | fleet ops |
+| 10 | v0.25.0 stable promotion — gated on canary soak **plus item 7's live-claims evidence**; the Phase 0/1 code items are all in place, the runtime proof is not | decision |
+
+Track B (blind public test, `1.0.0-rc.1.public-test.1`) runs in parallel under a separate owner: sydney blind-edge recovery, dallas second failure domain, then the Peerit bind. Track A items here do not block it.
 
 ## Lessons encoded
 
