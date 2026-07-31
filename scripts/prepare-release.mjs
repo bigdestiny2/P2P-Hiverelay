@@ -485,18 +485,29 @@ function syncCommunityUmbrelStore () {
   if (releaseNotesProvided || oldVersion !== version) {
     replaceYamlFoldedBlock(storeManifest, 'releaseNotes', releaseNotes)
   }
-  replaceInFile(
-    path.join(umbrelStoreRoot, 'README.md'),
-    /Image:\s*`ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^`]+`/,
-    `Image: \`${imageName}:${version}\``,
-    'community store README image version'
-  )
-  replaceInFile(
-    path.join(umbrelStoreRoot, 'index.html'),
-    /ghcr\.io\/bigdestiny2\/p2p-hiverelay:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g,
-    `${imageName}:${version}`,
-    'community store landing page image version'
-  )
+  // Cosmetic store-root files are optional: the live store's README has no
+  // image line and it ships no index.html at all. Update when present and
+  // recognizable; skip otherwise — the compose pin and manifest version are
+  // the real sync targets.
+  const storeReadme = path.join(umbrelStoreRoot, 'README.md')
+  const readmeImage = /Image:\s*`ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^`]+`/
+  if (fs.existsSync(storeReadme) && readmeImage.test(read(storeReadme))) {
+    replaceInFile(
+      storeReadme,
+      readmeImage,
+      `Image: \`${imageName}:${version}\``,
+      'community store README image version'
+    )
+  }
+  const storeIndex = path.join(umbrelStoreRoot, 'index.html')
+  if (fs.existsSync(storeIndex)) {
+    replaceInFile(
+      storeIndex,
+      /ghcr\.io\/bigdestiny2\/p2p-hiverelay:\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?/g,
+      `${imageName}:${version}`,
+      'community store landing page image version'
+    )
+  }
 }
 
 function replaceImagePin (file, label) {

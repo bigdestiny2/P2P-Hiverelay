@@ -276,7 +276,11 @@ test('prepare-release syncs a community store that has no package.json', async (
   })
   await writeMinimalReleaseFixture(repo)
   await writeCommunityStoreFixture(store, '0.16.3')
+  // Match the live store layout: no package.json, no index.html, and a
+  // README without an image-version line.
   await rm(path.join(store, 'package.json'))
+  await rm(path.join(store, 'index.html'))
+  await writeText(path.join(store, 'README.md'), '# HiveRelay Community App Store for Umbrel\n')
 
   const res = await runPrepare([
     'v9.9.9-beta.1',
