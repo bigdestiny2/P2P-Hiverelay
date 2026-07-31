@@ -683,6 +683,14 @@ jobs:
         working-directory: blindspark-umbrel-store
         run: |
           set -euo pipefail
+          # The community store is an Umbrel app repo with no package.json and
+          # therefore no npm validation entrypoint. Skip honestly instead of
+          # dying on ENOENT.
+          if [ ! -f package.json ]; then
+            echo "store has no package.json — no npm validation to run; skipping"
+            echo "HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS=skipped-no-manifest" >> "$GITHUB_ENV"
+            exit 0
+          fi
           npm run validate
           echo "HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS=passed" >> "$GITHUB_ENV"
 
