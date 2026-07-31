@@ -460,9 +460,15 @@ function bumpPatchVersion (value, label = 'TrueNAS catalog') {
 }
 
 function syncCommunityUmbrelStore () {
-  updateJson(path.join(umbrelStoreRoot, 'package.json'), (json) => {
-    json.version = version
-  })
+  // The community store is an Umbrel app repo, not an npm package: older
+  // checkouts carried a package.json whose version we bumped, the live store
+  // has none. Bump it when present, never require it.
+  const storePkg = path.join(umbrelStoreRoot, 'package.json')
+  if (fs.existsSync(storePkg)) {
+    updateJson(storePkg, (json) => {
+      json.version = version
+    })
+  }
   replaceImagePin(path.join(umbrelStoreRoot, 'hiverelay-blindspark', 'docker-compose.yml'), 'community Umbrel store')
   const storeManifest = path.join(umbrelStoreRoot, 'hiverelay-blindspark', 'umbrel-app.yml')
   const oldVersion = readYamlScalar(storeManifest, 'version')

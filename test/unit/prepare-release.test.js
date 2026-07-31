@@ -264,6 +264,34 @@ test('prepare-release syncs the community store for a prerelease with an explici
   t.absent(res.stderr.includes('fleet/channels.json'), 'prerelease still does not bump fleet channels')
 })
 
+test('prepare-release syncs a community store that has no package.json', async (t) => {
+  // The live blindspark-umbrel-store repo is an Umbrel app repo, not an npm
+  // package — it has no root package.json. The sync must not require one
+  // (a hard ENOENT killed the v0.25.0-rc.9 release run's metadata sync).
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-store-nopkg-repo-'))
+  const store = await mkdtemp(path.join(tmpdir(), 'hiverelay-store-nopkg-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+    await rm(store, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+  await writeCommunityStoreFixture(store, '0.16.3')
+  await rm(path.join(store, 'package.json'))
+
+  const res = await runPrepare([
+    'v9.9.9-beta.1',
+    '--umbrel-store', store,
+    '--image-digest', DIGEST,
+    '--no-ecosystem-consumers',
+    '--check'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 1, res.stderr)
+  t.ok(res.stderr.includes('Release surfaces are out of sync:'))
+  t.ok(res.stderr.includes('hiverelay-blindspark/docker-compose.yml'), 'compose re-pin still detected without a store package.json')
+  t.absent(res.stderr.includes('ENOENT'), 'no crash on the absent store package.json')
+})
+
 test('prepare-release skips the community store for an implicit prerelease', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-prerelease-implicit-repo-'))
   t.teardown(async () => {
