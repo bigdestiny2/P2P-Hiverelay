@@ -231,7 +231,7 @@ export default {
   pairing: {
     enabled: false
   },
-  serviceDefaultPeerRole: 'authenticated-user',
+  serviceDefaultPeerRole: 'anonymous',
   serviceAdminAllowlist: [],
   enableServices: false,
   plugins: [],
