@@ -129,7 +129,7 @@ async function readExactResponse (response, exactBytes, signal) {
 export class BlindDirectHttpClient {
   constructor (options = {}) {
     this.runtime = options.runtime
-    this.fetch = options.fetch || globalThis.fetch
+    this.fetch = options.fetch || (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : globalThis.fetch)
     if (typeof this.fetch !== 'function') fail('TRANSPORT_UNAVAILABLE', 'fetch implementation is required')
     this.allowInsecureLoopback = options.allowInsecureLoopback === true
   }
