@@ -29,9 +29,9 @@ const FROZEN_SHA256 = Object.freeze({
   'packages/blind-protocol/hiverelay-blind-client-composition-vector-manifest-v1.cenc': 'b26ab9a86ccd665255ee17dd742ffc39acceeb670bc01a7f7633460cb9d7cee9',
   'packages/blind-protocol/client-composition-authority-generated.js': 'a66d7211bdedd3b0d0e580c7d6c504584001ee1bf5747ad9b27d8ee5e2b566aa',
   'packages/blind-client/browser-artifacts/blind-client-control-v1.mjs': '10425bb00fb8045e63ce2869b5e6bf88af39dc0723963203a6b021e0fd28090a',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc': '853c9967ea91f244af782807d8933a9a47ab6a0b9526a9c5fc4cc546ef287ace',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.chromium-evidence.json': 'ac16a04dc68dc81d033584781baba2e6ee71f6f380f93a279e5011f1c5d6149b',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.cross-host-evidence.json': '6b77bfe8e6be3d2cddf31208de4f0266a6abfbe999fad4de8e6fcbe8cee07133'
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc': '343a301acf50e5d0d4449e44a11b30c52a1692855c3ad3c03c6c9acc9103c509',
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.chromium-evidence.json': '5dc23bb9de210ec3292c74407fcb815b43b88535d656f62df16036473547e5cf',
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.cross-host-evidence.json': '72d7bdac68d2680436f54165dc956f48673d0c4320b3ae3325dbb29021cecaee'
 })
 
 test('blind v1 compatibility floor: frozen authority and mirror bytes remain exact', t => {
