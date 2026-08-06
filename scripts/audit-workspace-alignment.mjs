@@ -7531,8 +7531,11 @@ if (
   releaseWorkflow.includes('dist_tag=next') &&
   releaseWorkflow.includes('status_suffix=-next') &&
   releaseWorkflow.includes('dist_tag=latest') &&
-  releaseWorkflow.includes('status="published${status_suffix}"') &&
-  releaseWorkflow.includes('status="current${status_suffix}"') &&
+  // Split so the literal shell expansion does not read as a JS template string
+  // (standard's no-template-curly-in-string), matching the '$' + '{{ … }}'
+  // idiom used for the workflow expressions above.
+  releaseWorkflow.includes('status="published$' + '{status_suffix}"') &&
+  releaseWorkflow.includes('status="current$' + '{status_suffix}"') &&
   releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=$status') &&
   monorepoPkg.scripts['audit:ecosystem-consumers:release'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:sync:release'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest --consumer-scope release' &&
