@@ -39,7 +39,6 @@ if (errors.length) {
 console.log('TrueNAS Community package validates for Blindspark.')
 
 function validatePackage () {
-  const rootPackage = JSON.parse(read(path.join(repoRoot, 'package.json')))
   const readme = read(path.join(appRoot, 'README.md'))
   const app = read(path.join(appRoot, 'app.yaml'))
   const values = read(path.join(appRoot, 'ix_values.yaml'))
@@ -54,8 +53,11 @@ function validatePackage () {
 
   equal(topScalar(app, 'name'), 'blindspark', 'catalog app name')
   equal(topScalar(app, 'train'), 'community', 'catalog train')
-  equal(upstreamVersion, rootPackage.version, 'catalog upstream version')
-  equal(imageTag, rootPackage.version, 'catalog image tag')
+  // The checked-in Community package must remain deployable. It tracks the
+  // newest image that is actually published in GHCR and may therefore lag an
+  // unreleased repository version. Release preparation updates these fields
+  // together once the corresponding image exists.
+  equal(imageTag, upstreamVersion, 'catalog image tag')
   matches(catalogVersion, /^\d+\.\d+\.\d+$/, 'catalog package version')
   equal(topScalar(app, 'lib_version'), '2.3.8', 'TrueNAS rendering library version')
   equal(
@@ -64,7 +66,7 @@ function validatePackage () {
     'TrueNAS rendering library hash'
   )
   validateVendorProvenance(provenance, app)
-  includesAll(readme, [`Upstream HiveRelay release: \`${rootPackage.version}\``], 'TrueNAS app README')
+  includesAll(readme, [`Upstream HiveRelay release: \`${upstreamVersion}\``], 'TrueNAS app README')
 
   includesAll(app, [
     'uid: 999',
