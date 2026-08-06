@@ -44,10 +44,18 @@ The package also sets `HIVERELAY_ACCEPT_MODE=review` and
 `HIVERELAY_MAX_STORAGE=10GB` for first boot, plus the operator-declared
 `HIVERELAY_CAPACITY_PROFILE=edge-community` planning profile. That keeps
 home-server installs operator-reviewed and capped conservatively, while any
-saved operator config wins on later restarts. The profile describes how status
-and capacity plans should classify the box; it does **not** claim separate
-physical enforcement for each planned storage pool. PC/VPS operators can keep
-the core 50 GB default or pass `--max-storage` directly.
+saved operator config wins on later restarts. PC/VPS operators can keep the core
+50 GB default or pass `--max-storage` directly.
+
+`HIVERELAY_MAX_STORAGE` bounds **managed** capacity. The declared profile then
+narrows new adoption to its durable share, so the stock package holds at most
+**3.5 GB of durable payload** inside its 10 GB managed cap; the remainder is
+budgeted for the cache, repair, and service pools. Raise `HIVERELAY_MAX_STORAGE`
+if you want a larger durable budget, and read
+`capacity.enforcement.effectiveCapBytes` from `/status` to see the limit that
+actually binds. The profile still does **not** claim separate physical
+enforcement for each planned pool — only the durable ceiling is enforced. See
+`docs/BOUNDED-CAPACITY-HARDWARE-ROADMAP.md`.
 
 The ordinary Umbrel package is the **edge/community** profile, not a service
 farm. Its Services layer and all packaged utility-service flags start disabled,

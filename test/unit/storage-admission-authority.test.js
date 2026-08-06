@@ -36,6 +36,7 @@ function healthySample (checkedAt = Date.now()) {
 
 function authority (opts = {}) {
   const config = { storage: STORAGE, maxStorageBytes: opts.cap || CAP }
+  if (opts.capacityProfile !== undefined) config.capacityProfile = opts.capacityProfile
   return new StorageAdmissionAuthority(config, {
     getUsedBytes: opts.getUsedBytes || (() => 0),
     getActualBytes: opts.getActualBytes || (() => 0),
@@ -219,6 +220,12 @@ test('storage authority: capacitySnapshot tracks ledger debt without exposing re
   const a = authority({ recoveryKinds: [] })
   t.alike(a.capacitySnapshot(), {
     recoveryReady: true,
+    capacityProfileId: null,
+    capacityCeilingBytes: null,
+    capacityCeilingSource: null,
+    capacityCeilingReason: null,
+    operatorCapBytes: 10 * GiB,
+    effectiveCapBytes: 10 * GiB,
     committedBytes: 0,
     pendingBytes: 0,
     unknownCommitments: 0,
@@ -924,4 +931,147 @@ test('physical provider v1: a ceiling-equal mutation never invokes its callback'
   t.is(called, false, 'no write callback can begin without physical growth headroom')
   t.is(a.fatalReason, null, 'ordinary capacity exhaustion does not corrupt authority state')
   t.is(a.physicalEnforcementActive, true)
+})
+
+test('storage authority: a declared capacity profile narrows admission to its durable pool', (t) => {
+  // 100 GiB filesystem, 80 GiB free, 10 GiB operator cap (the shared fixture).
+  // edge-community budgets 35% of managed capacity to durable payload.
+  const a = authority({ recoveryKinds: [], capacityProfile: 'edge-community' })
+  const ceiling = a.capacityCeiling(healthySample())
+  t.absent(ceiling.invalid)
+  t.is(ceiling.bytes, Math.floor(10 * GiB * 0.35))
+  t.is(ceiling.source, 'capacity-profile:edge-community:durable')
+
+  const admission = a.admission(0)
+  t.is(admission.operatorCapBytes, 10 * GiB, 'the operator designation is reported unchanged')
+  t.is(admission.capBytes, ceiling.bytes, 'the enforced cap is the narrower profile ceiling')
+  t.is(admission.capCeilingSource, 'capacity-profile:edge-community:durable')
+  t.is(admission.logicalAvailableBytes, ceiling.bytes)
+
+  const undeclared = authority({ recoveryKinds: [] }).admission(0)
+  t.is(undeclared.capBytes, 10 * GiB, 'no profile means no change to the enforced cap')
+  t.is(undeclared.capCeilingBytes, null)
+})
+
+test('storage authority: the profile ceiling refuses a pin the operator cap would allow', (t) => {
+  const a = authority({ recoveryKinds: [], capacityProfile: 'edge-community' })
+  const ceilingBytes = Math.floor(10 * GiB * 0.35)
+
+  // A 5 GiB pin fits inside the 10 GiB operator cap but not the 3.5 GiB pool.
+  const refused = a.reserve('core:too-big', 5 * GiB, { kind: 'core' })
+  t.absent(refused.allowed)
+  t.is(refused.reason, 'insufficient-storage')
+
+  const fits = a.reserve('core:fits', GiB, { kind: 'core' })
+  t.ok(fits.allowed, 'a pin inside the durable pool is still admitted')
+  t.ok(a.commit(fits))
+
+  t.ok(authority({ recoveryKinds: [] }).reserve('core:too-big', 5 * GiB, { kind: 'core' }).allowed,
+    'the same pin is admitted without a declared profile')
+  t.ok(ceilingBytes < 5 * GiB)
+})
+
+test('storage authority: a full durable pool is distinguishable from a full operator cap', (t) => {
+  const used = 4 * GiB
+  const a = authority({
+    recoveryKinds: [],
+    capacityProfile: 'edge-community',
+    getUsedBytes: () => used
+  })
+  const admission = a.admission(1)
+  t.absent(admission.allowed)
+  t.is(admission.reason, 'capacity-profile-cap-reached',
+    'the operator can tell a role budget from a cap they set themselves')
+
+  const capBound = authority({ recoveryKinds: [], getUsedBytes: () => 11 * GiB }).admission(1)
+  t.is(capBound.reason, 'storage-cap-reached')
+})
+
+test('storage authority: an unusable declared profile fails closed, never to the wider cap', (t) => {
+  const invalidProfile = authority({ recoveryKinds: [], capacityProfile: 'not-a-profile' })
+  const byProfile = invalidProfile.admission(0)
+  t.absent(byProfile.allowed)
+  t.is(byProfile.reason, 'capacity-profile-invalid')
+
+  const unmeasurable = authority({
+    recoveryKinds: [],
+    capacityProfile: 'seeder-standard',
+    sampleFilesystem: () => ({ ...healthySample(), totalBytes: -1 })
+  })
+  const byMeasurement = unmeasurable.admission(0)
+  t.absent(byMeasurement.allowed)
+  t.is(byMeasurement.reason, 'capacity-profile-filesystem-unmeasured')
+
+  // Status must not invent a ceiling from a filesystem it has never sampled.
+  const unsampled = authority({ recoveryKinds: [], capacityProfile: 'seeder-standard' })
+  const snapshot = unsampled.capacitySnapshot()
+  t.is(snapshot.capacityCeilingBytes, null)
+  t.is(snapshot.capacityCeilingReason, 'capacity-profile-filesystem-unmeasured')
+  t.is(snapshot.effectiveCapBytes, 10 * GiB, 'the unnarrowed cap is reported, but admission still fails closed')
+})
+
+test('storage authority: a filesystem below the planning reserve enforces a zero ceiling', (t) => {
+  const tiny = { ...healthySample(), totalBytes: 20 * GiB, freeBytes: 18 * GiB }
+  const a = authority({
+    recoveryKinds: [],
+    capacityProfile: 'edge-community',
+    sampleFilesystem: () => tiny
+  })
+  const admission = a.admission(0)
+  t.absent(admission.allowed)
+  t.is(admission.capBytes, 0)
+  t.is(admission.reason, 'capacity-profile-cap-reached', 'routing and metadata only; no durable budget')
+  t.absent(a.reserve('core:any', 1024, { kind: 'core' }).allowed)
+})
+
+test('storage authority: the profile ceiling binds a real seeder against a real filesystem', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'storage-profile-ceiling-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const store = new Corestore(dir)
+  await store.ready()
+
+  // The temp filesystem is far larger than the reserve, so the operator cap is
+  // what bounds managed capacity and the profile takes its share of that.
+  const held = measureStorageTreeBytes(dir)
+  const config = {
+    storage: dir,
+    maxStorageBytes: held + 100 * 1024 * 1024,
+    capacityProfile: 'edge-community'
+  }
+  markStorageCapExplicit(config, 'test')
+  resolveStorageCap(config)
+
+  const admission = new StorageAdmissionAuthority(config, {
+    getUsedBytes: () => measureStorageTreeBytes(dir),
+    recoveryKinds: []
+  })
+  const sample = admission.refreshFilesystem()
+  t.is(sample.ok, true)
+
+  const ceiling = admission.capacityCeiling(sample)
+  t.absent(ceiling.invalid, 'a real statfs sample resolves the ceiling')
+  t.ok(ceiling.bytes < config.maxStorageBytes, 'the declared role narrows the operator cap')
+  // Largest-remainder allocation may hand one pool a single extra byte; the
+  // exact arithmetic is pinned by the capacity-plan unit tests.
+  t.ok(Math.abs(ceiling.bytes - config.maxStorageBytes * 0.35) <= 1, 'edge-community budgets 35% durable')
+
+  const seeder = new Seeder(store, { join () {}, async leave () {} }, {
+    storagePath: join(dir, 'seeded-cores.json'),
+    storageAdmission: admission
+  })
+  await seeder.start()
+
+  // 64 MiB fits the ~100 MiB operator cap but not the ~35 MiB durable pool.
+  const key = b4a.alloc(32)
+  key.writeUInt32BE(7, 28)
+  await t.exception(
+    seeder.seedCore(b4a.toString(key, 'hex'), { maxStorageBytes: 64 * 1024 * 1024 }),
+    /storage|capacity/i,
+    'a pin the operator cap alone would admit is refused by the declared role'
+  )
+  t.is(admission.get(StorageAdmissionAuthority.coreKey(b4a.toString(key, 'hex'))), null,
+    'the refused pin leaves no commitment behind')
+
+  await seeder.stop()
+  await store.close()
 })

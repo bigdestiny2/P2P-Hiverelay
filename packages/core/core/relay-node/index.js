@@ -3479,12 +3479,25 @@ export class RelayNode extends EventEmitter {
     const usedBytes = this._storageUsedBytes()
     const admission = this._storageAdmission()
 
+    // A declared capacity profile narrows the enforced cap below the operator
+    // designation. Report both: without the effective value an operator sees
+    // "10 GB cap, 4 GB used, not over cap" next to "adoption blocked" and has
+    // nothing to reconcile them with.
+    const effectiveMaxStorageBytes = Number.isSafeInteger(admission.capBytes)
+      ? admission.capBytes
+      : cap
     return {
       ok: true,
       maxStorageBytes: cap,
+      effectiveMaxStorageBytes,
+      capacityCeilingBytes: Number.isSafeInteger(admission.capCeilingBytes)
+        ? admission.capCeilingBytes
+        : null,
+      capacityProfile: this.config.capacityProfile ?? null,
       evictionEnabled: this.config.eviction?.enabled === true,
       usedBytes,
       overCap: usedBytes >= cap,
+      overEffectiveCap: usedBytes >= effectiveMaxStorageBytes,
       adoptionBlocked: !admission.allowed,
       admissionReason: admission.reason,
       sweeping: false

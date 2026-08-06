@@ -208,6 +208,10 @@ export function sanitizeCapacitySummary (capacity) {
       complete: bool(measurements.complete),
       fresh: bool(measurements.fresh),
       maxAgeMs: count(measurements.maxAgeMs),
+      floorMs: count(measurements.floorMs),
+      derivedWindow: bool(measurements.derivedWindow),
+      windowCapped: bool(measurements.windowCapped),
+      durationMs: countOrNull(measurements.durationMs),
       diskCheckedAt: timestampOrNull(measurements.diskCheckedAt),
       storageMeasuredAt: timestampOrNull(measurements.storageMeasuredAt)
     },
@@ -219,7 +223,12 @@ export function sanitizeCapacitySummary (capacity) {
       committedBytes: count(enforcement.committedBytes),
       pendingBytes: count(enforcement.pendingBytes),
       unknownCommitments: count(enforcement.unknownCommitments),
-      physicalEnforcementActive: bool(enforcement.physicalEnforcementActive)
+      physicalEnforcementActive: bool(enforcement.physicalEnforcementActive),
+      operatorCapBytes: countOrNull(enforcement.operatorCapBytes),
+      capacityCeilingBytes: countOrNull(enforcement.capacityCeilingBytes),
+      capacityCeilingSource: statusString(enforcement.capacityCeilingSource, { maxBytes: 64 }),
+      effectiveCapBytes: countOrNull(enforcement.effectiveCapBytes),
+      capacityCeilingApplied: bool(enforcement.capacityCeilingApplied)
     },
     advertisement: {
       eligible: bool(advertisement.eligible),

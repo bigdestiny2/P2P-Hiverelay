@@ -72,14 +72,16 @@ services:
       # disk by auto-accepting the public network.
       HIVERELAY_ACCEPT_MODE: review
 
-      # Conservative home-server storage cap. PC/VPS operators keep the core
-      # 50 GB default or set --max-storage, but Umbrel installs start smaller
-      # to avoid surprising typical home boxes.
+      # Conservative home-server cap on MANAGED storage. PC/VPS operators keep
+      # the core 50 GB default or set --max-storage, but Umbrel installs start
+      # smaller to avoid surprising typical home boxes.
       HIVERELAY_MAX_STORAGE: 10GB
 
-      # Operator-declared capacity planning profile. This labels the box for
-      # capacity/status calculations; it does not claim separate physical
-      # enforcement for each planned storage pool.
+      # Operator-declared capacity profile. This narrows new adoption to the
+      # profile's durable pool — 35% of managed capacity, so 3.5 GB of durable
+      # payload inside the 10 GB cap above. The rest is budgeted for the cache,
+      # repair, and service pools, which are NOT yet separately enforced. See
+      # docs/BOUNDED-CAPACITY-HARDWARE-ROADMAP.md.
       HIVERELAY_CAPACITY_PROFILE: edge-community
 
       # Deterministic, reinstall-safe identity + management token. Umbrel

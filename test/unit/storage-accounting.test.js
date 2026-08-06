@@ -9,7 +9,7 @@
  * sparse (partial replicas have holes), so st.size overcounts badly.
  */
 import test from 'brittle'
-import { mkdtemp, writeFile, mkdir, rm, open } from 'fs/promises'
+import { mkdtemp, writeFile, mkdir, rm, open, chmod } from 'fs/promises'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { StorageAccounting, dirBytes } from 'p2p-hiverelay/core/relay-node/storage-accounting.js'
@@ -95,4 +95,61 @@ test('measureDisk is latched and returns the measured value', async (t) => {
   const acct = new StorageAccounting({ appRegistry: { keys: () => [], get: () => null }, storagePath: dir })
   const [a, b] = await Promise.all([acct.measureDisk(), acct.measureDisk()])
   t.ok(a === apparent || b === apparent, 'at least one concurrent call returns the measured total')
+})
+
+test('a file deleted mid-walk does not make the measurement incomplete', async (t) => {
+  // Corestore deletes files constantly (compaction, truncation, unseed), so a
+  // readdir/stat race is the steady state on a busy relay — not an anomaly.
+  // Treating it as incomplete evidence fail-closed the entire capacity surface.
+  const { dir } = await tmpTree()
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const acct = new StorageAccounting({ appRegistry: { keys: () => [], get: () => null }, storagePath: dir })
+
+  const vanishing = join(dir, 'cores', 'sub', 'c.bin')
+  const missingDir = join(dir, 'cores', 'sub')
+  await rm(vanishing)
+  await acct.measureDisk()
+  let summary = acct.getSummary()
+  t.ok(summary.diskMeasurementComplete, 'a vanished file contributes zero bytes, so the total stays exact')
+  t.is(summary.diskBytes, 4096 + 8192)
+
+  await rm(missingDir, { recursive: true, force: true })
+  await acct.measureDisk()
+  summary = acct.getSummary()
+  t.ok(summary.diskMeasurementComplete, 'a vanished subdirectory is the same benign race')
+  t.is(summary.diskBytes, 4096 + 8192)
+})
+
+test('an unreadable subtree still fails the completeness claim', async (t) => {
+  const { dir } = await tmpTree()
+  t.teardown(async () => {
+    await chmod(join(dir, 'cores'), 0o755).catch(() => {})
+    await rm(dir, { recursive: true, force: true })
+  })
+  const acct = new StorageAccounting({ appRegistry: { keys: () => [], get: () => null }, storagePath: dir })
+
+  await chmod(join(dir, 'cores'), 0o000)
+  await acct.measureDisk()
+  const summary = acct.getSummary()
+  if (summary.diskBytes === 4096 + 8192 + 12288) {
+    t.pass('running as a user that bypasses directory permissions; race coverage is unaffected')
+    return
+  }
+  t.absent(summary.diskMeasurementComplete, 'hidden bytes are never reported as complete evidence')
+})
+
+test('measurement duration is observable so consumers can size a freshness window', async (t) => {
+  const { dir } = await tmpTree()
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const acct = new StorageAccounting({
+    appRegistry: { keys: () => [], get: () => null },
+    storagePath: dir,
+    diskIntervalMs: 90_000
+  })
+
+  t.is(acct.getSummary().diskMeasureDurationMs, null, 'no duration before the first walk')
+  await acct.measureDisk()
+  const summary = acct.getSummary()
+  t.ok(Number.isSafeInteger(summary.diskMeasureDurationMs) && summary.diskMeasureDurationMs >= 0)
+  t.is(summary.diskIntervalMs, 90_000, 'the cadence travels with the sample')
 })

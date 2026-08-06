@@ -1,6 +1,8 @@
 # Bounded capacity: hardware map and delivery roadmap
 
 Status: implementation baseline plus gated roadmap, 2026-08-05.
+Updated 2026-08-06 with R1a: a declared profile now narrows the enforced
+adoption ceiling. See "Enforced today vs planned" below.
 
 This is the capacity contract for growing HiveRelay beyond a few test apps.
 The central decision is simple: a relay is not a copy of the whole ecosystem.
@@ -33,17 +35,66 @@ selected holders with finite commitments.
 |---|---|
 | Capacity planner | `config/capacity-plan.js` implements five stable profiles, exact integer pool allocation, a 15%/32 GiB planning reserve, operator-cap narrowing, conservative debt accounting, and a whole-filesystem free-space bound for shared hosts. |
 | Operator declaration | `capacityProfile` can be persisted through the management config API or supplied with `--capacity-profile` / `HIVERELAY_CAPACITY_PROFILE`. No hardware class is inferred by default. |
-| Status | Relay stats and public `/status` expose an allowlisted `planning-only` capacity snapshot. Status reads cached measurement/ledger state, reports sample freshness, and never starts a synchronous disk walk. |
+| Enforced ceiling | A declared profile narrows new adoption to its durable pool. `StorageAdmissionAuthority.capacityCeiling()` derives it from `planCapacityCeiling()` on every reservation; `evaluateStorageAdmission()` takes `min(operator cap, ceiling)`. An undeclared profile changes nothing. |
+| Status | Relay stats and public `/status` expose an allowlisted `planning-only` capacity snapshot plus the enforced `capacityCeilingBytes` / `effectiveCapBytes`. Status reads cached measurement/ledger state, reports sample freshness, and never starts a synchronous disk walk. |
 | Advertisement safety | Planning headroom is distinct from network-advertisable capacity. Network advertisement is hard-disabled (zero bytes) for this tranche even when local checks are green; independently cached samples are not an identity-bound capacity lease. |
-| Admission | Existing drive, core, gateway, and bounded journal ingress continue to use the shared `StorageAdmissionAuthority`, not the planner. |
-| AutoHeal | Archive recruitment now prices the candidate drive through that shared authority. It no longer trusts `Seeder.totalBytesStored`, runs cheap backoff/jitter first, and caps exact disk admission walks per tick. |
-| Appliance defaults | Umbrel, the general Docker Compose path, and the systemd unit are core-only by default. Umbrel starts in review mode with a 10 GiB cap and declares `edge-community`; utility services require explicit operator opt-in. |
+| Admission | Existing drive, core, gateway, and bounded journal ingress continue to use the shared `StorageAdmissionAuthority`. The planner supplies only the ceiling; it never decides an individual reservation. |
+| AutoHeal | Archive recruitment now prices the candidate drive through that shared authority, so it inherits the profile ceiling for free. It no longer trusts `Seeder.totalBytesStored`, runs cheap backoff/jitter first, and caps exact disk admission walks per tick. |
+| Appliance defaults | Umbrel, the general Docker Compose path, and the systemd unit are core-only by default. Umbrel starts in review mode with a 10 GB managed cap and declares `edge-community` (3.5 GB durable); utility services require explicit operator opt-in. |
 
 The planner is intentionally stricter than today's logical admission reserve.
 `STORAGE-CAP-SAFETY.md` documents the current runtime reserve of 10% with a
 2 GiB floor and 20 GiB ceiling. The capacity profile reserves the larger of
-15% and 32 GiB for long-horizon hardware planning. Adding the planner does not
-silently change a running node's enforcement ceiling.
+15% and 32 GiB for long-horizon hardware planning. That larger reserve stays a
+planning input: it shapes the ceiling, but the runtime free-space gate is still
+the 10%/2 GiB/20 GiB reserve.
+
+## Enforced today vs planned
+
+Exactly one number on this surface is enforced: the durable-pool ceiling a
+declared profile imposes on new adoption. Everything else — cache, repair,
+service/control, and burst budgets, and every `advertisableBytes` value — is
+planning output with no runtime mechanism behind it yet.
+
+The ceiling is safe to enforce now precisely because it needs nothing R1 and R2
+have not built. It is derived from `statfs` total bytes and the operator cap
+alone, so it never waits on a storage tree walk and can never be stale. And
+because no commitment yet carries a `poolId`, both the planner and the ceiling
+charge every existing byte to `durable` — so status and enforcement are
+arithmetically identical rather than merely consistent.
+
+Two consequences an operator must expect:
+
+1. Declaring a profile narrows the effective cap. `edge-community` on a 10 GB
+   operator cap enforces 3.5 GB of durable payload; the remaining 6.5 GB is
+   reserved for the pools that R2 will make real. Leaving `capacityProfile`
+   unset changes nothing at all.
+2. Crossing the ceiling behaves exactly like crossing the operator cap: new
+   adoption pauses, nothing is deleted, and existing pins stay serveable. The
+   distinct `capacity-profile-cap-reached` reason tells the two apart.
+
+A profile that cannot be evaluated — unknown id, or a filesystem whose size
+cannot be measured — fails admission closed. It never falls back to the wider
+operator cap, because an operator who declared a role did not consent to the
+unnarrowed value.
+
+### Measurement freshness on large hardware
+
+The storage tree walk is timestamped at its start, so on archive-class hardware
+the newest finished sample is already `duration + interval` old. A fixed
+5-minute budget therefore marked exactly the hardware this work exists for
+permanently stale. The window is now derived from the host's own observed walk
+cost — `max(5 min, 2 × duration + interval)` — and hard-capped at one hour. A
+root that cannot be walked inside that cap stays fail-closed; splitting the
+store is the remedy, not a wider window. The cheap `statfs` sample keeps the
+strict 5-minute floor on every host.
+
+The walk also no longer treats a vanished path as incomplete evidence. A file
+deleted between `readdir()` and `stat()` holds zero bytes, and Corestore deletes
+files constantly, so the previous behavior left `diskMeasurementComplete` false
+on every busy relay — fail-closing the whole capacity surface. A missing storage
+*root* is still incomplete: an unmounted store must never read as zero bytes
+used.
 
 ## Planning formula
 
@@ -175,7 +226,10 @@ multi-pool allocator:
   bytes with confidence.
 
 For these reasons the current profile output says `planning-only`. It must not
-be copied into the signed capability document as available storage yet.
+be copied into the signed capability document as available storage yet. The
+durable ceiling of R1a is the sole exception, and it is a local brake on growth
+rather than a claim made to anyone else: it can only refuse work this relay
+would otherwise have accepted, so no peer relies on it being accurate.
 
 ## Delivery roadmap
 
@@ -189,6 +243,27 @@ be copied into the signed capability document as available storage yet.
 
 Exit gate: unit tests prove no oversell, no cap widening, fail-closed malformed
 state, and safe appliance defaults.
+
+### R1a — make the declared profile bind
+
+R0 published pool budgets that nothing enforced, which left invariant 3
+("a profile may narrow a cap") as documentation rather than behavior. R1a closes
+that gap with the one pool that needs no new accounting.
+
+- Derive an enforcement ceiling from the profile, the measured filesystem size,
+  and the operator cap; narrowing only, and zero is a valid answer.
+- Bind the ceiling to the same re-sampled filesystem the admission usage terms
+  came from, so a mount swap mid-admission cannot mix two devices.
+- Fail admission closed on an unusable declared profile.
+- Report `operatorCapBytes`, `capacityCeilingBytes`, and `effectiveCapBytes` on
+  status so the binding limit is never implicit.
+- Restore measurement availability on archive-class hardware and busy relays
+  (derived freshness window, benign-race tolerance in the walk).
+
+Exit gate: a pin that fits the operator cap but not the durable pool is refused;
+the same pin is admitted with no profile declared; the ceiling never exceeds the
+operator cap for any profile, filesystem size, or cap; and an unevaluable
+profile never widens to the operator cap. *Met.*
 
 ### R1 — close the single-root accounting ledger
 
@@ -283,9 +358,13 @@ failure rates.
 3. Leave persistent services off unless that box has a reviewed role and
    service-state budget.
 4. Declare a capacity profile only when it matches the hardware's intended
-   role; leaving it unset is safer than guessing.
+   role; leaving it unset is safer than guessing. Declaring one narrows the
+   enforced cap to that profile's durable share — check
+   `capacity.enforcement.effectiveCapBytes` after setting it, and raise the
+   operator cap if the resulting durable budget is smaller than the role needs.
 5. Treat planning output as local sizing information. Until R2/R3 gates pass,
-   do not sell or promise its `advertisableBytes` value to the network.
+   do not sell or promise its `advertisableBytes` value to the network. The
+   enforced `capacityCeilingBytes` is the only number that binds today.
 6. Run at least three independent holders for durable data; mirrors within one
    Umbrel Pro, NAS, or S2 count as one holder.
 7. Alert on free space, planner overcommit, unknown commitment count, physical

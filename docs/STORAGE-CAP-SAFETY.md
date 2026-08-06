@@ -16,6 +16,30 @@ different limits:
   and a 20 GiB ceiling. Admission checks the current available bytes again at
   runtime, so unrelated disk use cannot consume that reserve unnoticed.
 
+## Capacity-profile ceiling
+
+An operator-declared `capacityProfile` adds a second logical ceiling. It is
+derived on every admission from the profile, the freshly sampled filesystem
+size, and the operator cap, and it can only narrow: managed capacity is already
+`min(post-reserve, operator cap)` and the enforced pool is a fraction of it.
+Zero is a valid ceiling — a filesystem at or below the 32 GiB planning reserve
+budgets no durable payload at all, and such a host may route and index but not
+hold commitments.
+
+Only the `durable` pool is enforced. Until commitments carry a `poolId` there is
+no attribution that could charge a byte to cache, repair, or service state, so
+the ceiling charges every existing byte to `durable` exactly as the planner
+does. Crossing it pauses new adoption with `capacity-profile-cap-reached`,
+distinct from `storage-cap-reached`, and deletes nothing.
+
+An unknown profile id or an unmeasurable filesystem fails admission closed with
+`capacity-profile-invalid` / `capacity-profile-filesystem-unmeasured`. Falling
+back to the operator cap would silently hand back capacity the operator did not
+ask for. The ceiling is bound to the same re-sampled filesystem as the usage
+terms, so a mount swap mid-admission cannot pair one device's size with
+another's usage. `docs/BOUNDED-CAPACITY-HARDWARE-ROADMAP.md` holds the profile
+table and the R1a scope.
+
 The storage path must already exist before a custom-path startup. HiveRelay
 never measures the nearest existing ancestor of a missing path: `/data` may be
 an intended mount, and measuring `/` in its place would prove the wrong

@@ -32,6 +32,12 @@ function authority (overrides = {}) {
       acceptingMutations: snapshot.acceptingMutations,
       fatalReason: snapshot.fatalReason,
       physicalEnforcementActive: snapshot.physicalEnforcement?.active === true,
+      capacityProfileId: snapshot.capacityProfileId ?? null,
+      capacityCeilingBytes: snapshot.capacityCeilingBytes ?? null,
+      capacityCeilingSource: snapshot.capacityCeilingSource ?? null,
+      capacityCeilingReason: snapshot.capacityCeilingReason ?? null,
+      operatorCapBytes: snapshot.operatorCapBytes ?? null,
+      effectiveCapBytes: snapshot.effectiveCapBytes ?? null,
       committedBytes,
       pendingBytes,
       unknownCommitments,
@@ -158,4 +164,147 @@ test('capacity status rejects a fresh but incomplete storage traversal', (t) => 
   t.is(status.plan, null)
   t.absent(status.measurements.complete)
   t.ok(status.advertisement.blockReasons.includes('capacity-measurement-incomplete'))
+})
+
+test('capacity status reports the enforced ceiling alongside the planned budget', (t) => {
+  const status = buildCapacityStatus({
+    config: { capacityProfile: 'edge-community', maxStorageBytes: 10 * GiB },
+    disk: { totalBytes: TiB, freeBytes: 900 * GiB, checkedAt: NOW - 1000 },
+    storage: { diskBytes: GiB, totalBytes: GiB, diskMeasuredAt: NOW - 2000, diskMeasurementComplete: true },
+    storageAdmission: authority({
+      capacityProfileId: 'edge-community',
+      capacityCeilingBytes: Math.floor(10 * GiB * 0.35),
+      capacityCeilingSource: 'capacity-profile:edge-community:durable',
+      operatorCapBytes: 10 * GiB,
+      effectiveCapBytes: Math.floor(10 * GiB * 0.35)
+    }),
+    now: NOW
+  })
+
+  t.is(status.enforcement.operatorCapBytes, 10 * GiB)
+  t.is(status.enforcement.capacityCeilingBytes, Math.floor(10 * GiB * 0.35))
+  t.is(status.enforcement.effectiveCapBytes, Math.floor(10 * GiB * 0.35))
+  t.is(status.enforcement.capacityCeilingSource, 'capacity-profile:edge-community:durable')
+  t.ok(status.enforcement.capacityCeilingApplied, 'the operator can see the ceiling is binding')
+  t.is(status.enforcement.capacityCeilingBytes, status.plan.poolBytes.durable,
+    'the enforced ceiling and the published durable pool are the same number')
+  t.absent(status.advertisement.blockReasons.includes('capacity-profile-ceiling-unresolved'))
+})
+
+test('capacity status flags a declared profile whose ceiling could not be resolved', (t) => {
+  const status = buildCapacityStatus({
+    config: { capacityProfile: 'edge-community', maxStorageBytes: 10 * GiB },
+    disk: { totalBytes: TiB, freeBytes: 900 * GiB, checkedAt: NOW - 1000 },
+    storage: { diskBytes: GiB, totalBytes: GiB, diskMeasuredAt: NOW - 2000, diskMeasurementComplete: true },
+    storageAdmission: authority({ capacityProfileId: 'edge-community' }),
+    now: NOW
+  })
+
+  t.is(status.enforcement.capacityCeilingBytes, null)
+  t.absent(status.enforcement.capacityCeilingApplied)
+  t.ok(status.advertisement.blockReasons.includes('capacity-profile-ceiling-unresolved'))
+})
+
+test('a slow archive walk widens the freshness window instead of being permanently stale', (t) => {
+  // A 40 TB pool takes ~12 minutes to walk. The sample is timestamped at the
+  // START of the walk, so under the fixed 5-minute budget this hardware could
+  // never once report a fresh measurement.
+  const walkMs = 12 * 60 * 1000
+  const archive = {
+    config: { capacityProfile: 'archive-storage', maxStorageBytes: 30 * TiB },
+    disk: { totalBytes: 40 * TiB, freeBytes: 20 * TiB, checkedAt: NOW - 1000 },
+    storage: {
+      diskBytes: 10 * TiB,
+      totalBytes: 10 * TiB,
+      diskMeasuredAt: NOW - walkMs - 30_000,
+      diskMeasureDurationMs: walkMs,
+      diskIntervalMs: 60_000,
+      diskMeasurementComplete: true
+    },
+    storageAdmission: authority(),
+    now: NOW
+  }
+
+  const status = buildCapacityStatus(archive)
+  t.ok(status.measurements.fresh, 'a sample one walk-cycle old is as fresh as this hardware can be')
+  t.ok(status.measurements.derivedWindow)
+  t.is(status.measurements.durationMs, walkMs)
+  t.is(status.measurements.maxAgeMs, 2 * walkMs + 60_000)
+  t.is(status.measurements.floorMs, 5 * 60 * 1000, 'the strict floor is still reported')
+  t.absent(status.advertisement.blockReasons.includes('capacity-measurement-stale'))
+
+  const older = buildCapacityStatus({
+    ...archive,
+    storage: { ...archive.storage, diskMeasuredAt: NOW - 3 * walkMs }
+  })
+  t.absent(older.measurements.fresh, 'the widened window is still a window')
+  t.ok(older.advertisement.blockReasons.includes('capacity-measurement-stale'))
+})
+
+test('a fast host keeps the strict freshness budget', (t) => {
+  const status = buildCapacityStatus({
+    config: { capacityProfile: 'seeder-standard', maxStorageBytes: 100 * GiB },
+    disk: { totalBytes: TiB, freeBytes: 500 * GiB, checkedAt: NOW - 1000 },
+    storage: {
+      diskBytes: GiB,
+      totalBytes: GiB,
+      diskMeasuredAt: NOW - 6 * 60 * 1000,
+      diskMeasureDurationMs: 120,
+      diskIntervalMs: 60_000,
+      diskMeasurementComplete: true
+    },
+    storageAdmission: authority(),
+    now: NOW
+  })
+
+  t.is(status.measurements.maxAgeMs, 5 * 60 * 1000, 'a sub-second walk earns no extra allowance')
+  t.absent(status.measurements.derivedWindow)
+  t.absent(status.measurements.fresh)
+  t.ok(status.advertisement.blockReasons.includes('capacity-measurement-stale'))
+})
+
+test('a storage root too slow to measure never buys an unbounded freshness window', (t) => {
+  const walkMs = 90 * 60 * 1000
+  const status = buildCapacityStatus({
+    config: { capacityProfile: 'archive-storage', maxStorageBytes: 30 * TiB },
+    disk: { totalBytes: 40 * TiB, freeBytes: 20 * TiB, checkedAt: NOW - 1000 },
+    storage: {
+      diskBytes: TiB,
+      totalBytes: TiB,
+      diskMeasuredAt: NOW - walkMs,
+      diskMeasureDurationMs: walkMs,
+      diskIntervalMs: 60_000,
+      diskMeasurementComplete: true
+    },
+    storageAdmission: authority(),
+    now: NOW
+  })
+
+  t.is(status.measurements.maxAgeMs, 60 * 60 * 1000, 'capped at the hard ceiling')
+  t.ok(status.measurements.windowCapped)
+  t.absent(status.measurements.fresh, 'an unmeasurable root stays fail-closed')
+  t.ok(status.advertisement.blockReasons.includes('capacity-measurement-stale'))
+})
+
+test('the statfs sample keeps the strict floor even on slow-walking hardware', (t) => {
+  const walkMs = 12 * 60 * 1000
+  const status = buildCapacityStatus({
+    config: { capacityProfile: 'archive-storage', maxStorageBytes: 30 * TiB },
+    // A 20-minute-old disk sample is stale no matter how slow the tree walk is:
+    // statfs costs the same on every host.
+    disk: { totalBytes: 40 * TiB, freeBytes: 20 * TiB, checkedAt: NOW - 20 * 60 * 1000 },
+    storage: {
+      diskBytes: TiB,
+      totalBytes: TiB,
+      diskMeasuredAt: NOW - walkMs,
+      diskMeasureDurationMs: walkMs,
+      diskIntervalMs: 60_000,
+      diskMeasurementComplete: true
+    },
+    storageAdmission: authority(),
+    now: NOW
+  })
+
+  t.absent(status.measurements.fresh)
+  t.ok(status.advertisement.blockReasons.includes('capacity-measurement-stale'))
 })
