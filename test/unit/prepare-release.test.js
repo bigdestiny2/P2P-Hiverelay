@@ -393,6 +393,72 @@ test('prepare-release removes local-only README status suffix for public release
   t.absent(readme.includes('packages; main has unreleased upgrades'))
 })
 
+test('prepare-release bumps the blind-substrate workspaces in lockstep', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-blind-fixture-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  // 'Verify exact source package versions' in release-surfaces.yml requires all
+  // eleven workspaces to equal the tag. These six used to be bumped by hand,
+  // which is how they drifted to 1.0.0-rc.1 while the product line was on 0.25.x.
+  const blind = [
+    'blind-protocol', 'blind-ipc', 'blind-client',
+    'blind-peercred', 'blind-edge', 'blind-daemon'
+  ]
+  for (const name of blind) {
+    await writeJson(path.join(repo, 'packages', name, 'package.json'), {
+      name: `@hiverelay/${name}`,
+      version: '0.16.3'
+    })
+  }
+
+  const res = await runPrepare([
+    'v9.9.9',
+    '--channel', 'none',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 0, res.stderr)
+  for (const name of blind) {
+    const pkg = JSON.parse(await readFile(path.join(repo, 'packages', name, 'package.json'), 'utf8'))
+    t.is(pkg.version, '9.9.9', `${name} moved with the release`)
+  }
+})
+
+test('prepare-release rewrites the backticked StartOS status line', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-startos-backtick-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  // The real startos/README.md authors the version in backticks. A regex without
+  // a backtick in its character class cannot reach the ', one-page dashboard'
+  // anchor, so replaceInFile die()s and the whole bump exits 1 — which is exactly
+  // what happened on main and took release:prepare down for every version.
+  await writeText(
+    path.join(repo, 'startos', 'README.md'),
+    '`v0.16.3`, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first\n'
+  )
+
+  const res = await runPrepare([
+    'v9.9.9',
+    '--channel', 'none',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 0, res.stderr)
+  const readme = await readFile(path.join(repo, 'startos', 'README.md'), 'utf8')
+  t.ok(readme.includes('`v9.9.9`, one-page dashboard'), 'backticked status line is rewritten in place')
+  t.absent(readme.includes('0.16.3'), 'no stale version survives')
+})
+
 async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'scripts', 'prepare-release.mjs'), await readFile('scripts/prepare-release.mjs', 'utf8'))
   await writeText(path.join(repo, 'scripts', 'lib', 'release-promise-scope.mjs'), await readFile('scripts/lib/release-promise-scope.mjs', 'utf8'))

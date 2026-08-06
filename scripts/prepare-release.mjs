@@ -224,12 +224,33 @@ function hasUnsafeReleaseNoteControlChars (value) {
 
 function syncPackageVersions () {
   const internalDependency = isPrerelease ? version : `^${version}`
-  const packageFiles = [
+  // The published product line. These must exist.
+  const requiredPackageFiles = [
     'package.json',
     'packages/core/package.json',
     'packages/services/package.json',
     'packages/client/package.json',
     'packages/verifier/package.json'
+  ]
+
+  // The blind-substrate workspaces. They are unpublished and not present in every
+  // checkout shape, so they are bumped only when present — but when they ARE
+  // present they must move with everything else. 'Verify exact source package
+  // versions' in release-surfaces.yml requires all eleven to equal the tag, and
+  // these six were previously bumped by hand, which is how they drifted to
+  // 1.0.0-rc.1 while the product line was on 0.25.x.
+  const optionalPackageFiles = [
+    'packages/blind-protocol/package.json',
+    'packages/blind-ipc/package.json',
+    'packages/blind-client/package.json',
+    'packages/blind-peercred/package.json',
+    'packages/blind-edge/package.json',
+    'packages/blind-daemon/package.json'
+  ]
+
+  const packageFiles = [
+    ...requiredPackageFiles,
+    ...optionalPackageFiles.filter((rel) => fs.existsSync(path.join(repoRoot, rel)))
   ]
 
   for (const rel of packageFiles) {
@@ -244,7 +265,8 @@ function syncPackageVersions () {
   updateJson(path.join(repoRoot, 'package-lock.json'), (lock) => {
     lock.version = version
     if (lock.packages && lock.packages['']) lock.packages[''].version = version
-    for (const rel of ['packages/core', 'packages/services', 'packages/client', 'packages/verifier']) {
+    // Mirrors packageFiles above, minus the root entry handled on the line above.
+    for (const rel of packageFiles.slice(1).map((file) => file.replace(/\/package\.json$/, ''))) {
       if (!lock.packages || !lock.packages[rel]) continue
       lock.packages[rel].version = version
       const deps = lock.packages[rel].dependencies
