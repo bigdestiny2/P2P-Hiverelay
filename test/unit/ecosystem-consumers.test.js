@@ -8,9 +8,13 @@ import {
   DEFAULT_DEPENDENCY_MODE,
   EXPECTED_CURRENT_CONSUMERS,
   HIVERELAY_DEPS,
+  NPM_REGISTRY_PREFIX,
   checkConsumerState,
   formatConsumerReport,
   getExpectedCurrentConsumers,
+  normalizeDependencyMode,
+  npmRangeSpec,
+  satisfiesCaretRange,
   scanConsumerSourceChecks,
   scanCurrentConsumerLockChecks,
   scanHiverelayConsumers,
@@ -1337,8 +1341,313 @@ test('ecosystem consumer audit guards local release snapshot defaults', (t) => {
   t.ok(failedSummary.errors.some(error => error.includes('p2p-hiverelay') && error.includes('^0.20.2')))
 })
 
+test('caret range semantics keep prerelease consumers installable', (t) => {
+  // These are the semantics npm-range is built on, verified against node-semver
+  // rather than assumed. `^0.26.0-rc.1` admits the current prerelease AND the
+  // 0.26.0 final, so promoting an rc needs no consumer manifest edit; dropping
+  // the prerelease tag to `^0.26.0` is what would strand every consumer while a
+  // prerelease is the newest published build.
+  t.ok(satisfiesCaretRange('0.26.0-rc.1', '^0.26.0-rc.1'), 'the pinned prerelease itself installs')
+  t.ok(satisfiesCaretRange('0.26.0-rc.2', '^0.26.0-rc.1'), 'later prereleases of the same tuple install')
+  t.ok(satisfiesCaretRange('0.26.0', '^0.26.0-rc.1'), 'the final release installs without a manifest edit')
+  t.ok(satisfiesCaretRange('0.26.7', '^0.26.0-rc.1'), 'same-minor patches install')
+  t.absent(satisfiesCaretRange('0.26.0-rc.0', '^0.26.0-rc.1'), 'earlier prereleases are excluded')
+  t.absent(satisfiesCaretRange('0.26.1-rc.1', '^0.26.0-rc.1'), 'prereleases of a different tuple stay excluded')
+  t.absent(satisfiesCaretRange('0.27.0', '^0.26.0-rc.1'), '0.x caret is same-minor, so a minor bump is deliberate')
+  t.absent(satisfiesCaretRange('0.20.2', '^0.26.0-rc.1'), 'downgrades are excluded')
+  t.absent(satisfiesCaretRange('0.26.0-rc.1', '^0.26.0'), 'a prerelease cannot satisfy a range with no prerelease at the same tuple')
+  t.ok(satisfiesCaretRange('1.9.9', '^1.2.3'), 'caret on 1.x allows minor bumps')
+  t.absent(satisfiesCaretRange('2.0.0', '^1.2.3'))
+  t.absent(satisfiesCaretRange('0.26.0', 'latest'), 'a dist-tag is not a range')
+  t.absent(satisfiesCaretRange('not-a-version', '^0.26.0-rc.1'))
+})
+
+test('npm-range dependency mode pins consumers to a caret range', (t) => {
+  const consumers = getExpectedCurrentConsumers({ dependencyMode: 'npm-range' })
+  const pearpaste = consumers.find(consumer => consumer.path === '02-apps/pearpaste/package.json')
+
+  t.is(npmRangeSpec(CURRENT_HIVERELAY_VERSION), `^${CURRENT_HIVERELAY_VERSION}`)
+  t.is(pearpaste.dependencyMode, 'npm-range')
+  t.is(pearpaste.deps['p2p-hiverelay'], `^${CURRENT_HIVERELAY_VERSION}`)
+  t.is(pearpaste.deps['p2p-hiverelay-client'], `^${CURRENT_HIVERELAY_VERSION}`)
+  t.ok(satisfiesCaretRange(CURRENT_HIVERELAY_VERSION, pearpaste.deps['p2p-hiverelay']), 'the shipped version satisfies its own pin')
+
+  const pinned = getExpectedCurrentConsumers({ dependencyMode: 'npm-range', expectedVersion: '0.20.2' })
+    .find(consumer => consumer.path === '02-apps/pearpaste/package.json')
+  t.is(pinned.deps['p2p-hiverelay'], '^0.20.2', 'the range follows the version the audit checks against')
+
+  // npm-range has no source-marker wording of its own yet, so it inherits the
+  // npm-latest registry wording instead of falling back to local file: links.
+  t.ok(pinned.sourceChecks.some(check => check.term === '"p2p-hiverelay": "latest"'))
+  t.absent(pinned.sourceChecks.some(check => check.term === '"p2p-hiverelay": "file:../../00-core/hiverelay/packages/core"'))
+
+  t.is(DEFAULT_DEPENDENCY_MODE, 'npm-latest', 'npm-latest remains the default')
+  t.is(getExpectedCurrentConsumers().find(consumer => consumer.path === '02-apps/pearpaste/package.json').deps['p2p-hiverelay'], 'latest')
+  t.is(normalizeDependencyMode('npm-range'), 'npm-range')
+  t.exception(() => normalizeDependencyMode('npm-caret'), /Expected local, npm-latest, or npm-range/)
+})
+
+test('npm-range audit accepts registry lock metadata at the pinned version', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = rangeConsumer('0.20.2')
+
+  writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
+  writeRangeLock(root, consumer, { 'p2p-hiverelay': '0.20.2', 'p2p-hiverelay-client': '0.20.2' })
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer]
+  })
+  const summary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    expectedStale: [],
+    lockChecks
+  })
+
+  t.ok(summary.ok)
+  t.ok(lockChecks.every(check => check.ok))
+  t.ok(lockChecks.some(check => check.label === 'p2p-hiverelay npm range satisfaction'), 'range mode reaches the lock entry check')
+  t.ok(lockChecks.some(check => check.label === 'p2p-hiverelay npm registry source'))
+  t.ok(formatConsumerReport(summary).includes('Current npm-range consumers:'))
+})
+
+test('npm-range audit fails when the lockfile resolves outside the pinned range', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = rangeConsumer('0.20.2')
+
+  // The manifest and the lock root entry both say ^0.20.2, so the string
+  // equality check is green. Only inspecting the resolved node_modules entry
+  // catches that npm pinned 0.21.0, which ^0.20.2 does not allow because caret
+  // on a 0.x version is same-minor. Before the range branch existed this fell
+  // through to `continue` and the audit reported success.
+  writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
+  writeRangeLock(root, consumer, { 'p2p-hiverelay': '0.21.0', 'p2p-hiverelay-client': '0.20.2' })
+
+  const rows = scanHiverelayConsumers({ workspaceRoot: root })
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer]
+  })
+  const summary = checkConsumerState(rows, {
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    expectedStale: [],
+    lockChecks
+  })
+
+  t.ok(
+    lockChecks.some(check => check.ok && check.label === 'p2p-hiverelay lock dependency'),
+    'the pre-existing string comparison still passes, which is exactly the silent-green hazard'
+  )
+  t.absent(summary.ok)
+  t.ok(lockChecks.some(check => !check.ok && check.label === 'p2p-hiverelay npm range satisfaction'))
+  t.ok(summary.errors.some(error => error.includes('resolves p2p-hiverelay@0.21.0, which does not satisfy the pinned range "^0.20.2"')))
+  t.ok(
+    lockChecks.filter(check => check.label.startsWith('p2p-hiverelay-client ')).every(check => check.ok),
+    'the in-range client dependency stays green, so the failure is attributed to the right pin'
+  )
+})
+
+test('npm-range audit fails when the lockfile is inside the range but off the expected version', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = rangeConsumer('0.26.0-rc.1')
+
+  // 0.26.0 genuinely satisfies ^0.26.0-rc.1, so the range alone cannot pin a
+  // release. The version equality check is what makes the audit exact.
+  writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
+  writeRangeLock(root, consumer, { 'p2p-hiverelay': '0.26.0', 'p2p-hiverelay-client': '0.26.0-rc.1' })
+
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.26.0-rc.1',
+    expectedCurrent: [consumer]
+  })
+
+  t.ok(
+    lockChecks.some(check => check.ok && check.label === 'p2p-hiverelay npm range satisfaction'),
+    '0.26.0 satisfies ^0.26.0-rc.1'
+  )
+  t.ok(lockChecks.some(check => !check.ok && check.label === 'p2p-hiverelay npm package version'))
+})
+
+test('npm-range audit fails when a pinned dependency does not come from the public registry', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = rangeConsumer('0.20.2')
+
+  writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
+  writeRangeLock(root, consumer, { 'p2p-hiverelay': '0.20.2', 'p2p-hiverelay-client': '0.20.2' }, {
+    'p2p-hiverelay': { resolved: 'https://npm.internal.example/p2p-hiverelay/-/p2p-hiverelay-0.20.2.tgz' }
+  })
+
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer]
+  })
+
+  t.ok(lockChecks.some(check => check.ok && check.label === 'p2p-hiverelay npm range satisfaction'))
+  t.ok(lockChecks.some(check => !check.ok && check.label === 'p2p-hiverelay npm registry source'))
+  t.ok(lockChecks.some(check => !check.ok && check.error.includes(NPM_REGISTRY_PREFIX)))
+})
+
+test('npm-range audit fails when the pinned dependency is missing from the lockfile', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = rangeConsumer('0.20.2')
+
+  writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
+  writePackageLock(root, '02-apps/pearpaste/package-lock.json', {
+    packages: {
+      '': {
+        optionalDependencies: consumer.deps
+      }
+    }
+  })
+
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer]
+  })
+
+  t.ok(lockChecks.some(check => !check.ok && check.label === 'p2p-hiverelay npm package entry'))
+})
+
+test('npm-range audit fails when a pinned dependency is still a local workspace link', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = rangeConsumer('0.20.2')
+
+  // The likeliest half-finished migration: the manifest has moved to a published
+  // range but the lockfile still links the workspace checkout. findStaleLockEntries
+  // deliberately skips versionless link entries, so nothing else in the audit
+  // notices.
+  writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
+  writePackageLock(root, '02-apps/pearpaste/package-lock.json', {
+    packages: {
+      '': {
+        optionalDependencies: consumer.deps
+      },
+      'node_modules/p2p-hiverelay': {
+        resolved: '../../00-core/hiverelay/packages/core',
+        link: true
+      },
+      'node_modules/p2p-hiverelay-client': {
+        resolved: '../../00-core/hiverelay/packages/client',
+        link: true
+      }
+    }
+  })
+
+  const lockChecks = scanCurrentConsumerLockChecks({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer]
+  })
+
+  t.absent(lockChecks.every(check => check.ok))
+  t.ok(lockChecks.some(check => !check.ok && check.label === 'p2p-hiverelay npm registry source'))
+  t.ok(lockChecks.some(check => !check.ok && check.label === 'p2p-hiverelay npm range satisfaction'))
+})
+
+test('ecosystem sync check reports npm-range pins without touching consumer files', (t) => {
+  const root = fixtureWorkspace()
+  const consumer = rangeConsumer('0.20.2')
+
+  writePackage(root, consumer.path, {
+    optionalDependencies: {
+      'p2p-hiverelay': 'latest',
+      'p2p-hiverelay-client': 'latest'
+    }
+  })
+  writeRangeLock(root, consumer, { 'p2p-hiverelay': '0.20.2', 'p2p-hiverelay-client': '0.20.2' })
+
+  const pending = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    dependencyMode: 'npm-range',
+    snapshotChecks: false,
+    check: true
+  })
+
+  t.absent(pending.ok)
+  t.is(pending.dependencyMode, 'npm-range')
+  t.ok(pending.changes.some(change => change.includes('02-apps/pearpaste/package.json: p2p-hiverelay -> ^0.20.2')))
+  t.ok(pending.errors.some(error => error.includes('ecosystem consumer file(s) need default-version sync')))
+  t.ok(pending.warnings.some(warning => warning.includes('npm-range mode skips the npm latest dist-tag gate')))
+  t.is(readPackage(root, consumer.path).optionalDependencies['p2p-hiverelay'], 'latest', 'check mode writes nothing')
+
+  writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
+  const ready = syncEcosystemConsumers({
+    workspaceRoot: root,
+    expectedVersion: '0.20.2',
+    expectedCurrent: [consumer],
+    dependencyMode: 'npm-range',
+    snapshotChecks: false,
+    check: true
+  })
+
+  t.ok(ready.ok)
+  t.is(ready.changes.length, 0)
+})
+
+test('ecosystem audit CLI supports npm-range mode without a dist-tag lookup', (t) => {
+  const root = fixtureWorkspace()
+  const result = spawnSync(process.execPath, [
+    'scripts/audit-ecosystem-consumers.mjs',
+    '--workspace-root', root,
+    '--expected-version', '0.20.2',
+    '--dependency-mode', 'npm-range',
+    '--consumer-scope', 'release',
+    '--check'
+  ], {
+    cwd: process.cwd(),
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      // Deliberately absent: npm-range must not need the dist-tag evidence the
+      // npm-latest CLI path requires.
+      HIVERELAY_NPM_LATEST_JSON: ''
+    }
+  })
+
+  t.is(result.status, 1, 'the empty fixture workspace still fails on missing consumers')
+  t.ok(result.stdout.includes('mode npm-range'))
+  t.ok(result.stdout.includes('Current npm-range consumers:'))
+  t.ok(result.stdout.includes('npm-range mode does not gate on the npm latest dist-tag'))
+  t.absent(result.stdout.includes('NPM latest dist-tag checks:'))
+})
+
 function fixtureWorkspace () {
   return fs.mkdtempSync(path.join(os.tmpdir(), 'hiverelay-ecosystem-consumers-'))
+}
+
+function rangeConsumer (expectedVersion) {
+  return {
+    ...getExpectedCurrentConsumers({ dependencyMode: 'npm-range', expectedVersion })
+      .find(consumer => consumer.path === '02-apps/pearpaste/package.json'),
+    sourceChecks: []
+  }
+}
+
+function writeRangeLock (root, consumer, versions, overrides = {}) {
+  const packages = {
+    '': {
+      optionalDependencies: consumer.deps
+    }
+  }
+  for (const [dep, version] of Object.entries(versions)) {
+    packages[`node_modules/${dep}`] = {
+      version,
+      resolved: `${NPM_REGISTRY_PREFIX}${dep}/-/${dep}-${version}.tgz`,
+      integrity: 'sha512-test',
+      ...overrides[dep]
+    }
+  }
+  writePackageLock(root, `${path.dirname(consumer.path)}/package-lock.json`, { packages })
 }
 
 function writePackage (root, relPath, body) {

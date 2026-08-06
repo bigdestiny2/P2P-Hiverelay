@@ -33,12 +33,16 @@ const DEP_SECTIONS = [
 
 const usage = `
 Usage:
-  node scripts/sync-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--consumer-scope <all|release>] [--check] [--dry-run] [--prepare-latest-defaults]
+  node scripts/sync-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest|npm-range>] [--consumer-scope <all|release>] [--check] [--dry-run] [--prepare-latest-defaults]
 
 Updates the known direct ecosystem app consumers so their default
 p2p-hiverelay* package defaults point at the npm latest dist-tag by default.
 npm-latest mode first verifies the full published HiveRelay package line equals
 the expected Hiverelay version, then requires npm to refresh package-lock metadata.
+npm-range mode writes the caret range ^<expected version> instead of the latest
+dist-tag so consumers are bumped deliberately; it skips the dist-tag gate, which
+is specific to the latest literal, and relies on the lockfile refresh plus the
+audit lock checks to prove the resolved version.
 Use --dependency-mode local for development workspace links. Use --check in CI
 to fail if a consumer would be changed. Use --prepare-latest-defaults only before
 npm latest is promoted; it writes manifests/source markers to latest, skips
@@ -54,8 +58,8 @@ export function syncEcosystemConsumers (opts = {}) {
   const expectedVersion = opts.expectedVersion || CURRENT_HIVERELAY_VERSION
   const dependencyMode = normalizeDependencyMode(opts.dependencyMode || DEFAULT_DEPENDENCY_MODE)
   const consumerScope = normalizeConsumerScope(opts.consumerScope || 'all')
-  const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope })
-  const expectedClassifiedCurrent = opts.expectedClassifiedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all' })
+  const expectedCurrent = opts.expectedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope, expectedVersion })
+  const expectedClassifiedCurrent = opts.expectedClassifiedCurrent || getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all', expectedVersion })
   const dryRun = Boolean(opts.dryRun || opts.check)
   const prepareLatestDefaults = Boolean(opts.prepareLatestDefaults)
   const changes = []
@@ -119,6 +123,15 @@ export function syncEcosystemConsumers (opts = {}) {
     }
   }
 
+  if (dependencyMode === 'npm-range') {
+    // The dist-tag gate asserts `latest === expectedVersion`, which is the wrong
+    // question for a range pin: a range deliberately tracks published versions
+    // rather than whichever build carries the latest tag. The proof for this
+    // mode is the lockfile check below, which requires a public-registry tarball
+    // at the expected version inside the pinned range.
+    warnings.push(`npm-range mode skips the npm latest dist-tag gate; consumer pins are proven by lockfile entries resolving ${expectedVersion} from the public npm registry`)
+  }
+
   for (const consumer of expectedCurrent) {
     try {
       changes.push(...syncConsumerManifest({
@@ -145,7 +158,9 @@ export function syncEcosystemConsumers (opts = {}) {
     }
   }
 
-  if (dependencyMode === 'npm-latest' && !dryRun && !prepareLatestDefaults) {
+  // Registry-backed modes cannot hand-edit lock metadata the way local links
+  // can; npm has to resolve the spec so the lockfile records a real tarball.
+  if (dependencyMode !== 'local' && !dryRun && !prepareLatestDefaults) {
     try {
       changes.push(...refreshNpmLatestLockfiles({
         workspaceRoot,
@@ -513,6 +528,10 @@ function parseArgs (argv) {
     }
     if (arg === '--npm-latest') {
       out.dependencyMode = 'npm-latest'
+      continue
+    }
+    if (arg === '--npm-range') {
+      out.dependencyMode = 'npm-range'
       continue
     }
     throw new Error(`Unknown argument: ${arg}`)
