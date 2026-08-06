@@ -95,6 +95,8 @@ import {
   resolveStorageCap
 } from '../../config/storage-cap.js'
 import { StorageAdmissionAuthority } from '../../config/storage-admission-authority.js'
+import { isCapacityProfile, normalizeCapacityProfile } from '../../config/capacity-plan.js'
+import { buildCapacityStatus } from './capacity-status.js'
 
 // z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
 // Used to validate the index-room pointer published by the sidecar.
@@ -102,6 +104,8 @@ const Z32_KEY_RE = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/
 
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
+  capacityProfile: null,
+  capacityProfileConfigured: false,
   storage: './storage',
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   maxConnections: 256,
@@ -616,6 +620,12 @@ export class RelayNode extends EventEmitter {
       : (opts.mode || opts.productProfile || 'relay-core')
     this._storagePathExplicit = Object.prototype.hasOwnProperty.call(opts, 'storage')
     this.config = buildConfig(this.mode, opts)
+    if (this.config.capacityProfile != null) {
+      if (!isCapacityProfile(this.config.capacityProfile)) {
+        throw new TypeError('capacityProfile must be one of the supported bounded-capacity profiles')
+      }
+      this.config.capacityProfile = normalizeCapacityProfile(this.config.capacityProfile)
+    }
     if (Object.prototype.hasOwnProperty.call(opts, 'maxStorageBytes') &&
         !getStorageCapProvenance(opts) && positiveStorageBound(opts.maxStorageBytes) === null) {
       throw new TypeError('maxStorageBytes must be a positive safe integer')
@@ -2404,6 +2414,7 @@ export class RelayNode extends EventEmitter {
           staleMs: this.config.autoHeal.staleMs,
           thresholds: this.config.autoHeal.thresholds,
           maxRecruitsPerTick: this.config.autoHeal.maxRecruitsPerTick,
+          maxCapacityChecksPerTick: this.config.autoHeal.maxCapacityChecksPerTick,
           // Cryptographic peer verification — peers count as live replicas
           // only when their /api/anchors/<appKey>/proof endpoint produces a
           // recently-verified Ed25519 signature. Default ON for archive tier.
@@ -2850,6 +2861,11 @@ export class RelayNode extends EventEmitter {
       : null
     const underReplicated = [...this._replicationHealth.values()].filter(v => v.state === 'under-replicated').length
 
+    const disk = this.diskMonitor ? this.diskMonitor.getInfo() : null
+    const storageSummary = this.storageAccounting ? this.storageAccounting.getSummary() : null
+    const storage = storageSummary
+      ? { ...storageSummary, dedup: buildDedupReport(this.appRegistry, this.storageAccounting) }
+      : null
     const stats = {
       running: this.running,
       mode: this.mode,
@@ -2883,10 +2899,14 @@ export class RelayNode extends EventEmitter {
         settlementIntervalMs: this.config.payment?.settlementInterval || null
       },
       accessControl: accessControlStats,
-      disk: this.diskMonitor ? this.diskMonitor.getInfo() : null,
-      storage: this.storageAccounting
-        ? { ...this.storageAccounting.getSummary(), dedup: buildDedupReport(this.appRegistry, this.storageAccounting) }
-        : null,
+      disk,
+      storage,
+      capacity: buildCapacityStatus({
+        config: this.config,
+        disk,
+        storage,
+        storageAdmission: this.storageAdmission
+      }),
       // Honest served total measured at the replication layer (every core,
       // not just Seeder.seedCore-routed ones). The served-bytes twin of
       // `storage` above — see api.js /api/overview for how it's preferred

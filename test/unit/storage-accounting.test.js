@@ -55,6 +55,8 @@ test('getSummary reports real disk bytes when the per-entry walk is blind (the b
   t.is(s.perEntryBytes, 0, 'per-entry walk sees nothing — the original failure')
   t.is(s.diskBytes, apparent, 'disk footprint measured')
   t.is(s.totalBytes, apparent, 'authoritative total = real disk footprint (guard now binds)')
+  t.ok(Number.isSafeInteger(s.diskMeasuredAt), 'summary timestamps the whole-tree measurement')
+  t.ok(s.diskMeasurementComplete, 'successful traversal is marked complete')
 })
 
 test('getSummary prefers the disk footprint over a smaller per-entry sum', async (t) => {
@@ -71,7 +73,20 @@ test('no storagePath -> falls back to the per-entry sum (back-compat)', (t) => {
   acct._bytes.set('x', { bytes: 42, measuredAt: 1 })
   const s = acct.getSummary()
   t.is(s.diskBytes, null, 'no disk measurement attempted')
+  t.is(s.diskMeasuredAt, null, 'missing measurement has no freshness timestamp')
+  t.absent(s.diskMeasurementComplete)
   t.is(s.totalBytes, 42, 'per-entry sum used when no storagePath configured')
+})
+
+test('an unreadable or missing root never becomes complete capacity evidence', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'hr-missing-root-'))
+  await rm(dir, { recursive: true, force: true })
+  const acct = new StorageAccounting({ appRegistry: { keys: () => [], get: () => null }, storagePath: dir })
+
+  t.is(await acct.measureDisk(), 0, 'best-effort dashboard count remains backward compatible')
+  const summary = acct.getSummary()
+  t.absent(summary.diskMeasurementComplete, 'failed root traversal is explicit')
+  t.ok(Number.isSafeInteger(summary.diskMeasuredAt), 'failed scan time remains observable')
 })
 
 test('measureDisk is latched and returns the measured value', async (t) => {

@@ -215,6 +215,39 @@ test('storage authority: synchronous cross-kind reservations cannot overcommit',
   t.is(a.admission(CAP, { refresh: true }).allowed, true, 'durable release returns the committed budget')
 })
 
+test('storage authority: capacitySnapshot tracks ledger debt without exposing records', (t) => {
+  const a = authority({ recoveryKinds: [] })
+  t.alike(a.capacitySnapshot(), {
+    recoveryReady: true,
+    committedBytes: 0,
+    pendingBytes: 0,
+    unknownCommitments: 0,
+    valid: true,
+    fatalReason: null,
+    acceptingMutations: true,
+    physicalEnforcementActive: false
+  })
+
+  const token = a.reserve('core:feed', GiB, { kind: 'core' })
+  t.ok(token.allowed)
+  let summary = a.capacitySnapshot()
+  t.is(summary.pendingBytes, GiB + STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES)
+  t.is(summary.committedBytes, 0)
+  t.absent(Object.prototype.hasOwnProperty.call(summary, 'records'), 'public aggregate never clones the ledger')
+
+  t.ok(a.commit(token))
+  summary = a.capacitySnapshot()
+  t.is(summary.pendingBytes, 0)
+  t.is(summary.committedBytes, GiB + STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES)
+
+  a.adoptRecovery('drive:unknown', null, { kind: 'drive' })
+  t.is(a.capacitySnapshot().unknownCommitments, 1)
+  t.ok(a.release('drive:unknown'))
+  t.is(a.capacitySnapshot().unknownCommitments, 0)
+  t.ok(a.release('core:feed'))
+  t.is(a.capacitySnapshot().committedBytes, 0)
+})
+
 test('storage authority: existing promises consume physical headroom under an oversized logical cap', (t) => {
   const sample = {
     ...healthySample(),

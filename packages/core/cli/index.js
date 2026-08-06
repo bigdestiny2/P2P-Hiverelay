@@ -46,6 +46,10 @@ import {
   mainBanner, setupBanner, testnetBanner, statusBanner, helpBanner,
   shutdownBanner, divider, HEX, HEX_DIM, OK, ARROW, paint, C
 } from './banner.js'
+import {
+  CAPACITY_PROFILE_IDS,
+  normalizeCapacityProfile
+} from '../config/capacity-plan.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
@@ -348,6 +352,14 @@ async function start () {
       cliOverrides.maxStorageBytes = maxStorageBytes
       markStorageCapExplicit(cliOverrides, 'environment')
     }
+  }
+  if (args['capacity-profile']) {
+    cliOverrides.capacityProfile = capacityProfileOrExit(args['capacity-profile'], '--capacity-profile')
+  } else if (process.env.HIVERELAY_CAPACITY_PROFILE && !hasPersistedCapacityProfile()) {
+    cliOverrides.capacityProfile = capacityProfileOrExit(
+      process.env.HIVERELAY_CAPACITY_PROFILE,
+      'HIVERELAY_CAPACITY_PROFILE'
+    )
   }
   if (args['max-connections']) cliOverrides.maxConnections = parseInt(args['max-connections'])
   if (args['max-bandwidth']) cliOverrides.maxRelayBandwidthMbps = parseInt(args['max-bandwidth'])
@@ -1602,6 +1614,7 @@ Init Options:
 Start Options:
   --storage <path>              Storage directory
   --max-storage <size>          Max storage (e.g., 50GB, 100GB)
+  --capacity-profile <id>       Hardware plan: ${CAPACITY_PROFILE_IDS.join(' | ')}
   --seed-max-storage <size>     Required finite bound for each --seed app
   --max-connections <n>         Max peer connections (default: 256)
   --max-bandwidth <mbps>        Max relay bandwidth in Mbps (default: 100)
@@ -1703,6 +1716,7 @@ Environment:
   HIVERELAY_API_HOST            API bind host used when --api-host is absent
   HIVERELAY_API_PORT            API port used when --port is absent
   HIVERELAY_HOLESAIL            Set 1/true to enable the Holesail API tunnel
+  HIVERELAY_CAPACITY_PROFILE    Planning profile until persisted or explicitly cleared
 
 Examples:
   npx p2p-hiverelay setup                              # Interactive setup wizard
@@ -1736,6 +1750,15 @@ function parseBytesOrExit (value, label) {
     process.exit(1)
   }
   return bytes
+}
+
+function capacityProfileOrExit (value, label) {
+  try {
+    return normalizeCapacityProfile(value)
+  } catch (_) {
+    console.error(`Invalid ${label}: must be one of ${CAPACITY_PROFILE_IDS.join(', ')}`)
+    process.exit(1)
+  }
 }
 
 function formatBytes (bytes) {
@@ -1780,6 +1803,18 @@ function hasPersistedMaxStorage () {
     const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
     return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
       Object.prototype.hasOwnProperty.call(parsed, 'maxStorageBytes'))
+  } catch (_) {
+    return false
+  }
+}
+
+function hasPersistedCapacityProfile () {
+  if (!existsSync(CONFIG_PATH)) return false
+  try {
+    const parsed = JSON.parse(readFileSync(CONFIG_PATH, 'utf8'))
+    return !!(parsed && typeof parsed === 'object' && !Array.isArray(parsed) &&
+      (Object.prototype.hasOwnProperty.call(parsed, 'capacityProfile') ||
+        parsed.capacityProfileConfigured === true))
   } catch (_) {
     return false
   }

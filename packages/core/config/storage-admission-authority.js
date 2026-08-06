@@ -23,6 +23,18 @@ function cloneRecord (record) {
   return record ? { ...record } : null
 }
 
+function capacityContribution (record) {
+  const bound = finiteNonNegativeInteger(record?.boundBytes)
+  const overhead = finiteNonNegativeInteger(record?.overheadBytes)
+  if (!record || bound === null || overhead === null) {
+    return { committed: 0n, pending: 0n, unknown: 1 }
+  }
+  const debt = BigInt(bound) + BigInt(overhead)
+  if (record.state === 'committed') return { committed: debt, pending: 0n, unknown: 0 }
+  if (record.state === 'reserved') return { committed: 0n, pending: debt, unknown: 0 }
+  return { committed: 0n, pending: 0n, unknown: 1 }
+}
+
 function admissionFailure (reason, details = {}) {
   return {
     allowed: false,
@@ -158,6 +170,9 @@ export class StorageAdmissionAuthority extends EventEmitter {
       : () => sampleStorageFilesystem(this.config)
     this.sampleMaxAgeMs = positiveStorageBound(opts.sampleMaxAgeMs) || 60_000
     this._records = new Map()
+    this._capacityCommittedBytes = 0n
+    this._capacityPendingBytes = 0n
+    this._capacityUnknownCommitments = 0
     this._recoveryPending = new Set(opts.recoveryKinds || ['drives', 'cores'])
     this._tokenSequence = 0
     this._lastFilesystemSample = null
@@ -178,6 +193,35 @@ export class StorageAdmissionAuthority extends EventEmitter {
 
   setConfig (config) {
     this.config = config
+  }
+
+  _adjustCapacityTotals (record, direction) {
+    if (!record) return
+    const contribution = capacityContribution(record)
+    const sign = direction < 0 ? -1n : 1n
+    this._capacityCommittedBytes += sign * contribution.committed
+    this._capacityPendingBytes += sign * contribution.pending
+    this._capacityUnknownCommitments += direction < 0 ? -contribution.unknown : contribution.unknown
+  }
+
+  _setRecord (key, record) {
+    this._adjustCapacityTotals(this._records.get(key), -1)
+    this._records.set(key, record)
+    this._adjustCapacityTotals(record, 1)
+  }
+
+  _deleteRecord (key) {
+    const previous = this._records.get(key)
+    if (!previous) return false
+    this._adjustCapacityTotals(previous, -1)
+    return this._records.delete(key)
+  }
+
+  _clearRecords () {
+    this._records.clear()
+    this._capacityCommittedBytes = 0n
+    this._capacityPendingBytes = 0n
+    this._capacityUnknownCommitments = 0
   }
 
   setResolvers (opts = {}) {
@@ -478,7 +522,7 @@ export class StorageAdmissionAuthority extends EventEmitter {
   }
 
   beginRecovery (kinds = ['drives', 'cores']) {
-    this._records.clear()
+    this._clearRecords()
     this._ownedLeases.clear()
     this._recoveryPending = new Set(kinds)
     this._fatalReason = null
@@ -605,7 +649,7 @@ export class StorageAdmissionAuthority extends EventEmitter {
       this.failClosed('storage-recovery-actual-exceeds-commitment')
       return null
     }
-    this._records.set(key, bound === null
+    const record = bound === null
       ? {
           key,
           kind,
@@ -624,7 +668,8 @@ export class StorageAdmissionAuthority extends EventEmitter {
           state: 'committed',
           recovery: true,
           tokenId: null
-        })
+        }
+    this._setRecord(key, record)
     return cloneRecord(this._records.get(key))
   }
 
@@ -758,7 +803,7 @@ export class StorageAdmissionAuthority extends EventEmitter {
       tokenId,
       measuredActualBytes: measuredActual
     }
-    this._records.set(key, record)
+    this._setRecord(key, record)
     return {
       allowed: true,
       key,
@@ -785,12 +830,16 @@ export class StorageAdmissionAuthority extends EventEmitter {
       this._fatalReason = 'storage-reservation-authority-invariant-failed'
       return false
     }
-    record.boundBytes = committedBound
-    if (actualBytes !== null) record.actualBytesOverride = actualBytes
-    record.state = 'committed'
-    record.tokenId = null
-    record.recovery = false
-    delete record.measuredActualBytes
+    const committed = {
+      ...record,
+      boundBytes: committedBound,
+      state: 'committed',
+      tokenId: null,
+      recovery: false
+    }
+    if (actualBytes !== null) committed.actualBytesOverride = actualBytes
+    delete committed.measuredActualBytes
+    this._setRecord(token.key, committed)
     return true
   }
 
@@ -845,19 +894,42 @@ export class StorageAdmissionAuthority extends EventEmitter {
   rollback (token) {
     const record = token && this._records.get(token.key)
     if (!record || record.state !== 'reserved' || record.tokenId !== token.tokenId) return false
-    if (token.previous) this._records.set(token.key, cloneRecord(token.previous))
-    else this._records.delete(token.key)
+    if (token.previous) this._setRecord(token.key, cloneRecord(token.previous))
+    else this._deleteRecord(token.key)
     return true
   }
 
   release (key) {
     const handoff = this._ownedLeases.get(key)
     if (handoff) this.releaseOwnedHandoff(handoff)
-    return this._records.delete(key)
+    return this._deleteRecord(key)
   }
 
   get (key) {
     return cloneRecord(this._records.get(key))
+  }
+
+  /**
+   * Constant-time aggregate for public/status paths. Record mutations update
+   * these counters synchronously, so an unauthenticated status read never
+   * clones or walks the commitment ledger.
+   */
+  capacitySnapshot () {
+    const max = BigInt(Number.MAX_SAFE_INTEGER)
+    const committedValid = this._capacityCommittedBytes >= 0n && this._capacityCommittedBytes <= max
+    const pendingValid = this._capacityPendingBytes >= 0n && this._capacityPendingBytes <= max
+    let physicalEnforcementActive = false
+    try { physicalEnforcementActive = this.physicalEnforcementActive === true } catch (_) {}
+    return {
+      recoveryReady: this.recoveryReady,
+      committedBytes: committedValid ? Number(this._capacityCommittedBytes) : 0,
+      pendingBytes: pendingValid ? Number(this._capacityPendingBytes) : 0,
+      unknownCommitments: this._capacityUnknownCommitments + (committedValid ? 0 : 1) + (pendingValid ? 0 : 1),
+      valid: committedValid && pendingValid && this._capacityUnknownCommitments >= 0,
+      fatalReason: this._fatalReason,
+      acceptingMutations: this._acceptingMutations,
+      physicalEnforcementActive
+    }
   }
 
   snapshot () {

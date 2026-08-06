@@ -3,6 +3,7 @@ import {
   sanitizeServiceCatalogEntries,
   serviceCatalogTotal
 } from '../services/service-catalog.js'
+import { isCapacityProfile } from '../../config/capacity-plan.js'
 
 export const MAX_STATUS_STRING_BYTES = 128
 export const MAX_STATUS_ERROR_BYTES = 512
@@ -85,6 +86,12 @@ function count (value) {
   return Math.min(Math.floor(value), Number.MAX_SAFE_INTEGER)
 }
 
+function countOrNull (value) {
+  if (value === null || value === undefined) return null
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.min(Math.floor(value), Number.MAX_SAFE_INTEGER)
+}
+
 function numberOrZero (value) {
   if (!Number.isFinite(value) || value < 0) return 0
   return Math.min(value, Number.MAX_SAFE_INTEGER)
@@ -129,6 +136,96 @@ export function sanitizeStorageSummary (storage) {
     measuredEntries: count(storage.measuredEntries),
     fullSweeps: count(storage.fullSweeps),
     lastFullSweepAt: timestampOrNull(storage.lastFullSweepAt)
+  }
+}
+
+function sanitizeCapacityPlan (plan) {
+  if (!isObject(plan) || plan.mode !== 'planning-only') return null
+  const profileId = isCapacityProfile(plan.profileId) ? plan.profileId : null
+  if (!profileId) return null
+  const pools = isObject(plan.poolBytes) ? plan.poolBytes : {}
+  const usage = isObject(plan.usage) ? plan.usage : {}
+  const reserve = isObject(plan.reservePolicy) ? plan.reservePolicy : {}
+  return {
+    schemaVersion: count(plan.schemaVersion),
+    mode: 'planning-only',
+    profileId,
+    observedUsableBytes: count(plan.observedUsableBytes),
+    observedFreeBytes: count(plan.observedFreeBytes),
+    observedFreeAssumed: bool(plan.observedFreeAssumed),
+    reservePolicy: {
+      basisPoints: count(reserve.basisPoints),
+      floorBytes: count(reserve.floorBytes)
+    },
+    physicalReserveBytes: count(plan.physicalReserveBytes),
+    postReserveBytes: count(plan.postReserveBytes),
+    operatorCapBytes: countOrNull(plan.operatorCapBytes),
+    operatorCapApplied: bool(plan.operatorCapApplied),
+    managedCapacityBytes: count(plan.managedCapacityBytes),
+    physicalHeadroomBytes: count(plan.physicalHeadroomBytes),
+    poolBytes: {
+      durable: count(pools.durable),
+      serviceControl: count(pools.serviceControl),
+      repair: count(pools.repair),
+      cache: count(pools.cache),
+      burst: count(pools.burst)
+    },
+    usage: {
+      actualUsageBytes: count(usage.actualUsageBytes),
+      committedBytes: count(usage.committedBytes),
+      pendingBytes: count(usage.pendingBytes),
+      untrackedDebtBytes: count(usage.untrackedDebtBytes),
+      futureDebtBytes: count(usage.futureDebtBytes),
+      conservativeDemandBytes: count(usage.conservativeDemandBytes)
+    },
+    logicalAvailableBytes: count(plan.logicalAvailableBytes),
+    availableBytes: count(plan.availableBytes),
+    advertisableBytes: count(plan.advertisableBytes),
+    overcommittedBytes: count(plan.overcommittedBytes),
+    atCapacity: bool(plan.atCapacity),
+    advertisingBlocked: bool(plan.advertisingBlocked)
+  }
+}
+
+export function sanitizeCapacitySummary (capacity) {
+  if (!isObject(capacity) || capacity.mode !== 'planning-only') return null
+  const measurements = isObject(capacity.measurements) ? capacity.measurements : {}
+  const enforcement = isObject(capacity.enforcement) ? capacity.enforcement : {}
+  const advertisement = isObject(capacity.advertisement) ? capacity.advertisement : {}
+  const blockReasons = Array.isArray(advertisement.blockReasons)
+    ? advertisement.blockReasons
+      .slice(0, 16)
+      .map(reason => statusString(reason, { maxBytes: 64 }))
+      .filter(Boolean)
+    : []
+  return {
+    schemaVersion: count(capacity.schemaVersion),
+    mode: 'planning-only',
+    profileId: isCapacityProfile(capacity.profileId) ? capacity.profileId : null,
+    operatorDeclared: bool(capacity.operatorDeclared),
+    plan: sanitizeCapacityPlan(capacity.plan),
+    measurements: {
+      complete: bool(measurements.complete),
+      fresh: bool(measurements.fresh),
+      maxAgeMs: count(measurements.maxAgeMs),
+      diskCheckedAt: timestampOrNull(measurements.diskCheckedAt),
+      storageMeasuredAt: timestampOrNull(measurements.storageMeasuredAt)
+    },
+    enforcement: {
+      logicalAdmissionActive: bool(enforcement.logicalAdmissionActive),
+      recoveryReady: bool(enforcement.recoveryReady),
+      acceptingMutations: bool(enforcement.acceptingMutations),
+      fatal: bool(enforcement.fatal),
+      committedBytes: count(enforcement.committedBytes),
+      pendingBytes: count(enforcement.pendingBytes),
+      unknownCommitments: count(enforcement.unknownCommitments),
+      physicalEnforcementActive: bool(enforcement.physicalEnforcementActive)
+    },
+    advertisement: {
+      eligible: bool(advertisement.eligible),
+      bytes: count(advertisement.bytes),
+      blockReasons
+    }
   }
 }
 
@@ -307,6 +404,7 @@ export function buildStatusPayload ({ node, now = Date.now() } = {}) {
       relay: sanitizeRelayStats(stats.relay),
       seeder: sanitizeSeederStats(stats.seeder),
       storage: sanitizeStorageSummary(stats.storage),
+      capacity: sanitizeCapacitySummary(stats.capacity),
       served: sanitizeServedSummary(stats.served),
       disk: sanitizeDiskInfo(stats.disk),
       registry: isObject(stats.registry)

@@ -230,3 +230,31 @@ test('api config update: maxStorageBytes equal to 50 GiB is marked explicit befo
   t.is(persistedProvenance.explicit, true)
   t.is(persistedProvenance.source, 'management-api')
 })
+
+test('api config update: validates, normalizes, and clears capacityProfile', async (t) => {
+  const config = { capacityProfile: null }
+
+  let result = await runConfigUpdateAction({
+    body: { capacityProfile: ' SEEDER-REGIONAL ' },
+    config
+  })
+  t.ok(result.ok)
+  t.is(config.capacityProfile, 'seeder-regional')
+  t.is(config.capacityProfileConfigured, true)
+  t.alike(result.payload.applied, ['capacityProfile'])
+
+  result = await runConfigUpdateAction({
+    body: { capacityProfile: 'monster-box' },
+    config
+  })
+  t.is(result.status, 400)
+  t.is(config.capacityProfile, 'seeder-regional', 'invalid update rolls back')
+
+  result = await runConfigUpdateAction({
+    body: { capacityProfile: null },
+    config
+  })
+  t.ok(result.ok)
+  t.is(config.capacityProfile, null)
+  t.is(config.capacityProfileConfigured, true, 'explicit clear is persisted over deployment env defaults')
+})

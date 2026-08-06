@@ -77,6 +77,14 @@ export class AutoHeal extends EventEmitter {
     // drives in a single tick — back-pressure against a thundering herd
     // of new archive content all becoming our responsibility at once.
     this.maxRecruitsPerTick = opts.maxRecruitsPerTick || 3
+    // admission() refreshes filesystem identity and measures the exact storage
+    // tree synchronously. Bound those expensive evaluations independently of
+    // successful recruits so a huge peer catalog cannot turn one tick into an
+    // unbounded sequence of event-loop-blocking disk walks.
+    this.maxCapacityChecksPerTick = Number.isSafeInteger(opts.maxCapacityChecksPerTick) &&
+      opts.maxCapacityChecksPerTick > 0
+      ? opts.maxCapacityChecksPerTick
+      : this.maxRecruitsPerTick
     // Soft storage cap — refuse to recruit past this fraction of
     // maxStorageBytes. Default 90% leaves headroom for the seed-request
     // path + manifest growth between ticks.
@@ -183,6 +191,7 @@ export class AutoHeal extends EventEmitter {
       tickMs: this.tickMs,
       thresholds: this.thresholds,
       maxRecruitsPerTick: this.maxRecruitsPerTick,
+      maxCapacityChecksPerTick: this.maxCapacityChecksPerTick,
       storageMargin: this.storageMargin,
       verifyProofs: this.verifyProofs,
       proofFreshnessMs: this.proofFreshnessMs,
@@ -216,6 +225,7 @@ export class AutoHeal extends EventEmitter {
 
     // 2. For each archive drive, decide whether to recruit.
     let recruits = 0
+    let capacityChecks = 0
     for (const [appKey, replicas] of this._fleet) {
       if (recruits >= this.maxRecruitsPerTick) break
 
@@ -288,26 +298,20 @@ export class AutoHeal extends EventEmitter {
       // (operator may have explicitly closed the relay, set allowlist, etc.).
       if (!this._canAccept(appKey)) continue
 
-      // Storage gate — refuse to recruit when we're already at the operator's
-      // storage cap. seedApp() would error or evict; better to decline up
-      // front and let a relay with capacity take it. We use a soft margin
-      // (default 90%) so we don't keep recruiting until literally full.
-      const storage = this._storageCapacity()
-      if (!storage.ok) {
-        this.emit('recruit-skipped', {
-          appKey,
-          reason: storage.reason,
-          usedBytes: storage.usedBytes,
-          maxStorageBytes: storage.maxStorageBytes,
-          storageMargin: storage.storageMargin
-        })
+      // A durable recruit is a promise for the catalog's full per-drive bound,
+      // not merely the bytes currently visible on another relay. Validate the
+      // bound before asking the shared admission authority to price that
+      // promise. admission() is a read-only gate here; seedApp() still owns the
+      // reservation/commit, so this does not double-reserve the same bytes.
+      const maxStorage = positiveStorageBound(this._bounds.get(appKey))
+      if (maxStorage === null) {
+        this.emit('recruit-skipped', { appKey, reason: 'storage-bound-invalid' })
         continue
       }
 
       // Backoff gate — if recruiting this drive failed recently, wait before
-      // retrying. Prevents tick-by-tick retry storms when a drive is
-      // permanently un-replicable (e.g., publisher gone, we can't connect
-      // to any peer that has it).
+      // retrying. This and convergence jitter intentionally run before the
+      // expensive filesystem admission walk.
       if (this._isInBackoff(appKey)) continue
 
       // Convergence jitter — at scale, many archive-aware relays will see
@@ -328,13 +332,38 @@ export class AutoHeal extends EventEmitter {
         continue
       }
 
+      if (capacityChecks >= this.maxCapacityChecksPerTick) {
+        this.emit('recruit-skipped', {
+          appKey,
+          reason: 'capacity-check-budget',
+          maxCapacityChecksPerTick: this.maxCapacityChecksPerTick
+        })
+        break
+      }
+      capacityChecks++
+
+      // Storage gate — refuse to recruit when the shared measured authority
+      // cannot prove room for the complete commitment. Its usedBytes already
+      // includes measured storage plus outstanding commitment debt, so never
+      // add Seeder's cumulative counter (or commitment bytes) a second time.
+      // The soft margin (default 90%) leaves headroom between recruitment and
+      // the hard admission boundary.
+      const storage = this._storageCapacity(maxStorage)
+      if (!storage.ok) {
+        this.emit('recruit-skipped', {
+          appKey,
+          reason: storage.reason,
+          usedBytes: storage.usedBytes,
+          maxStorageBytes: storage.maxStorageBytes,
+          storageMargin: storage.storageMargin,
+          requestedBytes: maxStorage,
+          availableBytes: storage.availableBytes
+        })
+        continue
+      }
+
       // Recruit.
       try {
-        const maxStorage = positiveStorageBound(this._bounds.get(appKey))
-        if (maxStorage === null) {
-          this.emit('recruit-skipped', { appKey, reason: 'storage-bound-invalid' })
-          continue
-        }
         await this.node.seedApp(appKey, {
           durability: ARCHIVE_TIER,
           revocable: false, // archive drives are non-revocable by definition
@@ -361,28 +390,85 @@ export class AutoHeal extends EventEmitter {
     return this._storageCapacity().ok
   }
 
-  _storageCapacity () {
-    const seeder = this.node.seeder
-    const cap = this.node.config?.maxStorageBytes
-    if (!seeder || !Number.isFinite(cap) || cap <= 0) {
-      return {
-        ok: false,
-        reason: 'storage-capacity-unavailable',
-        usedBytes: null,
-        maxStorageBytes: Number.isFinite(cap) ? cap : null,
-        storageMargin: null
-      }
-    }
-    const rawUsed = seeder.totalBytesStored
-    const used = Number.isFinite(rawUsed) && rawUsed > 0 ? rawUsed : 0
+  _storageCapacity (additionalBytes = 0) {
     const rawMargin = this.storageMargin
     const margin = Number.isFinite(rawMargin) && rawMargin > 0 ? Math.min(rawMargin, 1) : 0.90
-    if (used >= cap * margin) {
+    const requested = Number(additionalBytes)
+    const authority = this.node.storageAdmission
+    const unavailable = (reason = 'storage-capacity-unavailable', details = {}) => ({
+      ok: false,
+      reason,
+      usedBytes: null,
+      maxStorageBytes: null,
+      availableBytes: 0,
+      storageMargin: margin,
+      ...details
+    })
+
+    if (!Number.isSafeInteger(requested) || requested < 0) {
+      return unavailable('storage-bound-invalid')
+    }
+    if (!authority || typeof authority.admission !== 'function') {
+      return unavailable()
+    }
+
+    let admission
+    try {
+      if (authority.fatalReason) return unavailable(String(authority.fatalReason))
+      if (authority.recoveryReady !== true) {
+        return unavailable('storage-recovery-inventory-pending')
+      }
+      admission = authority.admission(requested, { refresh: true })
+    } catch (_) {
+      return unavailable('storage-capacity-unavailable')
+    }
+
+    const cap = Number(admission?.capBytes)
+    const used = Number(admission?.usedBytes)
+    const available = Number(admission?.availableBytes)
+    const validSnapshot = Number.isSafeInteger(cap) && cap > 0 &&
+      Number.isSafeInteger(used) && used >= 0 &&
+      Number.isSafeInteger(available) && available >= 0
+    if (!validSnapshot) {
+      return unavailable(admission?.reason || 'storage-capacity-unavailable')
+    }
+    if (admission.allowed !== true) {
+      return {
+        ok: false,
+        reason: admission.reason || 'storage-capacity-unavailable',
+        usedBytes: used,
+        maxStorageBytes: cap,
+        availableBytes: available,
+        storageMargin: margin
+      }
+    }
+    const admittedAdditional = Number(admission.additionalBytes)
+    if (!Number.isSafeInteger(admittedAdditional) || admittedAdditional !== requested || requested > available) {
+      return unavailable('storage-capacity-unavailable', {
+        usedBytes: used,
+        maxStorageBytes: cap,
+        availableBytes: available
+      })
+    }
+
+    // The admission snapshot already charges every outstanding commitment in
+    // usedBytes. Only add this candidate's as-yet-unreserved bound when
+    // applying the softer AutoHeal margin.
+    const projected = used + requested
+    if (!Number.isSafeInteger(projected)) {
+      return unavailable('storage-usage-invalid', {
+        usedBytes: used,
+        maxStorageBytes: cap,
+        availableBytes: available
+      })
+    }
+    if (projected >= cap * margin) {
       return {
         ok: false,
         reason: 'storage-full',
         usedBytes: used,
         maxStorageBytes: cap,
+        availableBytes: available,
         storageMargin: margin
       }
     }
@@ -391,6 +477,7 @@ export class AutoHeal extends EventEmitter {
       reason: null,
       usedBytes: used,
       maxStorageBytes: cap,
+      availableBytes: available,
       storageMargin: margin
     }
   }

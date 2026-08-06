@@ -77,7 +77,24 @@ services:
       # to avoid surprising typical home boxes.
       HIVERELAY_MAX_STORAGE: 10GB
 
+      # Operator-declared capacity planning profile. This labels the box for
+      # capacity/status calculations; it does not claim separate physical
+      # enforcement for each planned storage pool.
+      HIVERELAY_CAPACITY_PROFILE: edge-community
+
       # Deterministic, reinstall-safe identity + management token. Umbrel
       # injects $APP_SEED (derived from the user's Umbrel seed and this app
       # id); the relay reads it from the container environment.
       APP_SEED: ${APP_SEED}
+      # ─── Utility services (explicit opt-in) ───────────────────
+      # The ordinary Umbrel package is a capacity-bounded community edge,
+      # not a service farm. Keep every persistent utility provider off on a
+      # fresh install. Owners can deliberately select services in the
+      # dashboard; that saved choice takes effect on restart.
+      HIVERELAY_ENABLE_SERVICES: "false"
+      HIVERELAY_OUTBOXLOG: "false"
+      HIVERELAY_NOTIFY: "false"
+      HIVERELAY_SHARD_STORE: "false"
+      HIVERELAY_STORAGE_PROOF: "false"
+      HIVERELAY_VRF: "false"
+      HIVERELAY_WITNESSLOG: "false"

@@ -63,6 +63,10 @@ For the stale pinned image only, a manual inspection command is:
   pending, and preserves provider errors in the service manager UI.
 - [ ] Browser/devtools check: dashboard WebSocket clients send an in-band
   auth frame and no `/ws?token=` or `/ws?api_key=` URL appears.
+- [ ] Fresh install reports the Services layer disabled and starts none of the
+  optional outbox, notification, shard-store, proof, VRF, or witness providers.
+  Treat any service-provider test as a separate, explicit operator opt-in and
+  return the package to its stock configuration afterwards.
 - [ ] `/data` is writable by uid 999. If the relay logs storage/permission
   errors on first boot, the app data dir needs to be owned by 999 (or the
   service run with an init that chowns it) — resolve before submission.
@@ -86,6 +90,10 @@ For the stale pinned image only, a manual inspection command is:
 - [x] **Storage cap.** Core/VPS default stays 50 GB, but the Umbrel package sets
   `HIVERELAY_MAX_STORAGE=10GB` for a conservative home-box first install.
   Saved operator config wins on later restarts.
+- [x] **Services default.** The stock package is an edge/community relay, not a
+  service farm. `HIVERELAY_ENABLE_SERVICES` and every packaged utility-service
+  flag are `"false"`; providers run only after the owner explicitly selects
+  them and restarts.
 
 ## Open the PR
 

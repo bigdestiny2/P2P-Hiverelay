@@ -16,6 +16,22 @@ WorkingDirectory=/opt/hiverelay
 # Environment
 Environment=NODE_ENV=production
 Environment=HIVERELAY_LOG_LEVEL=info
+# Optional operator-declared planning label; choose from the documented
+# bounded-capacity profiles only after measuring this host.
+# Environment=HIVERELAY_CAPACITY_PROFILE=seeder-standard
+
+# ─── Utility services (explicit opt-in) ────────────────────────────
+# The authoritative Node-runtime choice is the reviewed plugins list persisted
+# from the Services dashboard. A base relay must not silently become a
+# multi-service storage host; zero defaults also keep future env wiring safe.
+Environment=HIVERELAY_ENABLE_SERVICES=0
+Environment=HIVERELAY_OUTBOXLOG=0
+Environment=HIVERELAY_NOTIFY=0
+Environment=HIVERELAY_STORAGE_PROOF=0
+Environment=HIVERELAY_VRF=0
+Environment=HIVERELAY_WITNESSLOG=0
+Environment=HIVERELAY_REPAIRTICKET=0
+Environment=HIVERELAY_SHARD_STORE=0
 
 # Restart policy — RestartSec=15 prevents ELOCKED crash loops
 # (random-access-file needs time to release primary-key lock)

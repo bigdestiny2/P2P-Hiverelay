@@ -115,6 +115,11 @@ The repo has moved from a relay prototype into a Core3 infrastructure stack:
 - **Measured accounting**: `StorageAccounting` reports real on-disk bytes;
   `ServedAccounting` counts upload bytes from every opened core, fixing the old
   undercounted "stored/served" dashboard blind spots.
+- **Bounded hardware planning**: operator-declared consumer, seeder, services,
+  and archive profiles split measured post-parity storage into exact finite
+  pools without widening the operator cap. The implementation boundary and
+  custom S2/Umbrel roadmap are in
+  [docs/BOUNDED-CAPACITY-HARDWARE-ROADMAP.md](docs/BOUNDED-CAPACITY-HARDWARE-ROADMAP.md).
 - **Disk pressure and corruption hardening**: eviction, purge, tombstones,
   reconcile, corrupt-core timeouts, and manual purge paths make full-disk fleet
   recovery practical.

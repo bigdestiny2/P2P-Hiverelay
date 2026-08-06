@@ -4,6 +4,7 @@ import {
   markStorageCapExplicit,
   STORAGE_CAP_PROVENANCE
 } from '../../config/storage-cap.js'
+import { normalizeCapacityProfile } from '../../config/capacity-plan.js'
 
 const INT_FIELDS = {
   maxStorageBytes: { min: 1048576, max: 10e12 },
@@ -113,6 +114,27 @@ export async function runConfigUpdateAction ({
     applied.push('maxRelayBandwidthMbps')
   }
 
+  if (body.capacityProfile !== undefined) {
+    if (body.capacityProfile === null) {
+      config.capacityProfile = null
+    } else {
+      try {
+        config.capacityProfile = normalizeCapacityProfile(body.capacityProfile)
+      } catch (_) {
+        rollback()
+        return {
+          ok: false,
+          kind: 'bad-request',
+          status: 400,
+          payload: errorPayload('capacityProfile must be a supported bounded-capacity profile or null')
+        }
+      }
+    }
+    config.capacityProfileConfigured = true
+    applied.push('capacityProfile')
+    applied.push('capacityProfileConfigured')
+  }
+
   for (const field of BOOLEAN_FIELDS) {
     if (body[field] !== undefined) {
       const result = validateBooleanField(body[field], field)
@@ -170,7 +192,7 @@ export async function runConfigUpdateAction ({
     ok: true,
     payload: {
       ok: true,
-      applied,
+      applied: applied.filter(field => field !== 'capacityProfileConfigured'),
       config: safeConfigPayload()
     }
   }

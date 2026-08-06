@@ -1,7 +1,7 @@
 # p2p-hiverelay — Docker Compose orchestration
 #
 # Quick start:
-#   docker compose up -d          # single relay, default config
+#   docker compose up -d          # bounded relay (services stay opt-in)
 #   docker compose logs -f relay  # tail logs
 #   docker compose exec relay p2p-hiverelay tui   # open management TUI
 #   docker compose down           # stop (data persists in the named volume)
@@ -34,9 +34,26 @@ services:
       - HIVERELAY_LOG_LEVEL=${HIVERELAY_LOG_LEVEL:-info}
       - HIVERELAY_REGION=${HIVERELAY_REGION:-NA}
       - HIVERELAY_MAX_STORAGE=${HIVERELAY_MAX_STORAGE:-50GB}
+      # Optional planning label; leaving it empty is safer than guessing the
+      # host's hardware role. Example: seeder-standard.
+      - HIVERELAY_CAPACITY_PROFILE=${HIVERELAY_CAPACITY_PROFILE:-}
       - HIVERELAY_API_KEY=${HIVERELAY_API_KEY:-}
       # Uncomment to enable Holesail transport for home relays behind NAT
       # - HIVERELAY_HOLESAIL=1
+      #
+      # ─── Utility services (explicit opt-in) ──────────────────────
+      # A general relay must not silently become a multi-service storage
+      # host. Enable reviewed providers from the Services dashboard, which
+      # persists the authoritative plugins list in /data/services.json.
+      # These zero defaults also make a future env-wiring change fail safe.
+      - HIVERELAY_ENABLE_SERVICES=${HIVERELAY_ENABLE_SERVICES:-0}
+      - HIVERELAY_OUTBOXLOG=${HIVERELAY_OUTBOXLOG:-0}
+      - HIVERELAY_NOTIFY=${HIVERELAY_NOTIFY:-0}
+      - HIVERELAY_SHARD_STORE=${HIVERELAY_SHARD_STORE:-0}
+      - HIVERELAY_STORAGE_PROOF=${HIVERELAY_STORAGE_PROOF:-0}
+      - HIVERELAY_VRF=${HIVERELAY_VRF:-0}
+      - HIVERELAY_WITNESSLOG=${HIVERELAY_WITNESSLOG:-0}
+      - HIVERELAY_REPAIRTICKET=${HIVERELAY_REPAIRTICKET:-0}
     command: >
       start
       --storage /data
@@ -63,6 +80,13 @@ services:
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_ENABLE_SERVICES=0
+      - HIVERELAY_OUTBOXLOG=0
+      - HIVERELAY_NOTIFY=0
+      - HIVERELAY_SHARD_STORE=0
+      - HIVERELAY_STORAGE_PROOF=0
+      - HIVERELAY_VRF=0
+      - HIVERELAY_WITNESSLOG=0
     command: ["start", "--storage", "/data", "--region", "NA", "--max-storage", "50GB"]
 
   relay-eu:
@@ -79,6 +103,13 @@ services:
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_ENABLE_SERVICES=0
+      - HIVERELAY_OUTBOXLOG=0
+      - HIVERELAY_NOTIFY=0
+      - HIVERELAY_SHARD_STORE=0
+      - HIVERELAY_STORAGE_PROOF=0
+      - HIVERELAY_VRF=0
+      - HIVERELAY_WITNESSLOG=0
     command: ["start", "--storage", "/data", "--region", "EU", "--max-storage", "50GB"]
 
   relay-as:
@@ -95,6 +126,13 @@ services:
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_ENABLE_SERVICES=0
+      - HIVERELAY_OUTBOXLOG=0
+      - HIVERELAY_NOTIFY=0
+      - HIVERELAY_SHARD_STORE=0
+      - HIVERELAY_STORAGE_PROOF=0
+      - HIVERELAY_VRF=0
+      - HIVERELAY_WITNESSLOG=0
     command: ["start", "--storage", "/data", "--region", "AS", "--max-storage", "50GB"]
 
 volumes:

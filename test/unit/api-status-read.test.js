@@ -4,6 +4,7 @@ import {
   buildStatusPayload,
   buildStatusRoutePayload,
   resolveStatusRoute,
+  sanitizeCapacitySummary,
   statusString
 } from 'p2p-hiverelay/core/relay-node/api-status-read.js'
 
@@ -293,4 +294,81 @@ test('api status: statusString truncates by UTF-8 bytes and rejects controls', (
   t.is(statusString(' abc '), 'abc')
   t.is(statusString('a\nb'), null)
   t.is(statusString('üüü', { maxBytes: 5, truncate: true }), 'üü')
+})
+
+test('api status: capacity summary is planning-only and field allowlisted', (t) => {
+  const summary = sanitizeCapacitySummary({
+    schemaVersion: 1,
+    mode: 'planning-only',
+    profileId: 'services-s2',
+    operatorDeclared: true,
+    plan: {
+      schemaVersion: 1,
+      mode: 'planning-only',
+      profileId: 'services-s2',
+      observedUsableBytes: 1000,
+      observedFreeBytes: 600,
+      observedFreeAssumed: false,
+      reservePolicy: { basisPoints: 1500, floorBytes: 32 },
+      physicalReserveBytes: 150,
+      postReserveBytes: 850,
+      operatorCapBytes: 800,
+      operatorCapApplied: true,
+      managedCapacityBytes: 800,
+      physicalHeadroomBytes: 450,
+      poolBytes: { durable: 500, serviceControl: 0, repair: 100, cache: 100, burst: 100, leak: 1 },
+      usage: {
+        actualUsageBytes: 10,
+        committedBytes: 20,
+        pendingBytes: 30,
+        untrackedDebtBytes: 0,
+        futureDebtBytes: 50,
+        conservativeDemandBytes: 60,
+        leak: 1
+      },
+      logicalAvailableBytes: 740,
+      availableBytes: 450,
+      advertisableBytes: 440,
+      overcommittedBytes: 0,
+      atCapacity: false,
+      advertisingBlocked: false,
+      secret: 'drop-me'
+    },
+    measurements: {
+      complete: true,
+      fresh: true,
+      maxAgeMs: 300000,
+      diskCheckedAt: 100,
+      storageMeasuredAt: 99,
+      rawSample: 'drop-me'
+    },
+    enforcement: {
+      logicalAdmissionActive: true,
+      recoveryReady: true,
+      acceptingMutations: true,
+      fatal: false,
+      committedBytes: 20,
+      pendingBytes: 30,
+      unknownCommitments: 0,
+      physicalEnforcementActive: true,
+      records: ['drop-me']
+    },
+    advertisement: {
+      eligible: true,
+      bytes: 440,
+      blockReasons: [],
+      signedDocument: 'drop-me'
+    },
+    secret: 'drop-me'
+  })
+
+  t.is(summary.profileId, 'services-s2')
+  t.is(summary.plan.poolBytes.durable, 500)
+  t.is(summary.plan.physicalHeadroomBytes, 450)
+  t.ok(summary.measurements.complete)
+  t.ok(summary.measurements.fresh)
+  t.ok(summary.advertisement.eligible)
+  t.is(summary.advertisement.bytes, 440)
+  t.absent(JSON.stringify(summary).includes('drop-me'))
+  t.is(sanitizeCapacitySummary({ mode: 'enforced' }), null, 'an enforcement claim is never accepted here')
 })

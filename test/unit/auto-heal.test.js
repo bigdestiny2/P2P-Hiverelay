@@ -45,6 +45,55 @@ function makeNode (opts = {}) {
   }
   if (operator) config.operator = operator
 
+  // AutoHeal must consult the same authority used by every durable writer.
+  // Keep this mock deliberately shaped like StorageAdmissionAuthority's
+  // admission() result so tests cannot accidentally fall back to Seeder's
+  // cumulative byte counter.
+  const authorityUsedBytes = Object.hasOwn(opts, 'authorityUsedBytes') ? opts.authorityUsedBytes : 0
+  const defaultStorageAdmission = {
+    recoveryReady: true,
+    fatalReason: null,
+    admission (additionalBytes, admissionOpts) {
+      const capBytes = config.maxStorageBytes
+      const usedBytes = authorityUsedBytes
+      const valid = Number.isSafeInteger(capBytes) && capBytes > 0 &&
+        Number.isSafeInteger(usedBytes) && usedBytes >= 0 &&
+        Number.isSafeInteger(additionalBytes) && additionalBytes >= 0
+      if (!valid) {
+        return {
+          allowed: false,
+          reason: 'storage-bound-invalid',
+          capBytes: Number.isSafeInteger(capBytes) ? capBytes : 0,
+          usedBytes: Number.isSafeInteger(usedBytes) ? usedBytes : 0,
+          availableBytes: 0,
+          additionalBytes
+        }
+      }
+      if (admissionOpts?.refresh !== true) {
+        return {
+          allowed: false,
+          reason: 'storage-filesystem-sample-stale',
+          capBytes,
+          usedBytes,
+          availableBytes: 0,
+          additionalBytes
+        }
+      }
+      const availableBytes = Math.max(0, capBytes - usedBytes)
+      const reason = usedBytes >= capBytes
+        ? 'storage-cap-reached'
+        : (additionalBytes > availableBytes ? 'insufficient-storage' : null)
+      return {
+        allowed: reason === null && availableBytes > 0,
+        reason,
+        capBytes,
+        usedBytes,
+        availableBytes,
+        additionalBytes
+      }
+    }
+  }
+
   const node = {
     config,
     swarm: { keyPair: { publicKey: pubkey } },
@@ -55,6 +104,9 @@ function makeNode (opts = {}) {
     federation: {
       snapshot: () => ({ peerCatalogs })
     },
+    storageAdmission: Object.hasOwn(opts, 'storageAdmission')
+      ? opts.storageAdmission
+      : defaultStorageAdmission,
     seeder: Object.hasOwn(opts, 'seeder') ? opts.seeder : { totalBytesStored: opts.totalBytesStored || 0 },
     seedApp: async (appKey, options) => {
       if (opts.seedApp) await opts.seedApp(appKey, options)
@@ -341,6 +393,11 @@ test('AutoHeal: refuses to recruit when storage cap reached', async (t) => {
   const recruited = []
   const node = makeNode({
     region: 'AS',
+    maxStorageBytes: 10 * 1024 * 1024,
+    authorityUsedBytes: 8.5 * 1024 * 1024,
+    // Deliberately contradict the authority. This legacy counter must not
+    // make a full relay look empty.
+    seeder: { totalBytesStored: 0 },
     peerCatalogs: [{
       pubkey: 'peerA',
       region: 'NA',
@@ -348,9 +405,6 @@ test('AutoHeal: refuses to recruit when storage cap reached', async (t) => {
     }],
     seedApp: async (k, o) => recruited.push({ k, o })
   })
-  // Configure tight storage: 1MB cap, already at 950KB (95% used > 90% margin)
-  node.config.maxStorageBytes = 1024 * 1024
-  node.seeder = { totalBytesStored: 950 * 1024 }
   const heal = new AutoHeal(node, {
     tickMs: 60_000,
     verifyProofs: false,
@@ -363,14 +417,102 @@ test('AutoHeal: refuses to recruit when storage cap reached', async (t) => {
   await heal._tick()
 
   t.is(recruited.length, 0, 'declined recruit')
-  t.ok(skipped.find(s => s.reason === 'storage-full'), 'emitted storage-full skip event')
+  const full = skipped.find(s => s.reason === 'storage-full')
+  t.ok(full, 'emitted storage-full skip event')
+  t.is(full.usedBytes, 8.5 * 1024 * 1024, 'used bytes come from shared authority')
+  t.is(full.requestedBytes, STORAGE_BOUND, 'margin prices the complete candidate commitment')
 })
 
-test('AutoHeal: refuses to recruit when storage capacity state is unavailable', async (t) => {
+test('AutoHeal: bounds expensive capacity walks across a large deficient catalog', async (t) => {
+  let capacityChecks = 0
+  const apps = Array.from({ length: 12 }, (_, index) => ({
+    appKey: 'archive-' + index,
+    durability: 1,
+    anchored: true
+  }))
+  const node = makeNode({
+    region: 'AS',
+    peerCatalogs: [{ pubkey: 'peerA', region: 'NA', apps }],
+    storageAdmission: {
+      recoveryReady: true,
+      fatalReason: null,
+      admission (additionalBytes) {
+        capacityChecks++
+        return {
+          allowed: false,
+          reason: 'insufficient-storage',
+          capBytes: 10 * STORAGE_BOUND,
+          usedBytes: 9 * STORAGE_BOUND,
+          availableBytes: STORAGE_BOUND,
+          additionalBytes
+        }
+      }
+    }
+  })
+  const heal = new AutoHeal(node, {
+    verifyProofs: false,
+    maxCapacityChecksPerTick: 2,
+    random: () => 0,
+    thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 }
+  })
+  const skipped = []
+  heal.on('recruit-skipped', info => skipped.push(info))
+  heal._running = true
+  await heal._tick()
+
+  t.is(capacityChecks, 2, 'one tick performs at most the configured number of exact disk walks')
+  t.ok(skipped.some(info => info.reason === 'capacity-check-budget'))
+  t.is(node._seededApps.length, 0)
+})
+
+test('AutoHeal: fresh shared authority wins over stale seeder counters', async (t) => {
+  const recruited = []
+  const reads = []
+  const node = makeNode({
+    region: 'AS',
+    seeder: { totalBytesStored: 49 * 1024 * 1024 * 1024 },
+    storageAdmission: {
+      recoveryReady: true,
+      fatalReason: null,
+      admission (additionalBytes, opts) {
+        reads.push({ additionalBytes, opts })
+        return {
+          allowed: true,
+          reason: null,
+          capBytes: 50 * 1024 * 1024 * 1024,
+          usedBytes: 2 * 1024 * 1024,
+          availableBytes: 50 * 1024 * 1024 * 1024 - 2 * 1024 * 1024,
+          additionalBytes
+        }
+      }
+    },
+    peerCatalogs: [{
+      pubkey: 'peerA',
+      region: 'NA',
+      apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+    }],
+    seedApp: async (k, o) => recruited.push({ k, o })
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
+    random: () => 0
+  })
+  heal._running = true
+  await heal._tick()
+
+  t.is(recruited.length, 1, 'stale high seeder counter does not veto authoritative capacity')
+  t.is(reads.length, 1, 'authority read once')
+  t.is(reads[0].additionalBytes, STORAGE_BOUND, 'authority prices full catalog bound')
+  t.alike(reads[0].opts, { refresh: true }, 'authority read explicitly refreshes filesystem state')
+})
+
+test('AutoHeal: refuses to recruit when shared storage authority is unavailable', async (t) => {
   const recruited = []
   const node = makeNode({
     region: 'AS',
-    seeder: null,
+    storageAdmission: null,
     peerCatalogs: [{
       pubkey: 'peerA',
       region: 'NA',
@@ -389,7 +531,7 @@ test('AutoHeal: refuses to recruit when storage capacity state is unavailable', 
   heal.on('recruit-skipped', (info) => skipped.push(info))
   await heal._tick()
 
-  t.is(recruited.length, 0, 'declined recruit without seeder accounting')
+  t.is(recruited.length, 0, 'declined recruit without shared authority')
   t.ok(skipped.find(s => s.reason === 'storage-capacity-unavailable'), 'emitted unavailable-capacity skip event')
 })
 
@@ -417,7 +559,59 @@ test('AutoHeal: refuses to recruit when maxStorageBytes is missing or invalid', 
   await heal._tick()
 
   t.is(recruited.length, 0, 'declined recruit without a positive maxStorageBytes cap')
-  t.ok(skipped.find(s => s.reason === 'storage-capacity-unavailable'), 'emitted unavailable-capacity skip event')
+  t.ok(skipped.find(s => s.reason === 'storage-bound-invalid'), 'surfaced authority storage-bound failure')
+})
+
+test('AutoHeal: unready, fatal, throwing and malformed authorities stop recruitment', async (t) => {
+  const fixtures = [
+    {
+      name: 'recovery pending',
+      reason: 'storage-recovery-inventory-pending',
+      authority: { recoveryReady: false, fatalReason: null, admission: () => { throw new Error('must not read') } }
+    },
+    {
+      name: 'fatal invariant',
+      reason: 'storage-authority-fatal',
+      authority: { recoveryReady: true, fatalReason: 'storage-authority-fatal', admission: () => { throw new Error('must not read') } }
+    },
+    {
+      name: 'read throws',
+      reason: 'storage-capacity-unavailable',
+      authority: { recoveryReady: true, fatalReason: null, admission: () => { throw new Error('sample failed') } }
+    },
+    {
+      name: 'malformed success',
+      reason: 'storage-capacity-unavailable',
+      authority: { recoveryReady: true, fatalReason: null, admission: () => ({ allowed: true }) }
+    }
+  ]
+
+  for (const fixture of fixtures) {
+    const recruited = []
+    const skipped = []
+    const node = makeNode({
+      region: 'AS',
+      storageAdmission: fixture.authority,
+      peerCatalogs: [{
+        pubkey: 'peerA',
+        region: 'NA',
+        apps: [{ appKey: 'archive-drive', durability: 1, anchored: true }]
+      }],
+      seedApp: async (k, o) => recruited.push({ k, o })
+    })
+    const heal = new AutoHeal(node, {
+      tickMs: 60_000,
+      verifyProofs: false,
+      thresholds: { minReplicas: 3, minRegions: 2, minOperators: 2 },
+      random: () => 0
+    })
+    heal.on('recruit-skipped', info => skipped.push(info))
+    heal._running = true
+    await heal._tick()
+
+    t.is(recruited.length, 0, fixture.name + ': recruitment stopped')
+    t.ok(skipped.some(entry => entry.reason === fixture.reason), fixture.name + ': failure surfaced')
+  }
 })
 
 test('AutoHeal: refuses a peer catalog entry without a per-drive bound', async (t) => {
@@ -943,6 +1137,7 @@ test('AutoHeal: constructor honors all bridge options (config pass-through)', as
     tickMs: 12_345,
     staleMs: 67_890,
     maxRecruitsPerTick: 7,
+    maxCapacityChecksPerTick: 5,
     storageMargin: 0.55,
     verifyProofs: false,
     proofFreshnessMs: 99_000,
@@ -954,6 +1149,7 @@ test('AutoHeal: constructor honors all bridge options (config pass-through)', as
   t.is(heal.tickMs, 12_345)
   t.is(heal.staleMs, 67_890)
   t.is(heal.maxRecruitsPerTick, 7)
+  t.is(heal.maxCapacityChecksPerTick, 5)
   t.is(heal.storageMargin, 0.55)
   t.is(heal.verifyProofs, false)
   t.is(heal.proofFreshnessMs, 99_000)
@@ -966,6 +1162,7 @@ test('AutoHeal: constructor honors all bridge options (config pass-through)', as
 
   const snap = heal.snapshot()
   t.is(snap.maxProofsPerTick, 17, 'snapshot surfaces maxProofsPerTick')
+  t.is(snap.maxCapacityChecksPerTick, 5, 'snapshot surfaces disk-walk budget')
   t.is(snap.thresholds.replicaBuffer, 4, 'snapshot surfaces replicaBuffer')
 })
 

@@ -92,6 +92,45 @@ test('cli start rejects invalid HIVERELAY_MAX_STORAGE before boot', async (t) =>
   t.ok(res.stderr.includes('Invalid HIVERELAY_MAX_STORAGE'))
 })
 
+test('cli start rejects an unknown HIVERELAY_CAPACITY_PROFILE before boot', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-capacity-profile-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const res = await execCli(['start'], {
+    ...process.env,
+    HOME: home,
+    HIVERELAY_CAPACITY_PROFILE: 'monster-box'
+  })
+
+  t.is(res.code, 1)
+  t.ok(res.stderr.includes('Invalid HIVERELAY_CAPACITY_PROFILE'))
+})
+
+test('config loader persists an operator-declared capacity profile', async (t) => {
+  const home = await mkdtemp(path.join(tmpdir(), 'hiverelay-capacity-profile-'))
+  t.teardown(async () => {
+    await rm(home, { recursive: true, force: true })
+  })
+
+  const { loadConfig, saveConfig } = await importLoaderWithHome(home)
+  t.is(loadConfig().capacityProfile, null, 'hardware is never inferred by default')
+  const config = loadConfig({ capacityProfile: 'seeder-standard' })
+  saveConfig(config)
+
+  t.is(loadConfig().capacityProfile, 'seeder-standard')
+
+  config.capacityProfile = null
+  config.capacityProfileConfigured = true
+  const clearedPath = saveConfig(config)
+  const cleared = JSON.parse(await readFile(clearedPath, 'utf8'))
+  t.is(cleared.capacityProfileConfigured, true, 'explicit clear survives persistence')
+  t.absent(Object.prototype.hasOwnProperty.call(cleared, 'capacityProfile'), 'default-valued null stays compact')
+  t.is(loadConfig().capacityProfile, null)
+  t.is(loadConfig().capacityProfileConfigured, true)
+})
+
 test('cli start keeps HIVERELAY_MAX_STORAGE explicit until a cap is persisted', async (t) => {
   const freshHome = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-env-fresh-'))
   const savedHome = await mkdtemp(path.join(tmpdir(), 'hiverelay-cli-env-saved-'))

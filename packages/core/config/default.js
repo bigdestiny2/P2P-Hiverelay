@@ -5,6 +5,17 @@
 export default {
   productProfile: 'relay-core',
 
+  // Optional operator-declared hardware/capacity class. This selects a
+  // planning/status budget only; the shared storage admission authority
+  // remains the runtime enforcement source of truth. Never infer this from a
+  // software mode because two hosts running the same mode may have radically
+  // different disks, memory, networking, and failure domains.
+  capacityProfile: null,
+  // Internal persistence marker: distinguishes an explicit operator clear
+  // (`capacityProfile: null`) from the untouched default so a deployment env
+  // value cannot silently return after a management-API restart.
+  capacityProfileConfigured: false,
+
   // Node identity
   storage: './hiverelay-storage',
 

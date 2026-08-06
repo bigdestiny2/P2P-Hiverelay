@@ -11,6 +11,7 @@ test('api safe config: emits only operator-safe persisted config fields', (t) =>
     config: {
       name: 'relay',
       storage: '/data',
+      capacityProfile: 'edge-community',
       acceptMode: 'review',
       acceptAllowlist: ['a'.repeat(64)],
       plugins: ['poker'],
@@ -58,6 +59,7 @@ test('api safe config: emits only operator-safe persisted config fields', (t) =>
   const payload = buildSafeConfigPayload(node)
   t.is(payload.name, 'relay')
   t.is(payload.mode, 'private')
+  t.is(payload.capacityProfile, 'edge-community')
   t.alike(payload.plugins, ['poker'])
   t.alike(payload.transports, { udp: true, websocket: true })
   t.alike(payload.subsidy, { enabled: true, payoutDestination: 'operator@example.com' })
@@ -76,6 +78,7 @@ test('api safe config: emits only operator-safe persisted config fields', (t) =>
 test('api safe config: normalizes missing arrays and nested defaults', (t) => {
   const payload = buildSafeConfigPayload({ config: {} })
   t.alike(payload.acceptAllowlist, [])
+  t.is(payload.capacityProfile, null)
   t.alike(payload.plugins, [])
   t.alike(payload.regions, [])
   t.alike(payload.discovery, { dht: true, announce: true, mdns: false })

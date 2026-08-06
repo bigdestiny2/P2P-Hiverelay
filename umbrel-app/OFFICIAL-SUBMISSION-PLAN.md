@@ -111,6 +111,15 @@ Verified against the linter rules — structurally green:
 - Boolean `HIVERELAY_UI_EXPOSE_TOKEN: "true"` is quoted. OK.
 - `HIVERELAY_ACCEPT_MODE: review` is set so a fresh home-server install queues
   new seed requests until the owner chooses otherwise. OK.
+- `HIVERELAY_MAX_STORAGE: 10GB` gives the edge/community package a conservative
+  first-boot relay-storage cap. OK.
+- `HIVERELAY_CAPACITY_PROFILE: edge-community` declares the package's planning
+  profile for capacity/status reporting; it does not claim physical per-pool
+  enforcement. OK.
+- `HIVERELAY_ENABLE_SERVICES` and every packaged utility-service flag are
+  `"false"`. The stock package is a community edge, not a service farm;
+  persistent service providers require an explicit owner selection in the
+  dashboard followed by restart. OK.
 - `${APP_SEED}` used for deterministic identity. OK.
 
 `data/.gitkeep` is committed, matching the canonical clean package pattern
@@ -221,6 +230,11 @@ On a real Umbrel box (or local sideload), confirm:
   `HIVERELAY_UI_EXPOSE_TOKEN` bearer path behind the proxy.
 - Management actions (approve/reject seed request, change accept-mode) work.
 - Fresh install starts in review mode before the operator changes it.
+- Fresh install reports the Services layer disabled and starts none of the
+  optional outbox, notification, shard-store, proof, VRF, or witness providers.
+  If service opt-in is tested separately, turn on only a deliberately selected
+  provider, restart, record the result, and turn it off again before capturing
+  the stock-package evidence.
 - `/data` is writable by uid 999 (no permission errors on first boot).
 - Uninstall + reinstall preserves the relay's public key (identity from `$APP_SEED`).
 

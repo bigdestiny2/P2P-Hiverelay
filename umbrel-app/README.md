@@ -35,10 +35,21 @@ host/LAN** — only the proxy can reach it. See
 `packages/core/config/default.js` → `ui.exposeToken` for the full contract.
 
 The package also sets `HIVERELAY_ACCEPT_MODE=review` and
-`HIVERELAY_MAX_STORAGE=10GB` for first boot. That keeps home-server installs
-operator-reviewed and capped conservatively, while any saved operator config
-wins on later restarts. PC/VPS operators can keep the core 50 GB default or
-pass `--max-storage` directly.
+`HIVERELAY_MAX_STORAGE=10GB` for first boot, plus the operator-declared
+`HIVERELAY_CAPACITY_PROFILE=edge-community` planning profile. That keeps
+home-server installs operator-reviewed and capped conservatively, while any
+saved operator config wins on later restarts. The profile describes how status
+and capacity plans should classify the box; it does **not** claim separate
+physical enforcement for each planned storage pool. PC/VPS operators can keep
+the core 50 GB default or pass `--max-storage` directly.
+
+The ordinary Umbrel package is the **edge/community** profile, not a service
+farm. Its Services layer and all packaged utility-service flags start disabled,
+so installing Blindspark does not silently add persistent outbox, notification,
+shard-store, proof, VRF, or witness workloads alongside relay storage. An owner
+can explicitly select services in the dashboard and restart after checking the
+box's available storage and memory. That saved selection is an operator choice;
+it is not part of the package default.
 
 ## Run it on your own Umbrel today (before the App Store listing)
 

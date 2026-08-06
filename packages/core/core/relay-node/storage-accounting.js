@@ -36,20 +36,23 @@ const DEFAULT_DISK_INTERVAL_MS = 60_000
  * guard never bound). Robust: unreadable dirs/files are skipped; symlinks are
  * not followed (only regular files count).
  */
-export async function dirBytes (dir) {
-  if (!dir) return 0
+async function scanDirBytes (dir) {
+  if (!dir) return { bytes: 0, complete: false }
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
   } catch {
-    return 0
+    return { bytes: 0, complete: false }
   }
   let total = 0
+  let complete = true
   for (const e of entries) {
     const p = join(dir, e.name)
     try {
       if (e.isDirectory()) {
-        total += await dirBytes(p)
+        const nested = await scanDirBytes(p)
+        total += nested.bytes
+        if (!nested.complete) complete = false
       } else if (e.isFile()) {
         // ALLOCATED disk bytes (st.blocks is in 512-byte units) — what df/du
         // see and what actually fills the disk. st.size is the APPARENT length,
@@ -61,10 +64,16 @@ export async function dirBytes (dir) {
         total += (st.blocks != null ? st.blocks * 512 : st.size)
       }
     } catch {
-      // racing deletes (eviction/purge), perms, broken links — skip
+      // Keep the best-effort byte total for dashboards, but never present a
+      // partial/racing scan as complete capacity evidence.
+      complete = false
     }
   }
-  return total
+  return { bytes: total, complete }
+}
+
+export async function dirBytes (dir) {
+  return (await scanDirBytes(dir)).bytes
 }
 
 /**
@@ -128,6 +137,7 @@ export class StorageAccounting extends EventEmitter {
     this._fullSweeps = 0
     this._lastFullSweepAt = null
     this._diskBytes = null // measured du(storagePath); null until first measure
+    this._diskMeasurementComplete = false
     this._diskMeasuring = false
     this._lastDiskMeasureAt = 0
   }
@@ -169,9 +179,15 @@ export class StorageAccounting extends EventEmitter {
   async measureDisk () {
     if (this._diskMeasuring || !this.storagePath) return this._diskBytes
     this._diskMeasuring = true
+    // Timestamp at the beginning: data observed early in a long recursive
+    // walk must age while the scan is still running, not appear brand-new at
+    // completion.
+    const startedAt = Date.now()
     try {
-      this._diskBytes = await dirBytes(this.storagePath)
-      this._lastDiskMeasureAt = Date.now()
+      const result = await scanDirBytes(this.storagePath)
+      this._diskBytes = result.bytes
+      this._diskMeasurementComplete = result.complete
+      this._lastDiskMeasureAt = startedAt
       return this._diskBytes
     } finally {
       this._diskMeasuring = false
@@ -273,6 +289,8 @@ export class StorageAccounting extends EventEmitter {
       diskBytes: this._diskBytes,
       perEntryBytes: perEntry,
       sourceBytes,
+      diskMeasuredAt: this._lastDiskMeasureAt || null,
+      diskMeasurementComplete: this._diskMeasurementComplete === true,
       measuredEntries: this._bytes.size,
       fullSweeps: this._fullSweeps,
       lastFullSweepAt: this._lastFullSweepAt

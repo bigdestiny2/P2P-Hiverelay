@@ -5,6 +5,7 @@ export function buildSafeConfigPayload (node) {
   const payload = {
     name: c.name,
     storage: c.storage,
+    capacityProfile: c.capacityProfile == null ? null : c.capacityProfile,
     acceptMode: c.acceptMode,
     acceptAllowlist: Array.isArray(c.acceptAllowlist) ? c.acceptAllowlist : [],
     maxStorageBytes: c.maxStorageBytes,
