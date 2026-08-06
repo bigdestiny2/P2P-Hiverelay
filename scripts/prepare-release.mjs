@@ -334,10 +334,14 @@ function syncStartOs () {
   if (releaseNotesProvided || oldVersion !== version) {
     replaceYamlLiteralBlock(manifest, 'release-notes', releaseNotes)
   }
+  // The status line authors the version in backticks (`v0.24.3`, one-page
+  // dashboard …). Both delimiters are optional so the bump keeps working
+  // whichever shape the README currently carries, and always writes the
+  // backticked form back.
   replaceInFile(
     path.join(repoRoot, 'startos', 'README.md'),
-    /v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?, one-page dashboard/,
-    `${tag}, one-page dashboard`,
+    /`?v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`?, one-page dashboard/,
+    `\`${tag}\`, one-page dashboard`,
     'StartOS README status version'
   )
 }

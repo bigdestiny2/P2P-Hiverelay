@@ -7711,7 +7711,13 @@ if (
   fail('StartOS Makefile can reuse stale image tarballs, allow accidental tag-only release packaging, or is missing digest-qualified image support')
 }
 
-if (startOsReadme.includes(`v${expectedVersion}, one-page dashboard`)) {
+// Accept the bare and backticked forms — prepare-release.mjs writes the
+// backticked one, but the assertion must not care which delimiter the README
+// currently carries.
+if (
+  startOsReadme.includes(`v${expectedVersion}, one-page dashboard`) ||
+  startOsReadme.includes(`\`v${expectedVersion}\`, one-page dashboard`)
+) {
   pass('StartOS README status version matches monorepo')
 } else {
   fail('StartOS README status version does not match monorepo')
