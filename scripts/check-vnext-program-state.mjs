@@ -65,7 +65,7 @@ export function validateVnextProgramState (state) {
 function validateReleaseTrain (value) {
   object(value, 'releaseTrain')
   exactKeys(value, ['candidatePattern', 'artifactBaseline', 'integrationBase'], 'releaseTrain')
-  equal(value.candidatePattern, 'v0.25.0-rc.N', 'release candidate pattern')
+  equal(value.candidatePattern, 'v0.26.0-rc.N', 'release candidate pattern')
   object(value.artifactBaseline, 'artifactBaseline')
   exactKeys(value.artifactBaseline, ['tag', 'commit'], 'artifactBaseline')
   equal(value.artifactBaseline.tag, 'v0.24.3', 'artifact baseline tag')

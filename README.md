@@ -2,7 +2,7 @@
 
 > **Release lanes:** the operator/fleet stable baseline is
 > [`v0.24.3`](./docs/STABLE-0.24.3.md). `v0.25.0-rc.9` is a canary release
-> candidate, and the `1.0.0-rc.1` manifests on `main` belong to the isolated
+> candidate, and the `0.26.0-rc.1` manifests on `main` belong to the isolated
 > blind-substrate development track. Neither candidate line is the stable
 > `v0.24.3` product.
 
@@ -49,7 +49,7 @@ dashboard configures only generic capacity, admission, transport/privacy roles,
 updates, evidence, and relay identity. Application/service selection belongs to
 the published compatibility appliance and does not carry into the blind product.
 
-**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.3** | **Canary: v0.25.0-rc.9** | **Status: v1.0.0-rc.1 development**
+**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.3** | **Canary: v0.25.0-rc.9** | **Status: v0.26.0-rc.1**
 
 License scope is explicit: HiveRelay-authored source is Apache-2.0, while
 `truenas-app/templates/library/base_v2_3_8/` is redistributed under
@@ -81,7 +81,7 @@ and StartOS metadata so the published release surfaces agree.
 
 | Surface | Current source state | Publication/evidence boundary |
 |---|---|---|
-| Stable source and fleet | Tag `v0.24.3` at `d0190577…`; `fleet/channels.json` keeps `stable` and `hold` on that tag | This is the application-aware compatibility product. It is not the isolated blind-substrate replacement described by the `1.0.0-rc.1` workspaces on `main`. |
+| Stable source and fleet | Tag `v0.24.3` at `d0190577…`; `fleet/channels.json` keeps `stable` and `hold` on that tag | This is the application-aware compatibility product. It is not the isolated blind-substrate replacement described by the `0.26.0-rc.1` workspaces on `main`. |
 | npm packages | As verified 2026-08-06, npm `latest` is `0.20.2` for core/client/verifier and `0.9.2` for services; exact `0.24.3` packages do not exist. npm `next` is `0.25.0-rc.9`. | Do not present npm as a `0.24.3` installation path. Use the signed source tag or immutable stable container described in the [stable guide](./docs/STABLE-0.24.3.md). |
 | Stable container | `ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8` is a verified multi-arch OCI index for Linux amd64 and arm64 | Keep the digest. A bare or floating tag is not stable artifact identity. |
 | Canary | `fleet/channels.json` points `canary` at `v0.25.0-rc.9` | Canary is opt-in release-candidate scope and must not be described as stable or as blind-substrate GA. |

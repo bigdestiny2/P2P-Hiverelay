@@ -1,8 +1,8 @@
 {
   "version": 4,
   "script": {
-    "version": "1.0.1",
-    "changeLog": "Sync Blindspark for HiveRelay 1.0.0-rc.1"
+    "version": "1.0.2",
+    "changeLog": "Sync Blindspark for HiveRelay 0.26.0-rc.1"
   },
   "requirements": {
     "locations": [],

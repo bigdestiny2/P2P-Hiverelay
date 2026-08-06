@@ -1,6 +1,6 @@
 {
   "name": "@hiverelay/blind-client",
-  "version": "1.0.0-rc.1",
+  "version": "0.26.0-rc.1",
   "description": "Application-agnostic client composition for the HiveRelay blind substrate",
   "private": true,
   "type": "module",

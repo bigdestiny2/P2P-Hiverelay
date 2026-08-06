@@ -177,7 +177,7 @@ Three paths, smallest to widest reach:
 ## Status
 
 Package source targets multi-arch image tarballs (x86_64 + aarch64),
-`v1.0.0-rc.1`, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first
+`v0.26.0-rc.1`, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first
 boot, and a first-boot-only 10 GB storage cap. That is development/candidate
 source, not the stable `v0.24.3` package. A named candidate must pass
 `make verify IMAGE_DIGEST=sha256:<multi-arch-digest>` before sideloading. Not yet

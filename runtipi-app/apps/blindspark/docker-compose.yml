@@ -1,6 +1,6 @@
 services:
   blindspark:
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:1.0.0-rc.1
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.1
     command:
       - start
       - --storage
