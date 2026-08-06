@@ -97,8 +97,8 @@ if (publicGatewayRelease.enabled && channel !== 'none') {
 // A prerelease MAY sync the community Umbrel store (so it never lags the fleet)
 // when an explicit --umbrel-store target is provided. It still cannot promote a
 // fleet/app-store channel (enforced above).
-if (!['local', 'npm-latest'].includes(ecosystemDependencyMode)) {
-  die(`Invalid --ecosystem-dependency-mode "${ecosystemDependencyMode}". Expected local or npm-latest.`)
+if (!['local', 'npm-latest', 'npm-range'].includes(ecosystemDependencyMode)) {
+  die(`Invalid --ecosystem-dependency-mode "${ecosystemDependencyMode}". Expected local, npm-latest, or npm-range.`)
 }
 
 syncPackageVersions()
@@ -365,6 +365,31 @@ function syncStartOs () {
     /`?v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`?, one-page dashboard/,
     `\`${tag}\`, one-page dashboard`,
     'StartOS README status version'
+  )
+  syncStartOs04()
+}
+
+// The 0.4-line package pins its version and image in TypeScript rather than
+// manifest.yaml, so it was invisible to this script and drifted on every bump.
+// audit-workspace-alignment.mjs requires both to equal the monorepo version.
+// Skipped when absent so older checkout shapes still prepare.
+function syncStartOs04 () {
+  const versionFile = path.join(repoRoot, 'startos-0.4', 'startos', 'versions', 'current.ts')
+  const manifestFile = path.join(repoRoot, 'startos-0.4', 'startos', 'manifest', 'index.ts')
+  if (!fs.existsSync(versionFile) || !fs.existsSync(manifestFile)) return
+
+  // StartOS version format is MAJOR.MINOR.PATCH:BUILD — keep the :BUILD revision.
+  replaceInFile(
+    versionFile,
+    /version: '\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?:(\d+)'/,
+    (_match, build) => `version: '${version}:${build}'`,
+    'StartOS 0.4 package version'
+  )
+  replaceInFile(
+    manifestFile,
+    /dockerTag: 'ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^']+'/,
+    `dockerTag: 'ghcr.io/bigdestiny2/p2p-hiverelay:${version}'`,
+    'StartOS 0.4 package image tag'
   )
 }
 

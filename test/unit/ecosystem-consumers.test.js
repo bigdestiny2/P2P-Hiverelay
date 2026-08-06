@@ -1421,8 +1421,13 @@ test('npm-range audit fails when the lockfile resolves outside the pinned range'
   // The manifest and the lock root entry both say ^0.20.2, so the string
   // equality check is green. Only inspecting the resolved node_modules entry
   // catches that npm pinned 0.21.0, which ^0.20.2 does not allow because caret
-  // on a 0.x version is same-minor. Before the range branch existed this fell
-  // through to `continue` and the audit reported success.
+  // on a 0.x version is same-minor.
+  // This particular shape — a resolved version that is simply wrong — was
+  // already caught before the range branch existed, by the findStaleLockEntries
+  // sweep. The shapes that really were silently green with a range pin, and are
+  // covered by the tests below, are: no node_modules entry at all, a correct
+  // version resolved from a non-public registry or a git tarball, and a
+  // `link: true` workspace link masquerading as a published package.
   writePackage(root, consumer.path, { optionalDependencies: consumer.deps })
   writeRangeLock(root, consumer, { 'p2p-hiverelay': '0.21.0', 'p2p-hiverelay-client': '0.20.2' })
 

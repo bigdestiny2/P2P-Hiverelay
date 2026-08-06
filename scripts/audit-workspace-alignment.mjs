@@ -6114,7 +6114,7 @@ if (
   ecosystemConsumersAudit.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersAudit.includes('normalizeDependencyMode') &&
   ecosystemConsumersAudit.includes("'p2p-hiveservices'") &&
-  ecosystemConsumersAudit.includes("DEPENDENCY_MODES = new Set(['local', 'npm-latest'])") &&
+  ecosystemConsumersAudit.includes("DEPENDENCY_MODES = new Set(['local', 'npm-latest', 'npm-range'])") &&
   ecosystemConsumersAudit.includes('termTemplate') &&
   ecosystemConsumersAudit.includes('01-browser/pearbrowser-desktop/package.json') &&
   ecosystemConsumersAudit.includes('02-apps/pearpaste/package.json') &&

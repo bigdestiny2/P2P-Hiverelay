@@ -59,8 +59,12 @@ const SOURCE_TERM_MODE_CHAIN = {
 // Consequences:
 //   * `^0.26.0-rc.1` desugars to `>=0.26.0-rc.1 <0.27.0-0`. It admits the
 //     current prerelease, later prereleases of the same 0.26.0 tuple, the
-//     0.26.0 final, and every 0.26.x patch. No manifest edit is needed when the
-//     rc is promoted to final.
+//     0.26.0 final, and every 0.26.x patch.
+//     That is a statement about npm RESOLUTION only. This audit separately pins
+//     the resolved version to expectedVersion, so promoting the rc to 0.26.0
+//     final still needs a sync run to move the manifest range and the lockfile
+//     together. The range keeps `npm install` working across the promotion; it
+//     does not make the promotion a no-op here.
 //   * Stripping the prerelease tag down to `^0.26.0` is the move that strands
 //     every consumer: node-semver refuses to match a prerelease version against
 //     a comparator set with no prerelease at the same major.minor.patch tuple,
