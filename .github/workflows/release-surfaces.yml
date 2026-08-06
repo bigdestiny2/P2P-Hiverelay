@@ -23,6 +23,15 @@ on:
           - stable
           - both
           - none
+      maintenance_branch:
+        description: >-
+          Maintenance release only: the branch carrying this tag, for example
+          release/v0.24.4. Leave blank for normal releases cut from main. A
+          maintenance tag is not an ancestor of main, so it is accepted only
+          when it forks from an already-released tag (see Verify release ref),
+          and its release-surface sync commits to this branch instead of main.
+        required: false
+        type: string
 
 permissions:
   contents: write
@@ -71,9 +80,17 @@ jobs:
           PUSH_SHA: ${{ github.sha }}
           DISPATCH_VERSION: ${{ inputs.version }}
           DISPATCH_CHANNEL: ${{ inputs.channel }}
+          DISPATCH_MAINTENANCE_BRANCH: ${{ inputs.maintenance_branch }}
         run: |
           set -euo pipefail
           is_branch_candidate=false
+          # A maintenance release is never implicit: the branch only comes from
+          # a deliberate workflow_dispatch, so a pushed tag or a published
+          # GitHub Release can never take the non-ancestor lane by accident.
+          maintenance_branch=""
+          if [ "$RELEASE_EVENT_NAME" = "workflow_dispatch" ]; then
+            maintenance_branch="${DISPATCH_MAINTENANCE_BRANCH:-}"
+          fi
           if [ "$RELEASE_EVENT_NAME" = "release" ]; then
             version="$RELEASE_TAG_NAME"
             requested_channel="${HIVERELAY_RELEASE_CHANNEL:-}"
@@ -159,6 +176,7 @@ jobs:
           echo "channel=$channel" >> "$GITHUB_OUTPUT"
           echo "is_prerelease=$is_prerelease" >> "$GITHUB_OUTPUT"
           echo "is_branch_candidate=$is_branch_candidate" >> "$GITHUB_OUTPUT"
+          echo "maintenance_branch=$maintenance_branch" >> "$GITHUB_OUTPUT"
 
       - name: Initialize release evidence
         shell: bash
@@ -258,10 +276,55 @@ jobs:
             exit 1
           fi
           main_sha="$(git rev-parse origin/main)"
+          maintenance_branch="${{ steps.rel.outputs.maintenance_branch }}"
           if ! git merge-base --is-ancestor "$tag_sha" "$main_sha"; then
-            echo "${{ steps.rel.outputs.version }} is not an ancestor of main." >&2
-            echo "Main: $main_sha" >&2
-            echo "Tag:  $tag_sha" >&2
+            if [ -z "$maintenance_branch" ]; then
+              echo "${{ steps.rel.outputs.version }} is not an ancestor of main." >&2
+              echo "Main: $main_sha" >&2
+              echo "Tag:  $tag_sha" >&2
+              echo "A patch cut from an older released tag is a maintenance release:" >&2
+              echo "re-dispatch with maintenance_branch set to the branch carrying it." >&2
+              exit 1
+            fi
+            # Maintenance lane. The ancestor-of-main rule exists so a release can
+            # only contain code that went through main. A patch to an older
+            # stable line cannot satisfy it — main has moved on — so we require
+            # the equivalent property instead: the tag forks from an
+            # already-released tag, and every commit after that fork point is on
+            # the declared maintenance branch. Everything before the fork was
+            # reviewed and released; nothing else can ride along.
+            git fetch --force origin "$maintenance_branch"
+            if ! git merge-base --is-ancestor "$tag_sha" "FETCH_HEAD"; then
+              echo "${{ steps.rel.outputs.version }} is not contained in $maintenance_branch." >&2
+              exit 1
+            fi
+            fork_sha="$(git merge-base "$tag_sha" "$main_sha")"
+            fork_tag="$(git describe --exact-match --tags "$fork_sha" 2>/dev/null || true)"
+            if [ -z "$fork_tag" ]; then
+              echo "Maintenance release must fork from a released tag." >&2
+              echo "Fork point $fork_sha carries no tag." >&2
+              exit 1
+            fi
+            case "$fork_tag" in
+              v*) ;;
+              *)
+                echo "Maintenance fork tag $fork_tag is not a release tag." >&2
+                exit 1
+                ;;
+            esac
+            if ! git merge-base --is-ancestor "$fork_sha" "$main_sha"; then
+              echo "Maintenance fork tag $fork_tag is not an ancestor of main." >&2
+              exit 1
+            fi
+            echo "Maintenance release: ${{ steps.rel.outputs.version }} forks from $fork_tag on $maintenance_branch."
+            echo "HIVERELAY_RELEASE_MAINTENANCE_BRANCH=$maintenance_branch" >> "$GITHUB_ENV"
+            echo "HIVERELAY_RELEASE_MAINTENANCE_BASE=$fork_tag" >> "$GITHUB_ENV"
+            echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          if [ -n "$maintenance_branch" ]; then
+            echo "maintenance_branch was set, but ${{ steps.rel.outputs.version }} is already an ancestor of main." >&2
+            echo "Clear the input and re-dispatch: this is a normal release." >&2
             exit 1
           fi
           echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
@@ -768,7 +831,14 @@ jobs:
             runtipi-app/apps/blindspark/docker-compose.yml \
             hexos-app/blindspark.json
           git commit -m "chore: sync release surfaces ${{ steps.rel.outputs.version }}"
-          git push origin HEAD:main
+          # A maintenance release syncs its surfaces back to the line it was cut
+          # from. Pushing a maintenance tree to main would rewind main to the
+          # older release line, so the branch is the only correct target.
+          surfaces_target="main"
+          if [ -n "${HIVERELAY_RELEASE_MAINTENANCE_BRANCH:-}" ]; then
+            surfaces_target="$HIVERELAY_RELEASE_MAINTENANCE_BRANCH"
+          fi
+          git push origin "HEAD:$surfaces_target"
           release_surfaces_sha="$(git rev-parse HEAD)"
           if ! [[ "$release_surfaces_sha" =~ ^[a-f0-9]{40}$ ]]; then
             echo "HiveRelay release surfaces commit SHA is malformed." >&2
