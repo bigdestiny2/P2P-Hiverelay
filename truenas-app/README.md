@@ -1,5 +1,9 @@
 # Blindspark by HiveRelay for TrueNAS
 
+> This package is pinned to the `0.25.0-rc.9` candidate line. It is not the
+> stable `v0.24.3` distribution. See the
+> [stable guide](../docs/STABLE-0.24.3.md) before choosing an artifact.
+
 Blindspark runs the released HiveRelay container as a TrueNAS Community app. It provides an always-on blind relay for Pear and Holepunch applications while keeping relay identity, configuration, and seeded data on persistent TrueNAS storage.
 
 ## Install defaults

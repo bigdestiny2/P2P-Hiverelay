@@ -1,5 +1,11 @@
 # Blindspark for StartOS
 
+> **Stable-package warning:** the HiveRelay stable fleet/source baseline is
+> `v0.24.3`, but its GitHub release has no attached `.s9pk`. This directory on
+> `main` currently tracks candidate/development packaging. Do not use GitHub's
+> `releases/latest` URL when you intend to install stable `v0.24.3`; see the
+> [stable guide](../docs/STABLE-0.24.3.md).
+
 A **blind relay** for the Pear / Holepunch peer-to-peer app ecosystem,
 packaged for [StartOS](https://start9.com) (Start9). Blindspark seeds
 end-to-end-encrypted Hyperdrives — content it can verify and serve but
@@ -14,10 +20,14 @@ users are offline.
 
 ## Install on StartOS
 
-### Option A — Sideload (works today)
+### Option A — Sideload a candidate package
 
-1. Download `blindspark.s9pk` from the
-   [latest release](https://github.com/bigdestiny2/P2P-Hiverelay/releases/latest).
+This route is for an explicitly selected candidate release. There is currently
+no published stable `v0.24.3` `.s9pk`.
+
+1. Choose a named prerelease and download its `blindspark.s9pk` from that exact
+   release page. Do not select it through `releases/latest` and do not call it
+   stable.
 2. In your StartOS dashboard, go to **System → Sideload Service** and
    drop the `.s9pk` file in.
 3. Open **Services → Blindspark → Start**.
@@ -155,8 +165,8 @@ Three paths, smallest to widest reach:
 ## Before submitting to the Start9 registry
 
 - [ ] `make verify IMAGE_DIGEST=sha256:<multi-arch-digest>` passes against the
-      published release image. Current `v0.20.2` verification is blocked until
-      `ghcr.io/bigdestiny2/p2p-hiverelay:0.20.2` resolves.
+      exact release image named by the package. The stable `v0.24.3` GHCR index
+      exists, but no stable `v0.24.3` `.s9pk` is currently distributed.
 - [ ] Sideload `blindspark.s9pk` on a real StartOS device: wizard
       completes, dashboard authenticates over Tor and LAN, identity
       survives a reinstall, backup/restore round-trips.
@@ -167,11 +177,11 @@ Three paths, smallest to widest reach:
 ## Status
 
 Package source targets multi-arch image tarballs (x86_64 + aarch64),
-v1.0.0-rc.1, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first boot,
-and a first-boot-only 10 GB storage cap. Current `v0.20.2` package verification
-is externally gated on the published GHCR image/tag and digest; once that image
-exists, `make verify IMAGE_DIGEST=sha256:<multi-arch-digest>` is the release
-gate. Not yet device-tested on real StartOS hardware; the checklist above is
-the remaining work. The runtime mechanisms it relies on (token auth behind a
+`v1.0.0-rc.1`, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first
+boot, and a first-boot-only 10 GB storage cap. That is development/candidate
+source, not the stable `v0.24.3` package. A named candidate must pass
+`make verify IMAGE_DIGEST=sha256:<multi-arch-digest>` before sideloading. Not yet
+device-tested on real StartOS hardware; the checklist above is the remaining
+work. The runtime mechanisms it relies on (token auth behind a
 proxy, seed persistence, `/data` home) are the same ones verified end-to-end for
 the Umbrel package.

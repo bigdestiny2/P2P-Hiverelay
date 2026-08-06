@@ -1,5 +1,11 @@
 # Blindspark by HiveRelay — Umbrel App Store package
 
+> **Version boundary:** the stable HiveRelay baseline is `v0.24.3`; this
+> directory on `main` also receives candidate appliance work. Use the
+> [stable guide](../docs/STABLE-0.24.3.md) and its immutable container digest
+> when stable behavior is required. A manifest version on `main` is not by
+> itself a stable store publication.
+
 This directory packages [HiveRelay](https://github.com/bigdestiny2/p2p-hiverelay)
 as an Umbrel app: **Blindspark**, a blind relay for the Pear / Holepunch
 peer-to-peer ecosystem. It seeds encrypted Hyperdrives the relay can verify
@@ -56,13 +62,12 @@ it is not part of the package default.
 You don't have to wait for the store. On the box:
 
 ```bash
-# 1. Pull the published image (multi-arch; works on Pi/arm64 and x86/amd64)
-docker pull ghcr.io/bigdestiny2/p2p-hiverelay:0.20.0
+# 1. Pull the stable v0.24.3 image by immutable multi-arch digest.
+docker pull ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8
 
 # 2. Install as a local/community app via umbreld, or run the compose
-#    directly with APP_DATA_DIR + APP_SEED set. The bare :0.20.0 tag is
-#    fine for a personal install (the sha256 digest pin is only an App
-#    Store review requirement).
+#    directly with APP_DATA_DIR + APP_SEED set. Preserve the digest pin;
+#    candidate or floating tags are not the stable artifact.
 ```
 
 The first-run wizard is at the app's dashboard once it's running.

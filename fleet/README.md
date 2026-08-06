@@ -1,5 +1,10 @@
 # Fleet management
 
+The current channel boundary is deliberate: `stable` and `hold` target
+`v0.24.3`, while `canary` targets `v0.25.0-rc.9`. The `1.0.0-rc.1` blind
+substrate work on `main` is a separate development track and is not a fleet
+stable claim. See [Stable HiveRelay v0.24.3](../docs/STABLE-0.24.3.md).
+
 Tooling for the **raw systemd fleet** — the relay boxes we operate
 directly (utah, utah-us, utah-2gb-a, utah-0.5gb, utah-8gb, sing-1, sing-2, bern, dubai). The Umbrel and StartOS
 packaged relays auto-update through their own registries and are *not*
