@@ -6,6 +6,39 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.24.4] — 2026-08-06
+
+### Fixed
+- **`GET /api/poker/usage` answers `enabled: false` instead of `503` when poker
+  is off.** The usage-telemetry payload builder was always designed to return
+  `{ enabled: false, tables: 0, ... }` for a null poker provider — "poker isn't
+  enabled" is a valid operator-telemetry answer, and it is the contract the
+  release-image smoke gate checks on a stock (no-services) boot. The dispatch in
+  `api.js` short-circuited to `503` before the builder ever saw the null, which
+  kept every Release surfaces run red from v0.24.0 through v0.24.3: the image
+  built and pushed fine, then the smoke gate failed and every step after it —
+  npm publish, store sync, evidence — was skipped. Auth is unchanged and a
+  running provider still reports live counts. This is the only code change over
+  v0.24.3; relay behavior is otherwise identical.
+
+### Security
+- **Production dependency advisories cleared so the release gate runs.**
+  `ip-address` `^10.2.0` → `^10.3.1` (resolves 10.4.0) closes three high-severity
+  SSRF / trust-boundary bypasses (GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh,
+  GHSA-22jq-vg5j-6vgg); the `protobufjs` override `^7.6.4` → `^7.6.5` closes a
+  moderate `.proto` parsing DoS (GHSA-j3f2-48v5-ccww). Both advisories were
+  published after the v0.24.3 gate last ran, and `npm audit --omit=dev` — the
+  first command in the release gate, under `set -euo pipefail` — exited non-zero
+  because of them. `npm audit --omit=dev` now reports zero vulnerabilities.
+
+### Distribution
+- First 0.24.x release to reach npm. `p2p-hiverelay`, `p2p-hiverelay-client`,
+  `p2p-hiveservices`, and `p2p-hiverelay-verifier` publish `0.24.4` and take the
+  `latest` dist-tag, which had been stranded on `0.20.2` (`p2p-hiveservices`
+  `0.9.2`) since the v0.24.0 gate first went red. `fleet/channels.json` is
+  untouched — `stable` and `hold` stay on `v0.24.3` until a separate,
+  independently authorized promotion.
+
 ## [0.24.3] — 2026-07-08
 
 ### Added
