@@ -1,6 +1,6 @@
 {
   "name": "@hiverelay/blind-client",
-  "version": "0.26.0-rc.1",
+  "version": "1.0.0-rc.1",
   "description": "Application-agnostic client composition for the HiveRelay blind substrate",
   "private": true,
   "type": "module",
@@ -48,7 +48,7 @@
     "lint": "XDG_CACHE_HOME=/private/tmp/hiverelay-standard-cache standard --no-cache ."
   },
   "dependencies": {
-    "@hiverelay/blind-protocol": "0.26.0-rc.1",
+    "@hiverelay/blind-protocol": "1.0.0-rc.1",
     "b4a": "^1.6.6",
     "bare-crypto": "^1.15.3",
     "sodium-javascript": "~0.8.0",

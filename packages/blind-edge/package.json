@@ -1,6 +1,6 @@
 {
   "name": "@hiverelay/blind-edge",
-  "version": "0.26.0-rc.1",
+  "version": "1.0.0-rc.1",
   "description": "Public metadata-stripping transport edge for the HiveRelay blind substrate",
   "private": true,
   "type": "module",
@@ -20,9 +20,9 @@
     "forward-https-vnext.js"
   ],
   "dependencies": {
-    "@hiverelay/blind-ipc": "0.26.0-rc.1",
-    "@hiverelay/blind-peercred": "0.26.0-rc.1",
-    "@hiverelay/blind-protocol": "0.26.0-rc.1",
+    "@hiverelay/blind-ipc": "1.0.0-rc.1",
+    "@hiverelay/blind-peercred": "1.0.0-rc.1",
+    "@hiverelay/blind-protocol": "1.0.0-rc.1",
     "b4a": "^1.6.6"
   },
   "engines": {

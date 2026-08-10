@@ -1,6 +1,6 @@
 {
   "name": "@hiverelay/blind-daemon",
-  "version": "0.26.0-rc.1",
+  "version": "1.0.0-rc.1",
   "description": "Private canonical dispatch, storage and signing daemon for the HiveRelay blind substrate",
   "private": true,
   "type": "module",
@@ -15,9 +15,9 @@
     "*.js"
   ],
   "dependencies": {
-    "@hiverelay/blind-ipc": "0.26.0-rc.1",
-    "@hiverelay/blind-peercred": "0.26.0-rc.1",
-    "@hiverelay/blind-protocol": "0.26.0-rc.1",
+    "@hiverelay/blind-ipc": "1.0.0-rc.1",
+    "@hiverelay/blind-peercred": "1.0.0-rc.1",
+    "@hiverelay/blind-protocol": "1.0.0-rc.1",
     "b4a": "^1.6.6",
     "sodium-universal": "^4.0.0"
   },

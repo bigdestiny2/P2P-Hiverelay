@@ -11,7 +11,7 @@ channel named below; it does not mean every distribution surface has published
 |---|---|---|
 | Stable | `v0.24.3` at `d0190577c5eccd10b7e4ae84baf2dc7b0f2b1c80` | Application-aware compatibility relay used by the stable and hold fleet channels |
 | Canary | `v0.25.0-rc.9` | Release candidate only; not promoted to stable |
-| Blind-substrate development | `0.26.0-rc.1` manifests on `main` | Isolated replacement work; not the stable product and not blind GA |
+| Blind-substrate development | `1.0.0-rc.1` manifests on `main` | Isolated replacement work; not the stable product and not blind GA |
 
 HiveRelay `v0.24.3` is the legacy application-aware relay. It includes the
 ghost-outbox sweep and rate-limit/read-path fixes recorded in
@@ -68,7 +68,7 @@ bare mutable tag when stable artifact identity matters.
   health gating, containment, and rollback.
 
 Documents under `docs/vnext/`, blind public-test material, `0.25.0-rc.*`
-announcements, and `0.26.0-rc.1` package/appliance manifests are candidate or
+announcements, and `1.0.0-rc.1` package/appliance manifests are candidate or
 development records. They are useful for the next train but are not stable
 `v0.24.3` behavior or installation instructions.
 

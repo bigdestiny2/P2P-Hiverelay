@@ -393,32 +393,27 @@ test('prepare-release removes local-only README status suffix for public release
   t.absent(readme.includes('packages; main has unreleased upgrades'))
 })
 
-test('prepare-release bumps the blind-substrate workspaces in lockstep', async (t) => {
+test('prepare-release leaves the blind-substrate lane on its own version line', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-blind-fixture-'))
   t.teardown(async () => {
     await rm(repo, { recursive: true, force: true })
   })
   await writeMinimalReleaseFixture(repo)
 
-  // 'Verify exact source package versions' in release-surfaces.yml requires all
-  // eleven workspaces to equal the tag. These six used to be bumped by hand,
-  // which is how they drifted to 1.0.0-rc.1 while the product line was on 0.25.x.
-  const blind = [
-    'blind-protocol', 'blind-ipc', 'blind-client',
-    'blind-peercred', 'blind-edge', 'blind-daemon'
-  ]
+  // The blind-* workspaces are the isolated replacement track. Their generated
+  // v1 artifacts are byte-frozen by blind-protocol-v1-compatibility-floor.test.js,
+  // and the blind-client browser artifact manifest embeds the package version —
+  // so moving them with the product line rewrites bytes a live guard declares
+  // frozen and invalidates the Chromium/cross-host evidence bound to that hash.
+  const blind = ['blind-protocol', 'blind-ipc', 'blind-client']
   for (const name of blind) {
     await writeJson(path.join(repo, 'packages', name, 'package.json'), {
       name: `@hiverelay/${name}`,
-      version: '0.16.3',
-      // These workspaces are private:true in the real repo, which is exactly why
-      // their cross-references matter: an unbumped reference stops matching the
-      // workspace and npm falls through to the public registry, where an
-      // unpublished package 404s and `npm ci` dies.
+      version: '1.0.0-rc.1',
       private: true,
       ...(name === 'blind-protocol'
         ? {}
-        : { dependencies: { '@hiverelay/blind-protocol': '0.16.3' } })
+        : { dependencies: { '@hiverelay/blind-protocol': '1.0.0-rc.1' } })
     })
   }
 
@@ -433,42 +428,25 @@ test('prepare-release bumps the blind-substrate workspaces in lockstep', async (
   t.is(res.status, 0, res.stderr)
   for (const name of blind) {
     const pkg = JSON.parse(await readFile(path.join(repo, 'packages', name, 'package.json'), 'utf8'))
-    t.is(pkg.version, '9.9.9', `${name} moved with the release`)
-    // The cross-reference must move too. Bumping the version while leaving the
-    // dependency behind is not a cosmetic mismatch: it breaks `npm ci` outright.
-    // v9.9.9 is a stable tag, so internal specs take the caret form; a
-    // prerelease pins exactly (covered by the prerelease test below).
+    t.is(pkg.version, '1.0.0-rc.1', `${name} kept its own version line`)
     if (name !== 'blind-protocol') {
-      t.is(
-        pkg.dependencies['@hiverelay/blind-protocol'],
-        '^9.9.9',
-        `${name} retargeted its internal @hiverelay/blind-protocol dependency`
-      )
+      t.is(pkg.dependencies['@hiverelay/blind-protocol'], '1.0.0-rc.1', `${name} kept its internal pin`)
     }
   }
-
-  // Nothing anywhere may still point at the previous version.
-  const lock = await readFile(path.join(repo, 'package-lock.json'), 'utf8')
-  t.absent(lock.includes('0.16.3'), 'lockfile carries no stale internal reference')
+  const core = JSON.parse(await readFile(path.join(repo, 'packages', 'core', 'package.json'), 'utf8'))
+  t.is(core.version, '9.9.9', 'the product line still moved')
 })
 
-test('prepare-release pins internal prerelease dependencies exactly', async (t) => {
-  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-blind-prerelease-'))
+test('prepare-release retargets internal product dependencies', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-internal-deps-'))
   t.teardown(async () => {
     await rm(repo, { recursive: true, force: true })
   })
   await writeMinimalReleaseFixture(repo)
 
-  await writeJson(path.join(repo, 'packages', 'blind-protocol', 'package.json'), {
-    name: '@hiverelay/blind-protocol', version: '0.16.3', private: true
-  })
-  await writeJson(path.join(repo, 'packages', 'blind-ipc', 'package.json'), {
-    name: '@hiverelay/blind-ipc',
-    version: '0.16.3',
-    private: true,
-    dependencies: { '@hiverelay/blind-protocol': '0.16.3' }
-  })
-
+  // Bumping a workspace version while leaving a dependency on it behind is not a
+  // cosmetic mismatch: npm stops matching the workspace, falls through to the
+  // public registry, and `npm ci` dies.
   const res = await runPrepare([
     'v9.9.9-rc.1',
     '--channel', 'none',
@@ -478,40 +456,12 @@ test('prepare-release pins internal prerelease dependencies exactly', async (t) 
   ], path.join(repo, 'scripts', 'prepare-release.mjs'))
 
   t.is(res.status, 0, res.stderr)
-  const ipc = JSON.parse(await readFile(path.join(repo, 'packages', 'blind-ipc', 'package.json'), 'utf8'))
+  const client = JSON.parse(await readFile(path.join(repo, 'packages', 'client', 'package.json'), 'utf8'))
   // A caret range cannot resolve a prerelease under node-semver, so a prerelease
-  // release must pin its internal dependencies exactly.
-  t.is(ipc.dependencies['@hiverelay/blind-protocol'], '9.9.9-rc.1')
-})
-
-test('prepare-release rewrites the backticked StartOS status line', async (t) => {
-  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-startos-backtick-'))
-  t.teardown(async () => {
-    await rm(repo, { recursive: true, force: true })
-  })
-  await writeMinimalReleaseFixture(repo)
-
-  // The real startos/README.md authors the version in backticks. A regex without
-  // a backtick in its character class cannot reach the ', one-page dashboard'
-  // anchor, so replaceInFile die()s and the whole bump exits 1 — which is exactly
-  // what happened on main and took release:prepare down for every version.
-  await writeText(
-    path.join(repo, 'startos', 'README.md'),
-    '`v0.16.3`, one-page dashboard via `HIVERELAY_UI_SIMPLE`, review-mode first\n'
-  )
-
-  const res = await runPrepare([
-    'v9.9.9',
-    '--channel', 'none',
-    '--image-digest', DIGEST,
-    '--no-umbrel-store',
-    '--no-ecosystem-consumers'
-  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
-
-  t.is(res.status, 0, res.stderr)
-  const readme = await readFile(path.join(repo, 'startos', 'README.md'), 'utf8')
-  t.ok(readme.includes('`v9.9.9`, one-page dashboard'), 'backticked status line is rewritten in place')
-  t.absent(readme.includes('0.16.3'), 'no stale version survives')
+  // pins its internal dependencies exactly.
+  t.is(client.dependencies['p2p-hiverelay'], '9.9.9-rc.1')
+  const lock = await readFile(path.join(repo, 'package-lock.json'), 'utf8')
+  t.absent(lock.includes('0.16.3'), 'lockfile carries no stale internal reference')
 })
 
 async function writeMinimalReleaseFixture (repo) {

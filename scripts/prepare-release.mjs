@@ -224,33 +224,28 @@ function hasUnsafeReleaseNoteControlChars (value) {
 
 function syncPackageVersions () {
   const internalDependency = isPrerelease ? version : `^${version}`
-  // The published product line. These must exist.
-  const requiredPackageFiles = [
+
+  // The published product line. This is the ONLY set a release bumps.
+  //
+  // The six @hiverelay/blind-* workspaces are deliberately NOT here. They are
+  // the isolated blind-substrate replacement track (docs/STABLE-0.24.3.md) and
+  // carry their own version line, and test/unit/blind-protocol-v1-compatibility-
+  // floor.test.js freezes the SHA-256 of their generated v1 artifacts. The
+  // blind-client browser artifact manifest embeds the package version, so moving
+  // the blind lane with the product line rewrites bytes that a live, blocking
+  // guard declares frozen — and invalidates the Chromium and cross-host release
+  // evidence bound to that manifest hash.
+  //
+  // release-surfaces.yml's 'Verify exact source package versions' does assert all
+  // eleven equal the tag, but it is gated on is_branch_candidate, which is true
+  // only for the hardcoded ship/ branch — it never guards a tag. Where the two
+  // disagree, the live floor wins over the dormant check.
+  const packageFiles = [
     'package.json',
     'packages/core/package.json',
     'packages/services/package.json',
     'packages/client/package.json',
     'packages/verifier/package.json'
-  ]
-
-  // The blind-substrate workspaces. They are unpublished and not present in every
-  // checkout shape, so they are bumped only when present — but when they ARE
-  // present they must move with everything else. 'Verify exact source package
-  // versions' in release-surfaces.yml requires all eleven to equal the tag, and
-  // these six were previously bumped by hand, which is how they drifted to
-  // 1.0.0-rc.1 while the product line was on 0.25.x.
-  const optionalPackageFiles = [
-    'packages/blind-protocol/package.json',
-    'packages/blind-ipc/package.json',
-    'packages/blind-client/package.json',
-    'packages/blind-peercred/package.json',
-    'packages/blind-edge/package.json',
-    'packages/blind-daemon/package.json'
-  ]
-
-  const packageFiles = [
-    ...requiredPackageFiles,
-    ...optionalPackageFiles.filter((rel) => fs.existsSync(path.join(repoRoot, rel)))
   ]
 
   // Every workspace name that is moving in this bump. A dependency on any of
