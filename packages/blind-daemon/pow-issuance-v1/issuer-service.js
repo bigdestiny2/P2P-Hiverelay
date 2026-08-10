@@ -26,6 +26,11 @@ import {
 const SIX_HOURS_MILLIS = 21_600_000
 const MAX_BODY_BYTES = 8 * 1024
 const MAX_REDEEMED_CHALLENGES = 65536
+const PUBLIC_BROWSER_HEADERS = Object.freeze({
+  'access-control-allow-origin': '*',
+  'cross-origin-resource-policy': 'cross-origin'
+})
+const PREFLIGHT_MAX_AGE_SECONDS = '600'
 
 function fail (code, message) {
   const error = new Error(message)
@@ -76,11 +81,25 @@ function readBody (request) {
 function sendJson (response, status, value) {
   const body = b4a.from(JSON.stringify(value), 'utf8')
   response.writeHead(status, {
+    ...PUBLIC_BROWSER_HEADERS,
     'content-type': 'application/json; charset=utf-8',
     'content-length': String(body.byteLength),
     'cache-control': 'no-store'
   })
   response.end(body)
+}
+
+function sendPreflight (response, methods, allowHeaders = null) {
+  const headers = {
+    ...PUBLIC_BROWSER_HEADERS,
+    'access-control-allow-methods': methods,
+    'access-control-max-age': PREFLIGHT_MAX_AGE_SECONDS,
+    'cache-control': 'no-store',
+    'content-length': '0'
+  }
+  if (allowHeaders !== null) headers['access-control-allow-headers'] = allowHeaders
+  response.writeHead(204, headers)
+  response.end()
 }
 
 export function createPowIssuanceV1Issuer (options = {}) {
@@ -193,7 +212,18 @@ export function createPowIssuanceV1Issuer (options = {}) {
     : http.createServer(handle)
 
   function handle (request, response) {
-    const route = `${request.method} ${(request.url || '').split('?')[0]}`
+    const path = (request.url || '').split('?')[0]
+    if (request.method === 'OPTIONS') {
+      if (path === '/challenge' || path === '/health') {
+        sendPreflight(response, 'GET, OPTIONS')
+        return
+      }
+      if (path === '/redeem') {
+        sendPreflight(response, 'POST, OPTIONS', 'content-type')
+        return
+      }
+    }
+    const route = `${request.method} ${path}`
     const work = route === 'GET /challenge'
       ? handleChallenge(response)
       : route === 'POST /redeem'

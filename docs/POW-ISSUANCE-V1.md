@@ -86,6 +86,24 @@ to the relays today. The issuer never logs `recordCommitment`; it holds no
 spend-tag database and has no callback into redemption, matching §14.1 role
 separation. Upgrade path: blind credentials behind the same adapter contract.
 
+Browser issuance is public and credential-free. Every issuer JSON success and
+error carries `Access-Control-Allow-Origin: *`,
+`Cross-Origin-Resource-Policy: cross-origin`, and `Cache-Control: no-store`;
+the issuer never sends `Access-Control-Allow-Credentials`, `Vary`, or
+`Set-Cookie`, and never reflects an origin. Known preflights are deliberately
+route-bounded:
+
+| Path | Status | `Access-Control-Allow-Methods` | `Access-Control-Allow-Headers` |
+| --- | ---: | --- | --- |
+| `/challenge` | 204 | `GET, OPTIONS` | absent |
+| `/health` | 204 | `GET, OPTIONS` | absent |
+| `/redeem` | 204 | `POST, OPTIONS` | `content-type` |
+
+Each accepted preflight also sends `Access-Control-Max-Age: 600`,
+`Cache-Control: no-store`, `Content-Length: 0`, and no body. Unknown `OPTIONS`
+paths remain ordinary JSON 404 responses, advertise no methods or headers, and
+cannot mint or consume a challenge.
+
 ## 4. Daemon integration (sandbox adapter script)
 
 The production daemon loads its admission adapter as a sha256-pinned,

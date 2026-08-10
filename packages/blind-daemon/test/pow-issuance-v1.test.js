@@ -65,6 +65,25 @@ function adapterInput (overrides = {}) {
   }
 }
 
+function assertPublicBrowserHeaders (t, response, label) {
+  t.is(response.headers.get('access-control-allow-origin'), '*', `${label}: public wildcard origin`)
+  t.is(response.headers.get('cross-origin-resource-policy'), 'cross-origin', `${label}: public cross-origin resource`)
+  t.is(response.headers.get('access-control-allow-credentials'), null, `${label}: credentials are never allowed`)
+  t.is(response.headers.get('vary'), null, `${label}: no origin-dependent Vary`)
+  t.is(response.headers.get('set-cookie'), null, `${label}: no cookie is set`)
+}
+
+async function assertPreflight (t, response, { label, methods, allowHeaders }) {
+  t.is(response.status, 204, `${label}: preflight accepted`)
+  assertPublicBrowserHeaders(t, response, label)
+  t.is(response.headers.get('access-control-allow-methods'), methods, `${label}: exact methods`)
+  t.is(response.headers.get('access-control-allow-headers'), allowHeaders, `${label}: exact allowed headers`)
+  t.is(response.headers.get('access-control-max-age'), '600', `${label}: bounded preflight cache`)
+  t.is(response.headers.get('cache-control'), 'no-store', `${label}: response is not cacheable`)
+  t.is(response.headers.get('content-length'), '0', `${label}: empty response length`)
+  t.is(await response.text(), '', `${label}: empty response body`)
+}
+
 test('codec: challenge mint/parse roundtrip, foreign key and expiry rejected', t => {
   const challenge = mintPowIssuanceV1Challenge(keys.challengeKey, {
     ttlSeconds: 120,
@@ -345,6 +364,105 @@ test('issuer: challenge → bad PoW rejected → valid PoW redeems once, replay 
   t.is((await allowance.json()).error, 'POW_ALLOWANCE_INVALID')
 
   t.is((await fetch(`${base}/nope`)).status, 404)
+})
+
+test('issuer: browser CORS is public, credential-free, route-bounded, and side-effect-free', async t => {
+  const issuer = createPowIssuanceV1Issuer({ issuerKey, difficultyBits: 1, port: 0 })
+  await issuer.start()
+  t.teardown(() => issuer.close())
+  const base = `http://127.0.0.1:${issuer.address().port}`
+  const origin = 'https://unrelated.example'
+
+  const challengeResponse = await fetch(`${base}/challenge`, { headers: { origin } })
+  t.is(challengeResponse.status, 200)
+  assertPublicBrowserHeaders(t, challengeResponse, 'challenge JSON')
+  t.is(challengeResponse.headers.get('cache-control'), 'no-store')
+  const challengeJson = await challengeResponse.json()
+  const challengeBytes = b4a.from(challengeJson.challenge.replace(/-/g, '+').replace(/_/g, '/'), 'base64')
+  const parsed = parsePowIssuanceV1Challenge(keys.challengeKey, challengeBytes)
+  const recordCommitment = b4a.from(randomBytes(32))
+  const nonce = mineNonce(parsed.payload, recordCommitment, 1)
+  const nonceBytes = b4a.alloc(8)
+  nonceBytes.writeBigUInt64BE(nonce, 0)
+  const redeemBody = JSON.stringify({
+    challenge: challengeJson.challenge,
+    nonce: b4a.toString(nonceBytes, 'hex'),
+    recordCommitment: b4a.toString(recordCommitment, 'hex')
+  })
+
+  for (const path of ['/challenge', '/health']) {
+    const response = await fetch(base + path, {
+      method: 'OPTIONS',
+      headers: {
+        origin,
+        'access-control-request-method': 'GET',
+        'access-control-request-headers': 'authorization'
+      }
+    })
+    await assertPreflight(t, response, {
+      label: `${path} preflight`,
+      methods: 'GET, OPTIONS',
+      allowHeaders: null
+    })
+  }
+
+  const redeemPreflight = await fetch(`${base}/redeem`, {
+    method: 'OPTIONS',
+    headers: {
+      origin,
+      'content-type': 'application/json',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type'
+    },
+    body: redeemBody
+  })
+  await assertPreflight(t, redeemPreflight, {
+    label: '/redeem preflight',
+    methods: 'POST, OPTIONS',
+    allowHeaders: 'content-type'
+  })
+
+  const unknownPreflight = await fetch(`${base}/unknown`, {
+    method: 'OPTIONS',
+    headers: {
+      origin,
+      'content-type': 'application/json',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type'
+    },
+    body: redeemBody
+  })
+  t.is(unknownPreflight.status, 404, 'unknown OPTIONS stays unknown')
+  assertPublicBrowserHeaders(t, unknownPreflight, 'unknown OPTIONS JSON error')
+  t.is(unknownPreflight.headers.get('access-control-allow-methods'), null, 'unknown route advertises no methods')
+  t.is(unknownPreflight.headers.get('access-control-allow-headers'), null, 'unknown route advertises no headers')
+  t.is(unknownPreflight.headers.get('access-control-max-age'), null, 'unknown route advertises no preflight cache')
+  t.is((await unknownPreflight.json()).error, 'NOT_FOUND')
+
+  const good = await fetch(`${base}/redeem`, {
+    method: 'POST',
+    headers: { origin, 'content-type': 'application/json' },
+    body: redeemBody
+  })
+  t.is(good.status, 200, 'preflight and unknown route did not consume the challenge')
+  assertPublicBrowserHeaders(t, good, 'redeem JSON success')
+  t.is(good.headers.get('cache-control'), 'no-store')
+  const redeemed = await good.json()
+  t.is(redeemed.scheme, 'pow-issuance-v1')
+
+  const malformed = await fetch(`${base}/redeem`, {
+    method: 'POST',
+    headers: { origin, 'content-type': 'application/json' },
+    body: '{'
+  })
+  t.is(malformed.status, 400)
+  assertPublicBrowserHeaders(t, malformed, 'redeem JSON error')
+  t.is((await malformed.json()).error, 'POW_ISSUANCE_INVALID')
+
+  const health = await fetch(`${base}/health`, { headers: { origin } })
+  t.is(health.status, 200)
+  assertPublicBrowserHeaders(t, health, 'health JSON')
+  t.is((await health.json()).ok, true)
 })
 
 test('issuer: key commitment is a stable public identifier, not the key', t => {
