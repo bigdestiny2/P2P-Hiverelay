@@ -410,7 +410,15 @@ test('prepare-release bumps the blind-substrate workspaces in lockstep', async (
   for (const name of blind) {
     await writeJson(path.join(repo, 'packages', name, 'package.json'), {
       name: `@hiverelay/${name}`,
-      version: '0.16.3'
+      version: '0.16.3',
+      // These workspaces are private:true in the real repo, which is exactly why
+      // their cross-references matter: an unbumped reference stops matching the
+      // workspace and npm falls through to the public registry, where an
+      // unpublished package 404s and `npm ci` dies.
+      private: true,
+      ...(name === 'blind-protocol'
+        ? {}
+        : { dependencies: { '@hiverelay/blind-protocol': '0.16.3' } })
     })
   }
 
@@ -426,7 +434,54 @@ test('prepare-release bumps the blind-substrate workspaces in lockstep', async (
   for (const name of blind) {
     const pkg = JSON.parse(await readFile(path.join(repo, 'packages', name, 'package.json'), 'utf8'))
     t.is(pkg.version, '9.9.9', `${name} moved with the release`)
+    // The cross-reference must move too. Bumping the version while leaving the
+    // dependency behind is not a cosmetic mismatch: it breaks `npm ci` outright.
+    // v9.9.9 is a stable tag, so internal specs take the caret form; a
+    // prerelease pins exactly (covered by the prerelease test below).
+    if (name !== 'blind-protocol') {
+      t.is(
+        pkg.dependencies['@hiverelay/blind-protocol'],
+        '^9.9.9',
+        `${name} retargeted its internal @hiverelay/blind-protocol dependency`
+      )
+    }
   }
+
+  // Nothing anywhere may still point at the previous version.
+  const lock = await readFile(path.join(repo, 'package-lock.json'), 'utf8')
+  t.absent(lock.includes('0.16.3'), 'lockfile carries no stale internal reference')
+})
+
+test('prepare-release pins internal prerelease dependencies exactly', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-blind-prerelease-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  await writeJson(path.join(repo, 'packages', 'blind-protocol', 'package.json'), {
+    name: '@hiverelay/blind-protocol', version: '0.16.3', private: true
+  })
+  await writeJson(path.join(repo, 'packages', 'blind-ipc', 'package.json'), {
+    name: '@hiverelay/blind-ipc',
+    version: '0.16.3',
+    private: true,
+    dependencies: { '@hiverelay/blind-protocol': '0.16.3' }
+  })
+
+  const res = await runPrepare([
+    'v9.9.9-rc.1',
+    '--channel', 'none',
+    '--allow-unpinned-image',
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 0, res.stderr)
+  const ipc = JSON.parse(await readFile(path.join(repo, 'packages', 'blind-ipc', 'package.json'), 'utf8'))
+  // A caret range cannot resolve a prerelease under node-semver, so a prerelease
+  // release must pin its internal dependencies exactly.
+  t.is(ipc.dependencies['@hiverelay/blind-protocol'], '9.9.9-rc.1')
 })
 
 test('prepare-release rewrites the backticked StartOS status line', async (t) => {

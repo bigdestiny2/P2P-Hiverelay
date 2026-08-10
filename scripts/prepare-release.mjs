@@ -253,12 +253,40 @@ function syncPackageVersions () {
     ...optionalPackageFiles.filter((rel) => fs.existsSync(path.join(repoRoot, rel)))
   ]
 
+  // Every workspace name that is moving in this bump. A dependency on any of
+  // them is an INTERNAL reference and has to move too, or npm stops matching the
+  // workspace and falls through to the public registry — where the unpublished
+  // @hiverelay/blind-* packages 404 and `npm ci` dies. Rewriting only
+  // 'p2p-hiverelay' was why the blind-* packages could be bumped while their
+  // dependencies on each other silently kept pointing at the previous version.
+  // Note: do NOT filter on `private`. The six @hiverelay/blind-* workspaces are
+  // all private:true, and they are exactly the ones whose cross-references need
+  // retargeting — they 404 on the public registry precisely because they are
+  // unpublished. The root monorepo name is harmless to include; nothing depends
+  // on it.
+  const internalNames = new Set()
+  for (const rel of packageFiles) {
+    const json = JSON.parse(read(path.join(repoRoot, rel)))
+    if (json.name) internalNames.add(json.name)
+  }
+
+  const DEPENDENCY_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
+
+  const retargetInternalDependencies = (container) => {
+    if (!container) return
+    for (const section of DEPENDENCY_SECTIONS) {
+      const deps = container[section]
+      if (!deps) continue
+      for (const name of Object.keys(deps)) {
+        if (internalNames.has(name)) deps[name] = internalDependency
+      }
+    }
+  }
+
   for (const rel of packageFiles) {
     updateJson(path.join(repoRoot, rel), (json) => {
       json.version = version
-      if (json.dependencies && json.dependencies['p2p-hiverelay']) {
-        json.dependencies['p2p-hiverelay'] = internalDependency
-      }
+      retargetInternalDependencies(json)
     })
   }
 
@@ -269,9 +297,10 @@ function syncPackageVersions () {
     for (const rel of packageFiles.slice(1).map((file) => file.replace(/\/package\.json$/, ''))) {
       if (!lock.packages || !lock.packages[rel]) continue
       lock.packages[rel].version = version
-      const deps = lock.packages[rel].dependencies
-      if (deps && deps['p2p-hiverelay']) deps['p2p-hiverelay'] = internalDependency
+      retargetInternalDependencies(lock.packages[rel])
     }
+    // The root entry mirrors the workspace links too.
+    retargetInternalDependencies(lock.packages?.[''])
   })
 
   replaceInFile(
