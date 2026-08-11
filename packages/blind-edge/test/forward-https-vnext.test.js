@@ -52,7 +52,9 @@ import {
   inboxCreateCommitment,
   inboxCreateV1,
   inboxManageV1,
+  inboxReadEntriesCommitment,
   inboxReadResultV1,
+  inboxReadSignaturePayloadV1,
   inboxReadV1,
   inboxReceiptV1,
   proveCellResultV1,
@@ -118,6 +120,21 @@ import {
   fixtureAdmission,
   removeFixtureScratch
 } from './forward-https-vnext-integration-fixture.mjs'
+
+function verifyInboxReadSignature (t, value, relayPublicKey) {
+  t.alike(value.entriesCommitment, inboxReadEntriesCommitment(value.entries))
+  const payload = encodeCanonical(inboxReadSignaturePayloadV1, {
+    version: value.version,
+    relayBinding: value.relayBinding,
+    requestNonce: value.requestNonce,
+    requestCommitment: value.requestCommitment,
+    snapshotRevision: value.snapshotRevision,
+    entriesCommitment: value.entriesCommitment,
+    nextCursor: value.nextCursor
+  })
+  t.ok(sodium.crypto_sign_verify_detached(value.signature,
+    resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, payload), relayPublicKey))
+}
 
 const runtime = createNodeCryptoRuntime()
 const MEDIA_TYPE = PROTOCOL.mediaType
@@ -1010,7 +1027,7 @@ test('INBOX CREATE, APPEND and READ serve signed receipts with exact readback', 
   })
   t.ok(readResult.ok, 'INBOX.READ is answered')
   const page = decodeCanonical(inboxReadResultV1, readResult.body, { copyBytes: true })
-  verifyResultSignedValue(inboxReadResultV1, page, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, identity.relayPublicKey, 'inbox read result')
+  verifyInboxReadSignature(t, page, identity.relayPublicKey)
   t.is(page.entries.length, 1, 'exact one-frame page')
   t.ok(b4a.equals(page.entries[0].frame, appended.frame), 'exact frame readback')
 
@@ -1149,7 +1166,7 @@ test('INBOX frames persist across relay restart with signed read pages', async t
   })
   t.ok(readResult.ok, 'INBOX.READ is answered after restart')
   const page = decodeCanonical(inboxReadResultV1, readResult.body, { copyBytes: true })
-  verifyResultSignedValue(inboxReadResultV1, page, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, identity.relayPublicKey, 'inbox read result')
+  verifyInboxReadSignature(t, page, identity.relayPublicKey)
   t.is(page.entries.length, 1)
   t.ok(b4a.equals(page.entries[0].frame, appended.frame), 'exact frame readback survives the restart')
   await edge.close()

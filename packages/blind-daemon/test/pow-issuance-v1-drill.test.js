@@ -25,9 +25,11 @@ import {
   blake2b256,
   blindReceiptV1,
   decodeCanonical,
+  encodeCanonical,
   inboxAppendAckV1,
   inboxAppendRequestCommitment,
   inboxReadResultV1,
+  inboxReadSignaturePayloadV1,
   inboxReceiptV1,
   resultSignaturePayload
 } from '@hiverelay/blind-protocol'
@@ -80,6 +82,22 @@ function verifySignedBody (codec, body, domainId, publicKey) {
   const unsigned = body.subarray(0, body.byteLength - sodium.crypto_sign_BYTES)
   const valid = sodium.crypto_sign_verify_detached(value.signature,
     resultSignaturePayload(domainId, unsigned), publicKey)
+  return { value, valid }
+}
+
+function verifySignedInboxReadBody (body, publicKey) {
+  const value = decodeCanonical(inboxReadResultV1, body, { copyBytes: true })
+  const payload = encodeCanonical(inboxReadSignaturePayloadV1, {
+    version: value.version,
+    relayBinding: value.relayBinding,
+    requestNonce: value.requestNonce,
+    requestCommitment: value.requestCommitment,
+    snapshotRevision: value.snapshotRevision,
+    entriesCommitment: value.entriesCommitment,
+    nextCursor: value.nextCursor
+  })
+  const valid = sodium.crypto_sign_verify_detached(value.signature,
+    resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, payload), publicKey)
   return { value, valid }
 }
 
@@ -590,8 +608,7 @@ test('pow-issuance-v1 local drills (a)-(e): public PoW-admitted CELL.PUT + INBOX
     expectedResultBodyBytes: readPageOne.wire.expectedResultBodyBytes
   }))
   t.is(readOneResponse.ok, true)
-  const readOne = verifySignedBody(inboxReadResultV1, readOneResponse.body,
-    RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, fixture.relayPublicKey)
+  const readOne = verifySignedInboxReadBody(readOneResponse.body, fixture.relayPublicKey)
   t.is(readOne.valid, true)
   t.is(readOne.value.entries.length, 1)
   t.alike(readOne.value.entries[0].frameHash, blake2b256(pointerFrame))
@@ -612,8 +629,7 @@ test('pow-issuance-v1 local drills (a)-(e): public PoW-admitted CELL.PUT + INBOX
     expectedResultBodyBytes: readPageTwo.wire.expectedResultBodyBytes
   }))
   t.is(readTwoResponse.ok, true)
-  const readTwo = verifySignedBody(inboxReadResultV1, readTwoResponse.body,
-    RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, fixture.relayPublicKey)
+  const readTwo = verifySignedInboxReadBody(readTwoResponse.body, fixture.relayPublicKey)
   t.is(readTwo.valid, true)
   t.is(readTwo.value.entries.length, 1)
   t.alike(readTwo.value.entries[0].frameHash, blake2b256(secondFrame))

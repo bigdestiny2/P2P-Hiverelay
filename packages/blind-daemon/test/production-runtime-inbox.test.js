@@ -21,7 +21,9 @@ import {
   inboxAppendV1,
   inboxCreateV1,
   inboxManageV1,
+  inboxReadEntriesCommitment,
   inboxReadResultV1,
+  inboxReadSignaturePayloadV1,
   inboxReadV1,
   inboxReceiptV1,
   inboxWatchV1,
@@ -131,6 +133,23 @@ function verifyResultSignature (t, codec, value, domainId, relayPublicKey) {
     resultSignaturePayload(domainId, unsigned), relayPublicKey))
 }
 
+function verifyInboxReadSignature (t, value, relayPublicKey) {
+  t.alike(value.entriesCommitment, inboxReadEntriesCommitment(value.entries),
+    'raw INBOX entries reproduce the signed commitment')
+  const payload = encodeCanonical(inboxReadSignaturePayloadV1, {
+    version: value.version,
+    relayBinding: value.relayBinding,
+    requestNonce: value.requestNonce,
+    requestCommitment: value.requestCommitment,
+    snapshotRevision: value.snapshotRevision,
+    entriesCommitment: value.entriesCommitment,
+    nextCursor: value.nextCursor
+  })
+  t.ok(sodium.crypto_sign_verify_detached(value.signature,
+    resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, payload), relayPublicKey),
+  'INBOX READ/WATCH signs the compressed normative payload')
+}
+
 async function rejectsCode (t, promise, code) {
   let rejected = null
   try {
@@ -192,12 +211,15 @@ test('production INBOX assembly serves the full public lifecycle through its rea
   t.is(page.snapshotRevision, 1n)
   t.is(page.entries.length, 1)
   t.alike(page.entries[0].frame, append.frame)
-  verifyResultSignature(t, inboxReadResultV1, page, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, relayPublicKey)
+  t.is(page.nextCursor, null)
+  verifyInboxReadSignature(t, page, relayPublicKey)
 
   const chargedRead = inboxReadFixture(created0, fixture.parameterHash, { charged: true })
   const chargedFrame = inboxFrame(OPERATION.INBOX.READ, inboxReadV1, chargedRead, 0xa4)
   const charged = await runtime.coordinator.dispatch(chargedFrame, inboxContext())
-  t.is(responseValue(charged, inboxReadResultV1).entries.length, 1)
+  const chargedPage = responseValue(charged, inboxReadResultV1)
+  t.is(chargedPage.entries.length, 1)
+  verifyInboxReadSignature(t, chargedPage, relayPublicKey)
   t.alike((await runtime.coordinator.dispatch(chargedFrame, inboxContext())).dispatch, charged.dispatch,
     'charged INBOX READ replays one exact signed page through production wiring')
 
@@ -206,6 +228,7 @@ test('production INBOX assembly serves the full public lifecycle through its rea
     inboxFrame(OPERATION.INBOX.WATCH, inboxWatchV1, watch, 0xa5), inboxContext()), inboxReadResultV1)
   t.is(woken.snapshotRevision, 1n)
   t.is(woken.entries.length, 1)
+  verifyInboxReadSignature(t, woken, relayPublicKey)
 
   const quietWatch = inboxWatchFixture(created0, fixture.parameterHash, {
     afterRevision: 1n,
@@ -215,6 +238,7 @@ test('production INBOX assembly serves the full public lifecycle through its rea
   const quiet = responseValue(await runtime.coordinator.dispatch(
     inboxFrame(OPERATION.INBOX.WATCH, inboxWatchV1, quietWatch, 0xa6), inboxContext()), inboxReadResultV1)
   t.is(quiet.entries.length, 0)
+  verifyInboxReadSignature(t, quiet, relayPublicKey)
   t.is(runtime.inboxStorage.status().waiterCount, 0)
 
   const renew = inboxRenewFixture(created0, created, relayPublicKey, fixture.parameterHash)
