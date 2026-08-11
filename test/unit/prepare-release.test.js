@@ -84,6 +84,8 @@ test('prepare-release defaults full release channel to both', async (t) => {
   const startosManifest = await readFile(path.join(repo, 'startos', 'manifest.yaml'), 'utf8')
   t.absent(startosManifest.includes('metadata.license'), 'StartOS release-notes block keeps the following key on a new line')
   t.ok(startosManifest.includes('HexOS.\nlicense: apache-2.0'), 'StartOS release-notes block is newline-terminated')
+  const startosReadme = await readFile(path.join(repo, 'startos', 'README.md'), 'utf8')
+  t.ok(startosReadme.includes('Status: `v9.9.9`, one-page dashboard'), 'backticked StartOS status is parsed and canonicalized')
 
   const truenasManifest = await readFile(path.join(repo, 'truenas-app', 'app.yaml'), 'utf8')
   const truenasImages = await readFile(path.join(repo, 'truenas-app', 'ix_values.yaml'), 'utf8')
@@ -393,6 +395,39 @@ test('prepare-release removes local-only README status suffix for public release
   t.absent(readme.includes('packages; main has unreleased upgrades'))
 })
 
+test('prepare-release accepts only bare or paired StartOS status backticks', async (t) => {
+  const cases = [
+    { name: 'bare', status: 'Status: v0.16.3, one-page dashboard\n', expected: 0 },
+    { name: 'opening-only', status: 'Status: `v0.16.3, one-page dashboard\n', expected: 1 },
+    { name: 'closing-only', status: 'Status: v0.16.3`, one-page dashboard\n', expected: 1 }
+  ]
+
+  for (const fixture of cases) {
+    const repo = await mkdtemp(path.join(tmpdir(), `hiverelay-startos-${fixture.name}-`))
+    t.teardown(async () => {
+      await rm(repo, { recursive: true, force: true })
+    })
+    await writeMinimalReleaseFixture(repo)
+    await writeText(path.join(repo, 'startos', 'README.md'), fixture.status)
+
+    const res = await runPrepare([
+      'v9.9.9',
+      '--channel', 'none',
+      '--image-digest', DIGEST,
+      '--no-umbrel-store',
+      '--no-ecosystem-consumers'
+    ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+    t.is(res.status, fixture.expected, `${fixture.name} delimiter shape has the expected status`)
+    if (fixture.expected === 0) {
+      const readme = await readFile(path.join(repo, 'startos', 'README.md'), 'utf8')
+      t.is(readme, 'Status: `v9.9.9`, one-page dashboard\n', 'bare status is canonicalized to paired backticks')
+    } else {
+      t.ok(res.stderr.includes('Could not find StartOS README status version.'), `${fixture.name} delimiter shape fails closed`)
+    }
+  }
+})
+
 async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'scripts', 'prepare-release.mjs'), await readFile('scripts/prepare-release.mjs', 'utf8'))
   await writeText(path.join(repo, 'scripts', 'lib', 'release-promise-scope.mjs'), await readFile('scripts/lib/release-promise-scope.mjs', 'utf8'))
@@ -422,7 +457,7 @@ async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'umbrel-app', 'umbrel-app.yml'), 'version: "0.16.3"\nreleaseNotes: "old"\n')
   await writeText(path.join(repo, 'startos', 'manifest.yaml'), 'id: blindspark\nversion: 0.16.3\nrelease-notes: |\n  old\nlicense: apache-2.0\n')
   await writeText(path.join(repo, 'startos', 'Makefile'), 'VERSION ?= $(shell sed -n \'s/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' ../package.json | head -n 1)\n')
-  await writeText(path.join(repo, 'startos', 'README.md'), 'Status: v0.16.3, one-page dashboard\n')
+  await writeText(path.join(repo, 'startos', 'README.md'), 'Status: `v0.16.3`, one-page dashboard\n')
   await writeText(path.join(repo, 'truenas-app', 'app.yaml'), 'app_version: 0.16.3\nversion: 1.0.0\n')
   await writeText(path.join(repo, 'truenas-app', 'ix_values.yaml'), 'images:\n  image:\n    repository: ghcr.io/bigdestiny2/p2p-hiverelay\n    tag: 0.16.3\n')
   await writeText(path.join(repo, 'truenas-app', 'README.md'), '- Upstream HiveRelay release: `0.16.3`\n')
