@@ -171,7 +171,8 @@
       "examples/**",
       "**/dist/**",
       "packages/blind-client/browser-artifacts/**",
-      "**/transports/dht-relay-ws/vendor/**"
+      "**/transports/dht-relay-ws/vendor/**",
+      "packages/blind-daemon/pow-issuance-v1/sandbox-adapter.js"
     ]
   },
   "dependencies": {

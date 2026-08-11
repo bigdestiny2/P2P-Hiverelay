@@ -693,10 +693,26 @@ function adapterVmContext () {
 function runBoundedScript (script, context, code, message) {
   try {
     return script.runInContext(context, { timeout: ADMISSION_ADAPTER_EXECUTION_TIMEOUT_MILLIS })
-  } catch {
+  } catch (error) {
+    // Adapter rejection vocabulary is part of the admission contract: a script
+    // that fails a spend with one of these exact codes intends precisely that
+    // wire outcome (pow-issuance-v1 rejects invalid/expired/foreign tokens with
+    // SPEND_INVALID). The code read stays behind its own guard so hostile or
+    // exotic thrown values keep the opaque execution failure below.
+    let preserved = null
+    try {
+      preserved = error != null && (typeof error === 'object' || typeof error === 'function')
+        ? error.code
+        : null
+    } catch {
+      preserved = null
+    }
+    if (PRESERVED_ADAPTER_ERROR_CODES.has(preserved)) throw error
     entrypointFailure(code, message)
   }
 }
+
+const PRESERVED_ADAPTER_ERROR_CODES = new Set(['SPEND_INVALID'])
 
 function compileScript (source, filename, code, message) {
   try {
