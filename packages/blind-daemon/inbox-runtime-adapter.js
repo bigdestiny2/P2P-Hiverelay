@@ -15,6 +15,7 @@ import {
   inboxPhysicalTopic,
   inboxReadEntriesCommitment,
   inboxReadResultV1,
+  inboxReadSignaturePayloadV1,
   inboxReceiptV1,
   relayResultBindingV1,
   resultSignaturePayload
@@ -201,7 +202,7 @@ async function signedRead (adapter, input, stored) {
   if (stored.entriesCommitment && !same(stored.entriesCommitment, expectedCommitment)) {
     fail('INTERNAL', 'INBOX storage returned a substituted entries commitment')
   }
-  return signValue(adapter.signer, inboxReadResultV1, {
+  const value = {
     version: 1,
     relayBinding,
     requestNonce: b4a.from(input.request.clientNonce),
@@ -211,9 +212,45 @@ async function signedRead (adapter, input, stored) {
     entriesCommitment: expectedCommitment,
     nextCursor: stored.nextCursor == null ? null : b4a.from(stored.nextCursor),
     signature: b4a.alloc(SIGNATURE_BYTES)
-  }, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT,
-  relayBinding.relayPublicKey,
-  input.signal)
+  }
+  const { unsigned } = signedBytes(inboxReadResultV1, value)
+  const signaturePayload = encodeCanonical(inboxReadSignaturePayloadV1, {
+    version: value.version,
+    relayBinding: value.relayBinding,
+    requestNonce: value.requestNonce,
+    requestCommitment: value.requestCommitment,
+    snapshotRevision: value.snapshotRevision,
+    entriesCommitment: value.entriesCommitment,
+    nextCursor: value.nextCursor
+  })
+  value.signature = b4a.from(await adapter.signer.sign({
+    domainId: RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT,
+    publicKey: b4a.from(relayBinding.relayPublicKey),
+    payload: resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, signaturePayload),
+    canonicalUnsignedBytes: b4a.from(unsigned),
+    signal: input.signal
+  }))
+  if (value.signature.byteLength !== SIGNATURE_BYTES) fail('INTERNAL', 'INBOX signer returned an invalid signature')
+  return encodeCanonical(inboxReadResultV1, value)
+}
+
+function verifySignedReadValue (value, publicKey) {
+  try {
+    signedBytes(inboxReadResultV1, value)
+    const signaturePayload = encodeCanonical(inboxReadSignaturePayloadV1, {
+      version: value.version,
+      relayBinding: value.relayBinding,
+      requestNonce: value.requestNonce,
+      requestCommitment: value.requestCommitment,
+      snapshotRevision: value.snapshotRevision,
+      entriesCommitment: value.entriesCommitment,
+      nextCursor: value.nextCursor
+    })
+    return sodium.crypto_sign_verify_detached(value.signature,
+      resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, signaturePayload), publicKey)
+  } catch {
+    return false
+  }
 }
 
 function maximumResultBytes (input, inbox) {
@@ -549,11 +586,10 @@ export class BlindInboxRuntimeAdapter {
         value.expiresAtEpoch > value.storedAtEpoch
     }
     if (input.operationId === OPERATION.INBOX.READ || input.operationId === OPERATION.INBOX.WATCH) {
-      if (!verifySignedValue(inboxReadResultV1, value,
-        RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, publicKey) ||
+      if (!same(value.entriesCommitment, inboxReadEntriesCommitment(value.entries)) ||
+          !verifySignedReadValue(value, publicKey) ||
           !same(value.requestNonce, request.clientNonce) ||
           !same(value.requestCommitment, input.requestCommitment) ||
-          !same(value.entriesCommitment, inboxReadEntriesCommitment(value.entries)) ||
           value.entries.length > request.limit) return false
       let previous = input.operationId === OPERATION.INBOX.WATCH ? request.afterRevision : -1n
       for (const entry of value.entries) {

@@ -22,7 +22,9 @@ import {
   inboxAppendV1,
   inboxCreateV1,
   inboxManageV1,
+  inboxReadEntriesCommitment,
   inboxReadResultV1,
+  inboxReadSignaturePayloadV1,
   inboxReadV1,
   inboxReceiptV1,
   inboxWatchV1,
@@ -73,6 +75,21 @@ function verifyResultSignature (t, codec, value, domainId, relayPublicKey) {
   const unsigned = canonical.subarray(0, canonical.byteLength - sodium.crypto_sign_BYTES)
   t.ok(sodium.crypto_sign_verify_detached(value.signature,
     resultSignaturePayload(domainId, unsigned), relayPublicKey))
+}
+
+function verifyInboxReadSignature (t, value, relayPublicKey) {
+  t.alike(value.entriesCommitment, inboxReadEntriesCommitment(value.entries))
+  const payload = encodeCanonical(inboxReadSignaturePayloadV1, {
+    version: value.version,
+    relayBinding: value.relayBinding,
+    requestNonce: value.requestNonce,
+    requestCommitment: value.requestCommitment,
+    snapshotRevision: value.snapshotRevision,
+    entriesCommitment: value.entriesCommitment,
+    nextCursor: value.nextCursor
+  })
+  t.ok(sodium.crypto_sign_verify_detached(value.signature,
+    resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, payload), relayPublicKey))
 }
 
 test('public INBOX operations round-trip through the metadata-stripping edge into production storage', async t => {
@@ -191,8 +208,7 @@ test('public INBOX operations round-trip through the metadata-stripping edge int
   t.is(page.snapshotRevision, 1n)
   t.is(page.entries.length, 1)
   t.alike(page.entries[0].frame, append.frame)
-  verifyResultSignature(t, inboxReadResultV1, page,
-    RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, relayPublicKey)
+  verifyInboxReadSignature(t, page, relayPublicKey)
 
   const quietWatch = inboxWatchFixture(created0, fixture.parameterHash, {
     afterRevision: 1n,
@@ -204,6 +220,7 @@ test('public INBOX operations round-trip through the metadata-stripping edge int
     OPERATION.INBOX.WATCH, inboxReadResultV1)
   t.is(quiet.entries.length, 0)
   t.is(quiet.snapshotRevision, 1n)
+  verifyInboxReadSignature(t, quiet, relayPublicKey)
 
   const renewed = successValue(
     await exchangePublicInbox(OPERATION.INBOX.RENEW, inboxManageV1,

@@ -287,8 +287,21 @@ test('result bindings carry external commit continuity and signature payloads', 
     entriesCommitment: bytes(32, 57),
     nextCursor: bytes(8, 58)
   }
-  t.is(decodeCanonical(inboxReadSignaturePayloadV1,
-    encodeCanonical(inboxReadSignaturePayloadV1, inbox)).snapshotRevision, 56n)
+  const encodedInbox = encodeCanonical(inboxReadSignaturePayloadV1, inbox)
+  const decodedInbox = decodeCanonical(inboxReadSignaturePayloadV1, encodedInbox)
+  t.is(decodedInbox.snapshotRevision, 56n)
+  t.alike(decodedInbox.relayBinding, binding)
+  t.alike(decodedInbox.requestNonce, inbox.requestNonce)
+  t.alike(decodedInbox.requestCommitment, inbox.requestCommitment)
+  t.alike(decodedInbox.entriesCommitment, inbox.entriesCommitment)
+  t.alike(decodedInbox.nextCursor, inbox.nextCursor)
+  const nullCursor = encodeCanonical(inboxReadSignaturePayloadV1, { ...inbox, nextCursor: null })
+  t.is(decodeCanonical(inboxReadSignaturePayloadV1, nullCursor).nextCursor, null)
+  t.unlike(encodedInbox, nullCursor, 'cursor presence changes the normative signed bytes')
+  t.unlike(encodedInbox, encodeCanonical(inboxReadSignaturePayloadV1, {
+    ...inbox,
+    entriesCommitment: bytes(32, 59)
+  }), 'entries commitment changes the normative signed bytes')
 })
 
 test('public backup and restore codecs round trip their frozen continuity chain', t => {

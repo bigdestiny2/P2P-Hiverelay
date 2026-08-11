@@ -27,12 +27,15 @@ import {
   inboxManageRequestCommitment,
   inboxManageV1,
   inboxPhysicalTopic,
+  inboxReadEntriesCommitment,
   inboxReadRequestCommitment,
   inboxReadResultV1,
+  inboxReadSignaturePayloadV1,
   inboxReadV1,
   inboxReceiptV1,
   inboxWatchRequestCommitment,
-  inboxWatchV1
+  inboxWatchV1,
+  resultSignaturePayload
 } from '@hiverelay/blind-protocol'
 import {
   BLIND_INBOX_RUNTIME_BLOCKERS,
@@ -62,6 +65,25 @@ function signature (secretKey, message) {
   const output = b4a.alloc(sodium.crypto_sign_BYTES)
   sodium.crypto_sign_detached(output, message, secretKey)
   return output
+}
+
+function inboxReadSignaturePayload (value) {
+  return encodeCanonical(inboxReadSignaturePayloadV1, {
+    version: value.version,
+    relayBinding: value.relayBinding,
+    requestNonce: value.requestNonce,
+    requestCommitment: value.requestCommitment,
+    snapshotRevision: value.snapshotRevision,
+    entriesCommitment: value.entriesCommitment,
+    nextCursor: value.nextCursor
+  })
+}
+
+function validInboxReadSignature (value, relayPublicKey) {
+  return same(value.entriesCommitment, inboxReadEntriesCommitment(value.entries)) &&
+    sodium.crypto_sign_verify_detached(value.signature,
+      resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT,
+        inboxReadSignaturePayload(value)), relayPublicKey)
 }
 
 function admission (byte) {
@@ -394,6 +416,9 @@ test('INBOX adapter executes lifecycle and exact retries through the real coordi
   const page = responseValue(await coordinator.dispatch(readFrame, context()), inboxReadResultV1)
   t.is(page.entries.length, 1)
   t.alike(page.entries[0].frame, append.frame)
+  t.is(page.nextCursor, null)
+  t.ok(validInboxReadSignature(page, h.relay.publicKey),
+    'null-cursor READ uses the normative compressed signature payload')
 
   const renew = renewRequest(fixture, created, h.relay.publicKey)
   const renewFrame = requestFrame(OPERATION.INBOX.RENEW, inboxManageV1, renew, 0xa4)
@@ -498,12 +523,46 @@ test('charged INBOX READ pins exact page/signature across append, refresh, and r
   await coordinator.dispatch(requestFrame(OPERATION.INBOX.CREATE, inboxCreateV1, fixture.request, 0xb1), context())
   const firstAppend = appendRequest(fixture, h.relay.publicKey, 0xc2)
   await coordinator.dispatch(requestFrame(OPERATION.INBOX.APPEND, inboxAppendV1, firstAppend, 0xb2), context())
+  const secondAppend = appendRequest(fixture, h.relay.publicKey, 0xc5)
+  await coordinator.dispatch(requestFrame(OPERATION.INBOX.APPEND, inboxAppendV1, secondAppend, 0xb5), context())
 
   const charged = readRequest(fixture, h.relay.publicKey, { charged: true, limit: 1, spendByte: 0xc3 })
   const chargedFrame = requestFrame(OPERATION.INBOX.READ, inboxReadV1, charged, 0xb3)
   const first = await coordinator.dispatch(chargedFrame, context())
   const decoded = responseValue(first, inboxReadResultV1)
   t.is(decoded.entries.length, 1)
+  t.ok(decoded.nextCursor != null, 'bounded READ carries a signed continuation cursor')
+  t.ok(validInboxReadSignature(decoded, h.relay.publicKey),
+    'cursor-bearing READ uses the normative compressed signature payload')
+
+  const verify = result => h.adapter.verifyResult({
+    familyId: FAMILY.INBOX,
+    operationId: OPERATION.INBOX.READ,
+    result,
+    request: charged,
+    requestCommitment: requestCommitment(OPERATION.INBOX.READ, charged, h.relay.publicKey),
+    expectedRelayBinding: decoded.relayBinding
+  })
+  const legacy = { ...decoded, signature: b4a.alloc(64) }
+  const legacyBytes = encodeCanonical(inboxReadResultV1, legacy)
+  legacy.signature = signature(h.relay.secretKey,
+    resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT,
+      legacyBytes.subarray(0, legacyBytes.byteLength - 64)))
+  t.is(await verify(legacy), false, 'the obsolete full-result signature is rejected')
+  t.is(await verify({ ...decoded, entriesCommitment: b4a.alloc(32, 0xe1) }), false,
+    'entries-commitment substitution is rejected')
+  const substitutedEntries = decoded.entries.map(entry => {
+    const frame = b4a.alloc(entry.frame.byteLength, 0xe2)
+    return { ...entry, frame, frameHash: blake2b256(frame) }
+  })
+  t.is(await verify({ ...decoded, entries: substitutedEntries }), false,
+    'raw entry substitution is rejected before signature acceptance')
+  const substitutedCursor = b4a.from(decoded.nextCursor)
+  substitutedCursor[0] ^= 0xff
+  t.is(await verify({ ...decoded, nextCursor: substitutedCursor }), false,
+    'cursor substitution is rejected')
+  t.is(await verify({ ...decoded, signature: b4a.alloc(64, 0xe3) }), false,
+    'detached signature substitution is rejected')
 
   const laterAppend = appendRequest(fixture, h.relay.publicKey, 0xc4)
   await coordinator.dispatch(requestFrame(OPERATION.INBOX.APPEND, inboxAppendV1, laterAppend, 0xb4), context())
@@ -537,6 +596,8 @@ test('INBOX WATCH is a bounded admitted unary operation that wakes on APPEND', a
   t.is(result.snapshotRevision, 1n)
   t.is(result.entries.length, 1)
   t.alike(result.entries[0].frame, append.frame)
+  t.ok(validInboxReadSignature(result, h.relay.publicKey),
+    'WATCH uses the same compressed result-signature contract as READ')
 })
 
 test('charged INBOX WATCH timeout returns and replays one exact empty unary result', async t => {
@@ -549,6 +610,9 @@ test('charged INBOX WATCH timeout returns and replays one exact empty unary resu
   const value = responseValue(first, inboxReadResultV1)
   t.is(value.snapshotRevision, 0n)
   t.is(value.entries.length, 0)
+  t.is(value.nextCursor, null)
+  t.ok(validInboxReadSignature(value, h.relay.publicKey),
+    'empty WATCH signs the null-cursor compressed payload')
   t.alike((await h.coordinator.dispatch(watchFrame,
     context({ absoluteDeadlineMonotonicMillis: 8000n }))).dispatch, first.dispatch)
   t.is(h.storage.status().waiterCount, 0)
