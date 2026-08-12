@@ -1,1 +1,3 @@
 packages/blind-client/browser-artifacts/blind-client-control-v1.mjs
+packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs
+packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs

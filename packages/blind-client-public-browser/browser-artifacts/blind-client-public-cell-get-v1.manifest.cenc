@@ -1,0 +1,24 @@
+{
+  "schema": "HiveRelayBlindClientPublicBrowserArtifactManifestV1",
+  "version": 1,
+  "acceptedSourceCommit": "1a114f64c97547cab6a18102c2ef4bff930e53ed",
+  "acceptedSourceTree": "5a341ba17a3d91a750cac94ba51116fe3552a6aa",
+  "sourceClosureHash": "a021373afd51e6e80d5c4143ff8b80a3c305f69d45c12f2296ad98e06cd2d461",
+  "profile": "hiverelay.blind-client-public-browser.cell-get.v1",
+  "artifactHashDomain": "hiverelay.blind-client-public-browser.cell-get-artifact-hash.v1",
+  "manifestHashDomain": "hiverelay.blind-client-public-browser.cell-get-manifest-hash.v1",
+  "artifactPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs",
+  "exactSortedExports": [
+    "createBlindCellGetControl",
+    "createBrowserCryptoRuntime"
+  ],
+  "toolchain": {
+    "node_major": 22,
+    "modules_abi": "127",
+    "napi": "10",
+    "esbuild": "0.28.1"
+  },
+  "tupleHash": "30c2c6c4bedfbf8cd77436a82c247490a09de9b46dfc45f28675c8cbb9df3b49",
+  "artifactLength": 191474,
+  "artifactHash": "ef60c0a45fe093d214cddb17f207675dfdf1df3bb5861bc9ea24542376bffb1c"
+}
