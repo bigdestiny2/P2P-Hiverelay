@@ -89,6 +89,8 @@ test('public browser control source has the exact closed 46-export surface', t =
 
 test('Ubuntu CI uses distinct structural and functional non-authoritative modes', t => {
   const workflow = fs.readFileSync(path.resolve(here, '../../../.github/workflows/test.yml'), 'utf8')
+  const chromiumRunner = fs.readFileSync(path.join(
+    here, '../scripts/test-blind-client-public-browser-artifact-chromium.mjs'), 'utf8')
   const focused = './node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-client-public-browser-artifact.test.js'
   const frozen = './node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-protocol-v1-compatibility-floor.test.js'
   const structural = 'node packages/blind-client-public-browser/scripts/generate-blind-client-public-browser-artifacts.mjs --check --ci-structural-only --require-release-evidence'
@@ -100,6 +102,13 @@ test('Ubuntu CI uses distinct structural and functional non-authoritative modes'
   t.is(workflow.split(functional).length - 1, 1)
   t.absent(workflow.includes('.t/seq29-browser-artifact-gates'))
   t.absent(workflow.includes('npm_config_devdir'))
+  const tempPrefixes = chromiumRunner.match(
+    /const tempPrefix = hostMode\s*\? '([^']+)'\s*: '([^']+)'/)
+  t.ok(tempPrefixes, 'Chromium runner keeps mode-specific temporary custody prefixes')
+  t.is(tempPrefixes[1], 'hiverelay-blind-client-public-browser-chromium-')
+  t.ok(tempPrefixes[2].length <= 8, 'CI Chromium prefix is bounded for Linux SingletonSocket')
+  t.ok(chromiumRunner.includes(
+    'const tempParent = hostMode ? process.env.TMPDIR : process.env.RUNNER_TEMP'))
 })
 
 test('generator preserves executable browser requires and rejects forbidden runtime reachability', t => {

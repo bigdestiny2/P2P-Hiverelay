@@ -35,7 +35,9 @@ const hostChromium = '/Users/localllm/Library/Caches/ms-playwright/chromium_head
 const hostChromiumVersion = 'Google Chrome for Testing 151.0.7922.34'
 const hostChromiumHash = '7687bff7cb2db075f250e6d5848bbc8838cac3802ac3952a899c574f8eccab45'
 const contentSecurityPolicy = "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz; frame-ancestors 'none'; form-action 'none'"
-const tempPrefix = 'hiverelay-blind-client-public-browser-chromium-'
+const tempPrefix = hostMode
+  ? 'hiverelay-blind-client-public-browser-chromium-'
+  : 'hr-bc-'
 const profiles = Object.freeze({
   full: BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES.full,
   limited: BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES.limited
