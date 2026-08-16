@@ -1682,13 +1682,24 @@ export async function assembleProductionBlindDaemon (options = {}) {
       : Object.freeze({ captured: new Map(), complete: false, required: 0 })
     if (cellRuntimeEnabled) {
       if (strictAdmissionCapture) {
+        const fallbackResolver = admissionResolver
         admissionResolver = input => {
           const captured = admissionCapture.captured.get(admissionAdapterKey(input))
-          if (captured == null) {
+          if (captured != null) return captured
+          // The startup capture covers only profiles that charge CELL.PUT —
+          // the staged write path whose adapters must never resolve lazily.
+          // Profiles without a CELL.PUT cost row (for example an INBOX-only
+          // pow admission profile) keep live resolution; the strict gate
+          // exists for CELL.PUT, not for unrelated operation families.
+          const chargesCellPut = input.parameters != null &&
+            Array.isArray(input.parameters.resourceCosts) &&
+            input.parameters.resourceCosts.some(row =>
+              row.familyId === FAMILY.CELL && row.operationId === OPERATION.CELL.PUT)
+          if (chargesCellPut) {
             runtimeFailure('BLIND_RUNTIME_ADMISSION_ADAPTER_RESOLUTION_FAILED',
               'strict CELL runtime forbids live fallback outside its startup adapter capture')
           }
-          return captured
+          return fallbackResolver(input)
         }
       } else {
         const fallbackResolver = admissionResolver
