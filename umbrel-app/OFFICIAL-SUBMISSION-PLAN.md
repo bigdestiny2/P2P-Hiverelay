@@ -1,5 +1,12 @@
 # Blindspark — Official Umbrel App Store Submission Plan
 
+> **Dated snapshot:** this plan's state assessment was written against the
+> `0.20.0` image pin and manifest and has not been re-baselined. The process
+> steps remain useful, but read every version, digest, and `--release` value
+> as belonging to the release under submission (`v0.26.0-rc.1` now,
+> `v0.26.0` at GA) and the current `SUBMISSION-CHECKLIST.md`, not the 0.20.x
+> narrative below.
+
 Target repo: `getumbrel/umbrel-apps` (the **official** store, not a community store).
 The repo's current `README.md` points package authors to `AGENTS.md`, which routes
 new app packages through its repo-local `umbrel-package-app` and `umbrel-test-app`

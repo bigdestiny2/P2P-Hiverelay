@@ -1,8 +1,8 @@
 # Blindspark by HiveRelay — Umbrel App Store package
 
-> **Version boundary:** the stable HiveRelay baseline is `v0.24.3`; this
+> **Version boundary:** the stable HiveRelay baseline is `v0.24.4`; this
 > directory on `main` also receives candidate appliance work. Use the
-> [stable guide](../docs/STABLE-0.24.3.md) and its immutable container digest
+> [stable guide](../docs/STABLE-0.24.4.md) and its immutable container digest
 > when stable behavior is required. A manifest version on `main` is not by
 > itself a stable store publication.
 
@@ -70,7 +70,9 @@ it is not part of the package default.
 You don't have to wait for the store. On the box:
 
 ```bash
-# 1. Pull the stable v0.24.3 image by immutable multi-arch digest.
+# 1. Pull the newest digest-pinned stable image by immutable multi-arch
+#    digest. This is the v0.24.3 index: v0.24.4 was an npm-only maintenance
+#    release with no image tag — see ../docs/STABLE-0.24.4.md.
 docker pull ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8
 
 # 2. Install as a local/community app via umbreld, or run the compose
