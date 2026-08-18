@@ -342,6 +342,91 @@ test('FLEET-DURABILITY-P1-1: expired genesis + intact sealed store boots from th
   await restarted.close()
 })
 
+// An expired predecessor can leave a relay with one signed continuity link
+// whose issued epoch no longer overlaps the predecessor window. Recovery is
+// allowed only when the operator pins the exact canonical hash of that one gap
+// successor. The pin is consumed at boot, never a blanket allow-gaps switch;
+// the restored/gapped snapshot keeps the full-store verification fence.
+test('boot restore: one transition-pinned emergency gap recovers and every wider form fails closed', async t => {
+  const fixture = await vnextSealedFixture({
+    functionalAdmission: true,
+    chainWindows: [[-6, -2], [-4, -1], [-2, 0], [0, 3]]
+  })
+  t.teardown(() => cleanup(fixture.directory))
+  await orchestrateVnextServingStore(fixture, fixture.chainFiles[2])
+  const gapAuthority = `2/${b4a.toString(fixture.chainHashes[2], 'hex')}/` +
+    `3/${b4a.toString(fixture.chainHashes[3], 'hex')}`
+
+  const noAuthority = await failure(() => assembleVnextRuntime(fixture))
+  t.is(noAuthority && noAuthority.code, DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+    'the readiness gap is rejected when the exact descriptor hash is absent')
+
+  const invalidAuthorities = [
+    ['wrong predecessor hash', `2/${'00'.repeat(32)}/3/${b4a.toString(fixture.chainHashes[3], 'hex')}`],
+    ['wrong successor hash', `2/${b4a.toString(fixture.chainHashes[2], 'hex')}/3/${'11'.repeat(32)}`],
+    ['wrong sequence pair', `1/${b4a.toString(fixture.chainHashes[2], 'hex')}/2/${b4a.toString(fixture.chainHashes[3], 'hex')}`],
+    ['stale non-gap transition', `1/${b4a.toString(fixture.chainHashes[1], 'hex')}/2/${b4a.toString(fixture.chainHashes[2], 'hex')}`]
+  ]
+  for (const [label, authority] of invalidAuthorities) {
+    const refused = await failure(() => assembleVnextRuntime(fixture, {
+      ...fixture.environment,
+      HIVERELAY_BLIND_EMERGENCY_GAP_AUTHORITY: authority
+    }))
+    t.is(refused && refused.code, DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+      `${label} cannot authorize the readiness gap`)
+  }
+
+  const bootstrap = loadDaemonBootstrapConfig(fixture.environment)
+  t.exception(() => loadProductionRuntimeConfig({
+    ...fixture.environment,
+    HIVERELAY_BLIND_EMERGENCY_GAP_AUTHORITY: `2/${'A'.repeat(64)}/3/${'11'.repeat(32)}`
+  }, bootstrap.endpointIds), /canonical form/,
+  'a non-canonical hash encoding is rejected at configuration load')
+
+  const recoveryEnvironment = {
+    ...fixture.environment,
+    HIVERELAY_BLIND_EMERGENCY_GAP_AUTHORITY: gapAuthority
+  }
+  let runtime = await assembleVnextRuntime(fixture, recoveryEnvironment)
+  t.teardown(() => runtime.close().catch(() => {}))
+  let status = runtime.status()
+  t.is(status.descriptorRestoredFromFloor, true, 'expired history restores behind the authorized gap')
+  t.is(status.descriptorSequence, 3n, 'the exact gap successor becomes the current head')
+  t.ok(b4a.equals(status.descriptorHash, fixture.chainHashes[3]))
+  t.is(status.storage.state, 'READY', 'the live store passes full recovery verification before serving')
+  const health = responseValue(await runtime.coordinator.dispatch(
+    healthChallengeFrame(3n, fixture.chainHashes[3], 0x19), dispatchContext()), blindHealthResultV1)
+  t.is(health.integrityState, HEALTH_INTEGRITY_STATE.VERIFIED,
+    'signed health exposes the recovered store as verified')
+  t.ok(health.readyOperationBits !== 0, 'operations are ready only after full-store verification')
+  await runtime.close()
+
+  runtime = await assembleVnextRuntime(fixture, recoveryEnvironment)
+  status = runtime.status()
+  t.is(status.descriptorRestoredFromFloor, true, 'restart restores through the now-persisted gap floor')
+  t.is(status.manifestFloor.descriptorSequenceFloor, 3n, 'the authorized gap floor persists exactly')
+  t.ok(b4a.equals(status.manifestFloor.descriptorHashFloor, fixture.chainHashes[3]))
+  await runtime.close()
+
+  const authorityRemoved = await failure(() => assembleVnextRuntime(fixture))
+  t.is(authorityRemoved && authorityRemoved.code, DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+    'the persisted gap still cannot boot after its exact authority is removed')
+
+  const twoGaps = await vnextSealedFixture({
+    chainWindows: [[-6, -3], [-5, -2], [-2, 0], [0, 3]]
+  })
+  t.teardown(() => cleanup(twoGaps.directory))
+  await orchestrateVnextServingStore(twoGaps, twoGaps.chainFiles[1])
+  const oneOfTwo = `1/${b4a.toString(twoGaps.chainHashes[1], 'hex')}/` +
+    `2/${b4a.toString(twoGaps.chainHashes[2], 'hex')}`
+  const multiple = await failure(() => assembleVnextRuntime(twoGaps, {
+    ...twoGaps.environment,
+    HIVERELAY_BLIND_EMERGENCY_GAP_AUTHORITY: oneOfTwo
+  }))
+  t.is(multiple && multiple.code, DESCRIPTOR_CLOSED_REASON.INVALID_TRANSITION,
+    'one authority record can never widen to a second gap')
+})
+
 // (b) An expired HEAD fails closed — the restore supersedes freshness only
 // behind the MAC-verified floor, never at the chain head.
 test('boot restore: an expired HEAD still fails closed', async t => {
