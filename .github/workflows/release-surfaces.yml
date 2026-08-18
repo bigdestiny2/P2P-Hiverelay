@@ -189,10 +189,16 @@ jobs:
           if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
             release_surfaces_status=skipped
             release_distribution_status=skipped
-            npm_publish_status=skipped
           fi
+          # A TAGGED prerelease still publishes to the npm `next` dist-tag, so it
+          # seeds `pending` and is resolved by the npm-publish job. Only a branch
+          # candidate publishes nothing at all. Seeding `skipped` for every
+          # prerelease is what made the evidence writer reject its own releases:
+          # write-release-evidence.mjs requires published-next|current-next for a
+          # non-candidate prerelease.
           if [ "${{ steps.rel.outputs.is_branch_candidate }}" = "true" ]; then
             startos_release_asset_status=skipped
+            npm_publish_status=skipped
           fi
           fleet_rollout_status=skipped
           if [ "${{ steps.rel.outputs.public_gateway_enabled }}" = "true" ] && \
@@ -528,6 +534,64 @@ jobs:
           NODE
           git diff --exit-code
 
+      - name: Publish npm packages
+        id: npm
+        # Branch candidates publish nothing. A TAGGED prerelease publishes to the
+        # `next` dist-tag and leaves `latest` alone; only a stable tag moves
+        # `latest`. Gating this on is_prerelease was why 0.24.x and every
+        # 0.25.0-rc.* reached npm only by hand.
+        if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
+        working-directory: hiverelay
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          expected="${{ steps.rel.outputs.semver }}"
+          if [ "${{ steps.rel.outputs.is_prerelease }}" = "true" ]; then
+            dist_tag=next
+            status_suffix=-next
+          else
+            dist_tag=latest
+            status_suffix=
+          fi
+          echo "Publishing $expected under the npm '$dist_tag' dist-tag."
+          published=0
+          for pkg in packages/core packages/client packages/verifier packages/services; do
+            name="$(node -p "require('./${pkg}/package.json').name")"
+            version="$(node -p "require('./${pkg}/package.json').version")"
+            if [ "$version" != "$expected" ]; then
+              echo "$name package.json version is $version; expected $expected" >&2
+              exit 1
+            fi
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "$name@$version already exists on npm; leaving tarball immutable."
+            else
+              npm publish "./$pkg" --access public --tag "$dist_tag"
+              published=1
+            fi
+            current="$(npm view "$name" "dist-tags.$dist_tag" 2>/dev/null || true)"
+            if [ "$current" != "$version" ]; then
+              npm dist-tag add "$name@$version" "$dist_tag"
+            fi
+            current="$(npm view "$name" "dist-tags.$dist_tag")"
+            if [ "$current" != "$version" ]; then
+              echo "$name $dist_tag dist-tag is $current; expected $version" >&2
+              exit 1
+            fi
+          done
+          # check-npm-latest only understands the `latest` dist-tag; the `next`
+          # line is verified inline by the loop above.
+          if [ "$dist_tag" = "latest" ]; then
+            npm run release:check-npm-latest -- --expected-version "$expected"
+          fi
+          if [ "$published" = "1" ]; then
+            status="published${status_suffix}"
+          else
+            status="current${status_suffix}"
+          fi
+          echo "HIVERELAY_NPM_PUBLISH_STATUS=$status" >> "$GITHUB_ENV"
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+
       - name: Setup Docker Buildx
         uses: docker/setup-buildx-action@v4
 
@@ -609,45 +673,6 @@ jobs:
           echo "HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE=release-image-smoke-evidence.json" >> "$GITHUB_ENV"
           echo "HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE_SHA256=$image_smoke_sha" >> "$GITHUB_ENV"
           echo "HIVERELAY_RELEASE_IMAGE_SMOKE_STATUS=passed" >> "$GITHUB_ENV"
-
-      - name: Publish npm packages
-        if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
-        working-directory: hiverelay
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: |
-          set -euo pipefail
-          expected="${{ steps.rel.outputs.semver }}"
-          published=0
-          for pkg in packages/core packages/client packages/verifier packages/services; do
-            name="$(node -p "require('./${pkg}/package.json').name")"
-            version="$(node -p "require('./${pkg}/package.json').version")"
-            if [ "$version" != "$expected" ]; then
-              echo "$name package.json version is $version; expected $expected" >&2
-              exit 1
-            fi
-            if npm view "$name@$version" version >/dev/null 2>&1; then
-              echo "$name@$version already exists on npm; leaving tarball immutable."
-            else
-              npm publish "./$pkg" --access public --tag latest
-              published=1
-            fi
-            latest="$(npm view "$name" dist-tags.latest 2>/dev/null || true)"
-            if [ "$latest" != "$version" ]; then
-              npm dist-tag add "$name@$version" latest
-            fi
-            latest="$(npm view "$name" dist-tags.latest)"
-            if [ "$latest" != "$version" ]; then
-              echo "$name latest dist-tag is $latest; expected $version" >&2
-              exit 1
-            fi
-          done
-          npm run release:check-npm-latest -- --expected-version "$expected"
-          if [ "$published" = "1" ]; then
-            echo "HIVERELAY_NPM_PUBLISH_STATUS=published" >> "$GITHUB_ENV"
-          else
-            echo "HIVERELAY_NPM_PUBLISH_STATUS=current" >> "$GITHUB_ENV"
-          fi
 
       - name: Sync release metadata
         working-directory: hiverelay
@@ -1030,9 +1055,14 @@ jobs:
           fi
           git config user.name "hiverelay-release-bot"
           git config user.email "hiverelay-release-bot@users.noreply.github.com"
-          git add package.json README.md index.html \
-            hiverelay-blindspark/docker-compose.yml \
+          # The appliance manifests always exist; the store-root files vary by
+          # store layout (bigdestiny2/blindspark-umbrel-store has no index.html,
+          # which made `git add` exit 128 with a pathspec error on every release).
+          git add hiverelay-blindspark/docker-compose.yml \
             hiverelay-blindspark/umbrel-app.yml
+          for f in package.json README.md index.html; do
+            [ -f "$f" ] && git add "$f" || true
+          done
           git commit -m "chore: publish Blindspark ${{ steps.rel.outputs.version }}"
           git push
           community_sha="$(git rev-parse HEAD)"

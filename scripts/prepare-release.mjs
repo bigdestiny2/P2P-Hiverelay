@@ -97,8 +97,8 @@ if (publicGatewayRelease.enabled && channel !== 'none') {
 // A prerelease MAY sync the community Umbrel store (so it never lags the fleet)
 // when an explicit --umbrel-store target is provided. It still cannot promote a
 // fleet/app-store channel (enforced above).
-if (!['local', 'npm-latest'].includes(ecosystemDependencyMode)) {
-  die(`Invalid --ecosystem-dependency-mode "${ecosystemDependencyMode}". Expected local or npm-latest.`)
+if (!['local', 'npm-latest', 'npm-range'].includes(ecosystemDependencyMode)) {
+  die(`Invalid --ecosystem-dependency-mode "${ecosystemDependencyMode}". Expected local, npm-latest, or npm-range.`)
 }
 
 syncPackageVersions()
@@ -224,6 +224,22 @@ function hasUnsafeReleaseNoteControlChars (value) {
 
 function syncPackageVersions () {
   const internalDependency = isPrerelease ? version : `^${version}`
+
+  // The published product line. This is the ONLY set a release bumps.
+  //
+  // The six @hiverelay/blind-* workspaces are deliberately NOT here. They are
+  // the isolated blind-substrate replacement track (docs/STABLE-0.24.3.md) and
+  // carry their own version line, and test/unit/blind-protocol-v1-compatibility-
+  // floor.test.js freezes the SHA-256 of their generated v1 artifacts. The
+  // blind-client browser artifact manifest embeds the package version, so moving
+  // the blind lane with the product line rewrites bytes that a live, blocking
+  // guard declares frozen — and invalidates the Chromium and cross-host release
+  // evidence bound to that manifest hash.
+  //
+  // release-surfaces.yml's 'Verify exact source package versions' does assert all
+  // eleven equal the tag, but it is gated on is_branch_candidate, which is true
+  // only for the hardcoded ship/ branch — it never guards a tag. Where the two
+  // disagree, the live floor wins over the dormant check.
   const packageFiles = [
     'package.json',
     'packages/core/package.json',
@@ -232,24 +248,54 @@ function syncPackageVersions () {
     'packages/verifier/package.json'
   ]
 
+  // Every workspace name that is moving in this bump. A dependency on any of
+  // them is an INTERNAL reference and has to move too, or npm stops matching the
+  // workspace and falls through to the public registry — where the unpublished
+  // @hiverelay/blind-* packages 404 and `npm ci` dies. Rewriting only
+  // 'p2p-hiverelay' was why the blind-* packages could be bumped while their
+  // dependencies on each other silently kept pointing at the previous version.
+  // Note: do NOT filter on `private`. The six @hiverelay/blind-* workspaces are
+  // all private:true, and they are exactly the ones whose cross-references need
+  // retargeting — they 404 on the public registry precisely because they are
+  // unpublished. The root monorepo name is harmless to include; nothing depends
+  // on it.
+  const internalNames = new Set()
+  for (const rel of packageFiles) {
+    const json = JSON.parse(read(path.join(repoRoot, rel)))
+    if (json.name) internalNames.add(json.name)
+  }
+
+  const DEPENDENCY_SECTIONS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies']
+
+  const retargetInternalDependencies = (container) => {
+    if (!container) return
+    for (const section of DEPENDENCY_SECTIONS) {
+      const deps = container[section]
+      if (!deps) continue
+      for (const name of Object.keys(deps)) {
+        if (internalNames.has(name)) deps[name] = internalDependency
+      }
+    }
+  }
+
   for (const rel of packageFiles) {
     updateJson(path.join(repoRoot, rel), (json) => {
       json.version = version
-      if (json.dependencies && json.dependencies['p2p-hiverelay']) {
-        json.dependencies['p2p-hiverelay'] = internalDependency
-      }
+      retargetInternalDependencies(json)
     })
   }
 
   updateJson(path.join(repoRoot, 'package-lock.json'), (lock) => {
     lock.version = version
     if (lock.packages && lock.packages['']) lock.packages[''].version = version
-    for (const rel of ['packages/core', 'packages/services', 'packages/client', 'packages/verifier']) {
+    // Mirrors packageFiles above, minus the root entry handled on the line above.
+    for (const rel of packageFiles.slice(1).map((file) => file.replace(/\/package\.json$/, ''))) {
       if (!lock.packages || !lock.packages[rel]) continue
       lock.packages[rel].version = version
-      const deps = lock.packages[rel].dependencies
-      if (deps && deps['p2p-hiverelay']) deps['p2p-hiverelay'] = internalDependency
+      retargetInternalDependencies(lock.packages[rel])
     }
+    // The root entry mirrors the workspace links too.
+    retargetInternalDependencies(lock.packages?.[''])
   })
 
   replaceInFile(
@@ -334,11 +380,40 @@ function syncStartOs () {
   if (releaseNotesProvided || oldVersion !== version) {
     replaceYamlLiteralBlock(manifest, 'release-notes', releaseNotes)
   }
+  // The status line authors the version in backticks (`v0.24.3`, one-page
+  // dashboard …). Both delimiters are optional so the bump keeps working
+  // whichever shape the README currently carries, and always writes the
+  // backticked form back.
   replaceInFile(
     path.join(repoRoot, 'startos', 'README.md'),
     /(?<!`)(`?)v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\1(?!`), one-page dashboard/,
     `\`${tag}\`, one-page dashboard`,
     'StartOS README status version'
+  )
+  syncStartOs04()
+}
+
+// The 0.4-line package pins its version and image in TypeScript rather than
+// manifest.yaml, so it was invisible to this script and drifted on every bump.
+// audit-workspace-alignment.mjs requires both to equal the monorepo version.
+// Skipped when absent so older checkout shapes still prepare.
+function syncStartOs04 () {
+  const versionFile = path.join(repoRoot, 'startos-0.4', 'startos', 'versions', 'current.ts')
+  const manifestFile = path.join(repoRoot, 'startos-0.4', 'startos', 'manifest', 'index.ts')
+  if (!fs.existsSync(versionFile) || !fs.existsSync(manifestFile)) return
+
+  // StartOS version format is MAJOR.MINOR.PATCH:BUILD — keep the :BUILD revision.
+  replaceInFile(
+    versionFile,
+    /version: '\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?:(\d+)'/,
+    (_match, build) => `version: '${version}:${build}'`,
+    'StartOS 0.4 package version'
+  )
+  replaceInFile(
+    manifestFile,
+    /dockerTag: 'ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^']+'/,
+    `dockerTag: 'ghcr.io/bigdestiny2/p2p-hiverelay:${version}'`,
+    'StartOS 0.4 package image tag'
   )
 }
 

@@ -82,6 +82,34 @@ function checkReleaseDistributionEnv ({ channel, prerelease, publicGatewayReleas
         }
       }
     }
+    // A prerelease skips every fleet/appliance surface, but it DOES publish the
+    // npm `next` dist-tag — so the npm credential is still load-bearing and must
+    // fail fast here rather than as a raw 401 after the image is built and signed.
+    const npmToken = String(env.NPM_TOKEN || '')
+    if (!npmToken.trim()) {
+      return {
+        ok: false,
+        skipped: false,
+        missing: ['NPM_TOKEN'],
+        envUpdates: {
+          HIVERELAY_RELEASE_EFFECTIVE_CHANNEL: channel,
+          HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'skipped',
+          HIVERELAY_NPM_PUBLISH_STATUS: 'missing-secret'
+        }
+      }
+    }
+    if (!isNpmToken(npmToken)) {
+      return {
+        ok: false,
+        skipped: false,
+        missing: ['NPM_TOKEN must be an npm automation token without whitespace or control characters'],
+        envUpdates: {
+          HIVERELAY_RELEASE_EFFECTIVE_CHANNEL: channel,
+          HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'skipped',
+          HIVERELAY_NPM_PUBLISH_STATUS: 'invalid-token'
+        }
+      }
+    }
     return {
       ok: true,
       skipped: true,

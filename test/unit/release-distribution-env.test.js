@@ -86,10 +86,12 @@ function validCandidateEnvBody (overrides = {}) {
 
 test('release distribution env check skips prereleases', async (t) => {
   const out = await envFile(t)
+  // A prerelease skips every fleet/appliance surface but still publishes the npm
+  // `next` dist-tag, so NPM_TOKEN remains required on this path.
   const res = await runCheck([
     '--prerelease', 'true',
     '--github-env', out
-  ])
+  ], { NPM_TOKEN: TEST_NPM_TOKEN })
 
   t.is(res.status, 0)
   t.ok(res.stdout.includes('skipped for prerelease'))
@@ -97,6 +99,35 @@ test('release distribution env check skips prereleases', async (t) => {
   const body = await readFile(out, 'utf8')
   t.ok(body.includes('HIVERELAY_RELEASE_EFFECTIVE_CHANNEL=none'))
   t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=skipped'))
+})
+
+test('release distribution env check fails prereleases without an npm token', async (t) => {
+  const out = await envFile(t)
+  const res = await runCheck([
+    '--prerelease', 'true',
+    '--github-env', out
+  ])
+
+  t.not(res.status, 0)
+  t.ok(res.stderr.includes('NPM_TOKEN'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HIVERELAY_NPM_PUBLISH_STATUS=missing-secret'))
+  t.ok(body.includes('HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS=skipped'))
+})
+
+test('release distribution env check rejects a malformed prerelease npm token', async (t) => {
+  const out = await envFile(t)
+  const res = await runCheck([
+    '--prerelease', 'true',
+    '--github-env', out
+  ], { NPM_TOKEN: 'npm_token with spaces' })
+
+  t.not(res.status, 0)
+  t.ok(res.stderr.includes('NPM_TOKEN'))
+
+  const body = await readFile(out, 'utf8')
+  t.ok(body.includes('HIVERELAY_NPM_PUBLISH_STATUS=invalid-token'))
 })
 
 test('release distribution env check rejects prerelease channel promotion', async (t) => {

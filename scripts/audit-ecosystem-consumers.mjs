@@ -17,10 +17,149 @@ export const HIVERELAY_DEPS = [
   'p2p-hiveservices'
 ]
 
-const DEPENDENCY_MODES = new Set(['local', 'npm-latest'])
+const DEPENDENCY_MODES = new Set(['local', 'npm-latest', 'npm-range'])
 export const DEFAULT_DEPENDENCY_MODE = 'npm-latest'
 const CONSUMER_SCOPES = new Set(['all', 'release'])
 const NPM_LATEST_SPEC = 'latest'
+export const NPM_REGISTRY_PREFIX = 'https://registry.npmjs.org/'
+
+// Declared up here with the other module constants because `main()` runs while
+// this module is still evaluating, so anything the report path touches must be
+// initialised before that call.
+const CONSUMER_SECTION_LABELS = {
+  local: 'Current local consumers:',
+  'npm-latest': 'Current npm-latest consumers:',
+  'npm-range': 'Current npm-range consumers:'
+}
+
+// Source-marker overrides are keyed by dependency mode. npm-range has no
+// overrides of its own yet because the consumer docs still describe the npm
+// `latest` contract, so it inherits the npm-latest wording. Falling through to
+// the base term instead would be actively wrong: the base terms describe local
+// `file:` workspace links, which a registry-backed mode must never assert.
+const SOURCE_TERM_MODE_CHAIN = {
+  local: ['local'],
+  'npm-latest': ['npm-latest'],
+  'npm-range': ['npm-range', 'npm-latest']
+}
+
+// npm-range pins consumers to a caret range instead of the `latest` dist-tag,
+// so a consumer can be bumped deliberately rather than tracking whatever the
+// registry last tagged. The range is `^<version>` with the prerelease tag kept
+// verbatim, and that detail is load bearing. Verified against node-semver
+// rather than assumed:
+//
+//   semver.satisfies('0.26.0',      '^0.26.0-rc.1') === true
+//   semver.satisfies('0.26.0-rc.2', '^0.26.0-rc.1') === true
+//   semver.satisfies('0.26.3',      '^0.26.0-rc.1') === true
+//   semver.satisfies('0.27.0',      '^0.26.0-rc.1') === false
+//   semver.satisfies('0.26.1-rc.1', '^0.26.0-rc.1') === false
+//   semver.satisfies('0.26.0-rc.1', '^0.26.0')      === false
+//
+// Consequences:
+//   * `^0.26.0-rc.1` desugars to `>=0.26.0-rc.1 <0.27.0-0`. It admits the
+//     current prerelease, later prereleases of the same 0.26.0 tuple, the
+//     0.26.0 final, and every 0.26.x patch.
+//     That is a statement about npm RESOLUTION only. This audit separately pins
+//     the resolved version to expectedVersion, so promoting the rc to 0.26.0
+//     final still needs a sync run to move the manifest range and the lockfile
+//     together. The range keeps `npm install` working across the promotion; it
+//     does not make the promotion a no-op here.
+//   * Stripping the prerelease tag down to `^0.26.0` is the move that strands
+//     every consumer: node-semver refuses to match a prerelease version against
+//     a comparator set with no prerelease at the same major.minor.patch tuple,
+//     so while a prerelease is the newest published build `^0.26.0` resolves to
+//     nothing at all.
+//   * For 0.x versions caret is same-minor only (`<0.27.0-0`), so a 0.27.0
+//     release needs a deliberate manifest bump. That is the point of the mode.
+//   * Prereleases of a different tuple (0.26.1-rc.1) stay excluded, so a future
+//     rc cannot leak in without a deliberate bump either.
+//   * `^<version>` is also the range the rest of this audit already expects for
+//     transitive Hiverelay pins (findStaleLockEntries, snapshot coreRange), so
+//     range mode stays consistent with the existing lockfile contract.
+export function npmRangeSpec (version) {
+  return `^${version}`
+}
+
+export function isNpmRangeSpec (value) {
+  return typeof value === 'string' && value.startsWith('^') && parseSemverVersion(value.slice(1)) !== null
+}
+
+// Deliberately dependency-free: this audit is release-critical tooling that has
+// to run from a production checkout, and `semver` is only present here as a
+// transitive devDependency of standard/patch-package. The supported input is
+// the narrow set of ranges this file emits (`^<version>`), implementing
+// node-semver caret semantics including the prerelease-tuple rule.
+export function satisfiesCaretRange (version, range) {
+  if (typeof range !== 'string' || !range.startsWith('^')) return false
+  const target = parseSemverVersion(version)
+  const base = parseSemverVersion(range.slice(1))
+  if (!target || !base) return false
+
+  // node-semver only lets a prerelease version match when a comparator with the
+  // same major.minor.patch tuple is itself a prerelease. That is what keeps
+  // 0.26.1-rc.1 out of ^0.26.0-rc.1.
+  if (target.prerelease.length > 0) {
+    if (base.prerelease.length === 0) return false
+    if (target.major !== base.major || target.minor !== base.minor || target.patch !== base.patch) return false
+  }
+
+  if (compareSemverVersions(target, base) < 0) return false
+  return compareVersionTuple(target, caretUpperBound(base)) < 0
+}
+
+function caretUpperBound (base) {
+  if (base.major !== 0) return { major: base.major + 1, minor: 0, patch: 0 }
+  if (base.minor !== 0) return { major: 0, minor: base.minor + 1, patch: 0 }
+  return { major: 0, minor: 0, patch: base.patch + 1 }
+}
+
+function parseSemverVersion (value) {
+  if (typeof value !== 'string') return null
+  const match = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(value.trim())
+  if (!match) return null
+  return {
+    major: Number(match[1]),
+    minor: Number(match[2]),
+    patch: Number(match[3]),
+    prerelease: match[4] ? match[4].split('.') : []
+  }
+}
+
+function compareSemverVersions (a, b) {
+  const tuple = compareVersionTuple(a, b)
+  if (tuple !== 0) return tuple
+  if (a.prerelease.length === 0 && b.prerelease.length === 0) return 0
+  if (a.prerelease.length === 0) return 1
+  if (b.prerelease.length === 0) return -1
+  return comparePrereleaseIdentifiers(a.prerelease, b.prerelease)
+}
+
+function compareVersionTuple (a, b) {
+  if (a.major !== b.major) return a.major < b.major ? -1 : 1
+  if (a.minor !== b.minor) return a.minor < b.minor ? -1 : 1
+  if (a.patch !== b.patch) return a.patch < b.patch ? -1 : 1
+  return 0
+}
+
+function comparePrereleaseIdentifiers (a, b) {
+  const length = Math.max(a.length, b.length)
+  for (let i = 0; i < length; i++) {
+    const left = a[i]
+    const right = b[i]
+    if (left === undefined) return -1
+    if (right === undefined) return 1
+    if (left === right) continue
+    const leftNumeric = /^\d+$/.test(left)
+    const rightNumeric = /^\d+$/.test(right)
+    if (leftNumeric && rightNumeric) return Number(left) < Number(right) ? -1 : 1
+    // Numeric identifiers always have lower precedence than alphanumeric ones.
+    if (leftNumeric) return -1
+    if (rightNumeric) return 1
+    return left < right ? -1 : 1
+  }
+  return 0
+}
 
 const DEP_SECTIONS = [
   'dependencies',
@@ -511,7 +650,7 @@ export const EXPECTED_STALE_CONSUMERS = [
 
 export function normalizeDependencyMode (value = DEFAULT_DEPENDENCY_MODE) {
   if (!DEPENDENCY_MODES.has(value)) {
-    throw new Error(`Invalid dependency mode ${JSON.stringify(value)}. Expected local or npm-latest.`)
+    throw new Error(`Invalid dependency mode ${JSON.stringify(value)}. Expected local, npm-latest, or npm-range.`)
   }
   return value
 }
@@ -526,31 +665,42 @@ export function normalizeConsumerScope (value = 'all') {
 export function getExpectedCurrentConsumers (opts = {}) {
   const dependencyMode = normalizeDependencyMode(opts.dependencyMode)
   const consumerScope = normalizeConsumerScope(opts.consumerScope)
+  // The range is derived from the version the audit is checking against so that
+  // --expected-version stays coherent with the pins it then verifies.
+  const rangeVersion = opts.expectedVersion || CURRENT_HIVERELAY_VERSION
   return EXPECTED_CURRENT_CONSUMERS
     .filter(consumer => consumerScope === 'all' || consumer.release)
     .map(consumer => ({
       ...consumer,
-      deps: dependencyMode === 'npm-latest'
-        ? Object.fromEntries(Object.keys(consumer.deps).map(dep => [dep, NPM_LATEST_SPEC]))
-        : { ...consumer.deps },
+      deps: resolveDepsForMode(consumer.deps, dependencyMode, rangeVersion),
       sourceChecks: resolveSourceChecksForMode(consumer.sourceChecks, dependencyMode),
       dependencyMode,
       consumerScope
     }))
 }
 
+function resolveDepsForMode (deps = {}, dependencyMode, rangeVersion) {
+  if (dependencyMode === 'local') return { ...deps }
+  const value = dependencyMode === 'npm-range' ? npmRangeSpec(rangeVersion) : NPM_LATEST_SPEC
+  return Object.fromEntries(Object.keys(deps).map(dep => [dep, value]))
+}
+
 function resolveSourceChecksForMode (sourceChecks = [], dependencyMode) {
+  const modeChain = SOURCE_TERM_MODE_CHAIN[dependencyMode] || [dependencyMode]
   return sourceChecks.map(spec => {
     const resolved = { ...spec }
     const termByMode = spec.termByDependencyMode || {}
     const termTemplateByMode = spec.termTemplateByDependencyMode || {}
     const rejectTermsByMode = spec.rejectTermsByDependencyMode || {}
+    const term = firstDefined(modeChain.map(mode => termByMode[mode]))
+    const termTemplate = firstDefined(modeChain.map(mode => termTemplateByMode[mode]))
+    const rejectTerms = modeChain.map(mode => rejectTermsByMode[mode]).find(Array.isArray) || []
 
-    if (typeof termByMode[dependencyMode] === 'string') resolved.term = termByMode[dependencyMode]
-    if (typeof termTemplateByMode[dependencyMode] === 'string') resolved.termTemplate = termTemplateByMode[dependencyMode]
+    if (typeof term === 'string') resolved.term = term
+    if (typeof termTemplate === 'string') resolved.termTemplate = termTemplate
     resolved.rejectTerms = uniqueStrings([
       ...(spec.rejectTerms || []),
-      ...(rejectTermsByMode[dependencyMode] || [])
+      ...rejectTerms
     ])
     resolved.replaceTerms = uniqueStrings([
       spec.term,
@@ -570,17 +720,21 @@ function resolveSourceChecksForMode (sourceChecks = [], dependencyMode) {
 
 const usage = `
 Usage:
-  node scripts/audit-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest>] [--consumer-scope <all|release>] [--json] [--check]
+  node scripts/audit-ecosystem-consumers.mjs [--workspace-root <path>] [--expected-version <semver>] [--dependency-mode <local|npm-latest|npm-range>] [--consumer-scope <all|release>] [--json] [--check]
 
 Scans package.json files outside the Hiverelay source tree and verifies the
 known direct p2p-hiverelay consumers plus local release snapshot defaults. The
 default dependency mode is npm-latest, which verifies the published-app contract
 where app manifests request the npm latest dist-tag and lockfiles resolve that
-tag to the expected Hiverelay version. Use --dependency-mode local for
-development workspace links. Use --consumer-scope release to check only app
-repos the release workflow can checkout, while still classifying local-only
-consumers so new pins cannot hide. The command fails on new unclassified pins,
-stale package metadata, or inventory/source-plan drift.
+tag to the expected Hiverelay version. Use --dependency-mode npm-range for the
+deliberate-bump contract where app manifests pin the caret range
+^<expected version> (prerelease tag included) and the lockfile must resolve a
+public-registry tarball whose version both satisfies that range and equals the
+expected version. Use --dependency-mode local for development workspace links.
+Use --consumer-scope release to check only app repos the release workflow can
+checkout, while still classifying local-only consumers so new pins cannot hide.
+The command fails on new unclassified pins, stale package metadata, or
+inventory/source-plan drift.
 `
 
 if (isMain()) main()
@@ -823,7 +977,14 @@ export function scanCurrentConsumerLockChecks (opts = {}) {
         })
       }
 
-      if (expectedValue === NPM_LATEST_SPEC) {
+      // A registry-backed pin (`latest` or a semver range) must be checked
+      // against the resolved node_modules entry. Without this, a range value
+      // matched neither this branch nor the `file:` branch below and fell
+      // through to `continue`, so only the manifest string comparison above
+      // ran: the audit went green while the lockfile was free to resolve any
+      // version the range happened to allow, or none of them.
+      const rangeSpec = isNpmRangeSpec(expectedValue) ? expectedValue : null
+      if (expectedValue === NPM_LATEST_SPEC || rangeSpec) {
         const targetKey = `node_modules/${dep}`
         const targetEntry = lock.packages?.[targetKey]
         if (!targetEntry) {
@@ -863,6 +1024,17 @@ export function scanCurrentConsumerLockChecks (opts = {}) {
             lockFile: relLockFile,
             label: `${dep} npm package version`
           })
+        }
+
+        if (rangeSpec) {
+          checks.push(...checkNpmRangeLockEntry({
+            consumerPath: consumer.path,
+            relLockFile,
+            dep,
+            targetKey,
+            targetEntry,
+            rangeSpec
+          }))
         }
         continue
       }
@@ -921,6 +1093,48 @@ export function scanCurrentConsumerLockChecks (opts = {}) {
   }
 
   checks.sort((a, b) => `${a.consumerPath}\0${a.lockFile || ''}\0${a.label}`.localeCompare(`${b.consumerPath}\0${b.lockFile || ''}\0${b.label}`))
+  return checks
+}
+
+function checkNpmRangeLockEntry ({ consumerPath, relLockFile, dep, targetKey, targetEntry, rangeSpec }) {
+  const checks = []
+  const lockedVersion = typeof targetEntry.version === 'string' ? targetEntry.version : ''
+
+  if (!satisfiesCaretRange(lockedVersion, rangeSpec)) {
+    checks.push({
+      ok: false,
+      consumerPath,
+      lockFile: relLockFile,
+      label: `${dep} npm range satisfaction`,
+      error: `${relLockFile} npm package ${targetKey} resolves ${dep}@${lockedVersion || '(missing)'}, which does not satisfy the pinned range ${JSON.stringify(rangeSpec)}`
+    })
+  } else {
+    checks.push({
+      ok: true,
+      consumerPath,
+      lockFile: relLockFile,
+      label: `${dep} npm range satisfaction`
+    })
+  }
+
+  const resolved = typeof targetEntry.resolved === 'string' ? targetEntry.resolved : ''
+  if (!resolved.startsWith(NPM_REGISTRY_PREFIX)) {
+    checks.push({
+      ok: false,
+      consumerPath,
+      lockFile: relLockFile,
+      label: `${dep} npm registry source`,
+      error: `${relLockFile} npm package ${targetKey} resolves from ${JSON.stringify(resolved || null)}; expected an ${NPM_REGISTRY_PREFIX} tarball so the pinned range is proven against the public registry`
+    })
+  } else {
+    checks.push({
+      ok: true,
+      consumerPath,
+      lockFile: relLockFile,
+      label: `${dep} npm registry source`
+    })
+  }
+
   return checks
 }
 
@@ -1003,13 +1217,17 @@ function uniqueStrings (values) {
   return Array.from(new Set(values.filter(value => typeof value === 'string' && value.length > 0)))
 }
 
+function firstDefined (values) {
+  return values.find(value => value !== undefined)
+}
+
 export function formatConsumerReport (summary) {
   const lines = [
     `HiveRelay ecosystem consumer audit (expected ${summary.expectedVersion}, mode ${summary.dependencyMode || 'local'}, scope ${summary.consumerScope || 'all'})`,
     ''
   ]
 
-  lines.push(summary.dependencyMode === 'npm-latest' ? 'Current npm-latest consumers:' : 'Current local consumers:')
+  lines.push(CONSUMER_SECTION_LABELS[summary.dependencyMode] || CONSUMER_SECTION_LABELS.local)
   for (const row of summary.current) {
     const role = row.role ? ` [${row.role}]` : ''
     const deps = formatDeps(row.deps) || (row.sourceOnly ? 'no package deps; source-only compatibility guard' : '(none)')
@@ -1422,6 +1640,10 @@ function parseArgs (argv) {
       out.dependencyMode = 'npm-latest'
       continue
     }
+    if (arg === '--npm-range') {
+      out.dependencyMode = 'npm-range'
+      continue
+    }
     throw new Error(`Unknown argument: ${arg}`)
   }
   return out
@@ -1447,11 +1669,18 @@ function main () {
   const workspaceRoot = args.workspaceRoot || workspaceRootDefault
   const dependencyMode = normalizeDependencyMode(args.dependencyMode || DEFAULT_DEPENDENCY_MODE)
   const consumerScope = normalizeConsumerScope(args.consumerScope || 'all')
-  const expectedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope })
-  const expectedClassifiedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all' })
+  const expectedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope, expectedVersion })
+  const expectedClassifiedCurrent = getExpectedCurrentConsumers({ dependencyMode, consumerScope: 'all', expectedVersion })
+  // The dist-tag gate is specific to the `latest` literal contract. npm-range
+  // deliberately decouples from whatever the registry last tagged, so its proof
+  // is the lockfile check: a registry tarball at the expected version inside the
+  // pinned range.
   const npmLatestCheck = dependencyMode === 'npm-latest'
     ? verifyNpmLatestDistTags({ expectedCurrent, expectedVersion })
     : { checks: [], warnings: [] }
+  const dependencyModeWarnings = dependencyMode === 'npm-range'
+    ? [`npm-range mode does not gate on the npm latest dist-tag; consumer pins are proven by lockfile entries resolving ${expectedVersion} from ${NPM_REGISTRY_PREFIX}`]
+    : []
   const rows = scanHiverelayConsumers({ workspaceRoot })
   const sourceChecks = scanConsumerSourceChecks({
     workspaceRoot,
@@ -1470,7 +1699,7 @@ function main () {
     lockChecks,
     snapshotChecks,
     npmLatestChecks: npmLatestCheck.checks,
-    npmLatestWarnings: npmLatestCheck.warnings
+    npmLatestWarnings: [...npmLatestCheck.warnings, ...dependencyModeWarnings]
   })
 
   if (args.json) {

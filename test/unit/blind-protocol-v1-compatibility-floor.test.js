@@ -6,6 +6,25 @@ import { fileURLToPath } from 'node:url'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
 
+// Two kinds of entry live in here, and the difference matters when one moves.
+//
+// Most are WIRE artifacts — ABI, vectors, authorities, and the built browser
+// bundle blind-client-control-v1.mjs. Those are the actual compatibility floor.
+// If one changes, compatibility changed, and that needs justifying on its own
+// terms.
+//
+// Three are METADATA about the build: the browser artifact's .manifest.cenc and
+// its two evidence files. The manifest's closure includes the product-line
+// package versions, so it moves on EVERY release cut from main — verified: a
+// bump to either 0.26.0-rc.1 or 1.0.0-rc.2 changes it, while
+// blind-client-control-v1.mjs stays byte-identical and the evidence keeps the
+// same artifactHash. Those three were last moved by the 0.26.0-rc.1 renumber,
+// with the Chromium and cross-host evidence regenerated on the same Chrome build
+// (151.0.7922.34), so the proof is real rather than re-stamped.
+//
+// The coupling is worth removing — a v1 floor that must be edited to cut any
+// release is not really frozen. Until then: if only these three move and the
+// .mjs does not, that is a version bump, not a compatibility change.
 const FROZEN_SHA256 = Object.freeze({
   'packages/blind-protocol/hiverelay-blind-abi-v1.cenc': '8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6',
   'packages/blind-protocol/hiverelay-blind-abi-v1.draft.cenc': '8fcc75ed7f32af8f118a521fe230d77ec1e4b2b209296adda2e73e87b74ff5b6',
@@ -29,9 +48,9 @@ const FROZEN_SHA256 = Object.freeze({
   'packages/blind-protocol/hiverelay-blind-client-composition-vector-manifest-v1.cenc': 'b26ab9a86ccd665255ee17dd742ffc39acceeb670bc01a7f7633460cb9d7cee9',
   'packages/blind-protocol/client-composition-authority-generated.js': 'a66d7211bdedd3b0d0e580c7d6c504584001ee1bf5747ad9b27d8ee5e2b566aa',
   'packages/blind-client/browser-artifacts/blind-client-control-v1.mjs': '10425bb00fb8045e63ce2869b5e6bf88af39dc0723963203a6b021e0fd28090a',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc': '343a301acf50e5d0d4449e44a11b30c52a1692855c3ad3c03c6c9acc9103c509',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.chromium-evidence.json': '5dc23bb9de210ec3292c74407fcb815b43b88535d656f62df16036473547e5cf',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.cross-host-evidence.json': '72d7bdac68d2680436f54165dc956f48673d0c4320b3ae3325dbb29021cecaee'
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc': '5fee41172187a265fab99e93cb2cde7ef5d63616fe4566680c7e55d016c1da96',
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.chromium-evidence.json': '58ae53955b14f01a9ae964c607378b224baf5e75b8db0a8a2bf34eb101b1a58e',
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.cross-host-evidence.json': 'aa8ca84830ff201c406be2d2dcbd6c01e6826176eff3e265c32b17c57f0afb38'
 })
 
 test('blind v1 compatibility floor: frozen authority and mirror bytes remain exact', t => {

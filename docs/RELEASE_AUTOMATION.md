@@ -384,11 +384,34 @@ manually dispatched, the workflow:
    any image or npm side effects, so app defaults cannot be silently skipped
    when PearBrowser, PearPaste, anonGPT, or another current consumer checkout is
    missing.
-5. Builds and pushes the multi-arch GHCR image from the tagged source:
+5. Publishes `p2p-hiverelay`, `p2p-hiverelay-client`,
+   `p2p-hiverelay-verifier`, and `p2p-hiveservices` to npm from the tagged
+   source, or leaves an already-published immutable tarball in place, then
+   verifies every `latest` dist-tag equals the release semver through
+   `npm run release:check-npm-latest`. This is the gate that lets PearBrowser,
+   PearPaste, anonGPT, and other app consumers safely move from local workspace
+   links to the published release line.
+   A tagged **prerelease** publishes the same four packages under the `next`
+   dist-tag and leaves `latest` untouched; only a stable tag moves `latest`.
+   Branch candidates publish nothing. The evidence record carries the matching
+   `published-next`/`current-next` status.
+   This step runs **before** every container and appliance surface on purpose. It
+   used to sit after the image smoke, which meant a Docker, StartOS, or Umbrel
+   failure skipped npm entirely — that is how `0.24.2` built and signed a release
+   image but never reached the registry.
+   `npm run release:check-npm-packages` has already dry-run packed the same
+   four workspaces before this publish step, so README/license metadata and
+   unsafe-path checks fail before npm side effects.
+   Operators can check the live registry gate without publishing by running
+   `npm run release:check-npm-latest`; it fails until all four package `latest`
+   dist-tags equal the monorepo release version, emits JSON with `-- --json`,
+   and writes `npm-latest-evidence.json` with `-- --out` only when the proof is
+   verified.
+6. Builds and pushes the multi-arch GHCR image from the tagged source:
    `ghcr.io/bigdestiny2/p2p-hiverelay:<version>`. Full releases also update
    `latest`; prereleases do not.
-6. Resolves the pushed multi-arch `sha256:` digest.
-7. Verifies the exact pushed image reference (`<version>@sha256:...`) is a
+7. Resolves the pushed multi-arch `sha256:` digest.
+8. Verifies the exact pushed image reference (`<version>@sha256:...`) is a
    multi-platform OCI/Docker image index with `linux/amd64` and `linux/arm64`
    manifests, tolerating OCI attestation sidecars without counting them as
    runnable platform duplicates, then writes
@@ -417,26 +440,11 @@ fails if the selected sibling app workspace is missing; use
 `--no-ecosystem-consumers` only for sparse local checks or intentional
 release-candidate skips. The audit proves there are no new unclassified
 `p2p-hiverelay*` app pins.
-8. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
+9. Boots the exact pushed image reference (`<version>@sha256:...`) in Docker,
    waits for `/health`, verifies the Blindspark appliance dashboard and setup
    page, proves the home-server `HIVERELAY_ACCEPT_MODE=review` default,
    proves dashboard WebSocket URL-token rejection plus in-band auth, and checks
    the authenticated service-management and usage telemetry APIs.
-9. Publishes `p2p-hiverelay`, `p2p-hiverelay-client`,
-   `p2p-hiverelay-verifier`, and `p2p-hiveservices` to npm from the tagged
-   source, or leaves an already-published immutable tarball in place, then
-   verifies every `latest` dist-tag equals the release semver through
-   `npm run release:check-npm-latest`. This is the gate that lets PearBrowser,
-   PearPaste, anonGPT, and other app consumers safely move from local workspace
-   links to the published release line.
-   `npm run release:check-npm-packages` has already dry-run packed the same
-   four workspaces before this publish step, so README/license metadata and
-   unsafe-path checks fail before npm side effects.
-   Operators can check the live registry gate without publishing by running
-   `npm run release:check-npm-latest`; it fails until all four package `latest`
-   dist-tags equal the monorepo release version, emits JSON with `-- --json`,
-   and writes `npm-latest-evidence.json` with `-- --out` only when the proof is
-   verified.
 10. Returns to `main`, then runs `npm run release:prepare -- vX.Y.Z --channel both
    --image-digest sha256:... --ecosystem-workspace-root .. --ecosystem-consumer-scope release --ecosystem-dependency-mode npm-latest`.
    In a full sibling workspace this switches tracked app manifests to npm

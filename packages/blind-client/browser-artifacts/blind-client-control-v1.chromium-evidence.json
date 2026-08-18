@@ -5,8 +5,8 @@
   "artifactPath": "browser-artifacts/blind-client-control-v1.mjs",
   "artifactLength": 253673,
   "artifactHash": "51bf061fb2d86cee91eb905a021e77774a37e27f0bba3ccb6d4e7688dcbc41a2",
-  "manifestHash": "33dd1c4f7c9ba7d3e68789c4fa1a8c39f333a15c37822559415565c2faac8445",
-  "sourceClosureHash": "c860f437a1a4f79521ac3c115f79a0f0a10eb0ddf8cf8e048e3569f28d0366b3",
+  "manifestHash": "789a31f6bb5ea4e8064b6e7dbff3e337d2028890e67788563e109ac5f53b5342",
+  "sourceClosureHash": "0436f3dab9be8ee3ea938b645e7c1ae76a7ae91a014bd8109ecc07ca094128c8",
   "chromium": "Google Chrome for Testing 151.0.7922.34",
   "checks": [
     "STANDALONE_ESM_IMPORT",
