@@ -1,10 +1,10 @@
 # HiveRelay
 
 > **Release lanes:** the operator/fleet stable baseline is
-> [`v0.24.3`](./docs/STABLE-0.24.3.md). `v0.25.0-rc.9` is a canary release
-> candidate, and the `1.0.0-rc.1` manifests on `main` belong to the isolated
-> blind-substrate development track. Neither candidate line is the stable
-> `v0.24.3` product.
+> [`v0.24.4`](./docs/STABLE-0.24.4.md). `v0.26.0-rc.1` is the release-candidate
+> lane (it supersedes the whole `0.25.0-rc.1`…`rc.9` train), and the
+> `1.0.0-rc.1` versions on the blind-* workspace packages are a separate,
+> deliberate track. Neither candidate line is the stable `v0.24.4` product.
 
 **A generic blind availability substrate for Pear/Holepunch and browser apps,
 packaged as Blindspark for independent operators.**
@@ -33,8 +33,8 @@ and the exact current-wire cost model plus safe protocol evolution plan is the
 Both are candidate replacement surfaces, not claims about the published legacy
 fleet.
 
-The currently published `v0.24.3` fleet is still the application-aware legacy
-implementation. It must not be described as the blind substrate. This branch is
+The currently published `v0.24.4` stable line is still the application-aware
+legacy implementation. It must not be described as the blind substrate. This branch is
 building its complete replacement and intentionally refuses to bind production
 listeners until the ABI, store, signed topology, readiness, migration, and release
 evidence gates pass. The old Core/ServiceProvider runtime is retained only as a
@@ -49,7 +49,7 @@ dashboard configures only generic capacity, admission, transport/privacy roles,
 updates, evidence, and relay identity. Application/service selection belongs to
 the published compatibility appliance and does not carry into the blind product.
 
-**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.3** | **Canary: v0.25.0-rc.9** | **Status: v1.0.0-rc.1 development**
+**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.4** | **Canary: v0.26.0-rc.1** | **Status: v1.0.0-rc.1 development**
 
 License scope is explicit: HiveRelay-authored source is Apache-2.0, while
 `truenas-app/templates/library/base_v2_3_8/` is redistributed under
@@ -67,7 +67,8 @@ The current published compatibility line has four lockstep packages:
 
 The replacement is being built in the unpublished
 `@hiverelay/blind-protocol`, `@hiverelay/blind-ipc`,
-`@hiverelay/blind-client`, `@hiverelay/blind-edge`, and
+`@hiverelay/blind-client`, `@hiverelay/blind-client-public-browser`,
+`@hiverelay/blind-peercred`, `@hiverelay/blind-edge`, and
 `@hiverelay/blind-daemon` workspaces. Their draft versions and generated hashes
 are not release authority; production start remains fail-closed until every
 catalog and signed-evidence gate is complete.
@@ -81,15 +82,15 @@ and StartOS metadata so the published release surfaces agree.
 
 | Surface | Current source state | Publication/evidence boundary |
 |---|---|---|
-| Stable source and fleet | Tag `v0.24.3` at `d0190577…`; `fleet/channels.json` keeps `stable` and `hold` on that tag | This is the application-aware compatibility product. It is not the isolated blind-substrate replacement described by the `1.0.0-rc.1` workspaces on `main`. |
-| npm packages | As verified 2026-08-06, npm `latest` is `0.20.2` for core/client/verifier and `0.9.2` for services; exact `0.24.3` packages do not exist. npm `next` is `0.25.0-rc.9`. | Do not present npm as a `0.24.3` installation path. Use the signed source tag or immutable stable container described in the [stable guide](./docs/STABLE-0.24.3.md). |
-| Stable container | `ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8` is a verified multi-arch OCI index for Linux amd64 and arm64 | Keep the digest. A bare or floating tag is not stable artifact identity. |
-| Canary | `fleet/channels.json` points `canary` at `v0.25.0-rc.9` | Canary is opt-in release-candidate scope and must not be described as stable or as blind-substrate GA. |
-| GitHub / StartOS distribution | The `v0.24.3` GitHub release exists but is marked prerelease and has no attached assets | There is no published stable `v0.24.3` `.s9pk`; `releases/latest` must not be used as a stable selector. Candidate and development appliance manifests remain separately gated. |
+| Stable source and fleet | Tag `v0.24.4` at `e5bb696f…`; `fleet/channels.json` keeps `stable` and `hold` on `v0.24.3` until a separately authorized fleet promotion | This is the application-aware compatibility product. It is not the isolated blind-substrate replacement described by the `1.0.0-rc.1` workspaces on `main`. |
+| npm packages | As verified 2026-08-18, npm `latest` is `0.24.4` for all four lockstep packages (`p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiveservices`, `p2p-hiverelay-verifier`). npm `next` is `0.25.0-rc.9`, moving to `0.26.0-rc.1` when the rc is cut. | npm `latest` is a supported stable install path. For immutable artifact identity, the signed source tag and digest-pinned container in the [stable guide](./docs/STABLE-0.24.4.md) remain authoritative. |
+| Stable container | `ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8` is a verified multi-arch OCI index for Linux amd64 and arm64. `v0.24.4` was an npm-only maintenance release; no `0.24.4` image tag exists, so this remains the newest digest-pinned stable container. | Keep the digest. A bare or floating tag is not stable artifact identity. |
+| Canary | `fleet/channels.json` points `canary` at `v0.25.0-rc.9`, the last tag of the superseded 0.25.0-rc train; it moves to `v0.26.0-rc.1` when that rc is promoted | Canary is opt-in release-candidate scope and must not be described as stable or as blind-substrate GA. |
+| GitHub / StartOS distribution | The `v0.24.4` tag exists but has no GitHub release object or attached assets; the `v0.24.3` release is marked prerelease with no assets | There is no published stable `.s9pk`; `releases/latest` must not be used as a stable selector. Candidate and development appliance manifests remain separately gated. |
 | Blindspark appliance submissions | Umbrel, StartOS, TrueNAS, Runtipi, ZimaOS, Unraid, and HexOS source/checks are in-repo | Store or registry publication still requires the relevant upstream review and real-device evidence. Candidate manifests on `main` are not proof of a stable marketplace package. |
 
 For stable installation, API, compatibility, and distribution details, use
-[Stable HiveRelay `v0.24.3`](./docs/STABLE-0.24.3.md). Historical release and
+[Stable HiveRelay `v0.24.4`](./docs/STABLE-0.24.4.md). Historical release and
 candidate documents remain in the repository, but their version labels are part
 of their scope; they do not supersede the stable guide.
 
@@ -99,6 +100,21 @@ of their scope; they do not supersede the stable guide.
 
 The repo has moved from a relay prototype into a Core3 infrastructure stack:
 
+- **PoW-issued one-use public-write admission (`pow-issuance-v1`)**: the blind
+  daemon accepts public writes only against single-use admission tokens issued
+  for spent proof-of-work — no account, payment, or identity. Sandbox adapter
+  plus issuer service/CLI; see [docs/POW-ISSUANCE-V1.md](docs/POW-ISSUANCE-V1.md).
+- **Browser PoW issuance with compressed inbox-read signing**: a browser client
+  can earn and spend one-use public-write admissions end to end, and signs
+  inbox reads over the compressed payload.
+- **seq29 browser publishing and inbox discovery**: the browser publish/read
+  lane with inbox-discovery reconcile that peerit is live on.
+- **Public browser artifact successor**: `@hiverelay/blind-client-public-browser`
+  ships the full public-control artifact and a limited cell-get artifact,
+  succeeding the frozen v1 blind-client browser bundle.
+- **Maintenance-release CI lane**: the Release surfaces workflow accepts an
+  explicit `maintenance_branch` dispatch input so a tag that is not an ancestor
+  of `main` (e.g. `v0.24.4`) can release through the same evidence gates.
 - **Application-agnostic Pear app availability**: hand the relay a Hyperdrive key
   plus an accept-mode policy; it keeps the app online and discoverable from the
   DHT without app-specific code or privileged knowledge of what is hosted.
@@ -997,9 +1013,10 @@ npx p2p-hiverelay testnet --nodes 5
 
 ---
 
-## Blindspark On Umbrel And StartOS
+## Blindspark Appliances
 
-Blindspark is the home-server UX for HiveRelay.
+Blindspark is the home-server UX for HiveRelay. The 0.26.0 train ships it for
+Umbrel, StartOS, TrueNAS, and a set of community appliance targets.
 
 ### Umbrel
 
@@ -1047,6 +1064,36 @@ make verify IMAGE_DIGEST=sha256:<multi-arch-digest>
 Official Start9 marketplace/community registry inclusion still requires Start9
 review. Full releases can publish to a configured StartOS registry after the
 verified `.s9pk` is built.
+
+A second package tree in [startos-0.4/](startos-0.4/) targets the StartOS 0.4
+packaging format alongside the 0.3.5.x package above.
+
+### TrueNAS
+
+The TrueNAS Community app package lives in [truenas-app/](truenas-app/), new in
+the 0.26.0 train:
+
+- runs the released `ghcr.io/bigdestiny2/p2p-hiverelay` container as a TrueNAS
+  Community app
+- persistent state on one `ixVolume` mounted at `/data`; runtime user `999:999`
+- review-mode first boot and a conservative first-boot storage cap, matching
+  the Umbrel/StartOS defaults
+- management API protected by the API key entered during installation
+- the vendored rendering library under `truenas-app/templates/library/` is
+  LGPL-3.0-only (see the README's provenance section); HiveRelay-authored
+  source stays Apache-2.0
+
+Catalog publication requires TrueNAS Community review; see
+[truenas-app/README.md](truenas-app/README.md).
+
+### Standalone And Community Packages
+
+- [standalone/](standalone/) — plain docker-compose packaging for any
+  Linux host without an appliance store.
+- [unraid-app/](unraid-app/), [zimaos-app/](zimaos-app/),
+  [runtipi-app/](runtipi-app/), and [hexos-app/](hexos-app/) — community
+  appliance packages synchronized by `npm run release:prepare` on each release
+  cut.
 
 ---
 
