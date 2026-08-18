@@ -1,5 +1,6 @@
 import test from 'brittle'
 import {
+  CAPACITY_ENFORCED_POOL_ID,
   CAPACITY_PLAN_MODE,
   CAPACITY_POOL_IDS,
   CAPACITY_PROFILE_IDS,
@@ -7,7 +8,9 @@ import {
   CAPACITY_RESERVE_FLOOR_BYTES,
   isCapacityProfile,
   normalizeCapacityProfile,
-  planBoundedCapacity
+  planBoundedCapacity,
+  planCapacityBudget,
+  planCapacityCeiling
 } from '../../packages/core/config/capacity-plan.js'
 
 const GiB = 1024 * 1024 * 1024
@@ -237,4 +240,61 @@ test('services-s2 matches the reference payload-root budget', (t) => {
     burst: 1.556 * TB
   })
   t.is(sumPools(plan), plan.managedCapacityBytes)
+})
+
+test('the enforcement ceiling is the durable pool and can only narrow', (t) => {
+  t.is(CAPACITY_ENFORCED_POOL_ID, 'durable', 'only the pool the planner already charges is enforceable')
+
+  for (const profileId of CAPACITY_PROFILE_IDS) {
+    for (const observedUsableBytes of [0, 32 * GiB, 200 * GiB, TiB, 40 * TiB]) {
+      for (const operatorCapBytes of [undefined, 1, 10 * GiB, 500 * GiB, 100 * TiB]) {
+        const ceiling = planCapacityCeiling({ profileId, observedUsableBytes, operatorCapBytes })
+        t.ok(Number.isSafeInteger(ceiling.ceilingBytes) && ceiling.ceilingBytes >= 0)
+        if (operatorCapBytes !== undefined) {
+          t.ok(ceiling.ceilingBytes <= operatorCapBytes, 'a profile never raises the operator cap')
+        }
+        t.ok(ceiling.ceilingBytes <= observedUsableBytes, 'a profile never exceeds the measured filesystem')
+
+        const plan = planBoundedCapacity({ profileId, observedUsableBytes, operatorCapBytes })
+        t.is(ceiling.ceilingBytes, plan.poolBytes.durable,
+          'enforcement and the published plan agree byte-for-byte')
+      }
+    }
+  }
+})
+
+test('a filesystem at or below the planning reserve enforces a zero ceiling', (t) => {
+  const ceiling = planCapacityCeiling({
+    profileId: 'edge-community',
+    observedUsableBytes: CAPACITY_RESERVE_FLOOR_BYTES
+  })
+  t.is(ceiling.managedCapacityBytes, 0)
+  t.is(ceiling.ceilingBytes, 0, 'small boot media may route and index but holds no durable commitment')
+  t.is(ceiling.source, 'capacity-profile:edge-community:durable')
+})
+
+test('the shipped Umbrel default narrows a 10 GiB cap to its durable share', (t) => {
+  // umbrel-app/docker-compose.yml: HIVERELAY_MAX_STORAGE=10GB + edge-community.
+  const ceiling = planCapacityCeiling({
+    profileId: 'edge-community',
+    observedUsableBytes: 4 * TB,
+    operatorCapBytes: 10 * 1_000_000_000
+  })
+  t.is(ceiling.managedCapacityBytes, 10 * 1_000_000_000, 'the operator cap still bounds managed capacity')
+  t.is(ceiling.ceilingBytes, 3_500_000_000, '35% of managed capacity is durable payload')
+})
+
+test('capacity budget rejects unusable inputs instead of guessing a ceiling', (t) => {
+  t.exception.all(() => planCapacityBudget({ profileId: 'nope', observedUsableBytes: TiB }),
+    /unknown capacity profile/)
+  for (const observedUsableBytes of [undefined, null, -1, 1.5, Infinity, '1024']) {
+    t.exception.all(() => planCapacityBudget({ profileId: 'edge-community', observedUsableBytes }),
+      /observedUsableBytes/)
+  }
+  t.exception.all(() => planCapacityBudget({
+    profileId: 'edge-community',
+    observedUsableBytes: TiB,
+    operatorCapBytes: -1
+  }), /operatorCapBytes/)
+  t.exception.all(() => planCapacityCeiling(null), /input is required/)
 })

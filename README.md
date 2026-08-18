@@ -129,7 +129,9 @@ The repo has moved from a relay prototype into a Core3 infrastructure stack:
   undercounted "stored/served" dashboard blind spots.
 - **Bounded hardware planning**: operator-declared consumer, seeder, services,
   and archive profiles split measured post-parity storage into exact finite
-  pools without widening the operator cap. The implementation boundary and
+  pools without widening the operator cap. A declared profile also narrows new
+  adoption to its durable pool, so a relay's size follows the role it was given
+  rather than whatever the network offers it. The implementation boundary and
   custom S2/Umbrel roadmap are in
   [docs/BOUNDED-CAPACITY-HARDWARE-ROADMAP.md](docs/BOUNDED-CAPACITY-HARDWARE-ROADMAP.md).
 - **Disk pressure and corruption hardening**: eviction, purge, tombstones,
@@ -1013,8 +1015,10 @@ The in-repo package lives in [umbrel-app/](umbrel-app/):
 - identity and dashboard token derived from Umbrel `APP_SEED`
 - `HIVERELAY_ACCEPT_MODE=review` so fresh installs queue incoming seed
   requests until the operator switches modes
-- `HIVERELAY_MAX_STORAGE=10GB` as a conservative first-boot cap; saved
+- `HIVERELAY_MAX_STORAGE=10GB` as a conservative first-boot managed cap; saved
   operator config wins on later restarts
+- `HIVERELAY_CAPACITY_PROFILE=edge-community`, which narrows new adoption to
+  that profile's durable share (3.5 GB of the 10 GB managed cap)
 
 Official Umbrel App Store publication still requires the upstream
 `getumbrel/umbrel-apps` PR/review flow. The release workflow can export the

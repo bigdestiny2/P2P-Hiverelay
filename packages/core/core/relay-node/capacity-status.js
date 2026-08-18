@@ -6,12 +6,59 @@ import {
 
 export const CAPACITY_MEASUREMENT_MAX_AGE_MS = 5 * 60 * 1000
 
+// Hard upper bound on the derived freshness window. A storage tree that cannot
+// be walked within this budget cannot produce trustworthy capacity evidence at
+// any cadence, so it stays fail-closed rather than being granted an ever-wider
+// window. Reaching it is an operator signal: split the store, or accept that
+// this root is not capacity-measurable.
+export const CAPACITY_MEASUREMENT_MAX_AGE_CEILING_MS = 60 * 60 * 1000
+
 function bytes (value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
 function timestamp (value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+function duration (value) {
+  return Number.isSafeInteger(value) && value >= 0 ? value : null
+}
+
+/**
+ * Derive the freshness window for the storage tree walk.
+ *
+ * The walk is timestamped at its START, so on large hardware the newest
+ * finished sample is already `duration + interval` old the moment it lands. A
+ * fixed 5-minute budget therefore marked every archive-class relay permanently
+ * stale — exactly the hardware the capacity work exists for. The window is
+ * instead derived from the host's own observed walk cost, then hard-capped.
+ *
+ * `floorMs` is still the minimum: fast hosts get the strict budget.
+ */
+export function measurementWindowMs ({
+  floorMs = CAPACITY_MEASUREMENT_MAX_AGE_MS,
+  durationMs = null,
+  intervalMs = null,
+  ceilingMs = CAPACITY_MEASUREMENT_MAX_AGE_CEILING_MS
+} = {}) {
+  const observed = duration(durationMs)
+  const cadence = duration(intervalMs)
+  if (observed === null) return { windowMs: floorMs, derived: false, exceedsCeiling: false }
+  // Two walks plus one cadence gap: the newest finished sample is already
+  // `duration + interval` old, and doubling the walk absorbs one pass that ran
+  // slower than the last. Hosts that finish well inside the floor keep the
+  // floor — the derived window only ever engages where the floor is
+  // unachievable by construction.
+  const required = 2 * observed + (cadence ?? 0)
+  if (required <= floorMs) return { windowMs: floorMs, derived: false, exceedsCeiling: false }
+  if (required > ceilingMs) {
+    // Do not widen past the ceiling. The host keeps the capped window, which it
+    // will usually miss — so it degrades to fail-closed instead of silently
+    // buying itself an unbounded freshness allowance.
+    return { windowMs: ceilingMs, derived: true, exceedsCeiling: true }
+  }
+  return { windowMs: required, derived: true, exceedsCeiling: false }
 }
 
 function isFreshMeasurement (measuredAt, now, maxAgeMs) {
@@ -63,9 +110,15 @@ export function buildCapacityStatus ({
   measurementMaxAgeMs = CAPACITY_MEASUREMENT_MAX_AGE_MS
 } = {}) {
   const currentTime = timestamp(now) ?? Date.now()
-  const maxAgeMs = Number.isSafeInteger(measurementMaxAgeMs) && measurementMaxAgeMs > 0
+  const floorMs = Number.isSafeInteger(measurementMaxAgeMs) && measurementMaxAgeMs > 0
     ? measurementMaxAgeMs
     : CAPACITY_MEASUREMENT_MAX_AGE_MS
+  const freshness = measurementWindowMs({
+    floorMs,
+    durationMs: storage && storage.diskMeasureDurationMs,
+    intervalMs: storage && storage.diskIntervalMs
+  })
+  const maxAgeMs = freshness.windowMs
   const configuredProfile = config && config.capacityProfile
   const profileId = isCapacityProfile(configuredProfile) ? configuredProfile : null
   const observedUsableBytes = bytes(disk && disk.totalBytes)
@@ -82,11 +135,19 @@ export function buildCapacityStatus ({
   const snapshot = authoritySnapshot(storageAdmission)
   const commitments = commitmentSummary(snapshot)
   const physicalEnforcementActive = snapshot?.physicalEnforcementActive === true
+  // The ceiling an operator-declared profile imposes on new adoption. This is
+  // the one number on this surface that is enforced rather than planned: the
+  // admission authority derives it from the same profile and the same
+  // filesystem size on every reservation.
+  const ceilingBytes = bytes(snapshot?.capacityCeilingBytes)
+  const effectiveCapBytes = bytes(snapshot?.effectiveCapBytes)
   const measurementAvailable = observedUsableBytes !== null && observedFreeBytes !== null &&
     actualUsageBytes !== null && operatorCapBytes !== null
   const measurementUsable = measurementAvailable && measurementComplete
+  // The statfs sample is cheap on every host, so it keeps the strict floor.
+  // Only the storage tree walk gets the derived, hardware-sized window.
   const measurementFresh = measurementUsable &&
-    isFreshMeasurement(diskCheckedAt, currentTime, maxAgeMs) &&
+    isFreshMeasurement(diskCheckedAt, currentTime, floorMs) &&
     isFreshMeasurement(storageMeasuredAt, currentTime, maxAgeMs)
 
   let plan = null
@@ -134,6 +195,7 @@ export function buildCapacityStatus ({
     blockReasons.push('storage-commitment-unknown')
   }
   if (!physicalEnforcementActive) blockReasons.push('physical-enforcement-unavailable')
+  if (profileId && ceilingBytes === null) blockReasons.push('capacity-profile-ceiling-unresolved')
   if (plan && plan.advertisingBlocked) blockReasons.push('capacity-full')
   blockReasons.push('network-advertisement-not-implemented')
 
@@ -149,6 +211,10 @@ export function buildCapacityStatus ({
       complete: measurementComplete,
       fresh: measurementFresh,
       maxAgeMs,
+      floorMs,
+      derivedWindow: freshness.derived,
+      windowCapped: freshness.exceedsCeiling,
+      durationMs: duration(storage && storage.diskMeasureDurationMs),
       diskCheckedAt,
       storageMeasuredAt
     },
@@ -160,7 +226,18 @@ export function buildCapacityStatus ({
       committedBytes: commitments.committedBytes,
       pendingBytes: commitments.pendingBytes,
       unknownCommitments: commitments.unknownCommitments,
-      physicalEnforcementActive
+      physicalEnforcementActive,
+      // Enforced, not planned. `capacityCeilingBytes` is what a declared
+      // profile narrows new adoption to; `effectiveCapBytes` is what admission
+      // actually compares used bytes against.
+      operatorCapBytes: bytes(snapshot?.operatorCapBytes),
+      capacityCeilingBytes: ceilingBytes,
+      capacityCeilingSource: typeof snapshot?.capacityCeilingSource === 'string'
+        ? snapshot.capacityCeilingSource
+        : null,
+      effectiveCapBytes,
+      capacityCeilingApplied: ceilingBytes !== null && effectiveCapBytes !== null &&
+        effectiveCapBytes === ceilingBytes && ceilingBytes < (bytes(snapshot?.operatorCapBytes) ?? Infinity)
     },
     advertisement: {
       eligible: false,
