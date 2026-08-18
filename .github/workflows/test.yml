@@ -43,7 +43,10 @@ jobs:
           packages/blind-client/test/policy.test.js
           packages/blind-client/test/cells.test.js
       - run: ./node_modules/.bin/brittle-node --timeout 120000 test/simulation/blind-capacity-lab.test.js
-      - run: npm run verify:blind-client:browser-artifact:release
+      - run: ./node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-client-public-browser-artifact.test.js
+      - run: ./node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-protocol-v1-compatibility-floor.test.js
+      - run: node packages/blind-client-public-browser/scripts/generate-blind-client-public-browser-artifacts.mjs --check --ci-structural-only --require-release-evidence
+      - run: node packages/blind-client-public-browser/scripts/test-blind-client-public-browser-artifact-chromium.mjs --ci-functional-only
 
   integration-tests:
     runs-on: ubuntu-latest

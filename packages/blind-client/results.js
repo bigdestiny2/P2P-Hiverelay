@@ -17,6 +17,7 @@ import {
   coreServeResultV1,
   getCellResultV1,
   inboxAppendAckV1,
+  inboxReadEntriesCommitment,
   inboxReadResultV1,
   inboxReceiptV1,
   proveCellResultV1
@@ -38,9 +39,13 @@ import {
   inboxManageRequestCommitment,
   inboxReadRequestCommitment,
   inboxWatchRequestCommitment,
-  persistentResultCommitment
+  persistentResultCommitment,
+  resultSignaturePayload
 } from '@hiverelay/blind-protocol/hashes'
-import { blindExternalCommitWitnessV1 } from '@hiverelay/blind-protocol/result-binding'
+import {
+  blindExternalCommitWitnessV1,
+  inboxReadSignaturePayloadV1
+} from '@hiverelay/blind-protocol/result-binding'
 import { asBytes } from './bytes.js'
 import { openCell } from './cells.js'
 import { verifiedEndpointContext } from './verified-endpoint.js'
@@ -48,6 +53,7 @@ import { fail } from './errors.js'
 import {
   decodeCanonicalCopy,
   sameBytes,
+  verifyDetached,
   verifyAuxiliarySignedValue,
   verifyResultSignedValue
 } from './signed.js'
@@ -372,8 +378,27 @@ function inboxReadVerifier () {
   return {
     encoding: inboxReadResultV1,
     verify (value, request, commitment, context, options) {
-      signed(inboxReadResultV1, value, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT,
-        context, 'inbox read result', value.relayBinding, options)
+      requireSame(inboxReadEntriesCommitment(value.entries), value.entriesCommitment,
+        'inbox read entriesCommitment')
+      const signaturePayload = encodeCanonical(inboxReadSignaturePayloadV1, {
+        version: value.version,
+        relayBinding: value.relayBinding,
+        requestNonce: value.requestNonce,
+        requestCommitment: value.requestCommitment,
+        snapshotRevision: value.snapshotRevision,
+        entriesCommitment: value.entriesCommitment,
+        nextCursor: value.nextCursor
+      })
+      verifyDetached(context.relayPublicKey,
+        resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, signaturePayload),
+        value.signature, 'inbox read result')
+      const withoutWitness = encodeCanonical(inboxReadResultV1, {
+        ...value,
+        relayBinding: { ...value.relayBinding, externalCommitWitness: null }
+      })
+      const unsigned = withoutWitness.subarray(0, withoutWitness.byteLength - 64)
+      verifyBinding(value.relayBinding, context, options,
+        persistentResultCommitment(context.familyId, context.operationId, unsigned))
       commonCorrelation(value, request, commitment)
     }
   }

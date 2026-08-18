@@ -13,7 +13,7 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { runPublicHiveGatewayDeploy } from '../../scripts/public-hive-gateway-deploy.mjs'
 import { createPublicT1OpsFixture } from '../fixtures/public-hive-gateway-ops.js'
@@ -123,7 +123,8 @@ test('public gateway deploy rehearsal - signed canary CAS, updater recovery, obs
 })
 
 function createReleaseFixture (t) {
-  const root = realpathSync(mkdtempSync(path.join(tmpdir(), 'hiverelay-deploy-rehearsal-')))
+  const fixtureRoot = process.platform === 'darwin' ? homedir() : tmpdir()
+  const root = realpathSync(mkdtempSync(path.join(fixtureRoot, '.hiverelay-deploy-rehearsal-')))
   t.teardown(() => rmSync(root, { recursive: true, force: true }))
   const repo = path.join(root, 'control')
   const remote = path.join(root, 'remote.git')
@@ -181,7 +182,7 @@ function createReleaseFixture (t) {
   copyFixtureSource('scripts/verify-public-hive-gateway-quarantine.mjs',
     path.join(scripts, 'verify-public-hive-gateway-quarantine.mjs'))
   copyFixtureSource('fleet/updater.sh', path.join(fleet, 'updater.sh'))
-  copyFixtureSource('fleet/quarantine-public-gateway.sh', path.join(fleet, 'quarantine-public-gateway.sh'))
+  copyFixtureQuarantineSource(path.join(fleet, 'quarantine-public-gateway.sh'))
   copyFixtureSource('scripts/resolve-public-hive-gateway-node.mjs',
     path.join(scripts, 'resolve-public-hive-gateway-node.mjs'))
   copyFixtureSource('scripts/preflight-public-hive-gateway.mjs',
@@ -268,6 +269,7 @@ function rehearseUpdaterFailurePaths (t, f) {
   const quarantine = path.join(runtime, 'quarantine')
   const nginxLog = path.join(runtime, 'nginx.log')
   const restartLog = path.join(runtime, 'restart.log')
+  const syncLog = path.join(runtime, 'sync.log')
   const preflightFailure = path.join(runtime, 'preflight-failure')
   const channelSnapshot = path.join(runtime, 'channels.json')
   mkdirSync(bin)
@@ -292,6 +294,11 @@ function rehearseUpdaterFailurePaths (t, f) {
   executable(ssBinary, '#!/bin/sh\nexit 0\n')
   executable(path.join(bin, 'flock'), '#!/bin/sh\nexit 0\n')
   executable(path.join(bin, 'timeout'), '#!/bin/sh\nshift\nexec "$@"\n')
+  executable(path.join(bin, 'sync'), `#!/bin/sh
+printf '%s\\t%s\\t%s\\n' "$#" "\${1:-}" "\${2:-}" >> "$FIXTURE_SYNC_LOG"
+if [ "$#" -ne 2 ] || [ "\${1:-}" != -f ]; then exit 64; fi
+exit 0
+`)
   executable(path.join(bin, 'systemctl'), `#!/bin/sh
 if [ "\${1:-}" = show ]; then exit 0; fi
 if [ "\${1:-}" = restart ]; then printf '%s\\n' "\${2:-}" >> "$FIXTURE_RESTART_LOG"; fi
@@ -383,12 +390,15 @@ esac
     FIXTURE_GATEWAY_CONTRACT: contract,
     FIXTURE_PREFLIGHT_FAILURE: preflightFailure,
     FIXTURE_NGINX_LOG: nginxLog,
-    FIXTURE_RESTART_LOG: restartLog
+    FIXTURE_RESTART_LOG: restartLog,
+    FIXTURE_SYNC_LOG: syncLog,
+    FIXTURE_BIN: bin
   }
   const updater = path.join(nodeRepo, 'fleet', 'updater.sh')
 
   writeFileSync(preflightFailure, 'red\n')
   const rolledBack = commandResult('/bin/bash', [updater], { env })
+  t.absent(rolledBack.error, 'rollback updater subprocess does not time out')
   t.not(rolledBack.status, 0, rolledBack.stderr || rolledBack.stdout)
   t.ok(rolledBack.stdout.includes('froze current-release public gateway quarantine verifier/helper authority'),
     rolledBack.stderr || rolledBack.stdout)
@@ -403,12 +413,14 @@ esac
 
   unlinkSync(preflightFailure)
   const updated = commandResult('/bin/bash', [updater], { env })
+  t.absent(updated.error, 'update updater subprocess does not time out')
   t.is(updated.status, 0, updated.stderr || updated.stdout)
   t.is(git(nodeRepo, ['rev-parse', 'HEAD']).stdout.trim(), f.targetSha)
   t.is(lines(restartLog).length, 3)
 
   writeFileSync(preflightFailure, 'red\n')
   const contained = commandResult('/bin/bash', [updater], { env })
+  t.absent(contained.error, 'containment updater subprocess does not time out')
   t.not(contained.status, 0)
   t.ok(contained.stdout.includes('public edge quarantined; management API left running'))
   t.is(git(nodeRepo, ['rev-parse', 'HEAD']).stdout.trim(), f.targetSha)
@@ -418,9 +430,45 @@ esac
 
   unlinkSync(preflightFailure)
   const recovered = commandResult('/bin/bash', [updater], { env })
+  t.absent(recovered.error, 'recovery updater subprocess does not time out')
   t.is(recovered.status, 0, recovered.stderr || recovered.stdout)
   t.is(readJson(gatewayEvidence).schema, 'fixture-gateway-evidence')
   t.is(readJson(gatewayOpsEvidence).schema, 'fixture-gateway-ops-evidence')
+  assertSyncInvocations(t, syncLog, runtime, gatewayEvidence, gatewayOpsEvidence, nginxConfig)
+}
+
+function assertSyncInvocations (t, syncLog, runtime, gatewayEvidence, gatewayOpsEvidence, nginxConfig) {
+  const gatewayTempPrefix = path.join(runtime, '.gateway-evidence.json.invalid.')
+  const opsTempPrefix = path.join(runtime, '.gateway-ops-evidence.json.invalid.')
+  const normalize = (target) => {
+    if (target === runtime) return 'runtime-directory'
+    if (target === gatewayEvidence) return 'gateway-evidence'
+    if (target === gatewayOpsEvidence) return 'gateway-ops-evidence'
+    if (target === nginxConfig) return 'nginx-config'
+    if (target === `${nginxConfig}.pre-quarantine`) return 'nginx-backup'
+    if (target.startsWith(gatewayTempPrefix) && target.length === gatewayTempPrefix.length + 6) return 'gateway-evidence-temp'
+    if (target.startsWith(opsTempPrefix) && target.length === opsTempPrefix.length + 6) return 'gateway-ops-evidence-temp'
+    return `unexpected:${target}`
+  }
+  const actual = lines(syncLog).map((line) => {
+    const [argc, flag, target, extra] = line.split('\t')
+    return [argc, flag, normalize(target), extra]
+  })
+  const invalidation = [
+    ['2', '-f', 'gateway-evidence-temp', undefined],
+    ['2', '-f', 'gateway-evidence', undefined],
+    ['2', '-f', 'runtime-directory', undefined],
+    ['2', '-f', 'gateway-ops-evidence-temp', undefined],
+    ['2', '-f', 'gateway-ops-evidence', undefined],
+    ['2', '-f', 'runtime-directory', undefined]
+  ]
+  const quarantine = [
+    ['2', '-f', 'nginx-backup', undefined],
+    ['2', '-f', 'runtime-directory', undefined],
+    ['2', '-f', 'nginx-config', undefined],
+    ['2', '-f', 'runtime-directory', undefined]
+  ]
+  t.alike(actual, [...invalidation, ...quarantine, ...invalidation], 'fixture records only the exact sync -f durability invocations')
 }
 
 function writeCompletedObservation (f, statePath, evidencePath, endMs) {
@@ -565,6 +613,17 @@ function verifySignedCommit (repo, commit, allowedSigners) {
 
 function copyFixtureSource (source, destination) {
   copyFileSync(path.resolve(source), destination)
+}
+
+function copyFixtureQuarantineSource (destination) {
+  copyFixtureSource('fleet/quarantine-public-gateway.sh', destination)
+  const source = readFileSync(destination, 'utf8')
+  const fixture = source.replace(
+    'PATH=/usr/sbin:/usr/bin:/sbin:/bin\n',
+    'PATH="$' + '{FIXTURE_BIN:?}:/usr/sbin:/usr/bin:/sbin:/bin"\n'
+  )
+  if (fixture === source) throw new Error('could not inject the fixture-local quarantine PATH')
+  writeFileSync(destination, fixture)
 }
 
 function executable (file, source) {

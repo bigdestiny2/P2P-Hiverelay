@@ -386,7 +386,7 @@ function syncStartOs () {
   // backticked form back.
   replaceInFile(
     path.join(repoRoot, 'startos', 'README.md'),
-    /`?v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`?, one-page dashboard/,
+    /(?<!`)(`?)v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?\1(?!`), one-page dashboard/,
     `\`${tag}\`, one-page dashboard`,
     'StartOS README status version'
   )

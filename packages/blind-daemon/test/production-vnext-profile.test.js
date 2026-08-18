@@ -38,7 +38,9 @@ import {
   inboxAppendAckV1,
   inboxAppendV1,
   inboxCreateV1,
+  inboxReadEntriesCommitment,
   inboxReadResultV1,
+  inboxReadSignaturePayloadV1,
   inboxReadV1,
   inboxReceiptV1,
   resultSignaturePayload
@@ -282,6 +284,21 @@ function verifyResultSignature (t, codec, value, domainId, relayPublicKey) {
   const unsigned = canonical.subarray(0, canonical.byteLength - sodium.crypto_sign_BYTES)
   t.ok(sodium.crypto_sign_verify_detached(value.signature,
     resultSignaturePayload(domainId, unsigned), relayPublicKey))
+}
+
+function verifyInboxReadSignature (t, value, relayPublicKey) {
+  t.alike(value.entriesCommitment, inboxReadEntriesCommitment(value.entries))
+  const payload = encodeCanonical(inboxReadSignaturePayloadV1, {
+    version: value.version,
+    relayBinding: value.relayBinding,
+    requestNonce: value.requestNonce,
+    requestCommitment: value.requestCommitment,
+    snapshotRevision: value.snapshotRevision,
+    entriesCommitment: value.entriesCommitment,
+    nextCursor: value.nextCursor
+  })
+  t.ok(sodium.crypto_sign_verify_detached(value.signature,
+    resultSignaturePayload(RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT, payload), relayPublicKey))
 }
 
 async function failure (run) {
@@ -560,8 +577,7 @@ test('vNext serving assembles with zero baseline exclusions and serves signed ba
       inboxReadFixture(created0, fixture.parameterHash), 0x19), dispatchContext()), inboxReadResultV1)
   t.is(page.entries.length, 1, 'the appended frame is served')
   t.alike(page.entries[0].frame, append.frame)
-  verifyResultSignature(t, inboxReadResultV1, page, RESULT_SIGNATURE_DOMAIN_ID.INBOX_READ_RESULT,
-    relayPublicKey)
+  verifyInboxReadSignature(t, page, relayPublicKey)
 
   const missingInbox = await runtime.coordinator.dispatch(
     requestFrame(FAMILY.INBOX, OPERATION.INBOX.READ, inboxReadV1, {
