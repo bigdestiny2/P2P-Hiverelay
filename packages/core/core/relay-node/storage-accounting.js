@@ -28,6 +28,18 @@ const DEFAULT_INFO_TIMEOUT_MS = 8_000
 const DEFAULT_DISK_INTERVAL_MS = 60_000
 
 /**
+ * A path that no longer exists. ENOENT is the ordinary readdir/stat race on a
+ * live Corestore; ENOTDIR means a directory entry was replaced by a file after
+ * we read its type. Neither leaves bytes behind, so neither makes a walk
+ * incomplete. Everything else (EACCES, EIO, EMFILE, ELOOP, ...) hides bytes we
+ * cannot account for and must fail the completeness claim.
+ */
+function vanished (err) {
+  const code = err && typeof err.code === 'string' ? err.code : ''
+  return code === 'ENOENT' || code === 'ENOTDIR'
+}
+
+/**
  * Ground-truth on-disk footprint: recursively sum the file bytes under `dir`.
  * This is what `du` sees and what actually fills the disk — unlike the
  * per-entry drive walk it CANNOT be fooled by bare seeded cores or lazily-
@@ -36,13 +48,17 @@ const DEFAULT_DISK_INTERVAL_MS = 60_000
  * guard never bound). Robust: unreadable dirs/files are skipped; symlinks are
  * not followed (only regular files count).
  */
-async function scanDirBytes (dir) {
+async function scanDirBytes (dir, { root = true } = {}) {
   if (!dir) return { bytes: 0, complete: false }
   let entries
   try {
     entries = await readdir(dir, { withFileTypes: true })
-  } catch {
-    return { bytes: 0, complete: false }
+  } catch (err) {
+    // A nested path that vanished between its parent's readdir and this call
+    // holds no bytes, so the total is still exact. A missing ROOT is never
+    // benign: an unmounted or deleted store would otherwise report "0 bytes,
+    // measurement complete" — which reads as unlimited headroom.
+    return { bytes: 0, complete: !root && vanished(err) }
   }
   let total = 0
   let complete = true
@@ -50,7 +66,7 @@ async function scanDirBytes (dir) {
     const p = join(dir, e.name)
     try {
       if (e.isDirectory()) {
-        const nested = await scanDirBytes(p)
+        const nested = await scanDirBytes(p, { root: false })
         total += nested.bytes
         if (!nested.complete) complete = false
       } else if (e.isFile()) {
@@ -63,10 +79,17 @@ async function scanDirBytes (dir) {
         const st = await stat(p)
         total += (st.blocks != null ? st.blocks * 512 : st.size)
       }
-    } catch {
+    } catch (err) {
       // Keep the best-effort byte total for dashboards, but never present a
       // partial/racing scan as complete capacity evidence.
-      complete = false
+      //
+      // Exception: a file that disappeared between readdir() and stat()
+      // contributes exactly zero bytes, so the total remains exact. Corestore
+      // deletes files constantly (compaction, truncation, unseed), so treating
+      // that benign race as "incomplete" left `diskMeasurementComplete` false
+      // on every busy relay — which fail-closes the whole capacity surface. A
+      // permission, IO, or any other error still means unknown bytes.
+      if (!vanished(err)) complete = false
     }
   }
   return { bytes: total, complete }
@@ -140,6 +163,12 @@ export class StorageAccounting extends EventEmitter {
     this._diskMeasurementComplete = false
     this._diskMeasuring = false
     this._lastDiskMeasureAt = 0
+    // How long the last complete walk took. A 30-100 TB archive pool takes far
+    // longer to walk than a fixed staleness budget allows, and the sample is
+    // timestamped at its START, so consumers need the observed duration to set
+    // an honest freshness window instead of declaring big hardware permanently
+    // stale. See capacity-status.js.
+    this._lastDiskMeasureDurationMs = null
   }
 
   start () {
@@ -188,6 +217,7 @@ export class StorageAccounting extends EventEmitter {
       this._diskBytes = result.bytes
       this._diskMeasurementComplete = result.complete
       this._lastDiskMeasureAt = startedAt
+      this._lastDiskMeasureDurationMs = Math.max(0, Date.now() - startedAt)
       return this._diskBytes
     } finally {
       this._diskMeasuring = false
@@ -290,6 +320,8 @@ export class StorageAccounting extends EventEmitter {
       perEntryBytes: perEntry,
       sourceBytes,
       diskMeasuredAt: this._lastDiskMeasureAt || null,
+      diskMeasureDurationMs: this._lastDiskMeasureDurationMs,
+      diskIntervalMs: this.diskIntervalMs,
       diskMeasurementComplete: this._diskMeasurementComplete === true,
       measuredEntries: this._bytes.size,
       fullSweeps: this._fullSweeps,

@@ -112,10 +112,12 @@ Verified against the linter rules — structurally green:
 - `HIVERELAY_ACCEPT_MODE: review` is set so a fresh home-server install queues
   new seed requests until the owner chooses otherwise. OK.
 - `HIVERELAY_MAX_STORAGE: 10GB` gives the edge/community package a conservative
-  first-boot relay-storage cap. OK.
-- `HIVERELAY_CAPACITY_PROFILE: edge-community` declares the package's planning
-  profile for capacity/status reporting; it does not claim physical per-pool
-  enforcement. OK.
+  first-boot managed-storage cap. OK.
+- `HIVERELAY_CAPACITY_PROFILE: edge-community` declares the package's capacity
+  profile. It narrows new adoption to the profile's durable share — 3.5 GB
+  inside the 10 GB managed cap — and reports the binding value as
+  `capacity.enforcement.effectiveCapBytes`. It does not claim physical per-pool
+  enforcement for the cache, repair, service, or burst budgets. OK.
 - `HIVERELAY_ENABLE_SERVICES` and every packaged utility-service flag are
   `"false"`. The stock package is a community edge, not a service farm;
   persistent service providers require an explicit owner selection in the

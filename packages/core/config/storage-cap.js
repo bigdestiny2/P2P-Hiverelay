@@ -375,17 +375,35 @@ export function resolveStorageCap (config, opts = {}) {
  * Compute whether a new pin/adoption may begin. Existing data and management
  * operations do not call this gate, so an over-cap node can still boot, serve,
  * inspect and unseed content. No eviction is enabled or triggered here.
+ *
+ * `opts.capCeilingBytes` is an optional second ceiling derived from an
+ * operator-declared capacity profile. It can only narrow the operator cap, and
+ * zero is a meaningful value (no durable budget on this hardware), so it is
+ * validated as non-negative rather than positive. A supplied-but-unusable
+ * ceiling fails closed: a profile that cannot be evaluated must never silently
+ * fall back to the wider operator cap.
  */
 export function evaluateStorageAdmission (config, opts = {}) {
   const usedBytes = finiteNonNegativeInteger(opts.usedBytes ?? 0)
   const additionalBytes = finiteNonNegativeInteger(opts.additionalBytes ?? 0)
   const committedBytes = finiteNonNegativeInteger(opts.committedBytes ?? 0)
   const capBytes = positiveStorageBound(config && config.maxStorageBytes)
-  if (usedBytes === null || additionalBytes === null || committedBytes === null || capBytes === null) {
+  const ceilingSupplied = opts.capCeilingBytes !== undefined && opts.capCeilingBytes !== null
+  const capCeilingBytes = ceilingSupplied ? finiteNonNegativeInteger(opts.capCeilingBytes) : null
+  const capCeilingSource = ceilingSupplied && typeof opts.capCeilingSource === 'string'
+    ? opts.capCeilingSource
+    : null
+  if (usedBytes === null || additionalBytes === null || committedBytes === null || capBytes === null ||
+      (ceilingSupplied && capCeilingBytes === null)) {
     return {
       allowed: false,
-      reason: usedBytes === null ? 'storage-usage-invalid' : 'storage-bound-invalid',
+      reason: ceilingSupplied && capCeilingBytes === null
+        ? 'capacity-profile-ceiling-invalid'
+        : (usedBytes === null ? 'storage-usage-invalid' : 'storage-bound-invalid'),
       capBytes: capBytes || 0,
+      operatorCapBytes: capBytes || 0,
+      capCeilingBytes,
+      capCeilingSource,
       usedBytes: usedBytes || 0,
       availableBytes: 0,
       additionalBytes: additionalBytes || 0
@@ -393,18 +411,29 @@ export function evaluateStorageAdmission (config, opts = {}) {
   }
   const provenance = getStorageCapProvenance(config)
 
+  // Narrowing only. Managed capacity is already min(post-reserve, operator cap)
+  // and the enforced pool is a fraction of it, so this can never raise the cap;
+  // Math.min is kept as a defensive invariant rather than as arithmetic.
+  const effectiveCapBytes = capCeilingBytes === null
+    ? capBytes
+    : Math.min(capBytes, capCeilingBytes)
+  const ceilingBinds = capCeilingBytes !== null && effectiveCapBytes < capBytes
+
   if (provenance && provenance.status !== 'resolved') {
     return {
       allowed: false,
       reason: 'storage-filesystem-unresolved',
-      capBytes,
+      capBytes: effectiveCapBytes,
+      operatorCapBytes: capBytes,
+      capCeilingBytes,
+      capCeilingSource,
       usedBytes,
       availableBytes: 0,
       additionalBytes
     }
   }
 
-  const logicalAvailable = Math.max(0, capBytes - usedBytes)
+  const logicalAvailable = Math.max(0, effectiveCapBytes - usedBytes)
   let physicalAvailable = Infinity
   let reserveBytes = 0
 
@@ -420,14 +449,21 @@ export function evaluateStorageAdmission (config, opts = {}) {
 
   const availableBytes = Math.max(0, Math.min(logicalAvailable, physicalAvailable))
   let reason = null
-  if (usedBytes >= capBytes) reason = 'storage-cap-reached'
-  else if (physicalAvailable <= 0) reason = 'storage-reserve-reached'
+  // Distinguish the two logical ceilings so an operator can tell "my cap is
+  // full" from "my declared hardware role only budgets this much durable
+  // payload" — the remedies are different.
+  if (usedBytes >= effectiveCapBytes) {
+    reason = ceilingBinds ? 'capacity-profile-cap-reached' : 'storage-cap-reached'
+  } else if (physicalAvailable <= 0) reason = 'storage-reserve-reached'
   else if (additionalBytes > availableBytes) reason = 'insufficient-storage'
 
   return {
     allowed: reason === null && availableBytes > 0,
     reason,
-    capBytes,
+    capBytes: effectiveCapBytes,
+    operatorCapBytes: capBytes,
+    capCeilingBytes,
+    capCeilingSource,
     usedBytes,
     logicalAvailableBytes: logicalAvailable,
     physicalAvailableBytes: Number.isFinite(physicalAvailable) ? physicalAvailable : null,

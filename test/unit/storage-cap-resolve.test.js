@@ -325,3 +325,53 @@ test('proved usage follows a symlink root target and rejects a same-device swap 
   }), /identity changed/)
   t.is(measuredPath, '/real/storage', 'root symlink is resolved before the exact walk')
 })
+
+test('storage designation reports the profile ceiling that actually blocks adoption', async (t) => {
+  // applyStorageDesignation re-resolves the cap against the live filesystem, so
+  // this uses a real directory. The stubbed statfs supplies the 100 GiB volume;
+  // the 20 GiB operator cap is what the edge-community pool divides.
+  const dir = await mkdtemp(join(tmpdir(), 'storage-profile-designation-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const config = {
+    storage: dir,
+    maxStorageBytes: 20 * GiB,
+    capacityProfile: 'edge-community',
+    eviction: { enabled: false }
+  }
+  markStorageCapExplicit(config, 'test')
+  const node = {
+    config,
+    seeder: { maxStorageBytes: 20 * GiB },
+    // Inside the 20 GiB operator cap, but past the 7 GiB durable pool.
+    _storageUsedBytes: () => 8 * GiB,
+    _storageAdmission: RelayNode.prototype._storageAdmission,
+    diskMonitor: null,
+    storageAccounting: null
+  }
+  node.storageAdmission = new StorageAdmissionAuthority(node.config, {
+    getUsedBytes: () => 8 * GiB,
+    recoveryKinds: [],
+    sampleFilesystem: () => ({
+      ok: true,
+      checkedAt: Date.now(),
+      storagePath: dir,
+      realpath: dir,
+      device: '42',
+      totalBytes: 100 * GiB,
+      freeBytes: 80 * GiB
+    })
+  })
+
+  const result = await RelayNode.prototype.applyStorageDesignation.call(node, 20 * GiB)
+
+  t.is(result.ok, true)
+  t.is(result.maxStorageBytes, 20 * GiB, 'the operator designation is echoed unchanged')
+  t.is(result.capacityProfile, 'edge-community')
+  t.is(result.effectiveMaxStorageBytes, Math.floor(20 * GiB * 0.35))
+  t.is(result.capacityCeilingBytes, result.effectiveMaxStorageBytes)
+  t.absent(result.overCap, 'usage is inside the operator cap')
+  t.ok(result.overEffectiveCap, 'but past the durable pool the profile enforces')
+  t.ok(result.adoptionBlocked)
+  t.is(result.admissionReason, 'capacity-profile-cap-reached',
+    'the reason names the ceiling, not the operator cap')
+})

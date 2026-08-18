@@ -6,6 +6,7 @@ import {
   positiveStorageBound,
   sampleStorageFilesystem
 } from './storage-cap.js'
+import { planCapacityCeiling } from './capacity-plan.js'
 
 export const STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES = 64 * 1024
 export const STORAGE_SHARE_BUNDLE_MAX_BYTES = 1024 * 1024
@@ -479,6 +480,47 @@ export class StorageAdmissionAuthority extends EventEmitter {
   static driveKey (appKey) { return `drive:${appKey}` }
   static coreKey (coreKey) { return `core:${coreKey}` }
 
+  /**
+   * Resolve the ceiling an operator-declared capacity profile imposes on this
+   * storage root.
+   *
+   * Returns `null` when no profile is declared — the overwhelmingly common
+   * case, and the one where nothing about admission changes. Returns an
+   * `invalid` result when a profile IS declared but cannot be evaluated; the
+   * caller must fail closed there rather than fall back to the wider operator
+   * cap, because an operator who declared a role did not consent to the
+   * unnarrowed value.
+   *
+   * The only measurement this needs is `statfs.totalBytes`, which every
+   * admission already samples. It deliberately does not depend on the storage
+   * tree walk, so the ceiling is never stale and never waits on disk IO.
+   */
+  capacityCeiling (sample = this._lastFilesystemSample) {
+    const profileId = this.config?.capacityProfile
+    if (profileId == null) return null
+    const observedUsableBytes = sample && sample.ok === true
+      ? finiteNonNegativeInteger(sample.totalBytes)
+      : null
+    if (observedUsableBytes === null) {
+      return { invalid: true, reason: 'capacity-profile-filesystem-unmeasured', profileId }
+    }
+    try {
+      const ceiling = planCapacityCeiling({
+        profileId,
+        observedUsableBytes,
+        operatorCapBytes: positiveStorageBound(this.config?.maxStorageBytes) ?? undefined
+      })
+      return {
+        invalid: false,
+        profileId: ceiling.profileId,
+        bytes: ceiling.ceilingBytes,
+        source: ceiling.source
+      }
+    } catch (_) {
+      return { invalid: true, reason: 'capacity-profile-invalid', profileId }
+    }
+  }
+
   refreshFilesystem () {
     let sample
     try {
@@ -736,11 +778,18 @@ export class StorageAdmissionAuthority extends EventEmitter {
     }
     const usedBytes = measuredUsed + committedRemainder
     if (!Number.isSafeInteger(usedBytes)) return admissionFailure('storage-usage-invalid')
+    // Bind the ceiling to the same re-sampled filesystem the capacity terms
+    // came from, so a mount swap mid-admission cannot pair one device's size
+    // with another device's usage.
+    const ceiling = this.capacityCeiling(finalSample)
+    if (ceiling && ceiling.invalid) return admissionFailure(ceiling.reason)
     return evaluateStorageAdmission(this.config, {
       usedBytes,
       additionalBytes: additional,
       diskInfo: finalSample,
-      committedBytes: committedRemainder
+      committedBytes: committedRemainder,
+      capCeilingBytes: ceiling ? ceiling.bytes : null,
+      capCeilingSource: ceiling ? ceiling.source : null
     })
   }
 
@@ -920,8 +969,30 @@ export class StorageAdmissionAuthority extends EventEmitter {
     const pendingValid = this._capacityPendingBytes >= 0n && this._capacityPendingBytes <= max
     let physicalEnforcementActive = false
     try { physicalEnforcementActive = this.physicalEnforcementActive === true } catch (_) {}
+    // Read the cached filesystem sample only. Status must never trigger a
+    // statfs, so a declared profile with no cached sample reports an
+    // unresolved ceiling instead of measuring one.
+    const ceiling = this.capacityCeiling()
+    const operatorCapBytes = positiveStorageBound(this.config?.maxStorageBytes)
+    // An unresolved operator cap makes the ceiling meaningless to publish: the
+    // profile would be reporting a share of hardware nothing is allowed to use.
+    // Admission fails closed on the cap itself, so report the ceiling as
+    // unresolved rather than as a number a dashboard could plot.
+    const ceilingBytes = ceiling && !ceiling.invalid && operatorCapBytes !== null
+      ? ceiling.bytes
+      : null
     return {
       recoveryReady: this.recoveryReady,
+      capacityProfileId: ceiling ? ceiling.profileId : null,
+      capacityCeilingBytes: ceilingBytes,
+      capacityCeilingSource: ceilingBytes === null ? null : ceiling.source,
+      capacityCeilingReason: ceiling && ceiling.invalid
+        ? ceiling.reason
+        : (ceiling && ceilingBytes === null ? 'capacity-profile-operator-cap-unresolved' : null),
+      operatorCapBytes,
+      effectiveCapBytes: operatorCapBytes === null
+        ? null
+        : (ceilingBytes === null ? operatorCapBytes : Math.min(operatorCapBytes, ceilingBytes)),
       committedBytes: committedValid ? Number(this._capacityCommittedBytes) : 0,
       pendingBytes: pendingValid ? Number(this._capacityPendingBytes) : 0,
       unknownCommitments: this._capacityUnknownCommitments + (committedValid ? 0 : 1) + (pendingValid ? 0 : 1),

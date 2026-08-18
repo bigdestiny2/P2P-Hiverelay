@@ -13,6 +13,14 @@ export const CAPACITY_PLAN_MODE = 'planning-only'
 export const CAPACITY_RESERVE_BASIS_POINTS = 1500
 export const CAPACITY_RESERVE_FLOOR_BYTES = 32 * 1024 * 1024 * 1024
 
+// The one pool an operator-declared profile is allowed to enforce today.
+// Until commitments carry a durable poolId (roadmap R1/R2) there is no
+// attribution that could charge a byte to cache, repair, or service state, so
+// every existing byte is charged to `durable` by both the planner and the
+// admission ceiling. Enforcing the same pool the planner already reports keeps
+// status and enforcement arithmetically identical.
+export const CAPACITY_ENFORCED_POOL_ID = 'durable'
+
 export const CAPACITY_POOL_IDS = Object.freeze([
   'durable',
   'serviceControl',
@@ -128,6 +136,68 @@ function allocatePools (managedCapacityBytes, profile) {
 }
 
 /**
+ * Reduce a measured filesystem plus an optional operator cap to the bounded
+ * pool budget both the planner and the admission ceiling must agree on.
+ *
+ * This is deliberately free of usage, commitment, and free-space terms: those
+ * change on every sample, while the budget is a stable property of the declared
+ * hardware role. Keeping the two apart lets the runtime derive an enforcement
+ * ceiling from one cheap `statfs` field without waiting for a storage tree walk.
+ */
+export function planCapacityBudget (input) {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    throw new TypeError('capacity budget input is required')
+  }
+  const profileId = normalizeCapacityProfile(input.profileId)
+  const profile = CAPACITY_PROFILES[profileId]
+  const observedUsableBytes = byteCount('observedUsableBytes', input.observedUsableBytes)
+  const operatorCapBytes = byteCount('operatorCapBytes', input.operatorCapBytes, { optional: true })
+
+  const physicalReserveBytes = reserveBytes(observedUsableBytes)
+  const postReserveBytes = observedUsableBytes - physicalReserveBytes
+  const managedCapacityBytes = operatorCapBytes === null
+    ? postReserveBytes
+    : Math.min(postReserveBytes, operatorCapBytes)
+
+  return {
+    profileId,
+    observedUsableBytes,
+    physicalReserveBytes,
+    postReserveBytes,
+    operatorCapBytes,
+    operatorCapApplied: operatorCapBytes !== null && operatorCapBytes < postReserveBytes,
+    managedCapacityBytes,
+    poolBytes: allocatePools(managedCapacityBytes, profile)
+  }
+}
+
+/**
+ * Derive the storage ceiling an operator-declared profile imposes.
+ *
+ * The result is only ever a narrowing of `operatorCapBytes`: the managed
+ * capacity is already `min(post-reserve, operator cap)` and the enforced pool is
+ * a fraction of that, so the ceiling cannot exceed the operator's own value. A
+ * ceiling of zero is a valid answer — a payload filesystem at or below the
+ * planning reserve supports routing and metadata but no durable commitments.
+ *
+ * Throws for an unknown profile or an unmeasurable filesystem. Callers must
+ * treat a throw as fail-closed, never as "no ceiling".
+ */
+export function planCapacityCeiling (input) {
+  const budget = planCapacityBudget(input)
+  return Object.freeze({
+    profileId: budget.profileId,
+    poolId: CAPACITY_ENFORCED_POOL_ID,
+    source: `capacity-profile:${budget.profileId}:${CAPACITY_ENFORCED_POOL_ID}`,
+    observedUsableBytes: budget.observedUsableBytes,
+    physicalReserveBytes: budget.physicalReserveBytes,
+    managedCapacityBytes: budget.managedCapacityBytes,
+    operatorCapBytes: budget.operatorCapBytes,
+    ceilingBytes: budget.poolBytes[CAPACITY_ENFORCED_POOL_ID]
+  })
+}
+
+/**
  * Build a conservative bounded-capacity plan.
  *
  * `observedUsableBytes` is the measured post-parity size of the exact
@@ -149,10 +219,17 @@ export function planBoundedCapacity (input) {
     throw new TypeError('capacity plan input is required')
   }
 
-  const profileId = normalizeCapacityProfile(input.profileId)
-  const profile = CAPACITY_PROFILES[profileId]
+  const budget = planCapacityBudget(input)
+  const {
+    profileId,
+    observedUsableBytes,
+    physicalReserveBytes,
+    postReserveBytes,
+    operatorCapBytes,
+    managedCapacityBytes,
+    poolBytes
+  } = budget
 
-  const observedUsableBytes = byteCount('observedUsableBytes', input.observedUsableBytes)
   const suppliedFreeBytes = byteCount('observedFreeBytes', input.observedFreeBytes, { optional: true })
   if (suppliedFreeBytes !== null && suppliedFreeBytes > observedUsableBytes) {
     throw new RangeError('observedFreeBytes cannot exceed observedUsableBytes')
@@ -160,7 +237,6 @@ export function planBoundedCapacity (input) {
   const observedFreeBytes = suppliedFreeBytes === null
     ? observedUsableBytes
     : suppliedFreeBytes
-  const operatorCapBytes = byteCount('operatorCapBytes', input.operatorCapBytes, { optional: true })
   const actualUsageBytes = byteCount(
     'actualUsageBytes',
     input.actualUsageBytes === undefined ? 0 : input.actualUsageBytes
@@ -177,13 +253,6 @@ export function planBoundedCapacity (input) {
     'untrackedDebtBytes',
     input.untrackedDebtBytes === undefined ? 0 : input.untrackedDebtBytes
   )
-
-  const physicalReserveBytes = reserveBytes(observedUsableBytes)
-  const postReserveBytes = observedUsableBytes - physicalReserveBytes
-  const managedCapacityBytes = operatorCapBytes === null
-    ? postReserveBytes
-    : Math.min(postReserveBytes, operatorCapBytes)
-  const poolBytes = allocatePools(managedCapacityBytes, profile)
 
   const conservativeDemandBytes = safeSum('conservative demand', [
     actualUsageBytes,
@@ -227,7 +296,7 @@ export function planBoundedCapacity (input) {
     physicalReserveBytes,
     postReserveBytes,
     operatorCapBytes,
-    operatorCapApplied: operatorCapBytes !== null && operatorCapBytes < postReserveBytes,
+    operatorCapApplied: budget.operatorCapApplied,
     managedCapacityBytes,
     physicalHeadroomBytes,
     poolBytes,
