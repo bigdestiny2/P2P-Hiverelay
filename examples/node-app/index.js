@@ -31,7 +31,7 @@ const drive = await relay.publish([
 console.log('Published! Key:', drive.key.toString('hex'))
 
 // Request seeding so relays persist your content
-await relay.seed(drive.key.toString('hex'), { replicationFactor: 3 })
+await relay.seed(drive.key.toString('hex'), { replicas: 3 })
 console.log('Seed request sent')
 
 // Check relay status
