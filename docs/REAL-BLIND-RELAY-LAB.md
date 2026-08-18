@@ -30,9 +30,9 @@ The verifier recomputes a key-sorted canonical SHA-256 checksum, checks the gate
 - CELL.GET traverses the public TLS edge, private unary IPC, coordinator, WAL-backed store, client wire decoder, hash check, and authenticated cell decryption.
 - Every local assembly is cleanly closed and newly assembled against its retained store before the recovery reads.
 
-The public edge does not yet bridge HTTP CELL.PUT bodies into the staged private content stream. The harness therefore does not claim a public write path. It also records that ordinary blind-client CELL qualification currently refuses the signed health result because the storage engine advertises degraded integrity while final store-format, scrub, repair, and related authorities remain unpublished. The lower-level public GET exercise is explicitly labeled an unqualified local wire seam; it is useful data-plane evidence, not a client-readiness claim.
+The production edge now bridges staged public CELL.PUT into the private content stream (pow-issuance-v1 one-use public-write admission plus the staged-PUT dispatch in `packages/blind-edge/server.js`); this lab harness predates that bridge and still does not exercise or claim the public write path. It also records that ordinary blind-client CELL qualification currently refuses the signed health result because the storage engine advertises degraded integrity while final store-format, scrub, repair, and related authorities remain unpublished. The lower-level public GET exercise is explicitly labeled an unqualified local wire seam; it is useful data-plane evidence, not a client-readiness claim.
 
-INBOX, CORE, and FORWARD are not mocked. They remain explicit blockers until their production public runtimes exist.
+INBOX and CORE unary public execution are now assembled in the production runtime (see the readiness disclosure in `POW-ISSUANCE-V1.md` for the remaining hardening gaps); this harness does not exercise them. FORWARD is not mocked and remains an explicit blocker until its production public runtime exists.
 
 ## Evidence that is still required
 

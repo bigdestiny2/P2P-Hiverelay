@@ -11,12 +11,21 @@ notifications, signed outbox logs, and the poker SignedLog substrate.
 npm install p2p-hiveservices
 ```
 
-```js
-import { createBuiltInServices } from 'p2p-hiveservices'
+The package exports the individual service classes:
 
-const services = createBuiltInServices({
-  enabled: ['identity', 'storage-proof']
-})
+```js
+import { IdentityService, StorageProofService } from 'p2p-hiveservices'
+```
+
+A relay operator normally never constructs these directly. Install
+`p2p-hiveservices` next to `p2p-hiverelay` and list builtin shortnames in the
+relay's `config.plugins` (or select them in the dashboard Services tab); the
+Core plugin loader resolves each shortname to its class from this package:
+
+```json
+{
+  "plugins": ["identity", "storage-proof"]
+}
 ```
 
 The package is ESM-only and requires Node 20 or newer.

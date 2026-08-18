@@ -102,7 +102,7 @@ const relay = new HiveRelayClient('./app-storage')
 await relay.start()
 const drive = await relay.publish('./examples/hiveworm-app')
 console.log('App key:', drive.key.toString('hex'))
-await relay.seed(drive.key.toString('hex'), { replicationFactor: 3 })
+await relay.seed(drive.key.toString('hex'), { replicas: 3 })
 ```
 
 The user is handling the publish step separately.

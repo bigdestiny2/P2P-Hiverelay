@@ -11,8 +11,19 @@
 
 ### Install
 
+From npm (stable `latest` is `0.24.4`; the release-candidate lane publishes to
+the `next` dist-tag):
+
 ```bash
-git clone https://github.com/hiverelay/hiverelay.git /opt/hiverelay
+npm install -g p2p-hiverelay        # stable
+npm install -g p2p-hiverelay@next   # release-candidate lane
+```
+
+Or from the signed source tag (see the
+[stable guide](docs/STABLE-0.24.4.md) for the current tag):
+
+```bash
+git clone https://github.com/bigdestiny2/P2P-Hiverelay.git /opt/hiverelay
 cd /opt/hiverelay
 npm ci --omit=dev
 ```
@@ -286,7 +297,7 @@ docker run -d \
   --restart unless-stopped \
   -v hiverelay-data:/data \
   -p 9100:9100 \
-  hiverelay/hiverelay:latest \
+  ghcr.io/bigdestiny2/p2p-hiverelay:latest \
   start --storage /data --region NA
 ```
 
@@ -306,7 +317,7 @@ docker run -d \
   --restart unless-stopped \
   --network host \
   -v hiverelay-data:/data \
-  hiverelay/hiverelay:latest \
+  ghcr.io/bigdestiny2/p2p-hiverelay:latest \
   start --storage /data
 ```
 

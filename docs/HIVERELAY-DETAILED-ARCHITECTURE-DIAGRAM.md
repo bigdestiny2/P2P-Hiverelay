@@ -535,10 +535,10 @@ can pick up the new line. The explicit local-development guard is
 
 | Consumer | HiveRelay surface | Current default |
 |---|---|---|
-| PearBrowser desktop | Bundled `p2p-hiverelay`, client, and verifier packages; HTTP catalog/gateway bridge | npm `latest`, guarded to resolve to `0.20.2` after publish |
+| PearBrowser desktop | Bundled `p2p-hiverelay`, client, and verifier packages; HTTP catalog/gateway bridge | npm `latest`, guarded to resolve to the published stable line (`0.24.4`) |
 | PearBrowser mobile | HTTP catalog, capability-doc, and gateway contracts over HTTPS relay transport | Wire-contract consumer; not a direct package pin |
-| PearPaste | Encrypted availability through split core/client packages and custody-safe relay paths | npm `latest`, guarded to resolve to core/client `0.20.2` after publish |
-| anonGPT native | Relay/onion AI app importing current core services subpaths | npm `latest`, guarded to resolve to core `0.20.2` after publish |
+| PearPaste | Encrypted availability through split core/client packages and custody-safe relay paths | npm `latest`, guarded to resolve core/client to the published stable line (`0.24.4`) |
+| anonGPT native | Relay/onion AI app importing current core services subpaths | npm `latest`, guarded to resolve core to the published stable line (`0.24.4`) |
 | POS, Tickets, p2pbuilders, Opengit bridge, hiverelay-test | Direct app/site/experiment consumers | npm `latest`, guarded with lockfile metadata and source markers |
 
 ## 13. Module Inventory

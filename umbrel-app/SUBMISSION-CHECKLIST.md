@@ -22,10 +22,10 @@ your own box; it all blocks the `getumbrel/umbrel-apps` PR.
 
 - [x] **Digest pin shape** — `docker-compose.yml` uses an image tag plus
   sha256 digest instead of `latest`.
-- [ ] **Fixed public digest** — the currently pinned `0.20.0` digest is
-  structurally pinned but smoke-red; publish a fixed digest from the source
-  containing the dashboard WebSocket same-origin fix before official
-  submission.
+- [ ] **Release-aligned digest** — the compose pin must name the release
+  actually under submission (`v0.26.0-rc.1` now; `v0.26.0` at GA). Run
+  `npm run release:prepare -- v<version> --image-digest sha256:<digest>` after
+  the multi-arch image is published so the tag and digest move together.
 - [ ] **Multi-arch** — confirm the fixed published tag has both `linux/amd64`
   and `linux/arm64` manifests. Full releases run
   `npm run release:check-image-manifest` and publish
@@ -35,10 +35,11 @@ your own box; it all blocks the `getumbrel/umbrel-apps` PR.
   exact fixed `ghcr.io/...:<semver>@sha256:<digest>` ref and publish
   `release-image-smoke-evidence.json`.
 
-For the stale pinned image only, a manual inspection command is:
+For a manual re-check of the pinned image, inspect the exact release tag
+under submission:
 
   ```bash
-  docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:0.20.0
+  docker buildx imagetools inspect ghcr.io/bigdestiny2/p2p-hiverelay:<version>
   ```
 
 ## Verify on a real Umbrel box
@@ -74,11 +75,11 @@ For the stale pinned image only, a manual inspection command is:
   key (identity derived from `$APP_SEED`).
 - [ ] Write the public-safe manual review artifact after the real-device pass:
   `npm run umbrel:write-runtime-review -- --out umbrel-runtime-review-evidence.json
-  --release v0.20.2 --device "<public device label>" --umbrel-version <version>
+  --release v<release-under-submission> --device "<public device label>" --umbrel-version <version>
   --tested-by <public reviewer> --public-key-before <hex> --public-key-after
   <hex> --checks installedThroughUmbrel,dashboardProxyLoads,liveFeedInBandAuth,noWebSocketUrlTokens,wizardCompletes,setupActionLockObserved,addWalletPersists,dynamicPayoutControlsObserved,walletBusyStateObserved,managementActionsPersist,serviceActionStateObserved,serviceRestartPendingObserved,aiModelAddStateObserved,reviewModeDefault,dataWritableUid999,reinstallPreservesPublicKey`.
   Then verify it with `npm run umbrel:verify-runtime-review -- --evidence
-  umbrel-runtime-review-evidence.json --release v0.20.2`.
+  umbrel-runtime-review-evidence.json --release v<release-under-submission>`.
   Do not include local URLs, LAN IPs, APP_SEED, bearer tokens, or API keys.
 
 ## Decisions to confirm before submission

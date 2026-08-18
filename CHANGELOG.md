@@ -4,9 +4,120 @@ All notable changes to `p2p-hiverelay`, `p2p-hiveservices`,
 `p2p-hiverelay-client`, and (from v0.6.0) `p2p-hiverelay-verifier` are
 documented here. Dates in YYYY-MM-DD.
 
-The packages are versioned in lockstep.
+The npm packages are versioned in lockstep. The blind-* workspaces
+(`@hiverelay/blind-protocol`, `blind-ipc`, `blind-client`,
+`blind-client-public-browser`, `blind-daemon`, `blind-edge`,
+`blind-peercred`) deliberately follow their own `1.0.0-rc.x` version line.
 
 ## [Unreleased]
+
+## [0.26.0-rc.1] — 2026-08-18
+
+First release candidate of the 0.26.0 train, cut from `main` with the merged
+blind-substrate work (~320 commits since `v0.25.0-rc.9`). It supersedes the
+entire `0.25.0-rc.1`…`rc.9` candidate train: every change those prereleases
+carried folds into this train, and none of them was promoted past canary.
+
+**Versioning note.** The product-line manifests on `main` were accidentally
+numbered `1.0.0-rc.1`; the release train is deliberately renumbered to
+`0.26.0-rc.1` (GA target `v0.26.0`). The `1.0.0-rc.1` numbering remains — on
+purpose — only on the isolated blind-* workspace packages listed in the header,
+which version independently of the four npm packages.
+
+### Blind substrate & PoW public-write admission
+- **pow-issuance-v1 — PoW-issued one-use public-write admission.** A stateless
+  issuer (service + CLI) grants single-use admission tokens against a
+  proof-of-work challenge; the daemon verifies them through a sandbox adapter
+  script. Public writes need no account, no payment, and no identity — only
+  spent work. See `docs/POW-ISSUANCE-V1.md`.
+- App-agnostic substrate protocol and isolated `@hiverelay/blind-edge` /
+  `@hiverelay/blind-daemon` runtime packages; CELL, INBOX, and CORE unary
+  public execution assembled in the production runtime.
+- Blind private IPC v2: staged PUT with admission preflight split from
+  post-EOF confirmation, authenticated-EOF commit, durable replay journal, and
+  atomic committed-PUT recovery. Public cell PUTs bridge over private IPC v2
+  into the staged daemon path.
+- forward-HTTPS durability storage v12 plus the adversarial-review hardening
+  series: aggregate-quota WAL with operational gate and fail-WAL control,
+  terminal-state machine, FTM9/FPR9 codecs, and exact recovery/prune-adjust
+  semantics.
+- VM sandbox-escape closures (deferred-execution escapes, GC-callback masking,
+  hardened admission script boundary) and an explicit blind production
+  entrypoint.
+- Store-genesis ceremony with two-slot manifest-floor enforcement, verified
+  manifest-floor boot restore past lapsed chain windows, and blind-store
+  migration to public bucket generation.
+- Public WIRE/ABI v2 and v3 authorities (`hiverelay-blind-abi-v2.cenc`,
+  `-v3.cenc`) and v2/v3 client-composition catalogs alongside the frozen v1
+  authority.
+
+### Browser publishing & artifacts
+- **Browser PoW issuance** with compressed inbox-read signing, so a browser
+  client can earn and spend one-use public-write admissions end to end.
+- **seq29 browser publishing + inbox discovery reconcile** — the browser
+  publish/read lane peerit is live on.
+- **Public browser artifact successor** `@hiverelay/blind-client-public-browser`
+  with a full public-control artifact and a limited cell-get artifact.
+- `blind-client-control-v2`/`-v3` browser artifacts with their own
+  authority.json and source-closure records (the v1 executable bundle stays
+  byte-frozen).
+
+### Public HTTPS gateway
+- T1 verifiable retrieval: `?verify=1` returns the block plus a merkle proof
+  and signed tree header (hc-block proof bundles).
+- Federated signed denylist channel with cache purge (R4); edge header and
+  advertisement bundle (R3/R5/R6/R7); R9 conformance suite with
+  slot-release/empty-drive enforcement.
+- Fail-closed HTTPS edge quarantine, signed public-gateway rollout control
+  plane, physical quota attestation and enforcement, and the exact public Hive
+  app runtime.
+
+### WAL & storage performance
+- Group commit: one datasync per admitted append batch; a public CELL.PUT costs
+  a single type-17 frame and one datasync.
+- Segmented WAL with checkpoint-anchored pruning; the atomic-commit staging
+  lock is narrowed to the quota ledger.
+
+### Tor transport
+- Tor v3 onion transport with a negative-probe health gate that detects
+  fail-open restricted discovery; hardened live bulk-transfer harness.
+
+### Capacity & fleet
+- Bounded hardware capacity planning and safe appliance profiles; the declared
+  profile's durable ceiling is enforced (R1a).
+- Fail-closed pilot-cohort and reprovision planners (ambiguous inputs
+  rejected); quorum counted by operators, not relays; fleet health watchdog.
+
+### Appliances
+- **TrueNAS appliance** (`truenas-app/`), pinned to the published
+  `ghcr.io/bigdestiny2/p2p-hiverelay` image.
+- Community appliance packages: Unraid (`unraid-app/`), ZimaOS/CasaOS
+  (`zimaos-app/`), Runtipi (`runtipi-app/`), and HexOS (`hexos-app/`), plus
+  `standalone/` compose packaging and the `startos-0.4/` package alongside
+  `startos/`.
+- StartOS tools build mirrors (Start9Labs/jsonpath, fedimint avahi-sys) so the
+  `.s9pk` toolchain builds reproducibly.
+
+### Release & CI
+- **Maintenance-release lane** in the Release surfaces workflow (#248): an
+  explicit `maintenance_branch` workflow_dispatch input lets a tag that is not
+  an ancestor of `main` release through the same evidence gates.
+- npm packages publish before container/appliance surfaces; tagged prereleases
+  publish to the npm `next` dist-tag; internal workspace dependencies retarget
+  on version bump; offline candidate manifests are bound and appliance
+  provenance verified.
+- rocksdb and peercred native bindings are built before the production prune
+  and carried into the runtime image; `patches/` is copied before `npm ci` so
+  audited fixes reach release images.
+
+### Security & fixes
+- x402 relay service integration; `serviceDefaultPeerRole` defaults to
+  `anonymous`; credits financial views are auth-gated.
+- `/health` reports fail-closed storage authority; AppRegistry `error` emits
+  route to a logged relay event; late-opening connections are guarded during
+  client teardown; owner-op destroy timeouts arm at start, not at queue time.
+- `HIVERELAY_API_HOST` / `HIVERELAY_API_PORT` / `HIVERELAY_HOLESAIL` env
+  fallbacks honored by the CLI; `servicesFailOpen` documented and configurable.
 
 ### Added
 - **Draft application privacy policy SDK.** `@hiverelay/blind-client/policy`
@@ -28,6 +139,47 @@ The packages are versioned in lockstep.
   refreshing its manifest, Chromium evidence, cross-host evidence, and pinned
   compatibility hashes to bind the already-current bundle and source closure.
   The vNext policy export is not part of the executable v1 bundle.
+
+## 0.25.0-rc.1 … 0.25.0-rc.9 (superseded) — 2026-07-26 … 2026-07-31
+
+The 0.25.0 release-candidate train (npm `next` reached `0.25.0-rc.9`) was
+never promoted to `latest` or a stable fleet channel — canary was held on
+`v0.24.3` twice during the train, including after the rc.4 storage hang — and
+is superseded by `0.26.0-rc.1`, which carries all of its changes. There will
+be no 0.25.0 GA.
+
+## [0.24.4] — 2026-08-06
+
+### Fixed
+- **`GET /api/poker/usage` answers `enabled: false` instead of `503` when poker
+  is off.** The usage-telemetry payload builder was always designed to return
+  `{ enabled: false, tables: 0, ... }` for a null poker provider — "poker isn't
+  enabled" is a valid operator-telemetry answer, and it is the contract the
+  release-image smoke gate checks on a stock (no-services) boot. The dispatch in
+  `api.js` short-circuited to `503` before the builder ever saw the null, which
+  kept every Release surfaces run red from v0.24.0 through v0.24.3: the image
+  built and pushed fine, then the smoke gate failed and every step after it —
+  npm publish, store sync, evidence — was skipped. Auth is unchanged and a
+  running provider still reports live counts. This is the only code change over
+  v0.24.3; relay behavior is otherwise identical.
+
+### Security
+- **Production dependency advisories cleared so the release gate runs.**
+  `ip-address` `^10.2.0` → `^10.3.1` (resolves 10.4.0) closes three high-severity
+  SSRF / trust-boundary bypasses (GHSA-mwp4-54f8-5fhr, GHSA-4xrf-jv44-h6hh,
+  GHSA-22jq-vg5j-6vgg); the `protobufjs` override `^7.6.4` → `^7.6.5` closes a
+  moderate `.proto` parsing DoS (GHSA-j3f2-48v5-ccww). Both advisories were
+  published after the v0.24.3 gate last ran, and `npm audit --omit=dev` — the
+  first command in the release gate, under `set -euo pipefail` — exited non-zero
+  because of them. `npm audit --omit=dev` now reports zero vulnerabilities.
+
+### Distribution
+- First 0.24.x release to reach npm. `p2p-hiverelay`, `p2p-hiverelay-client`,
+  `p2p-hiveservices`, and `p2p-hiverelay-verifier` publish `0.24.4` and take the
+  `latest` dist-tag, which had been stranded on `0.20.2` (`p2p-hiveservices`
+  `0.9.2`) since the v0.24.0 gate first went red. `fleet/channels.json` is
+  untouched — `stable` and `hold` stay on `v0.24.3` until a separate,
+  independently authorized promotion.
 
 ## [0.24.3] — 2026-07-08
 
