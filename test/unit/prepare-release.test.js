@@ -395,6 +395,77 @@ test('prepare-release removes local-only README status suffix for public release
   t.absent(readme.includes('packages; main has unreleased upgrades'))
 })
 
+test('prepare-release leaves the blind-substrate lane on its own version line', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-blind-fixture-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  // The blind-* workspaces are the isolated replacement track. Their generated
+  // v1 artifacts are byte-frozen by blind-protocol-v1-compatibility-floor.test.js,
+  // and the blind-client browser artifact manifest embeds the package version —
+  // so moving them with the product line rewrites bytes a live guard declares
+  // frozen and invalidates the Chromium/cross-host evidence bound to that hash.
+  const blind = ['blind-protocol', 'blind-ipc', 'blind-client']
+  for (const name of blind) {
+    await writeJson(path.join(repo, 'packages', name, 'package.json'), {
+      name: `@hiverelay/${name}`,
+      version: '1.0.0-rc.1',
+      private: true,
+      ...(name === 'blind-protocol'
+        ? {}
+        : { dependencies: { '@hiverelay/blind-protocol': '1.0.0-rc.1' } })
+    })
+  }
+
+  const res = await runPrepare([
+    'v9.9.9',
+    '--channel', 'none',
+    '--image-digest', DIGEST,
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 0, res.stderr)
+  for (const name of blind) {
+    const pkg = JSON.parse(await readFile(path.join(repo, 'packages', name, 'package.json'), 'utf8'))
+    t.is(pkg.version, '1.0.0-rc.1', `${name} kept its own version line`)
+    if (name !== 'blind-protocol') {
+      t.is(pkg.dependencies['@hiverelay/blind-protocol'], '1.0.0-rc.1', `${name} kept its internal pin`)
+    }
+  }
+  const core = JSON.parse(await readFile(path.join(repo, 'packages', 'core', 'package.json'), 'utf8'))
+  t.is(core.version, '9.9.9', 'the product line still moved')
+})
+
+test('prepare-release retargets internal product dependencies', async (t) => {
+  const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-internal-deps-'))
+  t.teardown(async () => {
+    await rm(repo, { recursive: true, force: true })
+  })
+  await writeMinimalReleaseFixture(repo)
+
+  // Bumping a workspace version while leaving a dependency on it behind is not a
+  // cosmetic mismatch: npm stops matching the workspace, falls through to the
+  // public registry, and `npm ci` dies.
+  const res = await runPrepare([
+    'v9.9.9-rc.1',
+    '--channel', 'none',
+    '--allow-unpinned-image',
+    '--no-umbrel-store',
+    '--no-ecosystem-consumers'
+  ], path.join(repo, 'scripts', 'prepare-release.mjs'))
+
+  t.is(res.status, 0, res.stderr)
+  const client = JSON.parse(await readFile(path.join(repo, 'packages', 'client', 'package.json'), 'utf8'))
+  // A caret range cannot resolve a prerelease under node-semver, so a prerelease
+  // pins its internal dependencies exactly.
+  t.is(client.dependencies['p2p-hiverelay'], '9.9.9-rc.1')
+  const lock = await readFile(path.join(repo, 'package-lock.json'), 'utf8')
+  t.absent(lock.includes('0.16.3'), 'lockfile carries no stale internal reference')
+})
+
 test('prepare-release accepts only bare or paired StartOS status backticks', async (t) => {
   const cases = [
     { name: 'bare', status: 'Status: v0.16.3, one-page dashboard\n', expected: 0 },

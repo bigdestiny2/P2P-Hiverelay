@@ -6114,7 +6114,7 @@ if (
   ecosystemConsumersAudit.includes('getExpectedCurrentConsumers') &&
   ecosystemConsumersAudit.includes('normalizeDependencyMode') &&
   ecosystemConsumersAudit.includes("'p2p-hiveservices'") &&
-  ecosystemConsumersAudit.includes("DEPENDENCY_MODES = new Set(['local', 'npm-latest'])") &&
+  ecosystemConsumersAudit.includes("DEPENDENCY_MODES = new Set(['local', 'npm-latest', 'npm-range'])") &&
   ecosystemConsumersAudit.includes('termTemplate') &&
   ecosystemConsumersAudit.includes('01-browser/pearbrowser-desktop/package.json') &&
   ecosystemConsumersAudit.includes('02-apps/pearpaste/package.json') &&
@@ -7213,7 +7213,7 @@ if (
   releaseWorkflow.includes('Ensure GitHub Release exists') &&
   releaseWorkflow.includes('if: $' + '{{ github.event_name != \'release\' && steps.rel.outputs.is_branch_candidate != \'true\' }}') &&
   releaseWorkflow.includes('HIVERELAY_RELEASE_CANDIDATE=') &&
-  releaseWorkflow.includes('Stamp branch candidate package version') &&
+  releaseWorkflow.includes('Verify exact source package versions') &&
   releaseWorkflow.includes('gh release view "$version"') &&
   releaseWorkflow.includes('args=(release create "$version" --verify-tag --title "$version" --notes "$notes")') &&
   releaseWorkflow.includes('args+=(--prerelease)') &&
@@ -7522,12 +7522,21 @@ if (
   releaseWorkflow.includes('NODE_AUTH_TOKEN: $' + '{{ secrets.NPM_TOKEN }}') &&
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
-  releaseWorkflow.includes('npm publish "$pkg" --access public --tag latest') &&
-  releaseWorkflow.includes('npm dist-tag add "$name@$version" latest') &&
-  releaseWorkflow.includes('npm view "$name" dist-tags.latest') &&
+  releaseWorkflow.includes('npm publish "./$pkg" --access public --tag "$dist_tag"') &&
+  releaseWorkflow.includes('npm dist-tag add "$name@$version" "$dist_tag"') &&
+  releaseWorkflow.includes('npm view "$name" "dist-tags.$dist_tag"') &&
   releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
-  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=published') &&
-  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=current') &&
+  // Prereleases move `next`, stable moves `latest`, and the evidence status
+  // carries the matching -next suffix.
+  releaseWorkflow.includes('dist_tag=next') &&
+  releaseWorkflow.includes('status_suffix=-next') &&
+  releaseWorkflow.includes('dist_tag=latest') &&
+  // Split so the literal shell expansion does not read as a JS template string
+  // (standard's no-template-curly-in-string), matching the '$' + '{{ … }}'
+  // idiom used for the workflow expressions above.
+  releaseWorkflow.includes('status="published$' + '{status_suffix}"') &&
+  releaseWorkflow.includes('status="current$' + '{status_suffix}"') &&
+  releaseWorkflow.includes('HIVERELAY_NPM_PUBLISH_STATUS=$status') &&
   monorepoPkg.scripts['audit:ecosystem-consumers:release'] === 'node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:sync:release'] === 'node scripts/sync-ecosystem-consumers.mjs --dependency-mode npm-latest --consumer-scope release' &&
   monorepoPkg.scripts['ecosystem:check-workspace'] === 'node scripts/check-ecosystem-workspace.mjs' &&
@@ -7544,10 +7553,13 @@ if (
   releaseWorkflow.indexOf('Verify stable ecosystem app workspace') < releaseWorkflow.indexOf('Sync release metadata') &&
   releaseWorkflow.indexOf('Commit ecosystem app consumer defaults') > releaseWorkflow.indexOf('Sync release metadata') &&
   releaseWorkflow.indexOf('Commit ecosystem app consumer defaults') < releaseWorkflow.indexOf('Smoke Umbrel package') &&
-  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Smoke pushed release image') &&
-  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
+  // npm publication runs BEFORE every container/appliance surface. It used to sit
+  // after the image smoke, which meant a Docker/StartOS/Umbrel failure skipped it
+  // entirely — that is how 0.24.2 built and signed an image but never reached npm.
+  releaseWorkflow.indexOf('Publish npm packages') > releaseWorkflow.indexOf('Audit and test release gate') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Build and push multi-arch image') &&
+  releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Smoke pushed release image') &&
   releaseWorkflow.indexOf('npm run release:check-npm-latest -- --expected-version "$expected"') > releaseWorkflow.indexOf('Publish npm packages') &&
-  releaseWorkflow.indexOf('npm run release:check-npm-latest -- --expected-version "$expected"') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Sync release metadata') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Smoke Umbrel package') &&
   releaseWorkflow.indexOf('Publish npm packages') < releaseWorkflow.indexOf('Build and verify StartOS package') &&
@@ -7711,7 +7723,13 @@ if (
   fail('StartOS Makefile can reuse stale image tarballs, allow accidental tag-only release packaging, or is missing digest-qualified image support')
 }
 
-if (startOsReadme.includes(`v${expectedVersion}, one-page dashboard`)) {
+// Accept the bare and backticked forms — prepare-release.mjs writes the
+// backticked one, but the assertion must not care which delimiter the README
+// currently carries.
+if (
+  startOsReadme.includes(`v${expectedVersion}, one-page dashboard`) ||
+  startOsReadme.includes(`\`v${expectedVersion}\`, one-page dashboard`)
+) {
   pass('StartOS README status version matches monorepo')
 } else {
   fail('StartOS README status version does not match monorepo')
@@ -7997,7 +8015,7 @@ if (
   releaseWorkflow.includes('HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE=release-image-smoke-evidence.json') &&
   releaseWorkflow.includes('HIVERELAY_RELEASE_IMAGE_SMOKE_EVIDENCE_SHA256=$image_smoke_sha') &&
   releaseWorkflow.indexOf('Smoke pushed release image') > releaseWorkflow.indexOf('Build and push multi-arch image') &&
-  releaseWorkflow.indexOf('Smoke pushed release image') < releaseWorkflow.indexOf('Return to main for metadata sync') &&
+  releaseWorkflow.indexOf('Smoke pushed release image') < releaseWorkflow.indexOf('Sync release metadata') &&
   releaseImageSmoke.includes('--evidence <path>') &&
   releaseImageSmoke.includes('parseTimeoutMs') &&
   releaseImageSmoke.includes('MAX_SMOKE_TIMEOUT_MS = 30 * 60 * 1000') &&

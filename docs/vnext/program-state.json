@@ -1,7 +1,7 @@
 {
   "schema": "hiverelay-vnext-program-state-v1",
   "releaseTrain": {
-    "candidatePattern": "v0.25.0-rc.N",
+    "candidatePattern": "v0.26.0-rc.N",
     "artifactBaseline": {
       "tag": "v0.24.3",
       "commit": "d0190577c5eccd10b7e4ae84baf2dc7b0f2b1c80"

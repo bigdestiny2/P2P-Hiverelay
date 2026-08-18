@@ -104,8 +104,8 @@ const FIXED_AUTHORITY_PATHS = Object.freeze([
   'node_modules/esbuild/package.json'
 ])
 const LEGACY_FROZEN_SHA256 = Object.freeze({
-  'package.json': 'db55467150b6e9f656de5ed5738b943afc8b4e9cf373297caa52e9c4f900b686',
-  'package-lock.json': 'df3f3592f32eac9d090ff4f5759f5985bdaec560471bcb9874652eb373129576',
+  'package.json': '7e352463944ad0bec5a98f892c5883019127f98c3e0ea297b2dc81a1ddaaaf4f',
+  'package-lock.json': '480fef5ee6f88a55ce9dae00c2ea01a70a9fd2811df531fe67fa75388c331f03',
   'patches/hypercore-storage+3.2.0.patch': 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53',
   'packages/blind-client/package.json': 'bda10754b89b255d178ddb4f0190f877a209ad143bebcce10876be80aefbfb29',
   'packages/blind-client/browser-artifact.js': '92f4daa973af957f295ce96c11e9684ad9a2313247832934b952819d2710204e',
@@ -121,11 +121,11 @@ const LEGACY_FROZEN_SHA256 = Object.freeze({
   'scripts/test-blind-client-browser-bundle.mjs': '84070b9249851efd0bcb1e99e613d5401f7c475aa4cfa2f9620fb4f731e127f3',
   'scripts/test-blind-client-browser-artifact-chromium.mjs': '33e8a13531ced49aeb674eb1d1c17e7809c0e175641dd0cc56b4a81138800119',
   'scripts/test-blind-client-browser-artifact-cross-host.mjs': '3525e70d31eb928afcc8f28ff994b562272a5cbb522038dc82a11a73eac02fa8',
-  'test/unit/blind-protocol-v1-compatibility-floor.test.js': '375fb8937d27d9a10a1683bb7fd3b4c72d17ff112b512f43fee11df00bb41ae3',
+  'test/unit/blind-protocol-v1-compatibility-floor.test.js': 'aed8a50b9839ce89a787580f30fca2b926386a5f02f6594a791303a98d53d300',
   'packages/blind-client/browser-artifacts/blind-client-control-v1.mjs': '10425bb00fb8045e63ce2869b5e6bf88af39dc0723963203a6b021e0fd28090a',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc': '343a301acf50e5d0d4449e44a11b30c52a1692855c3ad3c03c6c9acc9103c509',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.chromium-evidence.json': '5dc23bb9de210ec3292c74407fcb815b43b88535d656f62df16036473547e5cf',
-  'packages/blind-client/browser-artifacts/blind-client-control-v1.cross-host-evidence.json': '72d7bdac68d2680436f54165dc956f48673d0c4320b3ae3325dbb29021cecaee',
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.manifest.cenc': '5fee41172187a265fab99e93cb2cde7ef5d63616fe4566680c7e55d016c1da96',
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.chromium-evidence.json': '58ae53955b14f01a9ae964c607378b224baf5e75b8db0a8a2bf34eb101b1a58e',
+  'packages/blind-client/browser-artifacts/blind-client-control-v1.cross-host-evidence.json': 'aa8ca84830ff201c406be2d2dcbd6c01e6826176eff3e265c32b17c57f0afb38',
   'packages/blind-client/browser-artifacts/blind-client-control-v2.mjs': 'dfb4276ae74a42d487ad1ef77783309a93ba8985591799ea298c01f8f47442aa',
   'packages/blind-client/browser-artifacts/blind-client-control-v2.manifest.cenc': 'eb37a674bb92e218088f9f6e9a820866e1eca9f540feeeee825923e311b81731',
   'packages/blind-client/browser-artifacts/blind-client-control-v2.authority.json': 'eef9468bc97b04fb53692ca7096997ce71e5e56f85a451d1aacdcde12215b43c',
@@ -145,13 +145,13 @@ const LEGACY_CHECKS = Object.freeze([
   Object.freeze({
     script: 'packages/blind-client/generate-browser-artifact-v2.mjs',
     args: ['--check'],
-    message: 'frozen browser v1 artifact changed: blind-client-control-v1.manifest.cenc 343a301acf50e5d0d4449e44a11b30c52a1692855c3ad3c03c6c9acc9103c509',
+    message: 'frozen browser v1 artifact changed: blind-client-control-v1.manifest.cenc 5fee41172187a265fab99e93cb2cde7ef5d63616fe4566680c7e55d016c1da96',
     scratch: false
   }),
   Object.freeze({
     script: 'packages/blind-client/generate-browser-artifact-v3.mjs',
     args: ['--check'],
-    message: 'frozen browser v1/v2 artifact changed: browser-artifacts/blind-client-control-v1.manifest.cenc 343a301acf50e5d0d4449e44a11b30c52a1692855c3ad3c03c6c9acc9103c509',
+    message: 'frozen browser v1/v2 artifact changed: browser-artifacts/blind-client-control-v1.manifest.cenc 5fee41172187a265fab99e93cb2cde7ef5d63616fe4566680c7e55d016c1da96',
     scratch: false
   })
 ])
