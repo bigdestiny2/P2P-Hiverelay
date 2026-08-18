@@ -1,9 +1,9 @@
 > [!WARNING]
-> **This doc tracks v0.24.3.** For anything newer, the [CHANGELOG](../CHANGELOG.md) is authoritative — release notes land there first and this file follows.
+> **This doc tracks v0.24.4.** For anything newer, the [CHANGELOG](../CHANGELOG.md) is authoritative — release notes land there first and this file follows.
 
 # HiveRelay Developer Documentation
 
-**Version:** 0.24.3
+**Version:** 0.24.4
 **License:** Apache 2.0
 **Runtime:** Node.js >= 20.0.0
 **Module System:** ESM (`"type": "module"`)

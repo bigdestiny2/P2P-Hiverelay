@@ -1,8 +1,8 @@
 # Giga Release Architecture — How the Features Fit Together
 
-**Date:** 2026-07-17 · **Status:** composition map for the giga release; four features shipped, one (WAL) in flight · **Feature docs:** [BLIND-CELLS](./BLIND-CELLS.md) · [TOR-ONION-TRANSPORT](./TOR-ONION-TRANSPORT.md) · [HTTPS-GATEWAY](./HTTPS-GATEWAY.md) · [NAMESPACE](./NAMESPACE.md) · WAL (this doc §5)
+**Date:** 2026-07-17 · **Status:** composition map for the giga release; all five features shipped — the WAL durability spine landed in the 0.26.0 train · **Feature docs:** [BLIND-CELLS](./BLIND-CELLS.md) · [TOR-ONION-TRANSPORT](./TOR-ONION-TRANSPORT.md) · [HTTPS-GATEWAY](./HTTPS-GATEWAY.md) · [NAMESPACE](./NAMESPACE.md) · WAL (this doc §5)
 
-> This is the map of how the release's five subsystems compose into one product: **blind cells** (verifiable threshold custody), **Tor v3 onion transport** (relay location privacy), **HTTPS gateway** (public read plane), **namespace** (app-neutral messaging), and the **WAL** (durability spine, in flight). Each feature has its own deep-dive doc; this one exists to answer "how do they fit, and what still gates the release."
+> This is the map of how the release's five subsystems compose into one product: **blind cells** (verifiable threshold custody), **Tor v3 onion transport** (relay location privacy), **HTTPS gateway** (public read plane), **namespace** (app-neutral messaging), and the **WAL** (durability spine, shipped in the 0.26.0 train). Each feature has its own deep-dive doc; this one exists to answer "how do they fit, and what still gates the release."
 
 ## 1. The stack in one diagram
 

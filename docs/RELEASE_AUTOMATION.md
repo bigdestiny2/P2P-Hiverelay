@@ -91,6 +91,29 @@ preflight as
 `release-distribution-preflight.yml`. Missing or malformed credentials fail the
 run and record `distributionPreflight: failed` in release evidence.
 
+## Maintenance-Release Lane
+
+A patch cut from an older released tag (for example `v0.24.4` on
+`release/v0.24.4` after `main` had moved on to the next train) is a
+maintenance release: its tag is not an ancestor of `main`. The workflow's
+Verify release ref gate rejects such tags on a normal run.
+
+To release one, dispatch the workflow with the explicit `maintenance_branch`
+input set to the branch carrying the tag (for example `release/v0.24.4`).
+A maintenance release is never implicit — the branch comes only from the
+dispatch input. The gate then accepts the tag only when:
+
+- the tag is contained in the declared maintenance branch, and
+- the branch forks from an already-released tag (everything before the fork
+  point has already shipped).
+
+If `maintenance_branch` is set but the tag is an ancestor of `main`, the run
+fails: use a normal release. All evidence gates run unchanged; the only other
+difference is that the release-surface sync commit pushes to the maintenance
+branch instead of `main`, because pushing a maintenance tree to `main` would
+rewind it to the older release line. `v0.24.4` (the release that promoted npm
+`latest` off `0.20.2`) shipped through this lane.
+
 ## Repository Secret Setup
 
 Configure the release secrets before cutting a full release. Use stdin or local
@@ -118,7 +141,8 @@ npm run release:check-distribution-env -- \
   --prerelease false
 ```
 
-For the current `v0.20.2` issue #120 repair, the latest issue comment says the
+For the historical `v0.20.2` issue #120 repair (resolved before the
+0.24.x/0.26.0 trains), the last issue comment said the
 repository secret names are present and only four masked values still have bad
 shape: `UMBREL_STORE_TOKEN`, `UMBREL_OFFICIAL_PR_TOKEN`,
 `UMBREL_OFFICIAL_FORK`, and `STARTOS_REGISTRY_URL`. Use the targeted mode so

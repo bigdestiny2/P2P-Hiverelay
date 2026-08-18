@@ -158,3 +158,26 @@ per-connection watch scoping) remain open hardening gaps and stay disclosed in
 assembly-requirement blockers are reported statically by this tree even when
 wired; functional readiness (`v2WritePathReady`, admission capture complete)
 is the honest signal and is asserted by the drill.
+
+## 7. Browser lane shipped on this admission scheme (0.26.0)
+
+The 0.26.0 train ships the browser write/read lane that consumes
+pow-issuance-v1 end to end; it is documented here rather than only in the
+out-of-repo peerit lane plan:
+
+- **Browser PoW issuance.** A browser client can complete the PoW challenge
+  and obtain one-use public-write admission tokens itself — no server-side
+  helper. The client passes the admission (or an `admissionProvider`
+  callback) to the `@hiverelay/blind-client/control` write operations.
+- **Compressed inbox-read signing.** Browser inbox reads are signed over the
+  compressed payload, verified relay-side, so read authentication does not
+  require decompressing before verification.
+- **seq29 browser publishing + inbox discovery.** The seq29 lane covers
+  browser publishing and inbox-discovery reconcile; peerit is the live
+  consumer of this lane.
+- **Public browser artifact successor.** The
+  `@hiverelay/blind-client-public-browser` workspace (1.0.0-rc.1 blind-*
+  line) ships the `blind-client-public-control-v1` full artifact and the
+  limited `blind-client-public-cell-get-v1` artifact, including the PoW
+  admission-parameter APIs and the browser-side gates for this lane. It
+  succeeds the frozen v1 blind-client browser bundle for public controls.

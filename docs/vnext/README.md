@@ -27,6 +27,7 @@ npm run vnext:check-protocol
 ```
 
 The current integration base is post-release `main` at `999b0afd…`; the exact
-`v0.24.3` artifact baseline remains `d0190577…`. The tentative train is
-`v0.25.0-rc.N`. No concrete RC number, profile promotion, channel movement, or
-public claim is authorized by this file.
+`v0.24.3` artifact baseline remains `d0190577…`. The train is
+`v0.26.0-rc.N` (current RC: `v0.26.0-rc.1`, GA target `v0.26.0`); the earlier
+`0.25.0-rc.1`…`rc.9` candidates are superseded and folded into it. No profile
+promotion, channel movement, or public claim is authorized by this file.

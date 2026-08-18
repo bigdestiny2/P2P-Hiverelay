@@ -1,5 +1,9 @@
 # Stable HiveRelay v0.24.3
 
+> **Superseded:** `v0.24.4` is now the stable baseline (npm `latest` for all
+> four packages). This document is kept as the historical record of the
+> `v0.24.3` boundary; use [Stable HiveRelay v0.24.4](./STABLE-0.24.4.md).
+
 This is the canonical documentation entry point for the current stable
 HiveRelay operator/fleet baseline. Stable means the signed source and raw-fleet
 channel named below; it does not mean every distribution surface has published

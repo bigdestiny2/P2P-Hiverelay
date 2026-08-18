@@ -205,24 +205,26 @@ node scripts/publish-catalog-bee.js <catalog.json> --storage <dir> --serve
 
 That gives you a stable `hyperbee://` catalog plus relay pinning.
 
-## Current 0.24.3 ecosystem alignment
+## Current ecosystem alignment (stable 0.24.4 / rc 0.26.0-rc.1)
 
-The Hiverelay workspace packages are now `0.24.3`. Pear Browser desktop is the
-main bundled consumer, but its preserved package manifest and lockfile still
-resolve the three HiveRelay packages to `0.20.2`. That stale lockfile is an
+The published stable Hiverelay npm line is now `0.24.4` (`latest` for all
+four packages), and the workspace on `main` is versioned for the
+`0.26.0-rc.1` release-candidate train. Pear Browser desktop is the main
+bundled consumer; if its preserved package manifest and lockfile still resolve
+the three HiveRelay packages to an older line, that stale lockfile is an
 explicit release blocker, not evidence that the older bundle is current. The
-desktop alignment pass must make all of the following surfaces agree before a
-bundled-browser release:
+desktop alignment pass must make all of the following surfaces agree on the
+stable `0.24.4` line before a bundled-browser release:
 
-1. `scripts/check-hiverelay-layout.mjs` must expect `0.24.3`.
+1. `scripts/check-hiverelay-layout.mjs` must expect `0.24.4`.
 2. `package-lock.json` must resolve `p2p-hiverelay`,
-   `p2p-hiverelay-client`, and `p2p-hiverelay-verifier` to `0.24.3`.
+   `p2p-hiverelay-client`, and `p2p-hiverelay-verifier` to `0.24.4`.
 3. `.github/workflows/desktop-ci.yml` must check out
-   `bigdestiny2/P2P-Hiverelay@v0.24.3` and guard `0.24.3`.
+   `bigdestiny2/P2P-Hiverelay@v0.24.4` and guard `0.24.4`.
 4. Desktop README, release-readiness docs, and the release-packaging test must
-   name the `0.24.3` npm package line.
+   name the `0.24.4` npm package line.
 5. Desktop install state must make `npm ls` resolve all three
-   `p2p-hiverelay*` packages to `0.24.3`; workspace links are a separate local
+   `p2p-hiverelay*` packages to `0.24.4`; workspace links are a separate local
    development mode and must not be confused with npm release proof.
 6. Desktop and mobile relay clients now use explicit HTTP/HTTPS transport
    selection for public relay gateway fetches. This HTTPS relay transport path
@@ -240,7 +242,8 @@ when mobile wants parity with the `0.20.x` signed discovery model.
 Public ecosystem copy should also be refreshed in the same pass:
 
 - `hyper-fetch` live-smoke evidence that names relay `v0.20.0` should be
-  refreshed after a real public relay advertises `v0.24.3`.
+  refreshed after a real public relay advertises the current stable
+  (`v0.24.4` or later).
 
 ### Non-bundled direct consumers
 
@@ -250,15 +253,15 @@ but they are not all release-critical for the browser:
 - `02-apps/pear-pos`, `02-apps/pear-tickets`, and
   `04-experiments/hiverelay-test` already point at the local Hiverelay
   workspace packages.
-- `02-apps/pearpaste` now points at the local Hiverelay `0.24.3` core/client
+- `02-apps/pearpaste` now points at the current Hiverelay core/client
   workspace packages for encrypted availability, custody, and relay pinning.
 - `03-sites/pearbrowser-publishers/src/p2pbuilders` now points at the local
-  Hiverelay `0.24.3` workspace packages and imports the split
+  Hiverelay workspace packages (stable line `0.24.4`) and imports the split
   `p2p-hiverelay-client` SDK.
 - `04-experiments/Opengit/packages/opengit-relay` now points its optional
-  `--use-hiverelay` bridge at the local Hiverelay `0.24.3` workspace packages
+  `--use-hiverelay` bridge at the current Hiverelay workspace packages
   and dynamically imports the split ESM client.
-- `04-experiments/anongpt-native` now points at the local Hiverelay `0.24.3`
+- `04-experiments/anongpt-native` now points at the current Hiverelay `0.24.4`
   core workspace package for customer relay/onion AI transport and directory
   discovery.
 - `00-core/hr-acct` and `00-core/hr-fleet` are snapshot/worktree-style relay
@@ -291,12 +294,14 @@ The per-app source/import migration notes live in
 
 ### Version skew
 
-This workspace is not pinned to one HiveRelay version line at all times. On
-2026-07-12 the authoritative Hiverelay package line is:
+This workspace is not pinned to one HiveRelay version line at all times. As of
+2026-08-18 the authoritative published stable line is:
 
-- `p2p-hiverelay` `0.24.3`
-- `p2p-hiverelay-client` `0.24.3`
-- `p2p-hiverelay-verifier` `0.24.3`
+- `p2p-hiverelay` `0.24.4`
+- `p2p-hiverelay-client` `0.24.4`
+- `p2p-hiverelay-verifier` `0.24.4`
+
+with the `0.26.0-rc.1` release-candidate train behind it on `main`.
 
 That means compatibility work should bias toward:
 
