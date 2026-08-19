@@ -23,7 +23,7 @@ your own box; it all blocks the `getumbrel/umbrel-apps` PR.
 - [x] **Digest pin shape** — `docker-compose.yml` uses an image tag plus
   sha256 digest instead of `latest`.
 - [ ] **Release-aligned digest** — the compose pin must name the release
-  actually under submission (`v0.26.0-rc.2` now; `v0.26.0` at GA). Run
+  actually under submission (`v0.26.0-rc.3` now; `v0.26.0` at GA). Run
   `npm run release:prepare -- v<version> --image-digest sha256:<digest>` after
   the multi-arch image is published so the tag and digest move together.
 - [ ] **Multi-arch** — confirm the fixed published tag has both `linux/amd64`

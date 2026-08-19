@@ -3,7 +3,7 @@
 > **Dated snapshot:** this plan's state assessment was written against the
 > `0.20.0` image pin and manifest and has not been re-baselined. The process
 > steps remain useful, but read every version, digest, and `--release` value
-> as belonging to the release under submission (`v0.26.0-rc.2` now,
+> as belonging to the release under submission (`v0.26.0-rc.3` now,
 > `v0.26.0` at GA) and the current `SUBMISSION-CHECKLIST.md`, not the 0.20.x
 > narrative below.
 

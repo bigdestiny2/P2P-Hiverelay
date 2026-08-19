@@ -1,12 +1,12 @@
 # v1 Release Sequence — What's Next (2026-07-20)
 
 > **Superseded (2026-08-18):** this is a dated planning snapshot. Outcomes
-> since it was written: the Phase 2.4 version decision went to **0.26.0-rc.2 /
+> since it was written: the Phase 2.4 version decision went to **0.26.0-rc.3 /
 > GA v0.26.0** for the product line (the accidental `1.0.0-rc.1` numbering on
 > `main` was renumbered; `1.0.0-rc.x` is reserved for the blind-* workspace
 > packages only); npm `latest` was promoted to **0.24.4** for all four
 > packages (no longer `0.20.2`); the 0.25.0-rc.1…rc.9 candidate train was
-> superseded by 0.26.0-rc.2; and the TrueNAS/HexOS appliance lane (3.5) has
+> superseded by 0.26.0-rc.3; and the TrueNAS/HexOS appliance lane (3.5) has
 > merged to `main` as `truenas-app/` and `hexos-app/`.
 
 **Where we are:** all four giga tracks (blind cells, Tor onion transport, HTTPS gateway, namespace) and the WAL spine are code-complete, tested (356/356 unit + 45/45 integration), and committed on branch `v1-integration` (worktree `00-core/v1-integration`). Nothing is pushed. This document is the ordered sequence from here to live on the fleet. Items are numbered in dependency order — do them top to bottom unless marked parallel.

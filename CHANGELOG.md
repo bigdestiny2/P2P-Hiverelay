@@ -11,7 +11,7 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
-## [0.26.0-rc.2] — 2026-08-19
+## [0.26.0-rc.3] — 2026-08-19
 
 First release candidate of the 0.26.0 train to reach the release surfaces, cut
 from `main` with the merged blind-substrate work (~320 commits since
@@ -19,10 +19,14 @@ from `main` with the merged blind-substrate work (~320 commits since
 train: every change those prereleases carried folds into this train, and none
 of them was promoted past canary.
 
-> `v0.26.0-rc.1` (2026-08-18) was tagged but its pipeline failed closed in the
-> audit gate before publishing anything: the release-evidence fixture test
-> inherited the live release environment (fixed in this release). The tag
-> remains as a dead, unpublished prerelease.
+> `v0.26.0-rc.1` (2026-08-18) and `v0.26.0-rc.2` (2026-08-19) were tagged but
+> their pipelines failed closed in the audit gate before publishing anything:
+> the release-evidence fixture tests inherited the live release environment —
+> first the `HIVERELAY_*` surfaces, then the writer's non-prefixed fallbacks
+> (`STARTOS_REGISTRY_URL` arrives repo-wide from secrets). Both leaks are
+> fixed in this release; the full unit suite passes under a complete mirror of
+> the release-gate environment. Both tags remain as dead, unpublished
+> prereleases.
 
 **Versioning note.** The product-line manifests on `main` were accidentally
 numbered `1.0.0-rc.1`; the release train is deliberately renumbered to the

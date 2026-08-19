@@ -16,9 +16,25 @@ const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const WRITE_RELEASE_EVIDENCE_SCRIPT = path.join(process.cwd(), 'scripts/write-release-evidence.mjs')
 const S9PK_BYTES = 'startos package\n'
 
+// Every name write-release-evidence.mjs reads from the environment. The
+// release gate exports the live release's values for all of them (the
+// STARTOS_* pair arrives repo-wide from secrets), so the fixture spawn must
+// scrub the full set, not just the HIVERELAY_ prefix.
+const WRITER_FALLBACK_ENV = [
+  'STARTOS_REGISTRY_URL',
+  'STARTOS_REGISTRY_PACKAGE_URL',
+  'IMAGE_NAME',
+  'JOB_STATUS',
+  'GITHUB_REPOSITORY',
+  'GITHUB_RUN_ID',
+  'GITHUB_RUN_ATTEMPT',
+  'GITHUB_SERVER_URL'
+]
+
 function scrubbedBaseEnv () {
   return Object.fromEntries(
-    Object.entries(process.env).filter(([key]) => !key.startsWith('HIVERELAY_'))
+    Object.entries(process.env).filter(([key]) =>
+      !key.startsWith('HIVERELAY_') && !WRITER_FALLBACK_ENV.includes(key))
   )
 }
 const IMAGE_MANIFEST_BYTES = '{"kind":"release-image-manifest"}\n'

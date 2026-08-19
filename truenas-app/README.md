@@ -1,6 +1,6 @@
 # Blindspark by HiveRelay for TrueNAS
 
-> This package tracks the release-candidate line — the `0.26.0-rc.2` train,
+> This package tracks the release-candidate line — the `0.26.0-rc.3` train,
 > which supersedes `0.25.0-rc.1`…`rc.9`. The exact pinned release is the
 > Install defaults line below; `npm run release:prepare` rewrites that pin on
 > every release cut. It is not the stable `v0.24.4` distribution. See the
@@ -10,7 +10,7 @@ Blindspark runs the released HiveRelay container as a TrueNAS Community app. It 
 
 ## Install defaults
 
-- Upstream HiveRelay release: `0.26.0-rc.2`
+- Upstream HiveRelay release: `0.26.0-rc.3`
 - Dashboard port: `30452` on the TrueNAS host
 - Persistent state: one `ixVolume` mounted at `/data`
 - Runtime user and group: `999:999`

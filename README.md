@@ -1,7 +1,7 @@
 # HiveRelay
 
 > **Release lanes:** the operator/fleet stable baseline is
-> [`v0.24.4`](./docs/STABLE-0.24.4.md). `v0.26.0-rc.2` is the release-candidate
+> [`v0.24.4`](./docs/STABLE-0.24.4.md). `v0.26.0-rc.3` is the release-candidate
 > lane (it supersedes the whole `0.25.0-rc.1`…`rc.9` train), and the
 > `1.0.0-rc.1` versions on the blind-* workspace packages are a separate,
 > deliberate track. Neither candidate line is the stable `v0.24.4` product.
@@ -49,7 +49,7 @@ dashboard configures only generic capacity, admission, transport/privacy roles,
 updates, evidence, and relay identity. Application/service selection belongs to
 the published compatibility appliance and does not carry into the blind product.
 
-**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.4** | **Canary: v0.26.0-rc.2** | **Status: v0.26.0-rc.2**
+**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.4** | **Canary: v0.26.0-rc.3** | **Status: v0.26.0-rc.3**
 
 License scope is explicit: HiveRelay-authored source is Apache-2.0, while
 `truenas-app/templates/library/base_v2_3_8/` is redistributed under
@@ -83,9 +83,9 @@ and StartOS metadata so the published release surfaces agree.
 | Surface | Current source state | Publication/evidence boundary |
 |---|---|---|
 | Stable source and fleet | Tag `v0.24.4` at `e5bb696f…`; `fleet/channels.json` keeps `stable` and `hold` on `v0.24.3` until a separately authorized fleet promotion | This is the application-aware compatibility product. It is not the isolated blind-substrate replacement described by the blind-* `1.0.0-rc.1` workspaces on `main`. |
-| npm packages | As verified 2026-08-18, npm `latest` is `0.24.4` for all four lockstep packages (`p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiveservices`, `p2p-hiverelay-verifier`). npm `next` is `0.25.0-rc.9`, moving to `0.26.0-rc.2` when the rc is cut. | npm `latest` is a supported stable install path. For immutable artifact identity, the signed source tag and digest-pinned container in the [stable guide](./docs/STABLE-0.24.4.md) remain authoritative. |
+| npm packages | As verified 2026-08-18, npm `latest` is `0.24.4` for all four lockstep packages (`p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiveservices`, `p2p-hiverelay-verifier`). npm `next` is `0.25.0-rc.9`, moving to `0.26.0-rc.3` when the rc is cut. | npm `latest` is a supported stable install path. For immutable artifact identity, the signed source tag and digest-pinned container in the [stable guide](./docs/STABLE-0.24.4.md) remain authoritative. |
 | Stable container | `ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8` is a verified multi-arch OCI index for Linux amd64 and arm64. `v0.24.4` was an npm-only maintenance release; no `0.24.4` image tag exists, so this remains the newest digest-pinned stable container. | Keep the digest. A bare or floating tag is not stable artifact identity. |
-| Canary | `fleet/channels.json` points `canary` at `v0.25.0-rc.9`, the last tag of the superseded 0.25.0-rc train; it moves to `v0.26.0-rc.2` when that rc is promoted | Canary is opt-in release-candidate scope and must not be described as stable or as blind-substrate GA. |
+| Canary | `fleet/channels.json` points `canary` at `v0.25.0-rc.9`, the last tag of the superseded 0.25.0-rc train; it moves to `v0.26.0-rc.3` when that rc is promoted | Canary is opt-in release-candidate scope and must not be described as stable or as blind-substrate GA. |
 | GitHub / StartOS distribution | The `v0.24.4` tag exists but has no GitHub release object or attached assets; the `v0.24.3` release is marked prerelease with no assets | There is no published stable `.s9pk`; `releases/latest` must not be used as a stable selector. Candidate and development appliance manifests remain separately gated. |
 | Blindspark appliance submissions | Umbrel, StartOS, TrueNAS, Runtipi, ZimaOS, Unraid, and HexOS source/checks are in-repo | Store or registry publication still requires the relevant upstream review and real-device evidence. Candidate manifests on `main` are not proof of a stable marketplace package. |
 

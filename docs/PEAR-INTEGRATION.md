@@ -204,12 +204,12 @@ adds stronger catalog tooling:
 There can be active version skew across the ecosystem. As of 2026-08-18, the
 published stable npm line is `0.24.4` (`latest` for `p2p-hiverelay`,
 `p2p-hiverelay-client`, `p2p-hiveservices`, and `p2p-hiverelay-verifier`),
-and the workspace on `main` is versioned for the `0.26.0-rc.2`
+and the workspace on `main` is versioned for the `0.26.0-rc.3`
 release-candidate train:
 
-- `p2p-hiverelay` — stable `0.24.4`, rc `0.26.0-rc.2`
-- `p2p-hiverelay-client` — stable `0.24.4`, rc `0.26.0-rc.2`
-- `p2p-hiverelay-verifier` — stable `0.24.4`, rc `0.26.0-rc.2`
+- `p2p-hiverelay` — stable `0.24.4`, rc `0.26.0-rc.3`
+- `p2p-hiverelay-client` — stable `0.24.4`, rc `0.26.0-rc.3`
+- `p2p-hiverelay-verifier` — stable `0.24.4`, rc `0.26.0-rc.3`
 
 PearBrowser desktop is the bundled consumer that must be kept in lockstep:
 `scripts/check-hiverelay-layout.mjs`, `package-lock.json`, and desktop CI must

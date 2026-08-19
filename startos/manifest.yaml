@@ -13,7 +13,7 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.26.0-rc.2
+version: 0.26.0-rc.3
 release-notes: |
   Blindspark 0.26.0 release-candidate train: PoW-issued one-use public-write
   admission (pow-issuance-v1), seq29 browser publishing and inbox discovery,
