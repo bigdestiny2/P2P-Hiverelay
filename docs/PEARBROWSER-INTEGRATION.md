@@ -205,11 +205,11 @@ node scripts/publish-catalog-bee.js <catalog.json> --storage <dir> --serve
 
 That gives you a stable `hyperbee://` catalog plus relay pinning.
 
-## Current ecosystem alignment (stable 0.24.4 / rc 0.26.0-rc.1)
+## Current ecosystem alignment (stable 0.24.4 / rc 0.26.0-rc.2)
 
 The published stable Hiverelay npm line is now `0.24.4` (`latest` for all
 four packages), and the workspace on `main` is versioned for the
-`0.26.0-rc.1` release-candidate train. Pear Browser desktop is the main
+`0.26.0-rc.2` release-candidate train. Pear Browser desktop is the main
 bundled consumer; if its preserved package manifest and lockfile still resolve
 the three HiveRelay packages to an older line, that stale lockfile is an
 explicit release blocker, not evidence that the older bundle is current. The
@@ -301,7 +301,7 @@ This workspace is not pinned to one HiveRelay version line at all times. As of
 - `p2p-hiverelay-client` `0.24.4`
 - `p2p-hiverelay-verifier` `0.24.4`
 
-with the `0.26.0-rc.1` release-candidate train behind it on `main`.
+with the `0.26.0-rc.2` release-candidate train behind it on `main`.
 
 That means compatibility work should bias toward:
 

@@ -15,6 +15,12 @@ const STARTOS_REGISTRY_PACKAGE_URL = `${STARTOS_REGISTRY_URL}/blindspark`
 const ISO_TIMESTAMP_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
 const WRITE_RELEASE_EVIDENCE_SCRIPT = path.join(process.cwd(), 'scripts/write-release-evidence.mjs')
 const S9PK_BYTES = 'startos package\n'
+
+function scrubbedBaseEnv () {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([key]) => !key.startsWith('HIVERELAY_'))
+  )
+}
 const IMAGE_MANIFEST_BYTES = '{"kind":"release-image-manifest"}\n'
 const IMAGE_SMOKE_BYTES = '{"kind":"release-image-smoke"}\n'
 const UMBREL_SMOKE_BYTES = '{"kind":"umbrel-package-smoke"}\n'
@@ -139,7 +145,11 @@ async function runEvidence (outFile, env, opts = {}) {
   return new Promise((resolve, reject) => {
     execFile(process.execPath, [WRITE_RELEASE_EVIDENCE_SCRIPT, '--out', outFile], {
       cwd,
-      env: { ...process.env, ...env },
+      // The release gate runs this suite with the real release's HIVERELAY_*
+      // surfaces exported (gateway target, version, statuses). Fixtures must
+      // see only their own values, or the writer cross-checks fixture data
+      // against the live release and fails closed.
+      env: { ...scrubbedBaseEnv(), ...env },
       timeout: 10000
     }, (err, stdout, stderr) => {
       if (err) {

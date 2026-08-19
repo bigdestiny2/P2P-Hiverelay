@@ -1,7 +1,7 @@
 images:
   image:
     repository: ghcr.io/bigdestiny2/p2p-hiverelay
-    tag: 0.26.0-rc.1
+    tag: 0.26.0-rc.2
   container_utils_image:
     repository: ixsystems/container-utils
     tag: 1.0.2

@@ -21,7 +21,7 @@ export const manifest = setupManifest({
   volumes: ['main'],
   images: {
     blindspark: {
-      source: { dockerTag: 'ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.1' },
+      source: { dockerTag: 'ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.2' },
       arch: ['x86_64', 'aarch64'],
     },
   },
