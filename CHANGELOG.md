@@ -11,16 +11,22 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
-## [0.26.0-rc.1] — 2026-08-18
+## [0.26.0-rc.2] — 2026-08-19
 
-First release candidate of the 0.26.0 train, cut from `main` with the merged
-blind-substrate work (~320 commits since `v0.25.0-rc.9`). It supersedes the
-entire `0.25.0-rc.1`…`rc.9` candidate train: every change those prereleases
-carried folds into this train, and none of them was promoted past canary.
+First release candidate of the 0.26.0 train to reach the release surfaces, cut
+from `main` with the merged blind-substrate work (~320 commits since
+`v0.25.0-rc.9`). It supersedes the entire `0.25.0-rc.1`…`rc.9` candidate
+train: every change those prereleases carried folds into this train, and none
+of them was promoted past canary.
+
+> `v0.26.0-rc.1` (2026-08-18) was tagged but its pipeline failed closed in the
+> audit gate before publishing anything: the release-evidence fixture test
+> inherited the live release environment (fixed in this release). The tag
+> remains as a dead, unpublished prerelease.
 
 **Versioning note.** The product-line manifests on `main` were accidentally
-numbered `1.0.0-rc.1`; the release train is deliberately renumbered to
-`0.26.0-rc.1` (GA target `v0.26.0`). The `1.0.0-rc.1` numbering remains — on
+numbered `1.0.0-rc.1`; the release train is deliberately renumbered to the
+`0.26.0` line (GA target `v0.26.0`). The `1.0.0-rc.1` numbering remains — on
 purpose — only on the isolated blind-* workspace packages listed in the header,
 which version independently of the four npm packages.
 
