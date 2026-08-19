@@ -1,7 +1,7 @@
 {
-  "_doc": "Declarative release channels for the raw systemd fleet. Each box runs hiverelay-updater on a timer; it reads its channel here and checks out the matching tag (health-gated, auto-rollback). Promote a release by editing the target tag and committing \u2014 canary boxes pick it up first, stable boxes when you bump stable. Holding a box = point its channel at the version it already runs.",
+  "_doc": "Declarative release channels for the raw systemd fleet. Each box runs hiverelay-updater on a timer; it reads its channel here and checks out the matching tag (health-gated, auto-rollback). Promote a release by editing the target tag and committing — canary boxes pick it up first, stable boxes when you bump stable. Holding a box = point its channel at the version it already runs.",
   "_hold_doc": "`hold` exists so an individual box can be excluded from a channel promotion without inventing a bespoke channel per release. Point a box at it with `CHANNEL=hold` in /etc/hiverelay-updater.conf. Currently used to keep the Track B blind public-test hosts off Track A rollouts.",
   "stable": "v0.24.3",
-  "canary": "v0.25.0-rc.9",
+  "canary": "v0.26.0-rc.3",
   "hold": "v0.24.3"
 }
