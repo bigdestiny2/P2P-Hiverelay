@@ -12,7 +12,7 @@ surface has published `0.24.4` artifacts.
 |---|---|---|
 | Stable | `v0.24.4` at `e5bb696f039b0aace885becaf0052441b6b7a8a5` | Application-aware compatibility relay; npm `latest` for all four packages |
 | Stable fleet channel | `v0.24.3` at `d0190577c5eccd10b7e4ae84baf2dc7b0f2b1c80` | `fleet/channels.json` keeps `stable` and `hold` here until a separately authorized promotion |
-| Release candidate | `v0.26.0-rc.2` | The 0.26.0 train; supersedes the whole `0.25.0-rc.1`…`rc.9` train (npm `next`) |
+| Release candidate | `v0.26.0-rc.3` | The 0.26.0 train; supersedes the whole `0.25.0-rc.1`…`rc.9` train (npm `next`) |
 | Blind-substrate development | `1.0.0-rc.1` blind-* workspace packages | Isolated replacement work; deliberately on its own version line, not the stable product and not blind GA |
 
 HiveRelay `v0.24.4` is the legacy application-aware relay. Its only code
@@ -34,7 +34,7 @@ npm install p2p-hiverelay-verifier  # verification helpers
 ```
 
 The `next` dist-tag tracks the release-candidate lane (currently
-`0.25.0-rc.9`, moving to `0.26.0-rc.2`); it is not stable scope.
+`0.25.0-rc.9`, moving to `0.26.0-rc.3`); it is not stable scope.
 
 ## Reproducible stable source
 
@@ -94,14 +94,14 @@ The following was verified against the public registries on 2026-08-18:
 - npm `latest` is `0.24.4` for `p2p-hiverelay`, `p2p-hiverelay-client`,
   `p2p-hiveservices`, and `p2p-hiverelay-verifier`; npm `next` is
   `0.25.0-rc.9` (the superseded rc train's last tag, moving to
-  `0.26.0-rc.2`).
+  `0.26.0-rc.3`).
 - The `v0.24.4` git tag exists; no GitHub release object or attached assets
   accompany it, so `releases/latest` must not be used as a stable selector.
 - No stable `.s9pk` is attached to any release.
 - No `0.24.4` GHCR image exists; the immutable `0.24.3` index above is the
   newest digest-pinned stable container.
 - `fleet/channels.json` keeps `stable` and `hold` on `v0.24.3`; `canary`
-  points at `v0.25.0-rc.9` until the `v0.26.0-rc.2` promotion.
+  points at `v0.25.0-rc.9` until the `v0.26.0-rc.3` promotion.
 
 Those are distribution boundaries, not reasons to relabel a candidate as
 stable. Until a separately authorized release action changes them, the signed
