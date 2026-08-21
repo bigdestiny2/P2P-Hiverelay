@@ -90,6 +90,8 @@ jobs:
 
       - name: Install cosign verifier
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: 'v3.0.6'
 
       # Public Release sidecars are mutable and therefore compare-only. Resolve
       # the image exclusively from the exact run-attempt Actions artifact that
@@ -267,7 +269,17 @@ jobs:
       - name: Verify signed release image authority
         run: |
           set -euo pipefail
-          cosign verify --recursive \
+          cosign_version="$(cosign version 2>&1)"
+          if ! printf '%s\n' "$cosign_version" | grep -F 'v3.0.6' >/dev/null; then
+            echo "Expected cosign v3.0.6, got: $cosign_version" >&2
+            exit 1
+          fi
+          cosign_verify_help="$RUNNER_TEMP/cosign-verify-help.txt"
+          cosign verify --help > "$cosign_verify_help"
+          grep -F -- '--certificate-identity' "$cosign_verify_help" >/dev/null
+          grep -F -- '--certificate-oidc-issuer' "$cosign_verify_help" >/dev/null
+
+          cosign verify \
             --certificate-identity "https://github.com/bigdestiny2/P2P-Hiverelay/.github/workflows/release-surfaces.yml@refs/tags/$HIVERELAY_RELEASE_TAG" \
             --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
             "$HIVERELAY_IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST" >/dev/null

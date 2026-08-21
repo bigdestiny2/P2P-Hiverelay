@@ -7921,7 +7921,13 @@ if (
   releaseStartos04Workflow.includes('actions/runs/$EXPECTED_RELEASE_SURFACES_RUN_ID/artifacts?per_page=100&name=$authority_name') &&
   releaseStartos04Workflow.includes('actions/artifacts/$HIVERELAY_STARTOS_IMAGE_AUTHORITY_ID/zip') &&
   releaseStartos04Workflow.includes('Public release-evidence.json differs from immutable image authority') &&
-  releaseStartos04Workflow.includes('cosign verify --recursive') &&
+  releaseStartos04Workflow.includes("cosign-release: 'v3.0.6'") &&
+  releaseStartos04Workflow.includes("grep -F 'v3.0.6' >/dev/null") &&
+  releaseStartos04Workflow.includes('cosign verify --help > "$cosign_verify_help"') &&
+  releaseStartos04Workflow.includes("grep -F -- '--certificate-identity' \"$cosign_verify_help\"") &&
+  releaseStartos04Workflow.includes("grep -F -- '--certificate-oidc-issuer' \"$cosign_verify_help\"") &&
+  releaseStartos04Workflow.includes('cosign verify \\\n') &&
+  !releaseStartos04Workflow.includes('cosign verify --recursive') &&
   releaseStartos04Workflow.includes('node scripts/verify-startos-04-image-index.mjs') &&
   releaseStartos04Workflow.includes('uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)') &&
   releaseStartos04Workflow.includes('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)') &&

@@ -141,6 +141,15 @@ cosign verify \
   ghcr.io/bigdestiny2/p2p-hiverelay@sha256:<digest>
 ```
 
+The StartOS 0.4 child pins both `cosign-installer` and cosign v3.0.6. Before
+using the verifier, it runs `cosign verify --help` and requires the exact
+certificate-identity and OIDC-issuer options used by the gate. It verifies the
+signed multi-arch index with ordinary `cosign verify`; recursive verification
+is neither supported by this pinned command nor needed here because the child
+separately hashes the raw index, proves the amd64 and arm64 digests are members,
+and validates both child-image source revisions before any developer key is
+exposed.
+
 The reuse gate starts from one immutable, digest-bearing Actions artifact, not
 the public multi-asset Release update. It binds the artifact's numeric REST id,
 source run, archive URL, size, ZIP SHA-256, and exact evidence-file inventory,

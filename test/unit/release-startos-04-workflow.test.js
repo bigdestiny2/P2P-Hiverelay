@@ -18,6 +18,7 @@ const SETUP_NODE_ACTION_SHA = '249970729cb0ef3589644e2896645e5dc5ba9c38'
 const BUILDX_ACTION_SHA = '37fe631027851001ddb9b187196cc803df7f5f0e'
 const LOGIN_ACTION_SHA = 'dbcb813823bdd20940b903addbd779551569679f'
 const COSIGN_INSTALLER_ACTION_SHA = '6f9f17788090df1f26f669e9d70d6ae9567deba6'
+const COSIGN_RELEASE = 'v3.0.6'
 const START_CLI_URL = 'https://github.com/Start9Labs/start-technologies/releases/download/start-cli%2Fv1.1.0/start-cli_x86_64-linux'
 const START_CLI_SHA256 = '70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a'
 const UPLOAD_ARTIFACT_ACTION_SHA = '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
@@ -123,12 +124,20 @@ test('StartOS 0.4 dispatch is source ordered and exact-tag checked before keys',
   t.ok(workflow.includes('Public release-evidence.json differs from immutable image authority'))
   t.ok(workflow.includes('cat "$binding_env" >> "$GITHUB_ENV"'))
   t.ok(workflow.includes(`sigstore/cosign-installer@${COSIGN_INSTALLER_ACTION_SHA} # v4.1.2`))
+  t.ok(workflow.includes(`cosign-release: '${COSIGN_RELEASE}'`))
+  t.ok(workflow.includes("grep -F 'v3.0.6' >/dev/null"))
+  t.ok(workflow.includes('cosign verify --help > "$cosign_verify_help"'))
+  t.ok(workflow.includes("grep -F -- '--certificate-identity' \"$cosign_verify_help\""))
+  t.ok(workflow.includes("grep -F -- '--certificate-oidc-issuer' \"$cosign_verify_help\""))
+  t.ok(workflow.includes('cosign verify \\\n'))
+  t.is(workflow.includes('cosign verify --recursive'), false)
   t.ok(workflow.includes('--certificate-identity "https://github.com/bigdestiny2/P2P-Hiverelay/.github/workflows/release-surfaces.yml@refs/tags/$HIVERELAY_RELEASE_TAG"'))
   t.ok(workflow.includes('verify-startos-04-image-index.mjs'))
   t.is(workflow.includes('terminal Release surfaces run'), false, 'child must not wait for the parent that awaits it')
   t.ok(workflow.indexOf('Resolve exact release tag') < workflow.indexOf('Configure StartOS developer key'))
   t.ok(workflow.indexOf('Resolve immutable release image authority') < workflow.indexOf('Configure StartOS developer key'))
-  t.ok(workflow.indexOf('cosign verify --recursive') < workflow.indexOf('Configure StartOS developer key'))
+  t.ok(workflow.indexOf('cosign verify --help') < workflow.indexOf('cosign verify \\\n'))
+  t.ok(workflow.indexOf('cosign verify \\\n') < workflow.indexOf('Configure StartOS developer key'))
   t.ok(workflow.indexOf('verify-startos-04-image-index.mjs') < workflow.indexOf('Configure StartOS developer key'))
   t.ok(workflow.indexOf('verify_child amd64') < workflow.indexOf('Configure StartOS developer key'))
 
@@ -210,6 +219,59 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   t.ok(makefile.includes('REQUIRE_RELEASE_IMAGE_DIGEST ?= 0'))
   t.ok(makefile.includes('HIVERELAY_STARTOS_04_IMAGE_REF := $(IMAGE_TAG)'))
   t.ok(makefile.includes('universal: check-release-image'))
+})
+
+test('StartOS 0.4 image authority uses the pinned cosign v3 verify interface', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-startos-04-cosign-'))
+  t.teardown(async () => rm(root, { recursive: true, force: true }))
+  const bin = path.join(root, 'bin')
+  const runnerTemp = path.join(root, 'runner-temp')
+  const cosignLog = path.join(root, 'cosign.log')
+  await Promise.all([mkdir(bin), mkdir(runnerTemp)])
+
+  await writeFile(path.join(bin, 'cosign'), `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$COSIGN_LOG"
+if [ "$1" = version ]; then
+  printf 'GitVersion:    v3.0.6\\n'
+  exit 0
+fi
+if [ "$1" = verify ] && [ "\${2:-}" = --help ]; then
+  printf '%s\\n' '      --certificate-identity string' '      --certificate-oidc-issuer string'
+  exit 0
+fi
+for arg in "$@"; do
+  [ "$arg" != --recursive ] || exit 64
+done
+[ "$1" = verify ] || exit 65
+printf '[]\\n'
+`)
+  await writeFile(path.join(bin, 'docker'), '#!/bin/sh\nset -eu\nprintf \'{}\\n\'\n')
+  await writeFile(path.join(bin, 'node'), '#!/bin/sh\nset -eu\ncat >/dev/null\n')
+  await Promise.all([
+    chmod(path.join(bin, 'cosign'), 0o755),
+    chmod(path.join(bin, 'docker'), 0o755),
+    chmod(path.join(bin, 'node'), 0o755)
+  ])
+
+  const result = await runInlineWorkflowStep('Verify signed release image authority', root, {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH || ''}`,
+    COSIGN_LOG: cosignLog,
+    RUNNER_TEMP: runnerTemp,
+    HIVERELAY_RELEASE_TAG: 'v0.26.0-rc.4',
+    HIVERELAY_RELEASE_SHA: '1'.repeat(40),
+    HIVERELAY_IMAGE_NAME: 'ghcr.io/bigdestiny2/p2p-hiverelay',
+    HIVERELAY_IMAGE_DIGEST: `sha256:${'a'.repeat(64)}`,
+    HIVERELAY_IMAGE_AMD64_DIGEST: `sha256:${'b'.repeat(64)}`,
+    HIVERELAY_IMAGE_ARM64_DIGEST: `sha256:${'c'.repeat(64)}`
+  })
+
+  t.is(result.status, 0, result.stderr)
+  const invocations = (await readFile(cosignLog, 'utf8')).trim().split('\n')
+  t.alike(invocations.slice(0, 2), ['version', 'verify --help'])
+  t.ok(invocations[2].startsWith('verify --certificate-identity '))
+  t.is(invocations.some(line => line.includes('--recursive')), false)
 })
 
 test('StartOS 0.4 CLI installer rejects downloaded bytes before chmod or execution', async (t) => {
