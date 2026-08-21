@@ -420,9 +420,11 @@ manually dispatched, the workflow:
    Branch candidates publish nothing. The evidence record carries the matching
    `published-next`/`current-next` status.
    npm package visibility and dist-tag readback are eventually consistent, so
-   the workflow uses bounded exponential backoff for both phases and still
-   fails closed unless the registry returns the exact release version before
-   any container or appliance work begins.
+   the workflow uses bounded exponential backoff for both phases. Every registry
+   read and dist-tag mutation used by that gate, including the pre-publish
+   existence probe, also has a 30-second timeout and is killed if it hangs. The
+   release fails closed unless the registry returns the exact release version
+   before any container or appliance work begins.
    This step runs **before** every container and appliance surface on purpose. It
    used to sit after the image smoke, which meant a Docker, StartOS, or Umbrel
    failure skipped npm entirely — that is how `0.24.2` built and signed a release

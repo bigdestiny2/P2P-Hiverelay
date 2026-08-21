@@ -7526,16 +7526,24 @@ if (
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
   releaseWorkflow.includes('npm publish "./$pkg" --access public --tag "$dist_tag"') &&
   releaseWorkflow.includes('node scripts/ensure-npm-dist-tag.mjs') &&
+  releaseWorkflow.includes('--probe-only') &&
   releaseWorkflow.includes('--attempts 12') &&
   releaseWorkflow.includes('--initial-delay-ms 2000') &&
   releaseWorkflow.includes('--max-delay-ms 15000') &&
+  releaseWorkflow.includes('--command-timeout-ms 30000') &&
+  !releaseWorkflow.includes('if npm view "$name@$version" version') &&
   npmDistTagReadback.includes('export async function ensureNpmDistTag') &&
+  npmDistTagReadback.includes('export async function probeNpmPackageVersion') &&
+  npmDistTagReadback.includes('DEFAULT_COMMAND_TIMEOUT_MS = 30000') &&
+  npmDistTagReadback.includes("killSignal: 'SIGKILL'") &&
   npmDistTagReadback.includes("npmOutput(['dist-tag', 'add'") &&
   npmDistTagReadback.includes('DEFAULT_ATTEMPTS = 12') &&
   npmDistTagReadback.includes('DEFAULT_MAX_DELAY_MS = 15000') &&
   npmDistTagReadbackTest.includes('retries package visibility and stale registry reads') &&
   npmDistTagReadbackTest.includes('fails closed when package visibility never converges') &&
   npmDistTagReadbackTest.includes('fails closed when the tag stays stale') &&
+  npmDistTagReadbackTest.includes('kills a hung registry subprocess') &&
+  npmDistTagReadbackTest.includes('existence probe fails closed on registry timeouts') &&
   npmDistTagReadbackTest.includes('before downstream surfaces') &&
   releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
   // Prereleases move `next`, stable moves `latest`, and the evidence status

@@ -563,11 +563,23 @@ jobs:
               echo "$name package.json version is $version; expected $expected" >&2
               exit 1
             fi
-            if npm view "$name@$version" version >/dev/null 2>&1; then
+            # Reuse the bounded registry helper for the pre-publish existence
+            # probe. Only an explicit npm E404 becomes "missing"; timeouts and
+            # other registry failures stop the release instead of risking an
+            # ambiguous republish.
+            probe="$(node scripts/ensure-npm-dist-tag.mjs \
+              --probe-only \
+              --package "$name" \
+              --version "$version" \
+              --command-timeout-ms 30000)"
+            if [ "$probe" = "visible" ]; then
               echo "$name@$version already exists on npm; leaving tarball immutable."
-            else
+            elif [ "$probe" = "missing" ]; then
               npm publish "./$pkg" --access public --tag "$dist_tag"
               published=1
+            else
+              echo "Unexpected npm package probe result for $name@$version: $probe" >&2
+              exit 1
             fi
             # npm publication and dist-tag reads are eventually consistent.
             # Wait for the immutable tarball to become visible, request the
@@ -579,7 +591,8 @@ jobs:
               --tag "$dist_tag" \
               --attempts 12 \
               --initial-delay-ms 2000 \
-              --max-delay-ms 15000
+              --max-delay-ms 15000 \
+              --command-timeout-ms 30000
           done
           # check-npm-latest only understands the `latest` dist-tag; the `next`
           # line is verified inline by the loop above.

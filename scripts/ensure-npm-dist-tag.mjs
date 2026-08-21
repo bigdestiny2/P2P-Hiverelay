@@ -11,6 +11,7 @@ const execFile = promisify(execFileCallback)
 export const DEFAULT_ATTEMPTS = 12
 export const DEFAULT_INITIAL_DELAY_MS = 2000
 export const DEFAULT_MAX_DELAY_MS = 15000
+export const DEFAULT_COMMAND_TIMEOUT_MS = 30000
 
 function positiveInteger (value, label) {
   const parsed = Number(value)
@@ -55,6 +56,7 @@ function cleanOutput (value) {
 }
 
 function errorDetail (err) {
+  if (err?.code === 'ETIMEDOUT') return cleanOutput(err?.message) || 'npm command timed out'
   const detail = cleanOutput(err?.stderr) || cleanOutput(err?.stdout) || cleanOutput(err?.message)
   return detail || 'unknown npm error'
 }
@@ -64,24 +66,78 @@ function backoffDelay (attempt, initialDelayMs, maxDelayMs) {
   return Math.min(initialDelayMs * (2 ** exponent), maxDelayMs)
 }
 
-async function npmOutput (args) {
-  const { stdout } = await execFile('npm', args, {
-    encoding: 'utf8',
-    maxBuffer: 1024 * 1024
-  })
-  return cleanOutput(stdout)
+export async function execOutputWithTimeout (command, args, {
+  timeoutMs = DEFAULT_COMMAND_TIMEOUT_MS
+} = {}) {
+  timeoutMs = positiveInteger(timeoutMs, 'timeoutMs')
+
+  try {
+    const { stdout } = await execFile(command, args, {
+      encoding: 'utf8',
+      maxBuffer: 1024 * 1024,
+      timeout: timeoutMs,
+      killSignal: 'SIGKILL'
+    })
+    return cleanOutput(stdout)
+  } catch (err) {
+    if (err?.killed || err?.signal === 'SIGKILL') {
+      const timeoutError = new Error(`${command} command timed out after ${timeoutMs}ms`)
+      timeoutError.code = 'ETIMEDOUT'
+      timeoutError.stdout = err.stdout
+      timeoutError.stderr = err.stderr
+      throw timeoutError
+    }
+    throw err
+  }
 }
 
-async function defaultViewPackageVersion (packageName, version) {
-  return npmOutput(['view', `${packageName}@${version}`, 'version'])
+async function npmOutput (args, commandTimeoutMs) {
+  return execOutputWithTimeout('npm', args, { timeoutMs: commandTimeoutMs })
 }
 
-async function defaultViewDistTag (packageName, distTag) {
-  return npmOutput(['view', packageName, `dist-tags.${distTag}`])
+async function defaultViewPackageVersion (packageName, version, commandTimeoutMs) {
+  return npmOutput(['view', `${packageName}@${version}`, 'version'], commandTimeoutMs)
 }
 
-async function defaultAddDistTag (packageName, version, distTag) {
-  await npmOutput(['dist-tag', 'add', `${packageName}@${version}`, distTag])
+async function defaultViewDistTag (packageName, distTag, commandTimeoutMs) {
+  return npmOutput(['view', packageName, `dist-tags.${distTag}`], commandTimeoutMs)
+}
+
+async function defaultAddDistTag (packageName, version, distTag, commandTimeoutMs) {
+  await npmOutput(['dist-tag', 'add', `${packageName}@${version}`, distTag], commandTimeoutMs)
+}
+
+function npmPackageIsMissing (err) {
+  if (err?.code === 'ETIMEDOUT') return false
+  const detail = `${cleanOutput(err?.stderr)}\n${cleanOutput(err?.stdout)}`
+  return /\bE404\b|\b404 Not Found\b|is not in this registry/i.test(detail)
+}
+
+export async function probeNpmPackageVersion ({
+  packageName,
+  version,
+  commandTimeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  viewPackageVersion
+}) {
+  if (!safePackageName(packageName)) throw new TypeError('packageName is invalid')
+  if (!safeVersion(version)) throw new TypeError('version is invalid')
+  commandTimeoutMs = positiveInteger(commandTimeoutMs, 'commandTimeoutMs')
+  const readPackageVersion = viewPackageVersion || ((name, expected) => (
+    defaultViewPackageVersion(name, expected, commandTimeoutMs)
+  ))
+
+  let observed
+  try {
+    observed = cleanOutput(await readPackageVersion(packageName, version))
+  } catch (err) {
+    if (npmPackageIsMissing(err)) return false
+    throw new Error(`Could not determine whether ${packageName}@${version} already exists on npm: ${errorDetail(err)}`)
+  }
+
+  if (observed !== version) {
+    throw new Error(`npm returned ${observed || '(empty)'} while probing ${packageName}@${version}; expected exact version ${version}`)
+  }
+  return true
 }
 
 async function waitForPackageVisibility ({
@@ -125,9 +181,10 @@ export async function ensureNpmDistTag ({
   attempts = DEFAULT_ATTEMPTS,
   initialDelayMs = DEFAULT_INITIAL_DELAY_MS,
   maxDelayMs = DEFAULT_MAX_DELAY_MS,
-  viewPackageVersion = defaultViewPackageVersion,
-  viewDistTag = defaultViewDistTag,
-  addDistTag = defaultAddDistTag,
+  commandTimeoutMs = DEFAULT_COMMAND_TIMEOUT_MS,
+  viewPackageVersion,
+  viewDistTag,
+  addDistTag,
   sleep = sleepTimer,
   log = console.log
 }) {
@@ -137,7 +194,17 @@ export async function ensureNpmDistTag ({
   attempts = positiveInteger(attempts, 'attempts')
   initialDelayMs = positiveInteger(initialDelayMs, 'initialDelayMs')
   maxDelayMs = positiveInteger(maxDelayMs, 'maxDelayMs')
+  commandTimeoutMs = positiveInteger(commandTimeoutMs, 'commandTimeoutMs')
   if (maxDelayMs < initialDelayMs) throw new TypeError('maxDelayMs must be greater than or equal to initialDelayMs')
+  const readPackageVersion = viewPackageVersion || ((name, expected) => (
+    defaultViewPackageVersion(name, expected, commandTimeoutMs)
+  ))
+  const readDistTag = viewDistTag || ((name, tag) => (
+    defaultViewDistTag(name, tag, commandTimeoutMs)
+  ))
+  const updateDistTag = addDistTag || ((name, expected, tag) => (
+    defaultAddDistTag(name, expected, tag, commandTimeoutMs)
+  ))
 
   const packageVisibilityAttempts = await waitForPackageVisibility({
     packageName,
@@ -145,7 +212,7 @@ export async function ensureNpmDistTag ({
     attempts,
     initialDelayMs,
     maxDelayMs,
-    viewPackageVersion,
+    viewPackageVersion: readPackageVersion,
     sleep,
     log
   })
@@ -156,7 +223,7 @@ export async function ensureNpmDistTag ({
 
   for (let attempt = 1; attempt <= attempts; attempt++) {
     try {
-      lastObserved = cleanOutput(await viewDistTag(packageName, distTag))
+      lastObserved = cleanOutput(await readDistTag(packageName, distTag))
       lastError = ''
       if (lastObserved === version) {
         log(`Verified ${packageName} npm '${distTag}' dist-tag at ${version} after ${attempt} readback attempt(s).`)
@@ -176,7 +243,7 @@ export async function ensureNpmDistTag ({
 
     if (!mutationSucceeded) {
       try {
-        await addDistTag(packageName, version, distTag)
+        await updateDistTag(packageName, version, distTag)
         mutationSucceeded = true
         log(`Requested npm '${distTag}' dist-tag ${packageName}@${version}; waiting for registry readback.`)
       } catch (err) {
@@ -200,7 +267,8 @@ function parseArgs (argv) {
   const out = {
     attempts: DEFAULT_ATTEMPTS,
     initialDelayMs: DEFAULT_INITIAL_DELAY_MS,
-    maxDelayMs: DEFAULT_MAX_DELAY_MS
+    maxDelayMs: DEFAULT_MAX_DELAY_MS,
+    commandTimeoutMs: DEFAULT_COMMAND_TIMEOUT_MS
   }
 
   for (let i = 0; i < argv.length; i++) {
@@ -211,6 +279,8 @@ function parseArgs (argv) {
     else if (arg === '--attempts') out.attempts = argv[++i]
     else if (arg === '--initial-delay-ms') out.initialDelayMs = argv[++i]
     else if (arg === '--max-delay-ms') out.maxDelayMs = argv[++i]
+    else if (arg === '--command-timeout-ms') out.commandTimeoutMs = argv[++i]
+    else if (arg === '--probe-only') out.probeOnly = true
     else if (arg === '--help' || arg === '-h') out.help = true
     else throw new Error(`Unknown argument: ${arg}`)
   }
@@ -219,7 +289,9 @@ function parseArgs (argv) {
 }
 
 function usage () {
-  return `Usage: node scripts/ensure-npm-dist-tag.mjs --package <name> --version <semver> --tag <dist-tag> [options]
+  return `Usage:
+  node scripts/ensure-npm-dist-tag.mjs --probe-only --package <name> --version <semver> [options]
+  node scripts/ensure-npm-dist-tag.mjs --package <name> --version <semver> --tag <dist-tag> [options]
 
 Waits for a newly published immutable package version to become visible, then
 sets and verifies its npm dist-tag with bounded exponential backoff.
@@ -227,7 +299,9 @@ sets and verifies its npm dist-tag with bounded exponential backoff.
 Options:
   --attempts <n>           Attempts per visibility/readback phase (default: ${DEFAULT_ATTEMPTS})
   --initial-delay-ms <ms>  First retry delay (default: ${DEFAULT_INITIAL_DELAY_MS})
-  --max-delay-ms <ms>      Backoff ceiling (default: ${DEFAULT_MAX_DELAY_MS})`
+  --max-delay-ms <ms>      Backoff ceiling (default: ${DEFAULT_MAX_DELAY_MS})
+  --command-timeout-ms <ms>  Per-command timeout (default: ${DEFAULT_COMMAND_TIMEOUT_MS})
+  --probe-only             Print visible or missing without changing a dist-tag`
 }
 
 async function main () {
@@ -236,8 +310,17 @@ async function main () {
     console.log(usage())
     return
   }
-  if (!args.packageName || !args.version || !args.distTag) {
-    throw new Error(`--package, --version, and --tag are required\n${usage()}`)
+  if (!args.packageName || !args.version) {
+    throw new Error(`--package and --version are required\n${usage()}`)
+  }
+  if (args.probeOnly) {
+    if (args.distTag) throw new Error('--tag cannot be used with --probe-only')
+    const visible = await probeNpmPackageVersion(args)
+    console.log(visible ? 'visible' : 'missing')
+    return
+  }
+  if (!args.distTag) {
+    throw new Error(`--tag is required unless --probe-only is used\n${usage()}`)
   }
   await ensureNpmDistTag(args)
 }
