@@ -142,6 +142,8 @@ const releaseWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release
 const startOs04Manifest = readText(hiverelayRoot, 'startos-0.4', 'startos', 'manifest', 'index.ts')
 const startOs04Version = readText(hiverelayRoot, 'startos-0.4', 'startos', 'versions', 'current.ts')
 const startOs04Main = readText(hiverelayRoot, 'startos-0.4', 'startos', 'main.ts')
+const startOs04Makefile = readText(hiverelayRoot, 'startos-0.4', 'Makefile')
+const startOs04AssetsReadme = readText(hiverelayRoot, 'startos-0.4', 'assets', 'README.md')
 const releaseStartos04Workflow = readText(hiverelayRoot, '.github', 'workflows', 'release-startos-0.4.yml')
 const releasePreflightWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-distribution-preflight.yml')
 const dockerPublishWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'docker-publish.yml')
@@ -7781,6 +7783,7 @@ if (
 // YAML package, but the version + image pins live in TypeScript (not
 // manifest.yaml), so guard them against silent drift on a version bump.
 const startOs04ExpectedImage = `ghcr.io/bigdestiny2/p2p-hiverelay:${expectedVersion}`
+const legacyStartOsReleaseUpload = 'gh release upload "$' + '{{ steps.rel.outputs.version }}" startos/blindspark.s9pk --clobber'
 if (
   startOs04Version.includes(`version: '${expectedVersion}:`) &&
   startOs04Manifest.includes(`dockerTag: '${startOs04ExpectedImage}'`)
@@ -7803,16 +7806,32 @@ if (
 }
 
 if (
+  startOs04Makefile.includes('TARGETS := universal') &&
+  startOs04Makefile.includes('include node_modules/@start9labs/start-sdk/s9pk.mk') &&
+  startOs04AssetsReadme.includes('requires this directory as an `s9pk` build ingredient')
+) {
+  pass('StartOS 0.4 Makefile selects the SDK universal target and keeps its required assets ingredient')
+} else {
+  fail('StartOS 0.4 Makefile is missing the universal-output or required-assets build contract')
+}
+
+if (
   releaseStartos04Workflow.includes('setup-build-env') &&
   releaseStartos04Workflow.includes('working-directory: startos-0.4') &&
   releaseStartos04Workflow.includes('npm ci') &&
-  releaseStartos04Workflow.includes('make') &&
-  releaseStartos04Workflow.includes('gh release upload') &&
-  releaseStartos04Workflow.includes('blindspark.s9pk')
+  releaseStartos04Workflow.includes('cp "$key_path" ../.startos/build.key.pem') &&
+  releaseStartos04Workflow.includes('make universal') &&
+  releaseStartos04Workflow.includes('start-cli s9pk inspect blindspark.s9pk commitment') &&
+  releaseStartos04Workflow.includes('STARTOS_04_RELEASE_ASSET: blindspark-startos-0.4.s9pk') &&
+  releaseStartos04Workflow.includes('mv blindspark.s9pk "$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('gh release upload "$tag" "$STARTOS_04_RELEASE_ASSET" --clobber') &&
+  !releaseStartos04Workflow.includes('gh release upload "$tag" blindspark.s9pk --clobber') &&
+  releaseWorkflow.includes(legacyStartOsReleaseUpload) &&
+  !releaseWorkflow.includes('blindspark-startos-0.4.s9pk')
 ) {
-  pass('release-startos-0.4 workflow builds the 0.4 s9pk and uploads it to the GitHub Release (isolated from the 0.3 pipeline)')
+  pass('StartOS release writers use distinct 0.4 and legacy asset names without cross-format clobbering')
 } else {
-  fail('release-startos-0.4 workflow is missing the isolated build/upload steps for the 0.4 package')
+  fail('StartOS release writers can produce an ambiguous or cross-format-clobbered GitHub Release asset')
 }
 
 if (

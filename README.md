@@ -1066,7 +1066,9 @@ review. Full releases can publish to a configured StartOS registry after the
 verified `.s9pk` is built.
 
 A second package tree in [startos-0.4/](startos-0.4/) targets the StartOS 0.4
-packaging format alongside the 0.3.5.x package above.
+packaging format alongside the 0.3.5.x package above. GitHub Releases expose it
+as `blindspark-startos-0.4.s9pk`; the legacy package keeps the existing
+`blindspark.s9pk` asset name.
 
 ### TrueNAS
 

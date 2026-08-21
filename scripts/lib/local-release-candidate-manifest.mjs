@@ -174,7 +174,8 @@ export function collectLocalReleaseSnapshot (repoRoot, options = {}) {
         version: tsSingleQuotedValue(startos04VersionSource, 'version').split(':')[0],
         versionWithRevision: tsSingleQuotedValue(startos04VersionSource, 'version'),
         imageRef: tsSingleQuotedValue(startos04Manifest, 'dockerTag'),
-        packageFormat: 'startos-0.4'
+        packageFormat: 'startos-0.4',
+        artifactName: 'blindspark-startos-0.4.s9pk'
       }
     },
     fleetChannels: {

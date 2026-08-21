@@ -35,6 +35,8 @@ concurrency:
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
+    env:
+      STARTOS_04_RELEASE_ASSET: blindspark-startos-0.4.s9pk
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -66,23 +68,30 @@ jobs:
             exit 1
           fi
           chmod 600 "$key_path"
-          mkdir -p .startos
-          cp "$key_path" .startos/build-key
-          chmod 600 .startos/build-key
+          # start-cli 1.1.0 discovers the nearest workspace key while walking
+          # upward. Keep it at the checkout root (the parent of this package).
+          mkdir -p ../.startos
+          cp "$key_path" ../.startos/build.key.pem
+          chmod 600 ../.startos/build.key.pem
 
       - name: Build the StartOS 0.4 package
         working-directory: startos-0.4
         run: |
           set -euo pipefail
           npm ci
-          make
-          ls -1 *.s9pk
-          s9pk_sha="$(sha256sum blindspark.s9pk | cut -d ' ' -f 1)"
+          make universal
+          if [ ! -s blindspark.s9pk ]; then
+            echo "StartOS 0.4 universal package is missing or empty." >&2
+            exit 1
+          fi
+          start-cli s9pk inspect blindspark.s9pk commitment >/dev/null
+          mv blindspark.s9pk "$STARTOS_04_RELEASE_ASSET"
+          s9pk_sha="$(sha256sum "$STARTOS_04_RELEASE_ASSET" | cut -d ' ' -f 1)"
           if ! [[ "$s9pk_sha" =~ ^[a-f0-9]{64}$ ]]; then
             echo "StartOS 0.4 package SHA-256 is malformed." >&2
             exit 1
           fi
-          echo "Built blindspark.s9pk ($s9pk_sha)"
+          echo "Built $STARTOS_04_RELEASE_ASSET ($s9pk_sha)"
 
       - name: Upload .s9pk to the GitHub Release
         working-directory: startos-0.4
@@ -91,5 +100,5 @@ jobs:
         run: |
           set -euo pipefail
           tag="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          gh release upload "$tag" blindspark.s9pk --clobber
-          echo "Attached blindspark.s9pk (StartOS 0.4) to release $tag"
+          gh release upload "$tag" "$STARTOS_04_RELEASE_ASSET" --clobber
+          echo "Attached $STARTOS_04_RELEASE_ASSET to release $tag"

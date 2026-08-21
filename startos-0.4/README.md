@@ -7,7 +7,9 @@ toolchain and the new signed `.s9pk` format.
 
 The two packages are **separate distribution channels** and coexist during the
 transition: keep shipping `../startos/blindspark.s9pk` to 0.3.x devices, and
-this one to 0.4 devices.
+the `blindspark-startos-0.4.s9pk` GitHub Release asset to 0.4 devices. The
+different release filenames are intentional: the package formats are not
+interchangeable.
 
 ## What it does (unchanged from 0.3.x)
 
@@ -39,14 +41,18 @@ Prerequisites: **Node.js**, **Docker** (to pull the image per arch), and
 
 ```sh
 npm ci            # installs @start9labs/start-sdk 2.0.1 (brings in s9pk.mk)
-make              # tsc check → ncc bundle → pack x86_64 + aarch64 s9pks
+make              # tsc check → ncc bundle → pack one universal .s9pk
 ```
 
-`make` produces `blindspark.s9pk` (multi-arch). Verify / inspect with:
+`make` (or the explicit `make universal` used in CI) produces the predictable
+local file `blindspark.s9pk` (multi-arch). The release workflow verifies it and
+renames the uploaded 0.4 asset to `blindspark-startos-0.4.s9pk`, preserving the
+legacy 0.3.x release asset name `blindspark.s9pk`. Verify / inspect a local build
+with:
 
 ```sh
-start-cli s9pk verify blindspark.s9pk
-start-cli s9pk inspect blindspark.s9pk
+start-cli s9pk inspect blindspark.s9pk commitment
+start-cli s9pk inspect blindspark.s9pk manifest
 ```
 
 Sideload for testing: upload the `.s9pk` from your StartOS UI

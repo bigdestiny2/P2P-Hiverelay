@@ -158,7 +158,8 @@ function fixtureSnapshot () {
         version: semver,
         versionWithRevision: `${semver}:0`,
         imageRef: `ghcr.io/bigdestiny2/p2p-hiverelay:${semver}`,
-        packageFormat: 'startos-0.4'
+        packageFormat: 'startos-0.4',
+        artifactName: 'blindspark-startos-0.4.s9pk'
       }
     },
     fleetChannels: {

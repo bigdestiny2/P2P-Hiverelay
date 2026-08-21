@@ -5,14 +5,20 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 const WORKFLOW = path.join(process.cwd(), '.github/workflows/release-startos-0.4.yml')
+const LEGACY_WORKFLOW = path.join(process.cwd(), '.github/workflows/release-surfaces.yml')
+const MAKEFILE = path.join(process.cwd(), 'startos-0.4/Makefile')
+const ASSETS_README = path.join(process.cwd(), 'startos-0.4/assets/README.md')
+const RELEASE_ASSET = 'blindspark-startos-0.4.s9pk'
+const WORKSPACE_KEY = '.startos/build.key.pem'
+const LEGACY_RELEASE_UPLOAD = 'gh release upload "$' + '{{ steps.rel.outputs.version }}" startos/blindspark.s9pk --clobber'
 
 test('StartOS 0.4 release workflow copies the generated ephemeral key', async (t) => {
   const fixture = await workflowFixture(t, 'generated-key')
   const result = await runConfigureKey(fixture, '')
 
   t.is(result.status, 0)
-  t.is(await readFile(path.join(fixture.work, '.startos/build-key'), 'utf8'), 'ephemeral-key')
-  t.is((await stat(path.join(fixture.work, '.startos/build-key'))).mode & 0o777, 0o600)
+  t.is(await readFile(path.join(fixture.root, WORKSPACE_KEY), 'utf8'), 'ephemeral-key')
+  t.is((await stat(path.join(fixture.root, WORKSPACE_KEY))).mode & 0o777, 0o600)
 })
 
 test('StartOS 0.4 release workflow keeps the configured developer key path', async (t) => {
@@ -21,7 +27,7 @@ test('StartOS 0.4 release workflow keeps the configured developer key path', asy
 
   t.is(result.status, 0)
   t.is(await readFile(path.join(fixture.home, '.startos/developer.key.pem'), 'utf8'), 'configured-key')
-  t.is(await readFile(path.join(fixture.work, '.startos/build-key'), 'utf8'), 'configured-key')
+  t.is(await readFile(path.join(fixture.root, WORKSPACE_KEY), 'utf8'), 'configured-key')
 })
 
 test('StartOS 0.4 release workflow fails closed when key generation writes no key', async (t) => {
@@ -30,6 +36,39 @@ test('StartOS 0.4 release workflow fails closed when key generation writes no ke
 
   t.is(result.status, 1)
   t.ok(result.stderr.includes('StartOS developer key is missing or empty'))
+})
+
+test('StartOS 0.4 release build has the required inputs and deterministic universal output', async (t) => {
+  const [workflow, makefile, assetsReadme] = await Promise.all([
+    readFile(WORKFLOW, 'utf8'),
+    readFile(MAKEFILE, 'utf8'),
+    readFile(ASSETS_README, 'utf8')
+  ])
+
+  t.ok(makefile.includes('TARGETS := universal'))
+  t.ok(makefile.includes('include node_modules/@start9labs/start-sdk/s9pk.mk'))
+  t.ok(assetsReadme.includes('requires this directory as an `s9pk` build ingredient'))
+  t.ok(workflow.includes('cp "$key_path" ../.startos/build.key.pem'))
+  t.is(workflow.includes('.startos/build-key'), false)
+  t.ok(workflow.includes('make universal'))
+  t.ok(workflow.includes('start-cli s9pk inspect blindspark.s9pk commitment'))
+  t.is(workflow.includes('start-cli s9pk verify'), false)
+  t.ok(workflow.includes('mv blindspark.s9pk "$STARTOS_04_RELEASE_ASSET"'))
+  t.ok(workflow.indexOf('make universal') < workflow.indexOf('start-cli s9pk inspect'))
+  t.ok(workflow.indexOf('start-cli s9pk inspect') < workflow.indexOf('mv blindspark.s9pk'))
+})
+
+test('StartOS release workflows cannot clobber one another across package formats', async (t) => {
+  const [workflow, legacyWorkflow] = await Promise.all([
+    readFile(WORKFLOW, 'utf8'),
+    readFile(LEGACY_WORKFLOW, 'utf8')
+  ])
+
+  t.ok(workflow.includes(`STARTOS_04_RELEASE_ASSET: ${RELEASE_ASSET}`))
+  t.ok(workflow.includes('gh release upload "$tag" "$STARTOS_04_RELEASE_ASSET" --clobber'))
+  t.is(workflow.includes('gh release upload "$tag" blindspark.s9pk --clobber'), false)
+  t.ok(legacyWorkflow.includes(LEGACY_RELEASE_UPLOAD))
+  t.is(legacyWorkflow.includes(RELEASE_ASSET), false)
 })
 
 async function workflowFixture (t, startCliMode) {
@@ -47,7 +86,7 @@ async function workflowFixture (t, startCliMode) {
   await writeFile(startCli, startCliStub(startCliMode))
   await chmod(startCli, 0o755)
 
-  return { bin, home, work }
+  return { bin, home, root, work }
 }
 
 function startCliStub (mode) {
