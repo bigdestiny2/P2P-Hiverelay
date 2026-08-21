@@ -149,20 +149,30 @@ recovery rather than silently rebuilding a different index beneath an
 immutable package.
 
 The parent dispatcher waits up to its bounded timeout for the exact child run.
+It passes the exact parent run attempt and numeric id of a separate,
+run/attempt-named image-authority artifact. Before exporting image environment,
+the child authenticates that artifact's parent path/event/tag/SHA/checkpoints,
+REST record and exact two-file ZIP. Public checkpoint JSON is compare-only. It
+then verifies the exact-tag keyless signature, raw-index hash and amd64/arm64
+membership, plus both child revision labels before any package key or build.
 Its final closure job installs the same hash-authenticated CLI, downloads the
-exact immutable child Actions artifact by numeric REST id, authenticates the ZIP
-size/SHA-256, independently inspects the `.s9pk`
+exact image-authority and immutable child Actions artifacts by numeric REST id,
+authenticates both ZIPs' size/SHA-256, independently inspects the `.s9pk`
 commitment and structured manifest, and proves the artifact bytes match the
 current GitHub Release package/sidecar pair. It then publishes
 `release-closure-evidence.json`, re-downloads the complete published bundle,
 and runs live GitHub closure verification. That mode re-fetches current Release
-assets by exact REST id/digest, authenticates the exact child run attempt and
-workflow, downloads the exact artifact id, verifies its REST ZIP size/digest
-and inventory, resolves the current tag to the recorded source commit, and
-compares its bytes with the Release pair. A final inventory re-fetch requires
+assets by exact REST id/digest, authenticates the exact parent and child run
+attempts/workflow paths (including an exact-tag qualifier when the API supplies
+one), downloads both exact artifact ids, verifies their REST
+ZIP size/digest/inventory, resolves the current tag to the recorded source
+commit, and compares their files with the Release checkpoint/pair. A final
+inventory re-fetch requires
 the Release id, exact draft/prerelease policy, and each required asset
 id/state/size/digest/URL to remain unchanged after verification; it also
-revalidates the exact artifact record and tag commit. The stable blocker passes
+revalidates both exact artifact records, terminal-success parent run, and tag
+commit. The in-parent check permits that same parent to be in progress; later
+stable checks require it to have completed successfully. The stable blocker passes
 `--expected-prerelease false`, so prerelease proof cannot clear GA. Offline JSON-only
 verification is explicitly non-authoritative and cannot clear stable/GA. The earlier
 `release-evidence.json` describes

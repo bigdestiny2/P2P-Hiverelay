@@ -1,5 +1,5 @@
 name: Release StartOS 0.4 package
-run-name: StartOS 0.4 ${{ inputs.tag }} from release-surfaces ${{ inputs.release_surfaces_run_id }}
+run-name: StartOS 0.4 ${{ inputs.tag }} from release-surfaces ${{ inputs.release_surfaces_run_id }} attempt ${{ inputs.release_surfaces_run_attempt }}
 
 # Builds the StartOS 0.4 (TypeScript-SDK) Blindspark package from startos-0.4/
 # and attaches the sideloadable .s9pk to the GitHub Release.
@@ -27,6 +27,12 @@ on:
         required: true
       release_surfaces_run_id:
         description: Release surfaces run whose successful sync job published the source-bound image/evidence
+        required: true
+      release_surfaces_run_attempt:
+        description: Exact Release surfaces run attempt that uploaded the immutable image authority
+        required: true
+      release_image_authority_artifact_id:
+        description: Exact immutable image-authority Actions artifact uploaded by that run attempt
         required: true
 
 permissions:
@@ -82,64 +88,123 @@ jobs:
           echo "HIVERELAY_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
 
-      - name: Resolve source-bound release image
+      - name: Install cosign verifier
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # Public Release sidecars are mutable and therefore compare-only. Resolve
+      # the image exclusively from the exact run-attempt Actions artifact that
+      # the completed parent sync job uploaded, authenticate its REST record
+      # and ZIP bytes, then export the binding only after the public copies are
+      # byte-identical. The parent can remain in progress because it awaits us.
+      - name: Resolve immutable release image authority
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           EXPECTED_RELEASE_SURFACES_RUN_ID: ${{ inputs.release_surfaces_run_id }}
+          EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT: ${{ inputs.release_surfaces_run_attempt }}
+          EXPECTED_IMAGE_AUTHORITY_ARTIFACT_ID: ${{ inputs.release_image_authority_artifact_id }}
         run: |
           set -euo pipefail
-          evidence_dir="$RUNNER_TEMP/startos-0.4-source-evidence"
+          run_url="https://github.com/$GITHUB_REPOSITORY/actions/runs/$EXPECTED_RELEASE_SURFACES_RUN_ID"
+          run_json="$RUNNER_TEMP/startos-0.4-parent-run.json"
+          run_rest="$RUNNER_TEMP/startos-0.4-parent-run-rest.json"
+          gh run view "$EXPECTED_RELEASE_SURFACES_RUN_ID" \
+            --attempt "$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,attempt,url,workflowName,headSha,headBranch,event,status,conclusion,jobs > "$run_json"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$EXPECTED_RELEASE_SURFACES_RUN_ID/attempts/$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT" \
+            --jq '{workflowPath: .path}' > "$run_rest"
+          jq -s '.[0] + .[1]' "$run_json" "$run_rest" | \
+            node scripts/verify-startos-04-parent-run.mjs \
+              --run-id "$EXPECTED_RELEASE_SURFACES_RUN_ID" \
+              --run-attempt "$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT" \
+              --run-url "$run_url" \
+              --tag "$HIVERELAY_RELEASE_TAG" \
+              --tag-sha "$HIVERELAY_RELEASE_SHA"
+
+          authority_name="release-image-authority-$HIVERELAY_RELEASE_TAG-$EXPECTED_RELEASE_SURFACES_RUN_ID-$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT"
+          artifacts_json="$RUNNER_TEMP/startos-0.4-image-authority-artifacts.json"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$EXPECTED_RELEASE_SURFACES_RUN_ID/artifacts?per_page=100&name=$authority_name" \
+            > "$artifacts_json"
+          selected_env="$RUNNER_TEMP/startos-0.4-image-authority-selected.env"
+          node scripts/select-startos-04-release-image-authority.mjs \
+            --artifacts "$artifacts_json" \
+            --tag "$HIVERELAY_RELEASE_TAG" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --run-id "$EXPECTED_RELEASE_SURFACES_RUN_ID" \
+            --run-attempt "$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT" \
+            --artifact-id "$EXPECTED_IMAGE_AUTHORITY_ARTIFACT_ID" \
+            --github-env "$selected_env"
+          set -a
+          source "$selected_env"
+          set +a
+
+          exact_artifact_json="$RUNNER_TEMP/startos-0.4-image-authority-exact.json"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$HIVERELAY_STARTOS_IMAGE_AUTHORITY_ID" | \
+            jq -ce '{total_count: 1, artifacts: [.]}'> "$exact_artifact_json"
+          exact_env="$RUNNER_TEMP/startos-0.4-image-authority-exact.env"
+          node scripts/select-startos-04-release-image-authority.mjs \
+            --artifacts "$exact_artifact_json" \
+            --tag "$HIVERELAY_RELEASE_TAG" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --run-id "$EXPECTED_RELEASE_SURFACES_RUN_ID" \
+            --run-attempt "$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT" \
+            --artifact-id "$EXPECTED_IMAGE_AUTHORITY_ARTIFACT_ID" \
+            --github-env "$exact_env"
+          cmp --silent "$selected_env" "$exact_env" || {
+            echo "StartOS image-authority artifact metadata changed during resolution." >&2
+            exit 1
+          }
+
+          authority_zip="$RUNNER_TEMP/startos-0.4-image-authority.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$HIVERELAY_STARTOS_IMAGE_AUTHORITY_ID/zip" > "$authority_zip"
+          zip_size="$(wc -c < "$authority_zip" | tr -d ' ')"
+          zip_digest="sha256:$(sha256sum "$authority_zip" | cut -d ' ' -f 1)"
+          if [ "$zip_size" != "$HIVERELAY_STARTOS_IMAGE_AUTHORITY_SIZE" ] || \
+             [ "$zip_digest" != "$HIVERELAY_STARTOS_IMAGE_AUTHORITY_DIGEST" ]; then
+            echo "StartOS image-authority ZIP does not match its exact REST size/digest." >&2
+            exit 1
+          fi
+          zip_entries="$(unzip -Z1 "$authority_zip" | LC_ALL=C sort)"
+          expected_entries="$(printf '%s\n' release-evidence.json release-image-manifest-evidence.json | LC_ALL=C sort)"
+          if [ "$zip_entries" != "$expected_entries" ]; then
+            echo "StartOS image-authority ZIP must contain exactly the two flat evidence files." >&2
+            exit 1
+          fi
+          evidence_dir="$RUNNER_TEMP/startos-0.4-image-authority"
           mkdir -p "$evidence_dir"
-          gh release download "$HIVERELAY_RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern 'release-evidence.json' \
-            --dir "$evidence_dir"
-          gh release download "$HIVERELAY_RELEASE_TAG" \
-            --repo "$GITHUB_REPOSITORY" \
-            --pattern 'release-image-manifest-evidence.json' \
-            --dir "$evidence_dir"
+          unzip -q "$authority_zip" -d "$evidence_dir"
+
+          binding_env="$RUNNER_TEMP/startos-0.4-release-binding.env"
           node scripts/resolve-startos-04-release.mjs \
             --tag "$HIVERELAY_RELEASE_TAG" \
             --tag-sha "$HIVERELAY_RELEASE_SHA" \
             --release-surfaces-run-id "$EXPECTED_RELEASE_SURFACES_RUN_ID" \
+            --release-surfaces-run-attempt "$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT" \
             --release-evidence "$evidence_dir/release-evidence.json" \
             --image-manifest-evidence "$evidence_dir/release-image-manifest-evidence.json" \
-            --github-env "$GITHUB_ENV"
+            --github-env "$binding_env"
+
+          public_dir="$RUNNER_TEMP/startos-0.4-public-checkpoint"
+          mkdir -p "$public_dir"
+          gh release download "$HIVERELAY_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'release-evidence.json' \
+            --pattern 'release-image-manifest-evidence.json' \
+            --dir "$public_dir"
+          cmp --silent "$evidence_dir/release-evidence.json" "$public_dir/release-evidence.json" || {
+            echo "Public release-evidence.json differs from immutable image authority." >&2
+            exit 1
+          }
+          cmp --silent "$evidence_dir/release-image-manifest-evidence.json" "$public_dir/release-image-manifest-evidence.json" || {
+            echo "Public release-image-manifest-evidence.json differs from immutable image authority." >&2
+            exit 1
+          }
+
+          cat "$binding_env" >> "$GITHUB_ENV"
           echo "HIVERELAY_RELEASE_EVIDENCE_PATH=$evidence_dir/release-evidence.json" >> "$GITHUB_ENV"
           echo "HIVERELAY_IMAGE_MANIFEST_EVIDENCE_PATH=$evidence_dir/release-image-manifest-evidence.json" >> "$GITHUB_ENV"
-
-      # The parent workflow awaits this child, so requiring the whole parent
-      # run to be terminal would deadlock. Authenticate the already-terminal
-      # source `sync` job instead; its uploaded evidence is what this child
-      # consumes, while the parent dispatcher remains in progress.
-      - name: Verify release-surfaces sync authority
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          run_json="$(gh run view "$HIVERELAY_RELEASE_SURFACES_RUN_ID" \
-            --attempt "$HIVERELAY_RELEASE_SURFACES_RUN_ATTEMPT" \
-            --repo "$GITHUB_REPOSITORY" \
-            --json databaseId,attempt,url,workflowName,headSha,headBranch,event,jobs)"
-          node -e '
-            const run = JSON.parse(process.argv[1])
-            const expectedId = process.env.HIVERELAY_RELEASE_SURFACES_RUN_ID
-            const expectedAttempt = process.env.HIVERELAY_RELEASE_SURFACES_RUN_ATTEMPT
-            const expectedUrl = `https://github.com/${process.env.GITHUB_REPOSITORY}/actions/runs/${expectedId}`
-            if (String(run.databaseId) !== expectedId) throw new Error(`unexpected source run id: ${run.databaseId}`)
-            if (String(run.attempt) !== expectedAttempt) throw new Error(`unexpected source run attempt: ${run.attempt}`)
-            if (run.url !== expectedUrl) throw new Error(`unexpected source run URL: ${run.url}`)
-            if (run.workflowName !== "Release surfaces") throw new Error(`unexpected source workflow: ${run.workflowName}`)
-            if (run.headSha !== process.env.HIVERELAY_RELEASE_SHA) throw new Error(`unexpected source head SHA: ${run.headSha}`)
-            if (run.headBranch !== process.env.HIVERELAY_RELEASE_TAG) throw new Error(`unexpected source head ref: ${run.headBranch}`)
-            if (!["push", "release", "workflow_dispatch"].includes(run.event)) throw new Error(`unexpected source event: ${run.event}`)
-            const syncJobs = (run.jobs || []).filter(job => job.name === "sync")
-            if (syncJobs.length !== 1) throw new Error(`expected one sync job; got ${syncJobs.length}`)
-            const sync = syncJobs[0]
-            if (sync.status !== "completed" || sync.conclusion !== "success") {
-              throw new Error(`Release surfaces sync job is ${sync.status}/${sync.conclusion}`)
-            }
-          ' "$run_json"
 
       - name: Inspect existing immutable release assets
         env:
@@ -199,9 +264,23 @@ jobs:
       - name: Install authenticated StartOS CLI
         run: bash scripts/install-startos-cli.sh "$RUNNER_TEMP/startos-cli-1.1.0" "$GITHUB_PATH"
 
-      - name: Verify release image source revisions
+      - name: Verify signed release image authority
         run: |
           set -euo pipefail
+          cosign verify --recursive \
+            --certificate-identity "https://github.com/bigdestiny2/P2P-Hiverelay/.github/workflows/release-surfaces.yml@refs/tags/$HIVERELAY_RELEASE_TAG" \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "$HIVERELAY_IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST" >/dev/null
+
+          raw_index="$RUNNER_TEMP/startos-0.4-release-image-index.json"
+          docker buildx imagetools inspect \
+            "$HIVERELAY_IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST" \
+            --raw > "$raw_index"
+          node scripts/verify-startos-04-image-index.mjs \
+            --index-digest "$HIVERELAY_IMAGE_DIGEST" \
+            --amd64-digest "$HIVERELAY_IMAGE_AMD64_DIGEST" \
+            --arm64-digest "$HIVERELAY_IMAGE_ARM64_DIGEST" < "$raw_index"
+
           verify_child() {
             architecture="$1"
             digest="$2"

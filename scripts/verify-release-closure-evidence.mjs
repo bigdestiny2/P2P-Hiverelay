@@ -9,7 +9,9 @@ import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import {
   resolveStartos04ReleaseBinding,
+  selectStartos04ReleaseImageAuthorityArtifact,
   verifyPublishedReleaseClosureEvidence,
+  verifyStartos04ParentRunAuthority,
   verifyStartos04ClosureArtifact,
   verifyStartos04ClosureChildRun
 } from './lib/startos-04-release-evidence.mjs'
@@ -63,8 +65,10 @@ try {
   tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'hiverelay-live-closure-'))
   const liveBundleDir = path.join(tempRoot, 'release')
   const artifactDir = path.join(tempRoot, 'artifact')
+  const imageAuthorityDir = path.join(tempRoot, 'image-authority')
   fs.mkdirSync(liveBundleDir, { mode: 0o700 })
   fs.mkdirSync(artifactDir, { mode: 0o700 })
+  fs.mkdirSync(imageAuthorityDir, { mode: 0o700 })
 
   const live = downloadCurrentReleaseBundle({
     tag: local.binding.tag,
@@ -77,13 +81,49 @@ try {
   }
 
   const liveVerified = verifyBundleStructure(liveBundleDir)
+  if (args.allowInProgressParent) verifyInProgressParentContext(liveVerified.binding)
   const closure = readJson(live.files['release-closure-evidence.json'], 'live release closure evidence')
+  const recordedImageAuthorityId = String(closure?.image?.authority?.id || '')
   const recordedRunId = String(closure?.startos04?.childWorkflow?.runId || '')
   const recordedRunAttempt = String(closure?.startos04?.childWorkflow?.runAttempt || '')
   const recordedArtifactId = String(closure?.startos04?.immutableArtifact?.id || '')
+  requirePattern('recorded StartOS image authority artifact id', recordedImageAuthorityId, RUN_ID_PATTERN)
   requirePattern('recorded StartOS 0.4 child run id', recordedRunId, RUN_ID_PATTERN)
   requirePattern('recorded StartOS 0.4 child run attempt', recordedRunAttempt, RUN_ID_PATTERN)
   requirePattern('recorded StartOS 0.4 child artifact id', recordedArtifactId, RUN_ID_PATTERN)
+
+  const parentRun = readAndVerifyParentRun(liveVerified.binding)
+  const rawImageAuthority = ghJson(`repos/${EXPECTED_REPOSITORY}/actions/artifacts/${recordedImageAuthorityId}`)
+  const imageAuthority = selectStartos04ReleaseImageAuthorityArtifact({
+    response: { total_count: 1, artifacts: [rawImageAuthority] },
+    expectedTag: liveVerified.binding.tag,
+    expectedTagSha: liveVerified.binding.tagSha,
+    expectedRunId: liveVerified.binding.releaseSurfacesRunId,
+    expectedRunAttempt: liveVerified.binding.releaseSurfacesRunAttempt,
+    expectedArtifactId: recordedImageAuthorityId
+  })
+  if (!isDeepStrictEqual(imageAuthority, closure.image.authority)) {
+    throw new Error('Live StartOS image-authority REST identity differs from the published closure certificate')
+  }
+  const imageAuthorityArchive = path.join(tempRoot, 'image-authority.zip')
+  ghDownload(`repos/${EXPECTED_REPOSITORY}/actions/artifacts/${recordedImageAuthorityId}/zip`, imageAuthorityArchive)
+  verifyDownloadedFile(
+    imageAuthorityArchive,
+    imageAuthority.sizeInBytes,
+    imageAuthority.digest,
+    'StartOS release image-authority ZIP'
+  )
+  extractExactImageAuthority(imageAuthorityArchive, imageAuthorityDir)
+  compareRegularFiles(
+    path.join(imageAuthorityDir, 'release-evidence.json'),
+    live.files['release-evidence.json'],
+    'exact immutable image authority matches current release checkpoint evidence'
+  )
+  compareRegularFiles(
+    path.join(imageAuthorityDir, 'release-image-manifest-evidence.json'),
+    live.files['release-image-manifest-evidence.json'],
+    'exact immutable image authority matches current release image-manifest evidence'
+  )
 
   const rawRun = ghJson(`repos/${EXPECTED_REPOSITORY}/actions/runs/${recordedRunId}/attempts/${recordedRunAttempt}`)
   const childRun = verifyStartos04ClosureChildRun({
@@ -125,6 +165,15 @@ try {
     artifactId: recordedArtifactId,
     expectedArtifact: artifact,
     childRun
+  })
+  const terminalParentRun = readAndVerifyParentRun(liveVerified.binding)
+  if (!isDeepStrictEqual(terminalParentRun, parentRun)) {
+    throw new Error('Release-surfaces parent authority changed during live closure verification')
+  }
+  verifyCurrentImageAuthorityRecord({
+    artifactId: recordedImageAuthorityId,
+    expectedArtifact: imageAuthority,
+    binding: liveVerified.binding
   })
   verifyCurrentTagCommit(liveVerified.binding.tag, liveVerified.binding.tagSha)
 
@@ -222,6 +271,61 @@ function verifyCurrentArtifactRecord ({ artifactId, expectedArtifact, childRun }
   }
 }
 
+function verifyCurrentImageAuthorityRecord ({ artifactId, expectedArtifact, binding }) {
+  const rawArtifact = ghJson(`repos/${EXPECTED_REPOSITORY}/actions/artifacts/${artifactId}`)
+  const artifact = selectStartos04ReleaseImageAuthorityArtifact({
+    response: { total_count: 1, artifacts: [rawArtifact] },
+    expectedTag: binding.tag,
+    expectedTagSha: binding.tagSha,
+    expectedRunId: binding.releaseSurfacesRunId,
+    expectedRunAttempt: binding.releaseSurfacesRunAttempt,
+    expectedArtifactId: artifactId
+  })
+  if (!isDeepStrictEqual(artifact, expectedArtifact)) {
+    throw new Error('Live StartOS image-authority REST identity changed during closure verification')
+  }
+}
+
+function readAndVerifyParentRun (binding) {
+  const view = ghRunView(binding.releaseSurfacesRunId, binding.releaseSurfacesRunAttempt)
+  const rest = ghJson(
+    `repos/${EXPECTED_REPOSITORY}/actions/runs/${binding.releaseSurfacesRunId}/attempts/${binding.releaseSurfacesRunAttempt}`
+  )
+  view.workflowPath = rest?.path
+  return verifyStartos04ParentRunAuthority({
+    run: view,
+    expectedRunId: binding.releaseSurfacesRunId,
+    expectedRunAttempt: binding.releaseSurfacesRunAttempt,
+    expectedRunUrl: binding.releaseSurfacesRunUrl,
+    expectedTag: binding.tag,
+    expectedTagSha: binding.tagSha,
+    requireTerminalSuccess: !args.allowInProgressParent
+  })
+}
+
+function verifyInProgressParentContext (binding) {
+  const expected = {
+    GITHUB_ACTIONS: 'true',
+    GITHUB_SERVER_URL: 'https://github.com',
+    GITHUB_REPOSITORY: EXPECTED_REPOSITORY,
+    GITHUB_WORKFLOW: 'Release surfaces',
+    GITHUB_WORKFLOW_REF: `${EXPECTED_REPOSITORY}/.github/workflows/release-surfaces.yml@refs/tags/${binding.tag}`,
+    GITHUB_JOB: 'publish-startos-04-closure',
+    GITHUB_RUN_ID: binding.releaseSurfacesRunId,
+    GITHUB_RUN_ATTEMPT: binding.releaseSurfacesRunAttempt,
+    GITHUB_REF: `refs/tags/${binding.tag}`,
+    GITHUB_SHA: binding.tagSha
+  }
+  for (const [name, value] of Object.entries(expected)) {
+    if (process.env[name] !== value) {
+      throw new Error(
+        '--allow-in-progress-parent is restricted to the exact in-parent closure job; ' +
+        `${name} must be ${JSON.stringify(value)}`
+      )
+    }
+  }
+}
+
 function readCurrentReleaseAssetRecords (releaseId) {
   const pages = ghJson(`repos/${EXPECTED_REPOSITORY}/releases/${releaseId}/assets?per_page=100`, ['--paginate', '--slurp'])
   if (!Array.isArray(pages) || !pages.every(Array.isArray)) {
@@ -279,12 +383,38 @@ function extractExactChildArtifact (archive, outDir) {
   for (const name of expected) regularFile(path.join(outDir, name), `extracted child artifact ${name}`)
 }
 
+function extractExactImageAuthority (archive, outDir) {
+  const listed = runCommand('unzip', ['-Z1', archive]).stdout
+  const entries = listed.split(/\r?\n/).filter(Boolean).sort()
+  const expected = ['release-evidence.json', 'release-image-manifest-evidence.json'].sort()
+  if (!isDeepStrictEqual(entries, expected)) {
+    throw new Error(`StartOS image-authority ZIP entries must be exactly ${expected.join(', ')}`)
+  }
+  runCommand('unzip', ['-q', archive, '-d', outDir])
+  for (const name of expected) regularFile(path.join(outDir, name), `extracted image authority ${name}`)
+}
+
 function ghJson (endpoint, extraArgs = []) {
   const result = runCommand('gh', ['api', ...extraArgs, endpoint])
   try {
     return JSON.parse(result.stdout)
   } catch (err) {
     throw new Error(`GitHub API ${endpoint} returned invalid JSON: ${err.message}`)
+  }
+}
+
+function ghRunView (runId, runAttempt) {
+  const fields = 'databaseId,attempt,url,workflowName,headSha,headBranch,event,status,conclusion,jobs'
+  const result = runCommand('gh', [
+    'run', 'view', runId,
+    '--attempt', runAttempt,
+    '--repo', EXPECTED_REPOSITORY,
+    '--json', fields
+  ])
+  try {
+    return JSON.parse(result.stdout)
+  } catch (err) {
+    throw new Error(`GitHub run view ${runId} attempt ${runAttempt} returned invalid JSON: ${err.message}`)
   }
 }
 
@@ -373,6 +503,10 @@ function parseArgs (argv) {
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--live-github') {
       out.liveGithub = true
+      continue
+    }
+    if (argv[i] === '--allow-in-progress-parent') {
+      out.allowInProgressParent = true
       continue
     }
     if (argv[i] === '--expected-prerelease') {

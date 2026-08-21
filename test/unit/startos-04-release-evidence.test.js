@@ -6,7 +6,9 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
   resolveStartos04ReleaseBinding,
-  selectReusableReleaseImageArtifact
+  selectReusableReleaseImageArtifact,
+  selectStartos04ReleaseImageAuthorityArtifact,
+  verifyStartos04ParentRunAuthority
 } from '../../scripts/lib/startos-04-release-evidence.mjs'
 
 const ROOT = process.cwd()
@@ -31,6 +33,7 @@ test('StartOS 0.4 release resolver binds exact tag, source run, digest, and chil
     '--tag', TAG,
     '--tag-sha', TAG_SHA,
     '--release-surfaces-run-id', '12345',
+    '--release-surfaces-run-attempt', '3',
     '--release-evidence', fixture.releaseEvidence,
     '--image-manifest-evidence', fixture.imageManifestEvidence,
     '--github-env', githubEnv
@@ -46,6 +49,18 @@ test('StartOS 0.4 release resolver binds exact tag, source run, digest, and chil
   t.is(env.HIVERELAY_STARTOS_04_PACKAGE_VERSION, PACKAGE_VERSION)
   t.is(env.HIVERELAY_IMAGE_AMD64_DIGEST, AMD64_DIGEST)
   t.is(env.HIVERELAY_IMAGE_ARM64_DIGEST, ARM64_DIGEST)
+
+  const wrongAttempt = await run('scripts/resolve-startos-04-release.mjs', [
+    '--tag', TAG,
+    '--tag-sha', TAG_SHA,
+    '--release-surfaces-run-id', '12345',
+    '--release-surfaces-run-attempt', '4',
+    '--release-evidence', fixture.releaseEvidence,
+    '--image-manifest-evidence', fixture.imageManifestEvidence,
+    '--github-env', path.join(fixture.dir, 'wrong-attempt-env')
+  ])
+  t.is(wrongAttempt.status, 1)
+  t.ok(wrongAttempt.stderr.includes('source run attempt'))
 })
 
 test('reusable release-image resolver accepts only internally successful exact-tag evidence', async (t) => {
@@ -111,6 +126,247 @@ test('reusable image authority selector binds one immutable exact-source artifac
       expectedTagSha: TAG_SHA
     }), new RegExp(message), message)
   }
+})
+
+test('StartOS image authority selector binds the dispatched run-attempt artifact id and source', async (t) => {
+  const valid = startosImageAuthorityArtifact()
+  const args = {
+    response: { total_count: 1, artifacts: [valid] },
+    expectedTag: TAG,
+    expectedTagSha: TAG_SHA,
+    expectedRunId: '777',
+    expectedRunAttempt: '3',
+    expectedArtifactId: '990'
+  }
+  const selected = selectStartos04ReleaseImageAuthorityArtifact(args)
+  t.is(selected.id, '990')
+  t.is(selected.sourceRunId, '777')
+  t.is(selected.sourceRunAttempt, '3')
+  t.is(selected.digest, valid.digest)
+  const normalized = selectStartos04ReleaseImageAuthorityArtifact({
+    ...args,
+    response: { total_count: 1, artifacts: [selected] }
+  })
+  t.alike(normalized, selected)
+
+  const adversarial = [
+    [{ total_count: 0, artifacts: [] }, 'artifact count'],
+    [{ total_count: 2, artifacts: [valid] }, 'response is incomplete'],
+    [{ total_count: 2, artifacts: [valid, valid] }, 'artifact count'],
+    [{ total_count: 1, artifacts: [{ ...valid, id: 991 }] }, 'artifact id'],
+    [{ total_count: 1, artifacts: [{ ...valid, name: `${valid.name}-decoy` }] }, 'artifact name'],
+    [{ total_count: 1, artifacts: [{ ...valid, expired: true }] }, 'artifact expired'],
+    [{ total_count: 1, artifacts: [{ ...valid, size_in_bytes: 0 }] }, 'artifact size'],
+    [{ total_count: 1, artifacts: [{ ...valid, size_in_bytes: 16 * 1024 * 1024 + 1 }] }, 'artifact size'],
+    [{ total_count: 1, artifacts: [{ ...valid, digest: 'sha256:bad' }] }, 'artifact digest'],
+    [{ total_count: 1, artifacts: [{ ...valid, archive_download_url: 'https://example.com/authority.zip' }] }, 'archive URL'],
+    [{ total_count: 1, artifacts: [{ ...valid, workflow_run: { ...valid.workflow_run, id: 778 } }] }, 'source run id'],
+    [{ total_count: 1, artifacts: [{ ...valid, workflow_run: { ...valid.workflow_run, head_sha: 'f'.repeat(40) } }] }, 'source head SHA'],
+    [{ total_count: 1, artifacts: [{ ...valid, workflow_run: { ...valid.workflow_run, head_branch: `${TAG}-wrong` } }] }, 'source head ref']
+  ]
+  for (const [response, message] of adversarial) {
+    t.exception(
+      () => selectStartos04ReleaseImageAuthorityArtifact({ ...args, response }),
+      new RegExp(message),
+      message
+    )
+  }
+  t.exception(() => selectStartos04ReleaseImageAuthorityArtifact({
+    ...args,
+    response: {
+      total_count: 1,
+      artifacts: [{ ...selected, sourceRunAttempt: '4' }]
+    }
+  }), /source run attempt/)
+  t.exception(() => selectStartos04ReleaseImageAuthorityArtifact({
+    ...args,
+    response: {
+      total_count: 1,
+      artifacts: [{ ...valid, sourceRunId: '777' }]
+    }
+  }), /exactly one complete raw REST or normalized shape/)
+})
+
+test('StartOS parent authority allows an in-progress parent but binds exact successful sync checkpoints', async (t) => {
+  const args = {
+    run: startosParentRun(),
+    expectedRunId: '777',
+    expectedRunAttempt: '3',
+    expectedRunUrl: 'https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/777',
+    expectedTag: TAG,
+    expectedTagSha: TAG_SHA
+  }
+  const accepted = verifyStartos04ParentRunAuthority(args)
+  t.is(accepted.syncConclusion, 'success')
+  t.exception(
+    () => verifyStartos04ParentRunAuthority({ ...args, requireTerminalSuccess: true }),
+    /terminal run status/
+  )
+  const terminal = verifyStartos04ParentRunAuthority({
+    ...args,
+    run: startosParentRun({ status: 'completed', conclusion: 'success' }),
+    requireTerminalSuccess: true
+  })
+  t.is(terminal.runConclusion, 'success')
+  t.exception(
+    () => verifyStartos04ParentRunAuthority({
+      ...args,
+      run: startosParentRun({ status: 'completed', conclusion: 'failure' })
+    }),
+    /completed run conclusion/
+  )
+
+  for (const event of ['release', 'workflow_dispatch']) {
+    t.is(verifyStartos04ParentRunAuthority({ ...args, run: startosParentRun({ event }) }).event, event)
+  }
+
+  const adversarial = [
+    [{ databaseId: 778 }, 'database id'],
+    [{ attempt: 4 }, 'run attempt'],
+    [{ url: `${args.expectedRunUrl}/wrong` }, 'run URL'],
+    [{ workflowName: 'Decoy release' }, 'workflow name'],
+    [{ workflowPath: `.github/workflows/decoy.yml@refs/tags/${TAG}` }, 'workflow path'],
+    [{ workflowPath: '.github/workflows/release-surfaces.yml@refs/heads/main' }, 'workflow path'],
+    [{ workflowPath: `.github/workflows/release-surfaces.yml@refs/tags/${TAG}-wrong` }, 'workflow path'],
+    [{ status: 'queued' }, 'run status'],
+    [{ headSha: 'f'.repeat(40) }, 'head SHA'],
+    [{ headBranch: `${TAG}-wrong` }, 'head ref'],
+    [{ event: 'schedule' }, 'run event'],
+    [{ jobs: [] }, 'sync job count'],
+    [{ jobs: [startosParentSyncJob(), startosParentSyncJob()] }, 'sync job count'],
+    [{ jobs: [startosParentSyncJob({ conclusion: 'failure' })] }, 'sync job conclusion'],
+    [{ jobs: [startosParentSyncJob({ steps: startosParentCheckpointSteps().filter(step => step.name !== 'Upload exact StartOS image authority') })] }, 'checkpoint step Upload exact StartOS image authority count'],
+    [{ jobs: [startosParentSyncJob({ steps: startosParentCheckpointSteps().map(step => step.name === 'Upload immutable reusable image authority' ? { ...step, conclusion: 'failure' } : step) })] }, 'checkpoint step Upload immutable reusable image authority conclusion']
+  ]
+  for (const [override, message] of adversarial) {
+    t.exception(
+      () => verifyStartos04ParentRunAuthority({ ...args, run: startosParentRun(override) }),
+      new RegExp(message),
+      message
+    )
+  }
+})
+
+test('StartOS child rejects image-authority ZIP and mutable public checkpoint drift before env export', async (t) => {
+  const fixture = await evidenceFixture(t, { runId: '777' })
+  const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-startos-image-authority-step-'))
+  t.teardown(() => rm(root, { recursive: true, force: true }))
+  const bin = path.join(root, 'bin')
+  const runnerTemp = path.join(root, 'runner-temp')
+  await Promise.all([mkdir(bin), mkdir(runnerTemp)])
+  const archive = path.join(root, 'authority.zip')
+  const zipped = await exec('zip', ['-q', '-j', archive, fixture.releaseEvidence, fixture.imageManifestEvidence])
+  t.is(zipped.status, 0, zipped.stderr)
+  const archiveStat = await stat(archive)
+  const metadata = startosImageAuthorityArtifact({
+    size_in_bytes: archiveStat.size,
+    digest: `sha256:${sha256(await readFile(archive))}`
+  })
+  const metadataFile = path.join(root, 'artifact.json')
+  const artifactsFile = path.join(root, 'artifacts.json')
+  const parentRun = path.join(root, 'parent-run.json')
+  const parentRest = path.join(root, 'parent-rest.json')
+  const publicRelease = path.join(root, 'public-release-evidence.json')
+  const publicManifest = path.join(root, 'public-image-manifest-evidence.json')
+  const drifted = JSON.parse(await readFile(fixture.releaseEvidence, 'utf8'))
+  drifted.generatedAt = '2099-01-01T00:00:00.000Z'
+  await Promise.all([
+    writeFile(metadataFile, JSON.stringify(metadata) + '\n'),
+    writeFile(artifactsFile, JSON.stringify({ total_count: 1, artifacts: [metadata] }) + '\n'),
+    writeFile(parentRun, JSON.stringify(startosParentRun()) + '\n'),
+    writeFile(parentRest, JSON.stringify({ path: `.github/workflows/release-surfaces.yml@refs/tags/${TAG}` }) + '\n'),
+    writeFile(publicRelease, JSON.stringify(drifted, null, 2) + '\n'),
+    copyFile(fixture.imageManifestEvidence, publicManifest)
+  ])
+  const gh = path.join(bin, 'gh')
+  await writeFile(gh, `#!/bin/sh
+set -eu
+if [ "$1" = run ] && [ "$2" = view ]; then
+  cat "$GH_PARENT_RUN"
+elif [ "$1" = api ]; then
+  case "$2" in
+    *actions/runs/777/attempts/3) cat "$GH_PARENT_REST" ;;
+    *actions/runs/777/artifacts*) cat "$GH_ARTIFACTS" ;;
+    *actions/artifacts/990/zip) cat "$GH_AUTHORITY_ZIP" ;;
+    *actions/artifacts/990) cat "$GH_AUTHORITY_METADATA" ;;
+    *) exit 97 ;;
+  esac
+elif [ "$1" = release ] && [ "$2" = download ]; then
+  out=''
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = --dir ]; then out="$2"; shift 2; continue; fi
+    shift
+  done
+  cp "$GH_PUBLIC_RELEASE" "$out/release-evidence.json"
+  cp "$GH_PUBLIC_MANIFEST" "$out/release-image-manifest-evidence.json"
+else
+  exit 98
+fi
+`)
+  await chmod(gh, 0o755)
+  const githubEnv = path.join(root, 'github-env')
+  const baseEnv = {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH || ''}`,
+    GH_TOKEN: 'test',
+    GITHUB_ENV: githubEnv,
+    GITHUB_REPOSITORY: 'bigdestiny2/P2P-Hiverelay',
+    HIVERELAY_RELEASE_TAG: TAG,
+    HIVERELAY_RELEASE_SHA: TAG_SHA,
+    EXPECTED_RELEASE_SURFACES_RUN_ID: '777',
+    EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT: '3',
+    EXPECTED_IMAGE_AUTHORITY_ARTIFACT_ID: '990',
+    RUNNER_TEMP: runnerTemp,
+    GH_PARENT_RUN: parentRun,
+    GH_PARENT_REST: parentRest,
+    GH_ARTIFACTS: artifactsFile,
+    GH_AUTHORITY_METADATA: metadataFile,
+    GH_AUTHORITY_ZIP: archive,
+    GH_PUBLIC_RELEASE: publicRelease,
+    GH_PUBLIC_MANIFEST: publicManifest
+  }
+  const script = await workflowRunBlock('.github/workflows/release-startos-0.4.yml', 'Resolve immutable release image authority')
+  const publicDrift = await execShellScript(script, baseEnv)
+  t.is(publicDrift.status, 1)
+  t.ok(publicDrift.stderr.includes('Public release-evidence.json differs from immutable image authority'), publicDrift.stderr)
+  t.is(await fileExists(githubEnv), false, 'binding is not exported before public comparison')
+
+  const wrongArchive = path.join(root, 'wrong-inventory.zip')
+  const extra = path.join(root, 'extra.txt')
+  await writeFile(extra, 'decoy')
+  const zippedWrong = await exec('zip', [
+    '-q', '-j', wrongArchive, fixture.releaseEvidence, fixture.imageManifestEvidence, extra
+  ])
+  t.is(zippedWrong.status, 0, zippedWrong.stderr)
+  const wrongStat = await stat(wrongArchive)
+  const wrongMetadata = startosImageAuthorityArtifact({
+    size_in_bytes: wrongStat.size,
+    digest: `sha256:${sha256(await readFile(wrongArchive))}`
+  })
+  await Promise.all([
+    writeFile(metadataFile, JSON.stringify(wrongMetadata) + '\n'),
+    writeFile(artifactsFile, JSON.stringify({ total_count: 1, artifacts: [wrongMetadata] }) + '\n')
+  ])
+  const secondRunnerTemp = path.join(root, 'runner-temp-2')
+  await mkdir(secondRunnerTemp)
+  const wrongInventory = await execShellScript(script, {
+    ...baseEnv,
+    GH_AUTHORITY_ZIP: wrongArchive,
+    RUNNER_TEMP: secondRunnerTemp
+  })
+  t.is(wrongInventory.status, 1)
+  t.ok(wrongInventory.stderr.includes('must contain exactly the two flat evidence files'), wrongInventory.stderr)
+
+  const badDigestMetadata = { ...metadata, digest: `sha256:${'0'.repeat(64)}` }
+  await Promise.all([
+    writeFile(metadataFile, JSON.stringify(badDigestMetadata) + '\n'),
+    writeFile(artifactsFile, JSON.stringify({ total_count: 1, artifacts: [badDigestMetadata] }) + '\n')
+  ])
+  const thirdRunnerTemp = path.join(root, 'runner-temp-3')
+  await mkdir(thirdRunnerTemp)
+  const wrongDigest = await execShellScript(script, { ...baseEnv, RUNNER_TEMP: thirdRunnerTemp })
+  t.is(wrongDigest.status, 1)
+  t.ok(wrongDigest.stderr.includes('does not match its exact REST size/digest'), wrongDigest.stderr)
 })
 
 test('reusable release run verifier binds id, attempt, source, event, and completed checkpoint authority', async (t) => {
@@ -209,7 +465,10 @@ test('signed release image index verifier binds exact raw bytes and platform chi
         digest: `sha256:${'e'.repeat(64)}`,
         size: 100,
         platform: { os: 'unknown', architecture: 'unknown' },
-        annotations: { 'vnd.docker.reference.type': 'attestation-manifest' }
+        annotations: {
+          'vnd.docker.reference.type': 'attestation-manifest',
+          'vnd.docker.reference.digest': AMD64_DIGEST
+        }
       }
     ]
   }
@@ -232,6 +491,26 @@ test('signed release image index verifier binds exact raw bytes and platform chi
   ], wrongRaw)
   t.is(wrongChild.status, 1)
   t.ok(wrongChild.stderr.includes('linux/arm64 child digest'))
+
+  const platformDecoy = structuredClone(index)
+  platformDecoy.manifests.push({
+    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+    digest: `sha256:${'d'.repeat(64)}`,
+    size: 100,
+    platform: { os: 'linux', architecture: 'amd64' },
+    annotations: {
+      'vnd.docker.reference.type': 'attestation-manifest',
+      'vnd.docker.reference.digest': AMD64_DIGEST
+    }
+  })
+  const decoyRaw = Buffer.from(JSON.stringify(platformDecoy))
+  const annotatedDecoy = await runWithInput('scripts/verify-startos-04-image-index.mjs', [
+    '--index-digest', `sha256:${sha256(decoyRaw)}`,
+    '--amd64-digest', AMD64_DIGEST,
+    '--arm64-digest', ARM64_DIGEST
+  ], decoyRaw)
+  t.is(annotatedDecoy.status, 1)
+  t.ok(annotatedDecoy.stderr.includes('attestation platform'))
 
   const substitutedRaw = await runWithInput('scripts/verify-startos-04-image-index.mjs', [
     '--index-digest', `sha256:${'0'.repeat(64)}`,
@@ -384,6 +663,8 @@ test('final release closure binds exact child artifact, independent inspection, 
   const childRun = path.join(fixture.dir, 'child-run.json')
   const artifactMetadata = path.join(fixture.dir, 'child-artifact.json')
   const artifactArchive = path.join(fixture.dir, 'child-artifact.zip')
+  const imageAuthorityMetadata = path.join(fixture.dir, 'image-authority-artifact.json')
+  const imageAuthorityArchive = path.join(fixture.dir, 'image-authority-artifact.zip')
   const zipped = await exec('zip', ['-q', '-j', artifactArchive, copies.artifactPackage, copies.artifactStartosEvidence])
   t.is(zipped.status, 0, zipped.stderr)
   const archiveStat = await stat(artifactArchive)
@@ -393,8 +674,20 @@ test('final release closure binds exact child artifact, independent inspection, 
   })
   await writeFile(childRun, JSON.stringify(successfulStartosChildRun(), null, 2) + '\n')
   await writeFile(artifactMetadata, JSON.stringify(liveArtifact, null, 2) + '\n')
+  const zippedAuthority = await exec('zip', [
+    '-q', '-j', imageAuthorityArchive, fixture.releaseEvidence, fixture.imageManifestEvidence
+  ])
+  t.is(zippedAuthority.status, 0, zippedAuthority.stderr)
+  const authorityStat = await stat(imageAuthorityArchive)
+  const imageAuthority = startosImageAuthorityArtifact({
+    name: `release-image-authority-${TAG}-700-3`,
+    size_in_bytes: authorityStat.size,
+    digest: `sha256:${sha256(await readFile(imageAuthorityArchive))}`,
+    workflow_run: { id: 700, head_sha: TAG_SHA, head_branch: TAG }
+  })
+  await writeFile(imageAuthorityMetadata, JSON.stringify(imageAuthority, null, 2) + '\n')
   const closure = path.join(fixture.dir, 'release-closure-evidence.json')
-  const args = closureArgs(fixture, copies, childRun, artifactMetadata)
+  const args = closureArgs(fixture, copies, childRun, artifactMetadata, imageAuthorityMetadata)
   const written = await run('scripts/write-release-closure-evidence.mjs', [...args, '--out', closure])
   t.is(written.status, 0, written.stderr)
   const verified = await run('scripts/write-release-closure-evidence.mjs', [...args, '--verify', closure])
@@ -404,6 +697,8 @@ test('final release closure binds exact child artifact, independent inspection, 
   t.is(body.status, 'verified-startos-0.4-closure')
   t.is(body.sourceCheckpointEvidence.workflowStatus, 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure')
   t.is(body.sourceCheckpointEvidence.runAttempt, '3')
+  t.is(body.image.authority.id, '990')
+  t.is(body.image.authority.sourceRunAttempt, '3')
   t.is(body.startos04.childWorkflow.runId, '900')
   t.is(body.startos04.immutableArtifact.sourceRunAttempt, '2')
   t.ok(/^[a-f0-9]{64}$/.test(body.startos04.inspectedPackage.commitmentSha256))
@@ -429,7 +724,9 @@ test('final release closure binds exact child artifact, independent inspection, 
     startosEvidence,
     artifactArchive,
     artifactMetadata,
-    childRun
+    childRun,
+    imageAuthorityArchive,
+    imageAuthorityMetadata
   })
   t.is(live.status, 0, live.stderr)
   t.ok(live.stdout.includes('Live GitHub release closure verified'))
@@ -477,6 +774,13 @@ test('final release closure binds exact child artifact, independent inspection, 
   t.is(wrongPath.status, 1)
   t.ok(wrongPath.stderr.includes('child workflow path'))
 
+  const wrongWorkflowRef = successfulStartosChildRun()
+  wrongWorkflowRef.path = '.github/workflows/release-startos-0.4.yml@refs/heads/main'
+  await writeFile(childRun, JSON.stringify(wrongWorkflowRef, null, 2) + '\n')
+  const wrongRef = await run('scripts/write-release-closure-evidence.mjs', [...args, '--out', path.join(fixture.dir, 'wrong-workflow-ref.json')])
+  t.is(wrongRef.status, 1)
+  t.ok(wrongRef.stderr.includes('child workflow path'))
+
   const wrongRun = successfulStartosChildRun()
   wrongRun.head_sha = 'f'.repeat(40)
   await writeFile(childRun, JSON.stringify(wrongRun, null, 2) + '\n')
@@ -492,6 +796,7 @@ test('StartOS 0.4 release resolver rejects source and manifest drift', async (t)
     '--tag', TAG,
     '--tag-sha', 'e'.repeat(40),
     '--release-surfaces-run-id', '444',
+    '--release-surfaces-run-attempt', '3',
     '--release-evidence', fixture.releaseEvidence,
     '--image-manifest-evidence', fixture.imageManifestEvidence,
     '--github-env', githubEnv
@@ -509,6 +814,7 @@ test('StartOS 0.4 release resolver rejects source and manifest drift', async (t)
     '--tag', TAG,
     '--tag-sha', TAG_SHA,
     '--release-surfaces-run-id', '444',
+    '--release-surfaces-run-attempt', '3',
     '--release-evidence', fixture.releaseEvidence,
     '--image-manifest-evidence', fixture.imageManifestEvidence,
     '--github-env', githubEnv
@@ -717,7 +1023,7 @@ function reusableReleaseRun (override = {}) {
     attempt: 2,
     url: 'https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/54321',
     workflowName: 'Release surfaces',
-    workflowPath: '.github/workflows/release-surfaces.yml',
+    workflowPath: `.github/workflows/release-surfaces.yml@refs/tags/${TAG}`,
     headSha: TAG_SHA,
     headBranch: TAG,
     event: 'push',
@@ -748,6 +1054,58 @@ function successfulCheckpointSteps () {
   ].map(name => ({ name, status: 'completed', conclusion: 'success' }))
 }
 
+function startosParentCheckpointSteps () {
+  return [
+    ...successfulCheckpointSteps(),
+    { name: 'Upload immutable reusable image authority', status: 'completed', conclusion: 'success' },
+    { name: 'Upload exact StartOS image authority', status: 'completed', conclusion: 'success' }
+  ]
+}
+
+function startosParentSyncJob (override = {}) {
+  return {
+    name: 'sync',
+    status: 'completed',
+    conclusion: 'success',
+    steps: startosParentCheckpointSteps(),
+    ...override
+  }
+}
+
+function startosParentRun (override = {}) {
+  return {
+    databaseId: 777,
+    attempt: 3,
+    url: 'https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/777',
+    workflowName: 'Release surfaces',
+    workflowPath: `.github/workflows/release-surfaces.yml@refs/tags/${TAG}`,
+    headSha: TAG_SHA,
+    headBranch: TAG,
+    event: 'push',
+    status: 'in_progress',
+    conclusion: '',
+    jobs: [startosParentSyncJob()],
+    ...override
+  }
+}
+
+function startosImageAuthorityArtifact (override = {}) {
+  return {
+    id: 990,
+    name: `release-image-authority-${TAG}-777-3`,
+    size_in_bytes: 4096,
+    digest: `sha256:${'9'.repeat(64)}`,
+    archive_download_url: 'https://api.github.com/repos/bigdestiny2/P2P-Hiverelay/actions/artifacts/990/zip',
+    expired: false,
+    workflow_run: {
+      id: 777,
+      head_sha: TAG_SHA,
+      head_branch: TAG
+    },
+    ...override
+  }
+}
+
 function reusableImageAuthorityArtifact ({
   id,
   runId,
@@ -776,8 +1134,8 @@ function successfulStartosChildRun () {
     run_attempt: 2,
     html_url: 'https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/900',
     name: 'Release StartOS 0.4 package',
-    path: '.github/workflows/release-startos-0.4.yml',
-    display_title: `StartOS 0.4 ${TAG} from release-surfaces 700`,
+    path: `.github/workflows/release-startos-0.4.yml@refs/tags/${TAG}`,
+    display_title: `StartOS 0.4 ${TAG} from release-surfaces 700 attempt 3`,
     head_sha: TAG_SHA,
     head_branch: TAG,
     event: 'workflow_dispatch',
@@ -803,7 +1161,7 @@ function successfulChildArtifact (override = {}) {
   }
 }
 
-function closureArgs (fixture, copies, childRun, artifactMetadata) {
+function closureArgs (fixture, copies, childRun, artifactMetadata, imageAuthorityMetadata) {
   return [
     '--tag', TAG,
     '--tag-sha', TAG_SHA,
@@ -818,7 +1176,9 @@ function closureArgs (fixture, copies, childRun, artifactMetadata) {
     '--manifest', fixture.manifest,
     '--child-run', childRun,
     '--child-run-id', '900',
-    '--artifact-metadata', artifactMetadata
+    '--artifact-metadata', artifactMetadata,
+    '--image-authority-metadata', imageAuthorityMetadata,
+    '--image-authority-artifact-id', '990'
   ]
 }
 
@@ -826,7 +1186,9 @@ async function liveClosureFixture (t, {
   bundleDir,
   artifactArchive,
   artifactMetadata,
-  childRun
+  childRun,
+  imageAuthorityArchive,
+  imageAuthorityMetadata
 }) {
   const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-live-closure-api-'))
   t.teardown(() => rm(root, { recursive: true, force: true }))
@@ -836,6 +1198,8 @@ async function liveClosureFixture (t, {
   const tagRef = path.join(root, 'tag-ref.json')
   const tagObject = path.join(root, 'tag-object.json')
   const assets = path.join(root, 'assets.json')
+  const parentRunView = path.join(root, 'parent-run-view.json')
+  const parentRunRest = path.join(root, 'parent-run-rest.json')
   const assetSources = {
     1001: path.join(bundleDir, 'release-evidence.json'),
     1002: path.join(bundleDir, 'release-image-manifest-evidence.json'),
@@ -872,7 +1236,14 @@ async function liveClosureFixture (t, {
     writeFile(tagObject, JSON.stringify({
       object: { type: 'commit', sha: TAG_SHA }
     }) + '\n'),
-    writeFile(assets, JSON.stringify([records]) + '\n')
+    writeFile(assets, JSON.stringify([records]) + '\n'),
+    writeFile(parentRunView, JSON.stringify(startosParentRun({
+      databaseId: 700,
+      url: 'https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/700',
+      status: 'completed',
+      conclusion: 'success'
+    })) + '\n'),
+    writeFile(parentRunRest, JSON.stringify({ path: `.github/workflows/release-surfaces.yml@refs/tags/${TAG}` }) + '\n')
   ])
 
   const gh = path.join(bin, 'gh')
@@ -881,7 +1252,25 @@ set -eu
 if [ "\${GH_TEST_HANG:-0}" = 1 ]; then
   exec sleep 2
 fi
+if [ "$1" = run ] && [ "$2" = view ] && [ "$3" = 700 ]; then
+  cat "$GH_PARENT_RUN_VIEW"
+  exit 0
+fi
 case "$*" in
+  *actions/runs/700/attempts/3*) cat "$GH_PARENT_RUN_REST" ;;
+  *actions/artifacts/990/zip*) cat "$GH_IMAGE_AUTHORITY_ARCHIVE" ;;
+  *actions/artifacts/990*)
+    if [ -n "\${GH_IMAGE_AUTHORITY_METADATA_AFTER:-}" ]; then
+      if [ -e "$GH_IMAGE_AUTHORITY_METADATA_MARKER" ]; then
+        cat "$GH_IMAGE_AUTHORITY_METADATA_AFTER"
+      else
+        : > "$GH_IMAGE_AUTHORITY_METADATA_MARKER"
+        cat "$GH_IMAGE_AUTHORITY_METADATA"
+      fi
+    else
+      cat "$GH_IMAGE_AUTHORITY_METADATA"
+    fi
+    ;;
   *actions/runs/900/attempts/2*) cat "$GH_CHILD_RUN" ;;
   *actions/artifacts/901/zip*) cat "$GH_ARTIFACT_ARCHIVE" ;;
   *actions/artifacts/901*)
@@ -925,6 +1314,10 @@ esac
     GITHUB_REPOSITORY: 'bigdestiny2/P2P-Hiverelay',
     PATH: `${bin}:${process.env.PATH || ''}`,
     GH_CHILD_RUN: childRun,
+    GH_PARENT_RUN_VIEW: parentRunView,
+    GH_PARENT_RUN_REST: parentRunRest,
+    GH_IMAGE_AUTHORITY_ARCHIVE: imageAuthorityArchive,
+    GH_IMAGE_AUTHORITY_METADATA: imageAuthorityMetadata,
     GH_ARTIFACT_ARCHIVE: artifactArchive,
     GH_ARTIFACT_METADATA: artifactMetadata,
     GH_RELEASE_JSON: release,
@@ -942,6 +1335,38 @@ esac
     ['--bundle-dir', bundleDir, '--live-github'],
     env
   )
+
+  const inProgressParent = path.join(root, 'in-progress-parent.json')
+  await writeFile(inProgressParent, JSON.stringify(startosParentRun({
+    databaseId: 700,
+    url: 'https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/700'
+  })) + '\n')
+  const unboundedInProgress = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github', '--allow-in-progress-parent'],
+    { ...env, GH_PARENT_RUN_VIEW: inProgressParent }
+  )
+  t.is(unboundedInProgress.status, 1)
+  t.ok(unboundedInProgress.stderr.includes('restricted to the exact in-parent closure job'))
+  const boundedInProgress = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github', '--allow-in-progress-parent'],
+    {
+      ...env,
+      GH_PARENT_RUN_VIEW: inProgressParent,
+      GITHUB_ACTIONS: 'true',
+      GITHUB_SERVER_URL: 'https://github.com',
+      GITHUB_REPOSITORY: 'bigdestiny2/P2P-Hiverelay',
+      GITHUB_WORKFLOW: 'Release surfaces',
+      GITHUB_WORKFLOW_REF: `bigdestiny2/P2P-Hiverelay/.github/workflows/release-surfaces.yml@refs/tags/${TAG}`,
+      GITHUB_JOB: 'publish-startos-04-closure',
+      GITHUB_RUN_ID: '700',
+      GITHUB_RUN_ATTEMPT: '3',
+      GITHUB_REF: `refs/tags/${TAG}`,
+      GITHUB_SHA: TAG_SHA
+    }
+  )
+  t.is(boundedInProgress.status, 0, boundedInProgress.stderr)
 
   const stablePolicy = await run(
     'scripts/verify-release-closure-evidence.mjs',
@@ -989,6 +1414,31 @@ esac
   )
   t.is(substituted.status, 1)
   t.ok(substituted.stderr.includes('artifact ZIP size') || substituted.stderr.includes('artifact ZIP digest'))
+
+  const substitutedAuthorityArchive = path.join(root, 'substituted-image-authority.zip')
+  await writeFile(substitutedAuthorityArchive, 'not the parent REST digest-bound image authority')
+  const substitutedAuthority = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    { ...env, GH_IMAGE_AUTHORITY_ARCHIVE: substitutedAuthorityArchive }
+  )
+  t.is(substitutedAuthority.status, 1)
+  t.ok(substitutedAuthority.stderr.includes('image-authority ZIP size') || substitutedAuthority.stderr.includes('image-authority ZIP digest'))
+
+  const failedParent = path.join(root, 'failed-parent.json')
+  await writeFile(failedParent, JSON.stringify(startosParentRun({
+    databaseId: 700,
+    url: 'https://github.com/bigdestiny2/P2P-Hiverelay/actions/runs/700',
+    status: 'completed',
+    conclusion: 'failure'
+  })) + '\n')
+  const terminalFailure = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    { ...env, GH_PARENT_RUN_VIEW: failedParent }
+  )
+  t.is(terminalFailure.status, 1)
+  t.ok(terminalFailure.stderr.includes('completed run conclusion'))
 
   const wrongRun = path.join(root, 'wrong-run.json')
   await writeFile(wrongRun, JSON.stringify({ ...successfulStartosChildRun(), head_sha: 'f'.repeat(40) }) + '\n')
@@ -1049,6 +1499,21 @@ esac
   t.is(changedArtifact.status, 1)
   t.ok(changedArtifact.stderr.includes('not be expired'))
 
+  const expiredImageAuthority = path.join(root, 'expired-image-authority.json')
+  const currentImageAuthority = JSON.parse(await readFile(imageAuthorityMetadata, 'utf8'))
+  await writeFile(expiredImageAuthority, JSON.stringify({ ...currentImageAuthority, expired: true }) + '\n')
+  const changedImageAuthority = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    {
+      ...env,
+      GH_IMAGE_AUTHORITY_METADATA_AFTER: expiredImageAuthority,
+      GH_IMAGE_AUTHORITY_METADATA_MARKER: path.join(root, 'image-authority-expired')
+    }
+  )
+  t.is(changedImageAuthority.status, 1)
+  t.ok(changedImageAuthority.stderr.includes('artifact expired'))
+
   return accepted
 }
 
@@ -1073,6 +1538,36 @@ function exec (command, args, env = {}) {
       resolve({ status: err && typeof err.code === 'number' ? err.code : 0, stdout, stderr })
     })
   })
+}
+
+function execShellScript (script, env) {
+  return new Promise((resolve) => {
+    execFile('/bin/bash', ['-c', script], { cwd: ROOT, env, timeout: 10000 }, (err, stdout, stderr) => {
+      resolve({ status: err && typeof err.code === 'number' ? err.code : 0, stdout, stderr })
+    })
+  })
+}
+
+async function workflowRunBlock (workflowFile, stepName) {
+  const workflow = await readFile(path.join(ROOT, workflowFile), 'utf8')
+  const start = workflow.indexOf(`      - name: ${stepName}`)
+  const next = workflow.indexOf('\n      - name:', start + 1)
+  const step = workflow.slice(start, next)
+  const marker = '        run: |\n'
+  const runStart = step.indexOf(marker)
+  if (start < 0 || next < 0 || runStart < 0) throw new Error(`${stepName} run block is missing`)
+  const lines = step.slice(runStart + marker.length).split('\n')
+  const boundary = lines.findIndex(line => line !== '' && !line.startsWith('          '))
+  return lines.slice(0, boundary < 0 ? undefined : boundary).join('\n').replace(/^ {10}/gm, '') + '\n'
+}
+
+async function fileExists (file) {
+  try {
+    await stat(file)
+    return true
+  } catch {
+    return false
+  }
 }
 
 function runWithInput (script, args, input) {

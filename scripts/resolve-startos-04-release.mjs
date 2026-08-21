@@ -16,6 +16,7 @@ try {
     tag: required(args, 'tag'),
     tagSha: required(args, 'tagSha'),
     releaseSurfacesRunId: required(args, 'releaseSurfacesRunId'),
+    expectedReleaseSurfacesRunAttempt: required(args, 'releaseSurfacesRunAttempt'),
     releaseEvidencePath: required(args, 'releaseEvidence'),
     imageManifestEvidencePath: required(args, 'imageManifestEvidence')
   })
@@ -40,6 +41,7 @@ function parseArgs (argv) {
     ['--tag', 'tag'],
     ['--tag-sha', 'tagSha'],
     ['--release-surfaces-run-id', 'releaseSurfacesRunId'],
+    ['--release-surfaces-run-attempt', 'releaseSurfacesRunAttempt'],
     ['--release-evidence', 'releaseEvidence'],
     ['--image-manifest-evidence', 'imageManifestEvidence'],
     ['--github-env', 'githubEnv']

@@ -44,6 +44,11 @@ const REUSABLE_RELEASE_CHECKPOINT_STEPS = Object.freeze([
   'Write release evidence',
   'Verify release evidence'
 ])
+const STARTOS_04_PARENT_CHECKPOINT_STEPS = Object.freeze([
+  ...REUSABLE_RELEASE_CHECKPOINT_STEPS,
+  'Upload immutable reusable image authority',
+  'Upload exact StartOS image authority'
+])
 const MAX_JSON_BYTES = 2 * 1024 * 1024
 const MAX_REUSABLE_IMAGE_ARTIFACT_BYTES = 16 * 1024 * 1024
 const MAX_PACKAGE_BYTES = 4 * 1024 * 1024 * 1024
@@ -56,6 +61,7 @@ export function resolveStartos04ReleaseBinding ({
   tag,
   tagSha,
   releaseSurfacesRunId,
+  expectedReleaseSurfacesRunAttempt,
   releaseEvidencePath,
   imageManifestEvidencePath
 }) {
@@ -115,6 +121,14 @@ export function resolveStartos04ReleaseBinding ({
   requireEqual('release evidence source run id', String(releaseEvidence.release?.workflow?.runId || ''), releaseSurfacesRunId)
   const releaseSurfacesRunAttempt = String(releaseEvidence.release?.workflow?.runAttempt || '')
   requirePattern('release evidence source run attempt', releaseSurfacesRunAttempt, RUN_ID_PATTERN)
+  if (expectedReleaseSurfacesRunAttempt !== undefined) {
+    requirePattern('expected release-surfaces run attempt', expectedReleaseSurfacesRunAttempt, RUN_ID_PATTERN)
+    requireEqual(
+      'release evidence source run attempt',
+      releaseSurfacesRunAttempt,
+      expectedReleaseSurfacesRunAttempt
+    )
+  }
   requireEqual(
     'release evidence source run URL',
     releaseEvidence.release?.workflow?.runUrl,
@@ -194,6 +208,158 @@ export function resolveStartos04ReleaseBinding ({
   }
 }
 
+// The StartOS child is awaited by the parent workflow. Authenticate the exact
+// completed sync job and its immutable image-authority checkpoint while
+// deliberately allowing the overall parent run to remain in progress.
+export function verifyStartos04ParentRunAuthority ({
+  run,
+  expectedRunId,
+  expectedRunAttempt,
+  expectedRunUrl,
+  expectedTag,
+  expectedTagSha,
+  requireTerminalSuccess = false
+}) {
+  requirePattern('StartOS parent run id', expectedRunId, RUN_ID_PATTERN)
+  requirePattern('StartOS parent run attempt', expectedRunAttempt, RUN_ID_PATTERN)
+  requireEqual(
+    'StartOS parent run URL',
+    expectedRunUrl,
+    `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/${expectedRunId}`
+  )
+  requirePattern('StartOS parent release tag', expectedTag, TAG_PATTERN)
+  requirePattern('StartOS parent release tag SHA', expectedTagSha, SHA_PATTERN)
+  requireEqual('StartOS parent run database id', String(run?.databaseId || ''), expectedRunId)
+  requireEqual(
+    'StartOS parent run attempt',
+    String(run?.attempt ?? run?.run_attempt ?? run?.runAttempt ?? ''),
+    expectedRunAttempt
+  )
+  requireEqual('StartOS parent run URL', run?.url, expectedRunUrl)
+  requireEqual('StartOS parent workflow name', run?.workflowName, 'Release surfaces')
+  requireTaggedWorkflowPath(
+    'StartOS parent workflow path',
+    run?.workflowPath ?? run?.path,
+    '.github/workflows/release-surfaces.yml',
+    expectedTag
+  )
+  if (!['in_progress', 'completed'].includes(run?.status)) {
+    fail(`StartOS parent run status must be in_progress or completed; got ${JSON.stringify(run?.status)}`)
+  }
+  if (run.status === 'completed') {
+    requireEqual('StartOS parent completed run conclusion', run?.conclusion, 'success')
+  }
+  if (requireTerminalSuccess) {
+    requireEqual('StartOS parent terminal run status', run?.status, 'completed')
+  }
+  requireEqual('StartOS parent run head SHA', run?.headSha, expectedTagSha)
+  requireEqual('StartOS parent run head ref', run?.headBranch, expectedTag)
+  if (!ACCEPTED_RELEASE_EVENTS.has(run?.event)) {
+    fail(`StartOS parent run event must be one of ${JSON.stringify([...ACCEPTED_RELEASE_EVENTS])}; got ${JSON.stringify(run?.event)}`)
+  }
+  const jobs = Array.isArray(run?.jobs) ? run.jobs : []
+  const syncJobs = jobs.filter(job => job?.name === 'sync')
+  requireEqual('StartOS parent sync job count', syncJobs.length, 1)
+  const sync = syncJobs[0]
+  requireEqual('StartOS parent sync job status', sync?.status, 'completed')
+  requireEqual('StartOS parent sync job conclusion', sync?.conclusion, 'success')
+  const steps = Array.isArray(sync?.steps) ? sync.steps : []
+  for (const expectedStep of STARTOS_04_PARENT_CHECKPOINT_STEPS) {
+    const matches = steps.filter(step => step?.name === expectedStep)
+    requireEqual(`StartOS parent checkpoint step ${expectedStep} count`, matches.length, 1)
+    requireEqual(`StartOS parent checkpoint step ${expectedStep} status`, matches[0]?.status, 'completed')
+    requireEqual(`StartOS parent checkpoint step ${expectedStep} conclusion`, matches[0]?.conclusion, 'success')
+  }
+  return {
+    runId: expectedRunId,
+    runAttempt: expectedRunAttempt,
+    runUrl: expectedRunUrl,
+    tag: expectedTag,
+    tagSha: expectedTagSha,
+    event: run.event,
+    runStatus: run.status,
+    runConclusion: run.conclusion ?? '',
+    syncConclusion: sync.conclusion
+  }
+}
+
+export function selectStartos04ReleaseImageAuthorityArtifact ({
+  response,
+  expectedTag,
+  expectedTagSha,
+  expectedRunId,
+  expectedRunAttempt,
+  expectedArtifactId
+}) {
+  requirePattern('StartOS image authority tag', expectedTag, TAG_PATTERN)
+  requirePattern('StartOS image authority tag SHA', expectedTagSha, SHA_PATTERN)
+  requirePattern('StartOS image authority run id', expectedRunId, RUN_ID_PATTERN)
+  requirePattern('StartOS image authority run attempt', expectedRunAttempt, RUN_ID_PATTERN)
+  requirePattern('StartOS image authority expected artifact id', expectedArtifactId, RUN_ID_PATTERN)
+  if (!response || typeof response !== 'object' || Array.isArray(response)) {
+    fail('StartOS image authority artifact response must be an object')
+  }
+  const artifacts = response.artifacts
+  const totalCount = response.total_count
+  if (!Array.isArray(artifacts) || !Number.isSafeInteger(totalCount) || totalCount < 0) {
+    fail('StartOS image authority artifact response has malformed artifacts or total_count')
+  }
+  if (totalCount !== artifacts.length) {
+    fail(`StartOS image authority artifact response is incomplete: total_count=${totalCount}, returned=${artifacts.length}`)
+  }
+  const expectedName = `release-image-authority-${expectedTag}-${expectedRunId}-${expectedRunAttempt}`
+  requireEqual('StartOS image authority artifact count', artifacts.length, 1)
+  const artifact = artifacts[0]
+  const hasRawShape = ['workflow_run', 'size_in_bytes', 'archive_download_url'].some(key => Object.hasOwn(artifact || {}, key))
+  const hasNormalizedShape = [
+    'sourceRunId',
+    'sourceRunAttempt',
+    'sourceHeadSha',
+    'sourceHeadRef',
+    'sizeInBytes',
+    'archiveUrl'
+  ].some(key => Object.hasOwn(artifact || {}, key))
+  if (hasRawShape === hasNormalizedShape) {
+    fail('StartOS image authority artifact must use exactly one complete raw REST or normalized shape')
+  }
+  const id = String(artifact?.id || '')
+  const sourceRunId = String(hasRawShape ? artifact?.workflow_run?.id ?? '' : artifact?.sourceRunId ?? '')
+  const sourceHeadSha = hasRawShape ? artifact?.workflow_run?.head_sha : artifact?.sourceHeadSha
+  const sourceHeadRef = hasRawShape ? artifact?.workflow_run?.head_branch : artifact?.sourceHeadRef
+  const sourceRunAttempt = String(hasRawShape ? expectedRunAttempt : artifact?.sourceRunAttempt ?? '')
+  const size = hasRawShape ? artifact?.size_in_bytes : artifact?.sizeInBytes
+  const archiveUrl = hasRawShape ? artifact?.archive_download_url : artifact?.archiveUrl
+  requirePattern('StartOS image authority artifact id', id, RUN_ID_PATTERN)
+  requireEqual('StartOS image authority artifact id', id, expectedArtifactId)
+  requireEqual('StartOS image authority artifact name', artifact?.name, expectedName)
+  requireEqual('StartOS image authority artifact expired', artifact?.expired, false)
+  if (!Number.isSafeInteger(size) || size < 1 || size > MAX_REUSABLE_IMAGE_ARTIFACT_BYTES) {
+    fail(`StartOS image authority artifact size must be between 1 and ${MAX_REUSABLE_IMAGE_ARTIFACT_BYTES} bytes`)
+  }
+  requirePattern('StartOS image authority artifact digest', artifact?.digest, DIGEST_PATTERN)
+  requireEqual(
+    'StartOS image authority artifact archive URL',
+    archiveUrl,
+    `https://api.github.com/repos/${EXPECTED_REPOSITORY}/actions/artifacts/${id}/zip`
+  )
+  requireEqual('StartOS image authority artifact source run id', sourceRunId, expectedRunId)
+  requireEqual('StartOS image authority artifact source run attempt', sourceRunAttempt, expectedRunAttempt)
+  requireEqual('StartOS image authority artifact source head SHA', sourceHeadSha, expectedTagSha)
+  requireEqual('StartOS image authority artifact source head ref', sourceHeadRef, expectedTag)
+  return {
+    id,
+    name: expectedName,
+    digest: artifact.digest,
+    sizeInBytes: size,
+    archiveUrl,
+    sourceRunId,
+    sourceRunAttempt,
+    sourceHeadRef,
+    sourceHeadSha,
+    expired: false
+  }
+}
+
 export function verifyReusableReleaseRunAuthority ({
   run,
   expectedRunId,
@@ -219,7 +385,12 @@ export function verifyReusableReleaseRunAuthority ({
   )
   requireEqual('reusable release run URL', run?.url, expectedRunUrl)
   requireEqual('reusable release workflow name', run?.workflowName, 'Release surfaces')
-  requireEqual('reusable release workflow path', run?.workflowPath ?? run?.path, '.github/workflows/release-surfaces.yml')
+  requireTaggedWorkflowPath(
+    'reusable release workflow path',
+    run?.workflowPath ?? run?.path,
+    '.github/workflows/release-surfaces.yml',
+    expectedTag
+  )
   requireEqual('reusable release run status', run?.status, 'completed')
   requireEqual('reusable release run head SHA', run?.headSha, expectedTagSha)
   requireEqual('reusable release run head ref', run?.headBranch, expectedTag)
@@ -359,7 +530,20 @@ export function verifyStartos04ImageIndex ({ raw, expectedDigest, expectedAmd64D
   ])
   const observed = new Map()
   for (const entry of index.manifests) {
-    if (entry?.annotations?.['vnd.docker.reference.type'] === 'attestation-manifest') continue
+    if (entry?.annotations?.['vnd.docker.reference.type'] === 'attestation-manifest') {
+      const label = `${entry?.platform?.os || ''}/${entry?.platform?.architecture || ''}`
+      requireEqual('release image attestation platform', label, 'unknown/unknown')
+      if (!IMAGE_MANIFEST_MEDIA_TYPES.has(entry?.mediaType)) {
+        fail(`release image attestation media type is unsupported: ${JSON.stringify(entry?.mediaType)}`)
+      }
+      requirePattern('release image attestation digest', entry?.digest, DIGEST_PATTERN)
+      const subject = entry?.annotations?.['vnd.docker.reference.digest']
+      requirePattern('release image attestation subject digest', subject, DIGEST_PATTERN)
+      if (![expectedAmd64Digest, expectedArm64Digest].includes(subject)) {
+        fail(`release image attestation subject digest is not a required platform child: ${JSON.stringify(subject)}`)
+      }
+      continue
+    }
     const label = `${entry?.platform?.os || ''}/${entry?.platform?.architecture || ''}`
     if (!required.has(label)) fail(`release image raw index has unexpected runnable platform ${label}`)
     if (observed.has(label)) fail(`release image raw index has duplicate platform ${label}`)
@@ -596,11 +780,16 @@ export function verifyStartos04ClosureChildRun ({ run, expectedChildRunId, bindi
     `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/${expectedChildRunId}`
   )
   requireEqual('StartOS 0.4 child workflow name', workflowName, 'Release StartOS 0.4 package')
-  requireEqual('StartOS 0.4 child workflow path', workflowPath, '.github/workflows/release-startos-0.4.yml')
+  const canonicalWorkflowPath = requireTaggedWorkflowPath(
+    'StartOS 0.4 child workflow path',
+    workflowPath,
+    '.github/workflows/release-startos-0.4.yml',
+    binding.tag
+  )
   requireEqual(
     'StartOS 0.4 child display title',
     displayTitle,
-    `StartOS 0.4 ${binding.tag} from release-surfaces ${binding.releaseSurfacesRunId}`
+    `StartOS 0.4 ${binding.tag} from release-surfaces ${binding.releaseSurfacesRunId} attempt ${binding.releaseSurfacesRunAttempt}`
   )
   requireEqual('StartOS 0.4 child head SHA', headSha, binding.tagSha)
   requireEqual('StartOS 0.4 child head ref', headRef, binding.tag)
@@ -609,7 +798,7 @@ export function verifyStartos04ClosureChildRun ({ run, expectedChildRunId, bindi
   requireEqual('StartOS 0.4 child conclusion', run?.conclusion, 'success')
   return {
     workflowName: 'Release StartOS 0.4 package',
-    workflowPath,
+    workflowPath: canonicalWorkflowPath,
     displayTitle,
     runId,
     runAttempt,
@@ -675,7 +864,9 @@ export function buildReleaseClosureEvidence ({
   packageManifestPath,
   childRun,
   childRunId,
-  artifact
+  artifact,
+  imageAuthorityArtifact,
+  imageAuthorityArtifactId
 }) {
   const inspection = verifyInspectedStartos04ReleaseAssets({
     evidencePath: artifactStartosEvidencePath,
@@ -683,6 +874,14 @@ export function buildReleaseClosureEvidence ({
     packagePath: artifactPackagePath,
     commitmentPath,
     packageManifestPath
+  })
+  const imageAuthority = selectStartos04ReleaseImageAuthorityArtifact({
+    response: { total_count: 1, artifacts: [imageAuthorityArtifact] },
+    expectedTag: binding.tag,
+    expectedTagSha: binding.tagSha,
+    expectedRunId: binding.releaseSurfacesRunId,
+    expectedRunAttempt: binding.releaseSurfacesRunAttempt,
+    expectedArtifactId: imageAuthorityArtifactId
   })
   return buildReleaseClosureEvidenceBody({
     binding,
@@ -694,7 +893,8 @@ export function buildReleaseClosureEvidence ({
     releaseStartosEvidencePath,
     inspection,
     childRun: verifyStartos04ClosureChildRun({ run: childRun, expectedChildRunId: childRunId, binding }),
-    artifact
+    artifact,
+    imageAuthority
   })
 }
 
@@ -708,7 +908,8 @@ function buildReleaseClosureEvidenceBody ({
   releaseStartosEvidencePath,
   inspection,
   childRun,
-  artifact
+  artifact,
+  imageAuthority
 }) {
   const immutableArtifact = verifyStartos04ClosureArtifact({ artifact, childRun })
   const releaseEvidence = verifyPublishedStartos04ReleaseAssets({
@@ -757,6 +958,7 @@ function buildReleaseClosureEvidenceBody ({
     image: {
       ref: binding.imageRef,
       digest: binding.imageDigest,
+      authority: imageAuthority,
       manifestEvidence: {
         name: 'release-image-manifest-evidence.json',
         sha256: sha256File(imageManifestEvidencePath, 'release image manifest evidence', MAX_JSON_BYTES)
@@ -843,7 +1045,15 @@ export function verifyPublishedReleaseClosureEvidence ({
       expectedChildRunId: String(actual?.startos04?.childWorkflow?.runId || ''),
       binding
     }),
-    artifact: actual?.startos04?.immutableArtifact
+    artifact: actual?.startos04?.immutableArtifact,
+    imageAuthority: selectStartos04ReleaseImageAuthorityArtifact({
+      response: { total_count: 1, artifacts: [actual?.image?.authority] },
+      expectedTag: binding.tag,
+      expectedTagSha: binding.tagSha,
+      expectedRunId: binding.releaseSurfacesRunId,
+      expectedRunAttempt: binding.releaseSurfacesRunAttempt,
+      expectedArtifactId: String(actual?.image?.authority?.id || '')
+    })
   })
   if (!isDeepStrictEqual(actual, expected)) {
     fail('Published release closure evidence does not match the source checkpoint, current release assets, and recorded immutable child artifact')
@@ -922,6 +1132,20 @@ function sha256 (value) {
 function requirePattern (label, value, pattern) {
   if (typeof value === 'string' && pattern.test(value)) return
   fail(`${label} is required and malformed; got ${JSON.stringify(value)}`)
+}
+
+function requireTaggedWorkflowPath (label, actual, expectedPath, expectedTag) {
+  requirePattern(`${label} release tag`, expectedTag, TAG_PATTERN)
+  const canonical = `${expectedPath}@refs/tags/${expectedTag}`
+  if (
+    actual === expectedPath ||
+    actual === `${expectedPath}@${expectedTag}` ||
+    actual === canonical
+  ) return canonical
+  fail(
+    `${label} must be ${JSON.stringify(expectedPath)} at exact tag ${JSON.stringify(expectedTag)}; ` +
+    `got ${JSON.stringify(actual)}`
+  )
 }
 
 function requireEqual (label, actual, expected) {

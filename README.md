@@ -1070,10 +1070,13 @@ packaging format alongside the 0.3.5.x package above. GitHub Releases expose it
 as `blindspark-startos-0.4.s9pk`; the legacy package keeps the existing
 `blindspark.s9pk` asset name. The 0.4 package is dispatched only after the main
 release's source job succeeds, is pinned to that run's exact source-bound
-multi-arch digest, and is paired with immutable
+multi-arch digest through a run/attempt-named, REST-digest-bound Actions
+artifact whose keyless signature and raw index membership are verified before
+the package build, and is paired with immutable
 `startos-0.4-release-evidence.json` handoff evidence. The parent waits for the
-child and verifies those published closure assets before it can report
-success.
+child. Its closure certificate records and live-rechecks both the parent image
+authority and child package artifacts before it can report success; stable/GA
+also requires the exact parent attempt to have completed successfully.
 
 ### TrueNAS
 

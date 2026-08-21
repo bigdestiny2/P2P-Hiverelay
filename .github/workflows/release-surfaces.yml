@@ -56,6 +56,7 @@ jobs:
       version: ${{ steps.rel.outputs.version }}
       is_branch_candidate: ${{ steps.rel.outputs.is_branch_candidate }}
       release_sha: ${{ steps.source.outputs.release_sha }}
+      startos_image_authority_artifact_id: ${{ steps.startos_image_authority.outputs.artifact-id }}
     env:
       UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
       UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
@@ -702,7 +703,11 @@ jobs:
             --arg ref "${{ steps.rel.outputs.version }}" '
               (.id | tostring) == $run_id and
               .name == "Release surfaces" and
-              .path == ".github/workflows/release-surfaces.yml" and
+              (
+                .path == ".github/workflows/release-surfaces.yml" or
+                .path == (".github/workflows/release-surfaces.yml@" + $ref) or
+                .path == (".github/workflows/release-surfaces.yml@refs/tags/" + $ref)
+              ) and
               .head_sha == $sha and
               .head_branch == $ref and
               (.event == "push" or .event == "release" or .event == "workflow_dispatch")
@@ -1326,6 +1331,21 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
+      # The fixed-name artifact above is the parent retry pointer. The exact
+      # run+attempt archive below is the immutable authority consumed by the
+      # awaited StartOS child; public Release JSON is compare-only.
+      - name: Upload exact StartOS image authority
+        id: startos_image_authority
+        if: ${{ success() && steps.rel.outputs.is_branch_candidate != 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
+        with:
+          name: release-image-authority-${{ steps.rel.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            hiverelay/release-evidence.json
+            hiverelay/release-image-manifest-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Upload release evidence artifact
         if: ${{ always() && !cancelled() && hashFiles('hiverelay/release-evidence.json') != '' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
@@ -1612,10 +1632,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ needs.sync.outputs.version }}
           RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+          IMAGE_AUTHORITY_ARTIFACT_ID: ${{ needs.sync.outputs.startos_image_authority_artifact_id }}
         run: |
           set -euo pipefail
+          if ! [[ "$IMAGE_AUTHORITY_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Exact StartOS image-authority artifact id is malformed: $IMAGE_AUTHORITY_ARTIFACT_ID" >&2
+            exit 1
+          fi
           workflow='release-startos-0.4.yml'
-          export EXPECTED_TITLE="StartOS 0.4 $RELEASE_TAG from release-surfaces $GITHUB_RUN_ID"
+          export EXPECTED_TITLE="StartOS 0.4 $RELEASE_TAG from release-surfaces $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
           list_runs() {
             gh run list \
               --repo "$GITHUB_REPOSITORY" \
@@ -1671,7 +1696,9 @@ jobs:
               --repo "$GITHUB_REPOSITORY" \
               --ref "$RELEASE_TAG" \
               --raw-field "tag=$RELEASE_TAG" \
-              --raw-field "release_surfaces_run_id=$GITHUB_RUN_ID"
+              --raw-field "release_surfaces_run_id=$GITHUB_RUN_ID" \
+              --raw-field "release_surfaces_run_attempt=$GITHUB_RUN_ATTEMPT" \
+              --raw-field "release_image_authority_artifact_id=$IMAGE_AUTHORITY_ARTIFACT_ID"
             child_id=''
             for attempt in $(seq 1 30); do
               runs_json="$(list_runs)"
@@ -1753,6 +1780,8 @@ jobs:
       RELEASE_TAG: ${{ needs.sync.outputs.version }}
       RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
       CHILD_RUN_ID: ${{ needs.dispatch-startos-04.outputs.child_run_id }}
+      RELEASE_SURFACES_RUN_ATTEMPT: ${{ github.run_attempt }}
+      IMAGE_AUTHORITY_ARTIFACT_ID: ${{ needs.sync.outputs.startos_image_authority_artifact_id }}
       RELEASE_CLOSURE_EVIDENCE: release-closure-evidence.json
     steps:
       - name: Checkout exact released source for closure
@@ -1768,6 +1797,11 @@ jobs:
           set -euo pipefail
           if ! [[ "$CHILD_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
             echo "StartOS 0.4 child run id is malformed: $CHILD_RUN_ID" >&2
+            exit 1
+          fi
+          if ! [[ "$RELEASE_SURFACES_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || \
+             ! [[ "$IMAGE_AUTHORITY_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Release-surfaces attempt or image-authority artifact id is malformed." >&2
             exit 1
           fi
           tag_sha="$(git -C hiverelay rev-parse --verify "$RELEASE_TAG^{commit}")"
@@ -1788,8 +1822,59 @@ jobs:
           set -euo pipefail
           closure_dir="$RUNNER_TEMP/startos-0.4-final-closure"
           artifact_dir="$closure_dir/child-artifact"
+          image_authority_dir="$closure_dir/image-authority"
           release_dir="$closure_dir/release-assets"
-          mkdir -p "$artifact_dir" "$release_dir"
+          mkdir -p "$artifact_dir" "$image_authority_dir" "$release_dir"
+
+          parent_view="$closure_dir/release-surfaces-run-view.json"
+          parent_rest="$closure_dir/release-surfaces-run-rest.json"
+          gh run view "$GITHUB_RUN_ID" \
+            --attempt "$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,attempt,url,workflowName,headSha,headBranch,event,status,conclusion,jobs > "$parent_view"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --jq '{workflowPath: .path}' > "$parent_rest"
+          jq -s '.[0] + .[1]' "$parent_view" "$parent_rest" > "$closure_dir/release-surfaces-run.json"
+          node hiverelay/scripts/verify-startos-04-parent-run.mjs \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --tag "$RELEASE_TAG" \
+            --tag-sha "$RELEASE_SHA" < "$closure_dir/release-surfaces-run.json"
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$IMAGE_AUTHORITY_ARTIFACT_ID" \
+            > "$closure_dir/image-authority-artifact.json"
+          jq -ce '{total_count: 1, artifacts: [.]} ' "$closure_dir/image-authority-artifact.json" \
+            > "$closure_dir/image-authority-artifact-response.json"
+          image_authority_env="$closure_dir/image-authority.env"
+          node hiverelay/scripts/select-startos-04-release-image-authority.mjs \
+            --artifacts "$closure_dir/image-authority-artifact-response.json" \
+            --tag "$RELEASE_TAG" \
+            --tag-sha "$RELEASE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --artifact-id "$IMAGE_AUTHORITY_ARTIFACT_ID" \
+            --github-env "$image_authority_env"
+          set -a
+          source "$image_authority_env"
+          set +a
+          image_authority_zip="$closure_dir/image-authority-$IMAGE_AUTHORITY_ARTIFACT_ID.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$IMAGE_AUTHORITY_ARTIFACT_ID/zip" > "$image_authority_zip"
+          image_authority_size="$(wc -c < "$image_authority_zip" | tr -d ' ')"
+          image_authority_digest="sha256:$(sha256sum "$image_authority_zip" | cut -d ' ' -f 1)"
+          if [ "$image_authority_size" != "$HIVERELAY_STARTOS_IMAGE_AUTHORITY_SIZE" ] || \
+             [ "$image_authority_digest" != "$HIVERELAY_STARTOS_IMAGE_AUTHORITY_DIGEST" ]; then
+            echo "Downloaded image-authority archive does not match its exact REST size/digest." >&2
+            exit 1
+          fi
+          image_authority_entries="$(unzip -Z1 "$image_authority_zip" | LC_ALL=C sort)"
+          expected_image_authority_entries="$(printf '%s\n' release-evidence.json release-image-manifest-evidence.json | LC_ALL=C sort)"
+          if [ "$image_authority_entries" != "$expected_image_authority_entries" ]; then
+            echo "Image-authority archive has unexpected or missing entries: $image_authority_entries" >&2
+            exit 1
+          fi
+          unzip -q "$image_authority_zip" -d "$image_authority_dir"
 
           gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CHILD_RUN_ID" > "$closure_dir/child-run.json"
           child_attempt="$(jq -r '.run_attempt // empty' "$closure_dir/child-run.json")"
@@ -1845,6 +1930,8 @@ jobs:
             --pattern 'blindspark-startos-0.4.s9pk' \
             --pattern 'startos-0.4-release-evidence.json' \
             --dir "$release_dir"
+          cmp "$image_authority_dir/release-evidence.json" "$release_dir/release-evidence.json"
+          cmp "$image_authority_dir/release-image-manifest-evidence.json" "$release_dir/release-image-manifest-evidence.json"
           echo "closure_dir=$closure_dir" >> "$GITHUB_OUTPUT"
           echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
           echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"
@@ -1893,6 +1980,8 @@ jobs:
             --child-run "$CLOSURE_DIR/child-run.json"
             --child-run-id "$CHILD_RUN_ID"
             --artifact-metadata "$CLOSURE_DIR/child-artifact.json"
+            --image-authority-metadata "$CLOSURE_DIR/image-authority-artifact.json"
+            --image-authority-artifact-id "$IMAGE_AUTHORITY_ARTIFACT_ID"
           )
           node hiverelay/scripts/write-release-closure-evidence.mjs \
             "${common[@]}" \
@@ -1926,4 +2015,5 @@ jobs:
           cmp "$CLOSURE_DIR/$RELEASE_CLOSURE_EVIDENCE" "$published_dir/$RELEASE_CLOSURE_EVIDENCE"
           node hiverelay/scripts/verify-release-closure-evidence.mjs \
             --bundle-dir "$published_dir" \
-            --live-github
+            --live-github \
+            --allow-in-progress-parent

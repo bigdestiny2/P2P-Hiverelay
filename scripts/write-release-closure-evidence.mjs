@@ -35,7 +35,9 @@ try {
     packageManifestPath: required(args, 'manifest'),
     childRun: readJson(required(args, 'childRun'), 'child run'),
     childRunId: required(args, 'childRunId'),
-    artifact: readJson(required(args, 'artifactMetadata'), 'child artifact metadata')
+    artifact: readJson(required(args, 'artifactMetadata'), 'child artifact metadata'),
+    imageAuthorityArtifact: readJson(required(args, 'imageAuthorityMetadata'), 'image authority artifact metadata'),
+    imageAuthorityArtifactId: required(args, 'imageAuthorityArtifactId')
   }
   if (args.out) {
     writeJsonAtomic(args.out, buildReleaseClosureEvidence(common))
@@ -65,6 +67,8 @@ function parseArgs (argv) {
     ['--child-run', 'childRun'],
     ['--child-run-id', 'childRunId'],
     ['--artifact-metadata', 'artifactMetadata'],
+    ['--image-authority-metadata', 'imageAuthorityMetadata'],
+    ['--image-authority-artifact-id', 'imageAuthorityArtifactId'],
     ['--out', 'out'],
     ['--verify', 'verify']
   ])

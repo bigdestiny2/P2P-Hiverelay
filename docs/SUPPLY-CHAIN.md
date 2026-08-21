@@ -187,24 +187,37 @@ build and sidecar to the run/attempt-named, digest-bearing Actions artifact.
 not a completed `sync` job, and remains
 `checkpoint-passed-pending-sync-completion-and-startos-0.4-closure`. The child
 authenticates the exact recorded parent run attempt and its terminal successful
-`sync` job through the Actions API. Reusable-image recovery instead requires
+`sync` job through the Actions API. It resolves the package image only from the
+separate run/attempt-named image-authority artifact whose exact numeric id the
+parent dispatches. Its parent path/event/tag/SHA, successful checkpoints, REST
+record, two-file ZIP digest/inventory, and embedded attempt must agree. Mutable
+Release JSON is compare-only. Before key exposure, the child verifies the
+exact-tag keyless signature, raw index hash and amd64/arm64 membership, then
+both child revision labels. API workflow paths are accepted only as the exact
+workflow file, optionally qualified by the exact release tag; branch or other
+ref suffixes fail closed. Reusable-image recovery instead requires
 the exact attempt's enumerated image-sign, manifest, smoke, evidence-write,
 and local-verification steps, while the separately authenticated artifact
 proves its own completed upload; it can recover
-from a later terminal `sync` failure without weakening that authority. The final parent job uses the exact child's
-immutable Actions artifact as package authority, installs the
+from a later terminal `sync` failure without weakening that authority. The final parent job uses the exact image-authority
+and child Actions artifacts as image/package authority, installs the
 hash-authenticated CLI, independently inspects the package commitment and
 structured manifest, and compares those artifact bytes with the current
 Release pair. Only then does it publish `release-closure-evidence.json`,
 re-download the entire published bundle, and run the live GitHub closure
-verifier. The live verifier re-fetches each Release asset by exact REST id and
-digest, authenticates the exact child run attempt and workflow identity, and
-downloads and hashes the exact non-expired artifact ZIP before comparing its
-two files to the Release pair; it also resolves the current GitHub tag to the
+verifier. The closure certificate records normalized image-authority REST
+metadata. The live verifier re-fetches each Release asset by exact REST id and
+digest, authenticates the exact parent and child run attempts/workflow paths,
+and downloads and hashes both exact non-expired artifact ZIPs before comparing
+their files to the Release checkpoint/pair; it also resolves the current GitHub tag to the
 recorded source commit. A terminal inventory re-fetch requires the Release id
 and exact `draft`/`prerelease` policy plus every required asset
 id/state/size/digest/URL to remain unchanged after all downloads and artifact
-checks; the exact Actions artifact record and tag commit are revalidated too.
+checks; both exact Actions artifact records and the tag commit are revalidated
+too. The bounded verifier mode used inside the still-running parent permits
+that exact parent to remain in progress only when GitHub's repository,
+workflow-ref, job, run, attempt, ref, and SHA context all match; stable/GA checks require the recorded
+parent attempt to be completed successfully.
 The stable blocker explicitly requires `prerelease=false`. JSON-only offline inspection is deliberately
 non-authoritative; stable/GA blocker checks require `GH_TOKEN` and the live
 mode. Each verifier subprocess has a 60-second ceiling and the parent closure

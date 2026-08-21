@@ -800,15 +800,23 @@ package above. It is not triggered directly by release publication. A separate
 `dispatch-startos-04` job, with `needs: sync` and job-scoped `actions: write`,
 dispatches it only after the source `sync` job succeeds. The dispatch uses the
 exact release tag as both workflow ref and input and passes that
-`release-surfaces` run id as runtime authority. The parent then waits, with a
+`release-surfaces` run id, run attempt, and exact image-authority artifact id
+as runtime authority. The parent then waits, with a
 bounded timeout, for the exact child run to succeed. A separate least-privilege
 closure job then downloads the exact child's immutable Actions artifact,
 independently inspects its package, compares it to current Release bytes, and
 publishes the final closure certificate before the overall workflow can pass.
 
 Before any signing key or package build, the downstream workflow verifies the
-exact tag checkout, release evidence/tag-SHA agreement, the multi-arch image
-digest and child digests, and the amd64/arm64 child config
+exact tag checkout and the parent run attempt/path/event/tag/SHA plus its
+successful `sync` and artifact-upload checkpoints. It accepts the parent
+workflow path only when the Actions API reports the bare file or that same file
+qualified by the exact release tag; another ref or suffix is rejected. It downloads the dispatched
+run/attempt-named image-authority artifact by numeric REST id, verifies its
+record, ZIP size/SHA-256, exact two-file inventory, and embedded attempt, then
+requires mutable public checkpoint files to be byte-identical before exporting
+image environment. It verifies the exact-tag cosign identity, raw multi-arch
+index hash and exact amd64/arm64 membership, and both child config
 `org.opencontainers.image.revision` labels. Release builds set
 `REQUIRE_RELEASE_IMAGE_DIGEST=1`, and the packed manifest must contain the
 same tag-plus-digest ref. Structured manifest inspection also requires the
@@ -884,21 +892,29 @@ reuse queries that same exact attempt but requires the enumerated image-sign,
 manifest, smoke, evidence-write, and local-verification steps to be successful,
 while the independently authenticated artifact proves its own completed upload;
 a later transient `sync` failure therefore
-does not wedge the immutable image authority. Only after the exact child succeeds does the parent download
-that child's non-expired, digest-bearing Actions artifact by numeric REST id,
+does not wedge the immutable image authority. Only after the exact child succeeds does the parent independently download
+the recorded image-authority artifact and that child's non-expired,
+digest-bearing Actions artifact by numeric REST id,
 authenticate the downloaded ZIP size and SHA-256 against that same REST record,
 authenticate `start-cli`, independently inspect the `.s9pk` commitment and
 structured manifest, and prove the artifact package/sidecar are byte-identical
 to the current GitHub Release pair. It then publishes and verifies
-`release-closure-evidence.json`, re-downloads the entire closure bundle, and
-runs the live GitHub verifier. That verifier re-fetches every current Release
-asset by numeric REST id and digest, authenticates the exact child run attempt,
-downloads the exact non-expired artifact id, checks its REST ZIP size/digest
-and inventory, requires the current GitHub tag to resolve to the recorded source
-commit, and requires its bytes to equal the Release pair. After those checks it
+`release-closure-evidence.json` with normalized image-authority metadata,
+re-downloads the entire closure bundle, and runs the live GitHub verifier. That
+verifier re-fetches every current Release asset by numeric REST id and digest,
+authenticates the exact parent and child run attempts/workflow paths, downloads
+both exact non-expired artifact ids, checks their REST ZIP
+size/digest/inventory, requires the current GitHub tag to resolve to the recorded
+source commit, and requires their bytes to equal the Release checkpoint/pair.
+After those checks it
 re-fetches the Release and required asset inventory and requires every
 id/state/size/digest/URL to remain unchanged, re-resolves the tag, and re-fetches
-the exact Actions artifact record to reject deletion or expiry during the check.
+both exact Actions artifact records to reject deletion or expiry during the
+check. The in-workflow verifier permits its exact parent to remain in progress
+only when the GitHub Actions repository/workflow-ref/job/run/attempt/ref/SHA
+context matches that closure certificate;
+the stable blocker requires that recorded parent attempt to be terminal
+successful.
 The Release `draft`/`prerelease` state must exactly match the checkpoint evidence;
 the stable blocker additionally supplies `--expected-prerelease false`, so a
 prerelease certificate cannot clear GA. These terminal checks close the
