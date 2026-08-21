@@ -125,10 +125,11 @@ export class DHTRelayWS extends EventEmitter {
     super()
     if (!opts.dht) throw new Error('DHTRelayWS: dht is required')
     this.dht = opts.dht
-    // `0` asks the kernel for an available ephemeral port. Tests and other
-    // short-lived callers rely on that atomic allocation to avoid the usual
-    // "pick a random port, then bind it" race.
-    this.port = opts.port ?? DEFAULT_PORT
+    // Keep the configured bind request separate from the effective port.
+    // After a `port: 0` listen, `this.port` is materialized for callers while
+    // a later start still asks the kernel for a fresh atomic allocation.
+    this._bindPort = opts.port ?? DEFAULT_PORT
+    this.port = this._bindPort
     this.host = opts.host || '0.0.0.0'
     this.maxConnections = opts.maxConnections || 256
     // When the pipe sits behind a TLS-terminating reverse proxy (the
@@ -304,7 +305,7 @@ export class DHTRelayWS extends EventEmitter {
     if (this.running) return
 
     this.server = new WebSocketServer({
-      port: this.port,
+      port: this._bindPort,
       host: this.host,
       perMessageDeflate: false, // dht-relay carries its own framed binary
       // Single-frame ceiling, enforced by the ws parser before any payload

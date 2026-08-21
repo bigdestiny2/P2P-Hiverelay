@@ -362,6 +362,31 @@ test('integration: circuit relay forwards data between two peers', async (t) => 
   t.is(relayNode.relay.getStats().activeCircuits, 0, 'circuit closed')
 })
 
+// ─── DHT-relay WebSocket integration ──────────────────────────────
+
+test('integration: RelayNode preserves dhtRelayWsPort 0 through transport startup', async (t) => {
+  const testnet = await createTestnet(2)
+  const node = createNode(testnet, {
+    enableRelay: false,
+    enableSeeding: false,
+    transports: { dhtRelayWs: true },
+    dhtRelayWsPort: 0,
+    dhtRelayWsHost: '127.0.0.1'
+  })
+
+  t.teardown(async () => {
+    await node.stop()
+    await testnet.destroy()
+  })
+
+  await node.start()
+
+  t.is(node.config.dhtRelayWsPort, 0, 'RelayNode config preserves zero')
+  t.is(node.dhtRelayWs._bindPort, 0, 'RelayNode passes zero to DHTRelayWS')
+  t.ok(node.dhtRelayWs.port > 0, 'DHTRelayWS materializes the assigned port')
+  t.is(node.dhtRelayWs.server.address().port, node.dhtRelayWs.port, 'effective port matches the listener')
+})
+
 // ─── API integration ───────────────────────────────────────────────
 
 test('integration: HTTP API returns health and status', async (t) => {

@@ -1,4 +1,5 @@
 import test from 'brittle'
+import { createServer } from 'node:net'
 import { WebSocket } from 'ws'
 import { DHTRelayWS } from 'p2p-hiverelay/transports/dht-relay-ws/index.js'
 
@@ -42,6 +43,27 @@ test('DHTRelayWS: port 0 atomically allocates a connectable ephemeral port', asy
 
   await transport.stop()
   t.absent(transport.running, 'stopped cleanly')
+})
+
+test('DHTRelayWS: port 0 restart does not reuse an occupied old port', async (t) => {
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1' })
+  t.teardown(() => transport.stop())
+
+  await transport.start()
+  const firstPort = transport.port
+  await transport.stop()
+
+  const blocker = createServer()
+  await new Promise((resolve, reject) => {
+    blocker.once('error', reject)
+    blocker.listen(firstPort, '127.0.0.1', resolve)
+  })
+  t.teardown(() => new Promise(resolve => blocker.close(resolve)))
+
+  await transport.start()
+  t.is(transport._bindPort, 0, 'configured bind request remains ephemeral')
+  t.not(transport.port, firstPort, 'restart receives a fresh port while the old one is occupied')
+  t.is(transport.server.address().port, transport.port, 'effective port matches the restarted listener')
 })
 
 test('DHTRelayWS: enforces maxConnections', async (t) => {
