@@ -85,23 +85,28 @@ Bump **both** in lockstep with the HiveRelay monorepo version:
 Do not run this release package from a release-published event directly.
 `release-surfaces.yml` has a separate `dispatch-startos-04` job with
 `needs: sync`; only that least-privilege job can dispatch this workflow. It
-passes the exact successful source run id and uses the release tag itself as
-the workflow ref. A deliberate manual retry must do the same:
+passes the exact successful source run id, run attempt, and immutable
+image-authority artifact id, and uses the release tag itself as the workflow
+ref. A deliberate manual retry must do the same:
 
 ```sh
 gh workflow run release-startos-0.4.yml \
   --ref vX.Y.Z \
   --raw-field tag=vX.Y.Z \
-  --raw-field release_surfaces_run_id=<successful-release-surfaces-run-id>
+  --raw-field release_surfaces_run_id=<successful-release-surfaces-run-id> \
+  --raw-field release_surfaces_run_attempt=<successful-run-attempt> \
+  --raw-field release_image_authority_artifact_id=<exact-image-authority-artifact-id>
 ```
 
 Before any developer key or build step, the workflow resolves
 `refs/tags/vX.Y.Z`, checks out that exact tag, proves
 `HEAD == refs/tags/vX.Y.Z^{commit}`, verifies exactly one `sync` job in the
-source release run completed successfully, and binds its
-release/image-manifest evidence to the tag SHA. The parent run may still be in
-progress because it waits for this child; requiring the whole parent to finish
-would deadlock. The child also inspects the amd64 and arm64 image configs and requires each
+exact source run attempt completed successfully, and authenticates the passed
+image-authority artifact before comparing its evidence with the public Release
+copies. The parent run may still be in progress because it waits for this
+child; requiring the whole parent to finish would deadlock. The child also
+verifies the signed raw image index contains the required amd64 and arm64 child
+digests, then requires each child config's
 `org.opencontainers.image.revision` label to equal the tag commit.
 
 The secret-bearing job does not execute Start9's setup composite, because that
