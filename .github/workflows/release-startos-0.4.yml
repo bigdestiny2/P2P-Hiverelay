@@ -52,16 +52,23 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.startos"
+          key_path="$HOME/.startos/developer.key.pem"
           if [ -n "${STARTOS_DEV_KEY:-}" ]; then
-            printf '%s' "$STARTOS_DEV_KEY" > "$HOME/.startos/developer.key.pem"
+            printf '%s' "$STARTOS_DEV_KEY" > "$key_path"
             echo "Using STARTOS_DEV_KEY — signed, registry-publishable package."
           else
             start-cli init-key || start-cli init
+            key_path="$HOME/.startos/id.key.pem"
             echo "::warning title=Ephemeral StartOS key::STARTOS_DEV_KEY is not set; built with an ephemeral key (sideloadable artifact only, not registry-publishable). Add the STARTOS_DEV_KEY secret for a signed package."
           fi
-          chmod 600 "$HOME/.startos/developer.key.pem"
+          if [ ! -s "$key_path" ]; then
+            echo "StartOS developer key is missing or empty at $key_path." >&2
+            exit 1
+          fi
+          chmod 600 "$key_path"
           mkdir -p .startos
-          cp "$HOME/.startos/developer.key.pem" .startos/build-key
+          cp "$key_path" .startos/build-key
+          chmod 600 .startos/build-key
 
       - name: Build the StartOS 0.4 package
         working-directory: startos-0.4
