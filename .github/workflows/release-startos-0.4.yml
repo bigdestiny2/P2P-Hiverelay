@@ -142,13 +142,10 @@ jobs:
           ' "$run_json"
 
       - name: Inspect existing immutable release assets
-        id: existing
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          existing_dir="$RUNNER_TEMP/startos-0.4-existing"
-          mkdir -p "$existing_dir"
           release_id="$(gh api \
             "repos/$GITHUB_REPOSITORY/releases/tags/$HIVERELAY_RELEASE_TAG" \
             --jq '.id')"
@@ -191,26 +188,7 @@ jobs:
             exit 1
           fi
           if [ "$package_state" = "present" ]; then
-            gh release download "$HIVERELAY_RELEASE_TAG" \
-              --repo "$GITHUB_REPOSITORY" \
-              --pattern "$STARTOS_04_RELEASE_ASSET" \
-              --pattern "$STARTOS_04_RELEASE_EVIDENCE" \
-              --dir "$existing_dir"
-            cp "$existing_dir/$STARTOS_04_RELEASE_ASSET" "startos-0.4/$STARTOS_04_RELEASE_ASSET"
-            cp "$existing_dir/$STARTOS_04_RELEASE_EVIDENCE" "$STARTOS_04_RELEASE_EVIDENCE"
-            package_digest="${package_record##*|}"
-            evidence_digest="${evidence_record##*|}"
-            actual_package_digest="sha256:$(sha256sum "$existing_dir/$STARTOS_04_RELEASE_ASSET" | cut -d ' ' -f 1)"
-            actual_evidence_digest="sha256:$(sha256sum "$existing_dir/$STARTOS_04_RELEASE_EVIDENCE" | cut -d ' ' -f 1)"
-            if [ "$actual_package_digest" != "$package_digest" ] || [ "$actual_evidence_digest" != "$evidence_digest" ]; then
-              echo "Downloaded StartOS 0.4 asset bytes do not match GitHub's uploaded-asset digests." >&2
-              exit 1
-            fi
-            echo "needs_build=false" >> "$GITHUB_OUTPUT"
-            echo "package_digest=$package_digest" >> "$GITHUB_OUTPUT"
-            echo "evidence_digest=$evidence_digest" >> "$GITHUB_OUTPUT"
-          else
-            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+            echo "A complete public pair exists. It is compare-only: this child will still build from exact source and may never promote Release bytes into Actions-artifact authority."
           fi
 
       # Do not run Start9's setup composite in this secret-bearing job: it calls
@@ -239,12 +217,10 @@ jobs:
           verify_child arm64 "$HIVERELAY_IMAGE_ARM64_DIGEST"
 
       - name: Install locked StartOS dependencies
-        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         working-directory: startos-0.4
         run: npm ci
 
       - name: Configure StartOS developer key
-        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         working-directory: startos-0.4
         env:
           STARTOS_DEV_KEY: ${{ secrets.STARTOS_DEV_KEY }}
@@ -272,7 +248,6 @@ jobs:
           chmod 600 ../.startos/build.key.pem
 
       - name: Build the StartOS 0.4 package
-        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         working-directory: startos-0.4
         run: |
           set -euo pipefail
@@ -314,7 +289,6 @@ jobs:
           echo "Built $STARTOS_04_RELEASE_ASSET ($s9pk_sha)"
 
       - name: Write StartOS 0.4 release evidence
-        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         run: |
           set -euo pipefail
           node scripts/write-startos-04-release-evidence.mjs \
@@ -329,7 +303,6 @@ jobs:
             --out "$STARTOS_04_RELEASE_EVIDENCE"
 
       - name: Upload immutable StartOS 0.4 package and evidence pair
-        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -407,6 +380,8 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --pattern "$STARTOS_04_RELEASE_EVIDENCE" \
             --dir "$handoff_dir"
+          cmp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$handoff_dir/$STARTOS_04_RELEASE_ASSET"
+          cmp "$STARTOS_04_RELEASE_EVIDENCE" "$handoff_dir/$STARTOS_04_RELEASE_EVIDENCE"
           node scripts/write-startos-04-release-evidence.mjs \
             --tag "$HIVERELAY_RELEASE_TAG" \
             --tag-sha "$HIVERELAY_RELEASE_SHA" \
@@ -417,7 +392,10 @@ jobs:
             --commitment "$HIVERELAY_STARTOS_04_COMMITMENT_PATH" \
             --manifest "$HIVERELAY_STARTOS_04_MANIFEST_PATH" \
             --verify "$handoff_dir/$STARTOS_04_RELEASE_EVIDENCE"
-          echo "dir=$handoff_dir" >> "$GITHUB_OUTPUT"
+          artifact_dir="$(mktemp -d)"
+          cp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$artifact_dir/$STARTOS_04_RELEASE_ASSET"
+          cp "$STARTOS_04_RELEASE_EVIDENCE" "$artifact_dir/$STARTOS_04_RELEASE_EVIDENCE"
+          echo "dir=$artifact_dir" >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable child closure artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)

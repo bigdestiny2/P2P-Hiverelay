@@ -1182,7 +1182,7 @@ Important release commands:
 | Command | Purpose |
 |---|---|
 | `npm run release:prepare` | Sync package versions, ecosystem app defaults, fleet channels, Umbrel, and StartOS |
-| `npm run release:check-blockers` | Read-only closure board for the public full-release blockers: clean worktree, distribution env, npm latest, GHCR image proof, Umbrel PR/runtime proof, StartOS registry proof, fleet rollout, and final handoff bundle |
+| `npm run release:check-blockers` | Read-only closure board for the public full-release blockers, including `GH_TOKEN`-authenticated live GitHub Release/child-artifact authority and exact requested prerelease policy; offline closure JSON alone cannot clear stable/GA |
 | `npm run release:check-distribution-env` | Fail stable releases missing or malformed npm, fleet, Umbrel, or StartOS credentials; use `--env-file` to validate local candidate secrets before setting GitHub Secrets |
 | `npm run release:check-github-setup` | Verify the repo exposes release secret/variable names before tagging and print the safe secret-rotation repair path when names are missing; values are validated by the Actions preflight |
 | `npm run release:apply-github-secrets` | Validate a local release secret env-file, then apply those exact values to GitHub Secrets through `gh` stdin |

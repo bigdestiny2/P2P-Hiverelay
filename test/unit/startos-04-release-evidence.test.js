@@ -1,7 +1,7 @@
 import test from 'brittle'
 import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
-import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, unlink, writeFile } from 'node:fs/promises'
+import { chmod, copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, unlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
@@ -383,8 +383,16 @@ test('final release closure binds exact child artifact, independent inspection, 
   ])
   const childRun = path.join(fixture.dir, 'child-run.json')
   const artifactMetadata = path.join(fixture.dir, 'child-artifact.json')
+  const artifactArchive = path.join(fixture.dir, 'child-artifact.zip')
+  const zipped = await exec('zip', ['-q', '-j', artifactArchive, copies.artifactPackage, copies.artifactStartosEvidence])
+  t.is(zipped.status, 0, zipped.stderr)
+  const archiveStat = await stat(artifactArchive)
+  const liveArtifact = successfulChildArtifact({
+    size_in_bytes: archiveStat.size,
+    digest: `sha256:${sha256(await readFile(artifactArchive))}`
+  })
   await writeFile(childRun, JSON.stringify(successfulStartosChildRun(), null, 2) + '\n')
-  await writeFile(artifactMetadata, JSON.stringify(successfulChildArtifact(), null, 2) + '\n')
+  await writeFile(artifactMetadata, JSON.stringify(liveArtifact, null, 2) + '\n')
   const closure = path.join(fixture.dir, 'release-closure-evidence.json')
   const args = closureArgs(fixture, copies, childRun, artifactMetadata)
   const written = await run('scripts/write-release-closure-evidence.mjs', [...args, '--out', closure])
@@ -412,7 +420,19 @@ test('final release closure binds exact child artifact, independent inspection, 
     copyFile(closure, path.join(bundleDir, 'release-closure-evidence.json'))
   ])
   const offline = await run('scripts/verify-release-closure-evidence.mjs', ['--bundle-dir', bundleDir])
-  t.is(offline.status, 0, offline.stderr)
+  t.is(offline.status, 1)
+  t.ok(offline.stderr.includes('Offline JSON-only release closure verification is non-authoritative'))
+
+  const live = await liveClosureFixture(t, {
+    bundleDir,
+    closure,
+    startosEvidence,
+    artifactArchive,
+    artifactMetadata,
+    childRun
+  })
+  t.is(live.status, 0, live.stderr)
+  t.ok(live.stdout.includes('Live GitHub release closure verified'))
 
   const bundledClosure = path.join(bundleDir, 'release-closure-evidence.json')
   const wrongAttemptBody = JSON.parse(await readFile(bundledClosure, 'utf8'))
@@ -435,7 +455,7 @@ test('final release closure binds exact child artifact, independent inspection, 
   await symlink(fixture.releaseEvidence, bundledReleaseEvidence)
   const symlinked = await run('scripts/verify-release-closure-evidence.mjs', ['--bundle-dir', bundleDir])
   t.is(symlinked.status, 1)
-  t.ok(symlinked.stderr.includes('regular JSON file'))
+  t.ok(symlinked.stderr.includes('must be a regular file'))
 
   const wrongArtifactSource = successfulChildArtifact()
   wrongArtifactSource.workflow_run.id = 999
@@ -581,6 +601,7 @@ async function evidenceFixture (t, { runId, generatedAt = '2026-08-21T00:00:00.0
       version: TAG,
       semver: VERSION,
       candidate: false,
+      prerelease: true,
       tagSha: TAG_SHA,
       workflow: {
         scope: 'release-surfaces/pre-handoff-checkpoint',
@@ -765,7 +786,7 @@ function successfulStartosChildRun () {
   }
 }
 
-function successfulChildArtifact () {
+function successfulChildArtifact (override = {}) {
   return {
     id: 901,
     name: 'startos-0.4-closure-900-2',
@@ -777,7 +798,8 @@ function successfulChildArtifact () {
       id: 900,
       head_sha: TAG_SHA,
       head_branch: TAG
-    }
+    },
+    ...override
   }
 }
 
@@ -800,13 +822,254 @@ function closureArgs (fixture, copies, childRun, artifactMetadata) {
   ]
 }
 
+async function liveClosureFixture (t, {
+  bundleDir,
+  artifactArchive,
+  artifactMetadata,
+  childRun
+}) {
+  const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-live-closure-api-'))
+  t.teardown(() => rm(root, { recursive: true, force: true }))
+  const bin = path.join(root, 'bin')
+  await mkdir(bin)
+  const release = path.join(root, 'release.json')
+  const tagRef = path.join(root, 'tag-ref.json')
+  const tagObject = path.join(root, 'tag-object.json')
+  const assets = path.join(root, 'assets.json')
+  const assetSources = {
+    1001: path.join(bundleDir, 'release-evidence.json'),
+    1002: path.join(bundleDir, 'release-image-manifest-evidence.json'),
+    1003: path.join(bundleDir, PACKAGE_NAME),
+    1004: path.join(bundleDir, 'startos-0.4-release-evidence.json'),
+    1005: path.join(bundleDir, 'release-closure-evidence.json')
+  }
+  const records = []
+  for (const [id, file] of Object.entries(assetSources)) {
+    const name = path.basename(file)
+    const body = await readFile(file)
+    records.push({
+      id: Number(id),
+      name,
+      state: 'uploaded',
+      size: body.length,
+      digest: `sha256:${sha256(body)}`,
+      url: `https://api.github.com/repos/bigdestiny2/P2P-Hiverelay/releases/assets/${id}`
+    })
+  }
+  await Promise.all([
+    writeFile(release, JSON.stringify({
+      id: 777,
+      tag_name: TAG,
+      draft: false,
+      prerelease: true,
+      url: 'https://api.github.com/repos/bigdestiny2/P2P-Hiverelay/releases/777',
+      html_url: `https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/${TAG}`
+    }) + '\n'),
+    writeFile(tagRef, JSON.stringify({
+      ref: `refs/tags/${TAG}`,
+      object: { type: 'tag', sha: 'c'.repeat(40) }
+    }) + '\n'),
+    writeFile(tagObject, JSON.stringify({
+      object: { type: 'commit', sha: TAG_SHA }
+    }) + '\n'),
+    writeFile(assets, JSON.stringify([records]) + '\n')
+  ])
+
+  const gh = path.join(bin, 'gh')
+  await writeFile(gh, `#!/bin/sh
+set -eu
+if [ "\${GH_TEST_HANG:-0}" = 1 ]; then
+  exec sleep 2
+fi
+case "$*" in
+  *actions/runs/900/attempts/2*) cat "$GH_CHILD_RUN" ;;
+  *actions/artifacts/901/zip*) cat "$GH_ARTIFACT_ARCHIVE" ;;
+  *actions/artifacts/901*)
+    if [ -n "\${GH_ARTIFACT_METADATA_AFTER:-}" ]; then
+      if [ -e "$GH_ARTIFACT_METADATA_MARKER" ]; then
+        cat "$GH_ARTIFACT_METADATA_AFTER"
+      else
+        : > "$GH_ARTIFACT_METADATA_MARKER"
+        cat "$GH_ARTIFACT_METADATA"
+      fi
+    else
+      cat "$GH_ARTIFACT_METADATA"
+    fi
+    ;;
+  *releases/tags/${TAG}*) cat "$GH_RELEASE_JSON" ;;
+  *git/ref/tags/${TAG}*) cat "$GH_TAG_REF" ;;
+  *git/tags/cccccccccccccccccccccccccccccccccccccccc*) cat "$GH_TAG_OBJECT" ;;
+  *releases/777/assets*)
+    if [ -n "\${GH_RELEASE_ASSETS_AFTER:-}" ]; then
+      if [ -e "$GH_RELEASE_ASSETS_MARKER" ]; then
+        cat "$GH_RELEASE_ASSETS_AFTER"
+      else
+        : > "$GH_RELEASE_ASSETS_MARKER"
+        cat "$GH_RELEASE_ASSETS"
+      fi
+    else
+      cat "$GH_RELEASE_ASSETS"
+    fi
+    ;;
+  *releases/assets/1001*) cat "$GH_RELEASE_EVIDENCE" ;;
+  *releases/assets/1002*) cat "$GH_IMAGE_EVIDENCE" ;;
+  *releases/assets/1003*) cat "$GH_STARTOS_PACKAGE" ;;
+  *releases/assets/1004*) cat "$GH_STARTOS_EVIDENCE" ;;
+  *releases/assets/1005*) cat "$GH_CLOSURE_EVIDENCE" ;;
+  *) echo "unexpected fake gh invocation: $*" >&2; exit 97 ;;
+esac
+`)
+  await chmod(gh, 0o755)
+  const env = {
+    GH_TOKEN: 'test-live-token',
+    GITHUB_REPOSITORY: 'bigdestiny2/P2P-Hiverelay',
+    PATH: `${bin}:${process.env.PATH || ''}`,
+    GH_CHILD_RUN: childRun,
+    GH_ARTIFACT_ARCHIVE: artifactArchive,
+    GH_ARTIFACT_METADATA: artifactMetadata,
+    GH_RELEASE_JSON: release,
+    GH_TAG_REF: tagRef,
+    GH_TAG_OBJECT: tagObject,
+    GH_RELEASE_ASSETS: assets,
+    GH_RELEASE_EVIDENCE: assetSources[1001],
+    GH_IMAGE_EVIDENCE: assetSources[1002],
+    GH_STARTOS_PACKAGE: assetSources[1003],
+    GH_STARTOS_EVIDENCE: assetSources[1004],
+    GH_CLOSURE_EVIDENCE: assetSources[1005]
+  }
+  const accepted = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    env
+  )
+
+  const stablePolicy = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github', '--expected-prerelease', 'false'],
+    env
+  )
+  t.is(stablePolicy.status, 1)
+  t.ok(stablePolicy.stderr.includes('does not match requested closure policy prerelease=false'))
+
+  const wrongPrereleaseRelease = path.join(root, 'wrong-prerelease-release.json')
+  await writeFile(wrongPrereleaseRelease, JSON.stringify({
+    id: 777,
+    tag_name: TAG,
+    draft: false,
+    prerelease: false,
+    url: 'https://api.github.com/repos/bigdestiny2/P2P-Hiverelay/releases/777',
+    html_url: `https://github.com/bigdestiny2/P2P-Hiverelay/releases/tag/${TAG}`
+  }) + '\n')
+  const wrongPrerelease = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    { ...env, GH_RELEASE_JSON: wrongPrereleaseRelease }
+  )
+  t.is(wrongPrerelease.status, 1)
+  t.ok(wrongPrerelease.stderr.includes('prerelease=true policy'))
+
+  const timedOut = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    {
+      ...env,
+      GH_TEST_HANG: '1',
+      HIVERELAY_LIVE_VERIFY_COMMAND_TIMEOUT_MS: '50'
+    }
+  )
+  t.is(timedOut.status, 1)
+  t.ok(timedOut.stderr.includes('ETIMEDOUT'))
+
+  const substitutedArchive = path.join(root, 'substituted-artifact.zip')
+  await writeFile(substitutedArchive, 'not the REST digest-bound child artifact')
+  const substituted = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    { ...env, GH_ARTIFACT_ARCHIVE: substitutedArchive }
+  )
+  t.is(substituted.status, 1)
+  t.ok(substituted.stderr.includes('artifact ZIP size') || substituted.stderr.includes('artifact ZIP digest'))
+
+  const wrongRun = path.join(root, 'wrong-run.json')
+  await writeFile(wrongRun, JSON.stringify({ ...successfulStartosChildRun(), head_sha: 'f'.repeat(40) }) + '\n')
+  const replayed = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    { ...env, GH_CHILD_RUN: wrongRun }
+  )
+  t.is(replayed.status, 1)
+  t.ok(replayed.stderr.includes('child head SHA'))
+
+  const movedTag = path.join(root, 'moved-tag-ref.json')
+  await writeFile(movedTag, JSON.stringify({
+    ref: `refs/tags/${TAG}`,
+    object: { type: 'commit', sha: 'f'.repeat(40) }
+  }) + '\n')
+  const moved = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    { ...env, GH_TAG_REF: movedTag }
+  )
+  t.is(moved.status, 1)
+  t.ok(moved.stderr.includes('not release source'))
+
+  const swappedAssets = path.join(root, 'swapped-assets.json')
+  const swappedRecords = records.map(record => record.name === PACKAGE_NAME
+    ? {
+        ...record,
+        id: 2003,
+        url: 'https://api.github.com/repos/bigdestiny2/P2P-Hiverelay/releases/assets/2003'
+      }
+    : record)
+  await writeFile(swappedAssets, JSON.stringify([swappedRecords]) + '\n')
+  const changedInventory = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    {
+      ...env,
+      GH_RELEASE_ASSETS_AFTER: swappedAssets,
+      GH_RELEASE_ASSETS_MARKER: path.join(root, 'inventory-swapped')
+    }
+  )
+  t.is(changedInventory.status, 1)
+  t.ok(changedInventory.stderr.includes('asset inventory changed during live closure verification'))
+
+  const expiredArtifact = path.join(root, 'expired-artifact.json')
+  const currentArtifact = JSON.parse(await readFile(artifactMetadata, 'utf8'))
+  await writeFile(expiredArtifact, JSON.stringify({ ...currentArtifact, expired: true }) + '\n')
+  const changedArtifact = await run(
+    'scripts/verify-release-closure-evidence.mjs',
+    ['--bundle-dir', bundleDir, '--live-github'],
+    {
+      ...env,
+      GH_ARTIFACT_METADATA_AFTER: expiredArtifact,
+      GH_ARTIFACT_METADATA_MARKER: path.join(root, 'artifact-expired')
+    }
+  )
+  t.is(changedArtifact.status, 1)
+  t.ok(changedArtifact.stderr.includes('not be expired'))
+
+  return accepted
+}
+
 function sha256 (value) {
   return crypto.createHash('sha256').update(value).digest('hex')
 }
 
-function run (script, args) {
+function run (script, args, env = {}) {
   return new Promise((resolve) => {
-    execFile(process.execPath, [path.join(ROOT, script), ...args], { cwd: ROOT }, (err, stdout, stderr) => {
+    execFile(process.execPath, [path.join(ROOT, script), ...args], {
+      cwd: ROOT,
+      env: { ...process.env, ...env }
+    }, (err, stdout, stderr) => {
+      resolve({ status: err && typeof err.code === 'number' ? err.code : 0, stdout, stderr })
+    })
+  })
+}
+
+function exec (command, args, env = {}) {
+  return new Promise((resolve) => {
+    execFile(command, args, { cwd: ROOT, env: { ...process.env, ...env } }, (err, stdout, stderr) => {
       resolve({ status: err && typeof err.code === 'number' ? err.code : 0, stdout, stderr })
     })
   })

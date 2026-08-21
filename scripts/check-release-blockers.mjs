@@ -24,6 +24,10 @@ Options:
   --skip-git                Skip clean-worktree proof. Intended for hermetic tests only.
   --json                    Print machine-readable output.
   --out <path>              Write the public-safe JSON report, even when blocked.
+
+Environment:
+  GH_TOKEN                  Required read-only GitHub token (actions:read,
+                            contents:read) for authoritative stable/GA closure.
 `
 
 const REQUIRED_NPM_LATEST_PACKAGES = Object.freeze([
@@ -104,7 +108,7 @@ const EVIDENCE_FILES = Object.freeze([
     id: 'evidence.release-closure',
     label: 'final StartOS 0.4 release closure evidence',
     files: ['release-closure-evidence.json'],
-    command: 'npm run release:verify-closure-evidence -- --bundle-dir <dir>'
+    command: 'GH_TOKEN=<token> npm run release:verify-closure-evidence -- --bundle-dir <dir> --live-github --expected-prerelease <true|false>'
   },
   {
     id: 'evidence.fleet-rollout',
@@ -514,9 +518,9 @@ function addReleaseVerifierChecks () {
     addItem({
       id: 'release.closure.verify',
       status: 'blocker',
-      summary: 'final StartOS 0.4 closure verifier was not run because required files are missing',
+      summary: 'live final StartOS 0.4 closure verifier was not run because required files are missing',
       detail: missing.join(', '),
-      command: 'npm run release:verify-closure-evidence -- --bundle-dir <dir>'
+      command: `GH_TOKEN=<token> npm run release:verify-closure-evidence -- --bundle-dir <dir> --live-github --expected-prerelease ${prerelease}`
     })
     return
   }
@@ -543,12 +547,12 @@ function addReleaseVerifierChecks () {
 
   addCommandItem({
     id: 'release.closure.verify',
-    passSummary: 'final StartOS 0.4 release closure binds the exact child artifact and current release assets',
-    failSummary: 'final StartOS 0.4 release closure failed verification',
+    passSummary: 'live final StartOS 0.4 release closure binds the exact child run/artifact and current release assets',
+    failSummary: 'live final StartOS 0.4 release closure failed verification',
     script: 'verify-release-closure-evidence.mjs',
-    argv: ['--bundle-dir', bundleDir],
+    argv: ['--bundle-dir', bundleDir, '--live-github', '--expected-prerelease', String(prerelease)],
     timeout: 120000,
-    command: `npm run release:verify-closure-evidence -- --bundle-dir ${bundleDir}`
+    command: `GH_TOKEN=<token> npm run release:verify-closure-evidence -- --bundle-dir ${bundleDir} --live-github --expected-prerelease ${prerelease}`
   })
 }
 

@@ -144,6 +144,7 @@ test('StartOS 0.4 dispatch is source ordered and exact-tag checked before keys',
   t.ok(legacyWorkflow.includes('write-release-closure-evidence.mjs'))
   t.ok(legacyWorkflow.includes('verify-release-closure-evidence.mjs'))
   t.ok(legacyWorkflow.includes('--bundle-dir "$published_dir"'))
+  t.ok(legacyWorkflow.includes('--live-github'))
   t.ok(legacyWorkflow.includes('release-closure-evidence.json'))
   t.ok(legacyWorkflow.indexOf('Independently inspect exact child package') < legacyWorkflow.indexOf('Publish and verify final release closure'))
   t.is(legacyWorkflow.includes('permissions:\n  actions: write'), false)
@@ -368,14 +369,19 @@ esac
   t.ok(result.stderr.includes('Published release state exists but its immutable reusable image authority artifact is absent or expired'))
 })
 
-test('StartOS 0.4 reruns reuse only a complete package/evidence pair', async (t) => {
+test('StartOS 0.4 child always builds source and treats a complete public pair as compare-only', async (t) => {
   const workflow = await readFile(WORKFLOW, 'utf8')
 
   t.ok(workflow.includes('Inspect existing immutable release assets'))
-  t.ok(workflow.includes('needs_build=false'))
+  t.is(workflow.includes('needs_build='), false)
+  t.is(workflow.includes('cp "$existing_dir/$STARTOS_04_RELEASE_ASSET"'), false)
+  t.is(workflow.includes('cp "$existing_dir/$STARTOS_04_RELEASE_EVIDENCE"'), false)
   t.ok(workflow.includes('Package-only evidence recovery is forbidden'))
-  t.ok(workflow.includes(`if: ${GITHUB_EXPRESSION} steps.existing.outputs.needs_build == 'true' }}`))
-  t.is(workflow.includes('needs_evidence='), false)
+  t.ok(workflow.includes('this child will still build from exact source'))
+  t.ok(workflow.includes('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1'))
+  t.ok(workflow.includes('cmp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$handoff_dir/$STARTOS_04_RELEASE_ASSET"'))
+  t.ok(workflow.includes('cp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$artifact_dir/$STARTOS_04_RELEASE_ASSET"'))
+  t.ok(workflow.indexOf('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1') < workflow.indexOf('Upload immutable child closure artifact'))
   t.ok(workflow.includes('audited manual recovery is required'))
 })
 

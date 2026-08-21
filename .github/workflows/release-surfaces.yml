@@ -1925,4 +1925,5 @@ jobs:
             --dir "$published_dir"
           cmp "$CLOSURE_DIR/$RELEASE_CLOSURE_EVIDENCE" "$published_dir/$RELEASE_CLOSURE_EVIDENCE"
           node hiverelay/scripts/verify-release-closure-evidence.mjs \
-            --bundle-dir "$published_dir"
+            --bundle-dir "$published_dir" \
+            --live-github

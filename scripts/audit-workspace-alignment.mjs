@@ -7957,7 +7957,11 @@ if (
   releaseStartos04Workflow.includes('mv blindspark.s9pk "$STARTOS_04_RELEASE_ASSET"') &&
   releaseStartos04Workflow.includes('gh release upload "$tag" "$package" "$evidence"') &&
   !releaseStartos04Workflow.includes('--clobber') &&
-  releaseStartos04Workflow.includes('needs_build=false') &&
+  !releaseStartos04Workflow.includes('needs_build=') &&
+  !releaseStartos04Workflow.includes('cp "$existing_dir/$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('this child will still build from exact source') &&
+  releaseStartos04Workflow.includes('cmp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$handoff_dir/$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('cp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$artifact_dir/$STARTOS_04_RELEASE_ASSET"') &&
   releaseStartos04Workflow.includes('Package-only evidence recovery is forbidden') &&
   releaseStartos04Workflow.includes('repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100') &&
   releaseStartos04Workflow.includes('unexpected release-assets page shape') &&
@@ -7993,7 +7997,7 @@ if (
   startos04ReleaseEvidenceLib.includes('status: \'not-embedded-or-verifiable-from-s9pk\'') &&
   startos04ReleaseEvidenceLib.includes('status: \'not-exposed-by-start-cli-1.1.0\'') &&
   !startos04ReleaseEvidenceLib.includes('generatedAt') &&
-  releaseStartos04WorkflowTest.includes('reruns reuse only a complete package/evidence pair') &&
+  releaseStartos04WorkflowTest.includes('child always builds source and treats a complete public pair as compare-only') &&
   releaseStartos04WorkflowTest.includes('asset inventory rejects starter and package-only recovery states') &&
   startos04ReleaseEvidenceTest.includes('deterministic across equivalent source workflow reruns') &&
   startos04ReleaseEvidenceTest.includes('requires the exact source revision label') &&
@@ -8030,9 +8034,23 @@ if (
   releaseWorkflow.includes('write-release-closure-evidence.mjs') &&
   releaseWorkflow.includes('verify-release-closure-evidence.mjs') &&
   releaseWorkflow.includes('--bundle-dir "$published_dir"') &&
+  releaseWorkflow.includes('--live-github') &&
   writeReleaseClosureEvidence.includes('buildReleaseClosureEvidence') &&
   writeReleaseClosureEvidence.includes('verifyReleaseClosureEvidence') &&
   verifyReleaseClosureEvidence.includes('verifyPublishedReleaseClosureEvidence') &&
+  verifyReleaseClosureEvidence.includes('Offline JSON-only release closure verification is non-authoritative') &&
+  verifyReleaseClosureEvidence.includes('actions/runs/$' + '{recordedRunId}/attempts/$' + '{recordedRunAttempt}') &&
+  verifyReleaseClosureEvidence.includes('actions/artifacts/$' + '{recordedArtifactId}/zip') &&
+  verifyReleaseClosureEvidence.includes('releases/assets/$' + '{id}') &&
+  verifyReleaseClosureEvidence.includes('git/ref/tags/$' + '{tag}') &&
+  verifyReleaseClosureEvidence.includes('verifyCurrentReleaseInventory') &&
+  verifyReleaseClosureEvidence.includes('asset inventory changed during live closure verification') &&
+  verifyReleaseClosureEvidence.includes('verifyCurrentArtifactRecord') &&
+  verifyReleaseClosureEvidence.includes('REST artifact identity changed during closure verification') &&
+  verifyReleaseClosureEvidence.includes('release.prerelease must be a boolean') &&
+  verifyReleaseClosureEvidence.includes('does not match requested closure policy prerelease=') &&
+  verifyReleaseClosureEvidence.includes('timeout: COMMAND_TIMEOUT_MS') &&
+  verifyReleaseClosureEvidence.includes("killSignal: 'SIGTERM'") &&
   startos04ReleaseEvidenceLib.includes("kind: 'hiverelay-release-closure'") &&
   startos04ReleaseEvidenceLib.includes('sourceCheckpointEvidence:') &&
   startos04ReleaseEvidenceLib.includes('runAttempt: binding.releaseSurfacesRunAttempt') &&
@@ -8041,10 +8059,12 @@ if (
   startos04ReleaseEvidenceLib.includes("stableGaPolicy: 'stable-and-ga-closure-requires-this-verified-certificate'") &&
   releaseBlockersCheck.includes("id: 'evidence.release-closure'") &&
   releaseBlockersCheck.includes("id: 'release.closure.verify'") &&
+  releaseBlockersCheck.includes("argv: ['--bundle-dir', bundleDir, '--live-github', '--expected-prerelease', String(prerelease)]") &&
   releaseAutomationDocs.includes('**pre-handoff checkpoint** certificate') &&
   releaseAutomationDocs.includes('workflow is intentionally non-atomic') &&
   supplyChainDocs.includes('StartOS 0.4 package and closure authority') &&
-  startOs04Readme.includes('Package-only or\nsidecar-only recovery') &&
+  startOs04Readme.includes('public Release bytes are never copied into a trusted Actions artifact') &&
+  startOs04Readme.includes('Offline JSON-only\nverification is explicitly non-authoritative') &&
   startOs04Readme.includes('Release publication is non-atomic') &&
   startos04ReleaseEvidenceTest.includes('final release closure binds exact child artifact, independent inspection, and current release bytes')
 ) {

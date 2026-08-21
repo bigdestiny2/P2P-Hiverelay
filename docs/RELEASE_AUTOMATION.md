@@ -297,8 +297,10 @@ the required sidecars to the GitHub Release.
 
 Before rerunning a public full release, or before calling a completed release
 ready, use the read-only closure board. It does not publish, upload, set
-secrets, update fleet metadata, open PRs, or contact npm unless
-`--check-npm-live` is passed explicitly. With `--npm-latest-json`, the npm
+secrets, update fleet metadata, or open PRs. It does authenticate read-only to
+GitHub because stable/GA closure must live-bind the current Release and exact
+Actions run/artifact; set `GH_TOKEN` with `actions:read` and `contents:read`.
+It does not contact npm unless `--check-npm-live` is passed explicitly. With `--npm-latest-json`, the npm
 proof is taken from a trusted offline fixture and the checker refuses incomplete
 fixtures instead of falling through to a live lookup. Once the live registry
 gate is green, write `npm-latest-evidence.json` beside the other downloaded
@@ -314,6 +316,7 @@ The npm-latest command refuses to write that sidecar unless every package
 `latest` tag is verified at the expected release version.
 
 ```sh
+export GH_TOKEN=<read-only-github-token>
 npm run release:check-blockers -- \
   --bundle-dir /path/to/downloaded-release-assets \
   --env-file /private/tmp/hiverelay-release-secrets.env \
@@ -328,7 +331,9 @@ manifest and image smoke, Umbrel package smoke, official Umbrel PR, real Umbrel
 runtime review, StartOS registry publication, StartOS package artifact, fleet
 rollout, and the strict review-ready handoff verifier. It exits non-zero until
 every blocker has a present evidence file and the existing release/handoff
-verifiers pass. The optional `--out release-blockers-report.json` file is a
+verifiers pass, including live closure verification. A coherent offline
+`release-closure-evidence.json` bundle remains diagnostic only and cannot make
+the board ready. The optional `--out release-blockers-report.json` file is a
 public-safe diagnostic report of the current board, not a release proof; it can
 be attached to handoff notes while blockers are still open. The printed and
 written reports redact token-looking values across top-level paths, row details,
@@ -859,14 +864,16 @@ manifest, and the exact successful child's immutable Actions artifact, while
 the SDK/action/CLI pins describe the tag's required build contract.
 
 Both `blindspark-startos-0.4.s9pk` and its sidecar are an immutable release
-pair. Reruns accept only one non-empty `uploaded` record of each name with a
-valid GitHub SHA-256 digest and matching downloaded bytes; they never delete or
-`--clobber` either asset. A package without its sidecar, a sidecar without its
-package, duplicate names, or a zero-byte/`starter` record fails closed for
-audited manual recovery. Package-only evidence recovery is deliberately
-forbidden because the published package alone cannot prove its build
-provenance. A new child uploads the pair together and preserves the same bytes
-in a run/attempt-named `actions/upload-artifact` archive.
+pair. Every child run installs the locked source dependencies and builds the
+package again from the exact tag and authenticated toolchain. Existing Release
+assets are compare-only: they can never be copied into a new trusted Actions
+artifact. Reruns accept only one non-empty `uploaded` record of each name with
+a valid GitHub SHA-256 digest, and the newly built bytes must match those
+records exactly; they never delete or `--clobber` either asset. A package
+without its sidecar, a sidecar without its package, duplicate names, a
+zero-byte/`starter` record, or a source rebuild mismatch fails closed for
+audited manual recovery. The child Actions artifact is populated only from the
+fresh local build after that comparison.
 
 `release-evidence.json` is a **pre-handoff checkpoint** certificate, not a
 terminal `sync`-job or overall workflow-success claim. For a tag release it records
@@ -884,9 +891,22 @@ authenticate `start-cli`, independently inspect the `.s9pk` commitment and
 structured manifest, and prove the artifact package/sidecar are byte-identical
 to the current GitHub Release pair. It then publishes and verifies
 `release-closure-evidence.json`, re-downloads the entire closure bundle, and
-reruns the offline verifier so a post-inspection Release-asset substitution
-cannot make the final job green. The blocker board requires that certificate
-and its offline verifier for stable/GA closure.
+runs the live GitHub verifier. That verifier re-fetches every current Release
+asset by numeric REST id and digest, authenticates the exact child run attempt,
+downloads the exact non-expired artifact id, checks its REST ZIP size/digest
+and inventory, requires the current GitHub tag to resolve to the recorded source
+commit, and requires its bytes to equal the Release pair. After those checks it
+re-fetches the Release and required asset inventory and requires every
+id/state/size/digest/URL to remain unchanged, re-resolves the tag, and re-fetches
+the exact Actions artifact record to reject deletion or expiry during the check.
+The Release `draft`/`prerelease` state must exactly match the checkpoint evidence;
+the stable blocker additionally supplies `--expected-prerelease false`, so a
+prerelease certificate cannot clear GA. These terminal checks close the
+download-window replacement race. Offline JSON
+inspection is explicitly non-authoritative and cannot clear stable/GA. The
+blocker board therefore requires `GH_TOKEN` and this live verifier. Each live
+API/download/unzip subprocess is capped at 60 seconds, and the closure job has
+an explicit 20-minute bound.
 
 The public evidence upload itself remains a non-atomic multi-asset GitHub
 Release update: `gh release upload --clobber` may replace only a subset before

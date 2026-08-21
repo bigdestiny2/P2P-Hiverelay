@@ -175,11 +175,13 @@ SDK version, resolved tarball, and npm integrity are independently bound to the
 source manifest and lockfile.
 
 The GitHub Release package and deterministic sidecar form one immutable pair.
-CI accepts only exactly one non-empty `uploaded` record of each name with a
-valid GitHub digest and matching downloaded bytes. It rejects partial pairs,
-duplicate names, and zero-byte/`starter` records without deleting or clobbering
-them. A successful child also preserves the exact pair in a run/attempt-named,
-digest-bearing Actions artifact.
+Every child builds from the exact tag with the authenticated CLI and locked
+SDK; public Release bytes are never used as package or artifact authority. CI
+accepts only exactly one non-empty `uploaded` record of each name with a valid
+GitHub digest, and requires the newly built bytes to match. It rejects partial
+pairs, duplicate names, zero-byte/`starter` records, and rebuild drift without
+deleting or clobbering them. A successful child uploads only its fresh local
+build and sidecar to the run/attempt-named, digest-bearing Actions artifact.
 
 `release-evidence.json` certifies a `release-surfaces/pre-handoff-checkpoint`,
 not a completed `sync` job, and remains
@@ -194,10 +196,19 @@ immutable Actions artifact as package authority, installs the
 hash-authenticated CLI, independently inspects the package commitment and
 structured manifest, and compares those artifact bytes with the current
 Release pair. Only then does it publish `release-closure-evidence.json`,
-re-download the entire published bundle, and run the offline closure verifier
-against those current bytes.
-Stable/GA blocker checks require that certificate and reverify its hash links
-against the current bundle, so later package or sidecar substitution fails.
+re-download the entire published bundle, and run the live GitHub closure
+verifier. The live verifier re-fetches each Release asset by exact REST id and
+digest, authenticates the exact child run attempt and workflow identity, and
+downloads and hashes the exact non-expired artifact ZIP before comparing its
+two files to the Release pair; it also resolves the current GitHub tag to the
+recorded source commit. A terminal inventory re-fetch requires the Release id
+and exact `draft`/`prerelease` policy plus every required asset
+id/state/size/digest/URL to remain unchanged after all downloads and artifact
+checks; the exact Actions artifact record and tag commit are revalidated too.
+The stable blocker explicitly requires `prerelease=false`. JSON-only offline inspection is deliberately
+non-authoritative; stable/GA blocker checks require `GH_TOKEN` and the live
+mode. Each verifier subprocess has a 60-second ceiling and the parent closure
+job is explicitly bounded.
 
 The parent selects the child artifact by numeric REST id, verifies the downloaded
 ZIP size and SHA-256 against that exact REST record, and rejects an expired or

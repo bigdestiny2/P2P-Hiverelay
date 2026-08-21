@@ -119,13 +119,15 @@ runtime: the package format does not embed enough information to prove its
 original build toolchain.
 
 Published 0.4 assets are an immutable package/evidence pair. A retry accepts
-them only when exactly one non-empty `uploaded` record of each name has a valid
-GitHub SHA-256 digest and the downloaded bytes match. Package-only or
-sidecar-only recovery, duplicate names, and zero-byte/`starter` records fail
+them only as compare-only state. Every child still installs the locked source
+dependencies and builds from the exact tag with the authenticated toolchain;
+public Release bytes are never copied into a trusted Actions artifact. Exactly
+one non-empty `uploaded` record of each name must have a valid GitHub SHA-256
+digest and match the new source-built bytes. Package-only or sidecar-only
+recovery, duplicate names, zero-byte/`starter` records, and rebuild drift fail
 closed for audited manual recovery; the workflow never deletes or clobbers an
-existing 0.4 asset. A new child uploads the pair together and copies those same
-bytes into a non-expired, digest-bearing Actions artifact named for the exact
-child run and attempt.
+existing 0.4 asset. The child then uploads only its fresh local package and
+sidecar to the run/attempt-named, digest-bearing Actions artifact.
 
 Equivalent source reruns reuse the prior completed release checkpoint's canonical image
 digest instead of rebuilding a potentially different provenance-bearing index.
@@ -153,7 +155,16 @@ size/SHA-256, independently inspects the `.s9pk`
 commitment and structured manifest, and proves the artifact bytes match the
 current GitHub Release package/sidecar pair. It then publishes
 `release-closure-evidence.json`, re-downloads the complete published bundle,
-and reruns offline closure verification against those current bytes. The earlier
+and runs live GitHub closure verification. That mode re-fetches current Release
+assets by exact REST id/digest, authenticates the exact child run attempt and
+workflow, downloads the exact artifact id, verifies its REST ZIP size/digest
+and inventory, resolves the current tag to the recorded source commit, and
+compares its bytes with the Release pair. A final inventory re-fetch requires
+the Release id, exact draft/prerelease policy, and each required asset
+id/state/size/digest/URL to remain unchanged after verification; it also
+revalidates the exact artifact record and tag commit. The stable blocker passes
+`--expected-prerelease false`, so prerelease proof cannot clear GA. Offline JSON-only
+verification is explicitly non-authoritative and cannot clear stable/GA. The earlier
 `release-evidence.json` describes
 only a pre-handoff checkpoint, not terminal `sync` success, and explicitly remains
 `checkpoint-passed-pending-sync-completion-and-startos-0.4-closure`; stable/GA blocker checks require the
