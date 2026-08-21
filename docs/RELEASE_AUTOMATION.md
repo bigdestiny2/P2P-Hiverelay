@@ -419,6 +419,10 @@ manually dispatched, the workflow:
    dist-tag and leaves `latest` untouched; only a stable tag moves `latest`.
    Branch candidates publish nothing. The evidence record carries the matching
    `published-next`/`current-next` status.
+   npm package visibility and dist-tag readback are eventually consistent, so
+   the workflow uses bounded exponential backoff for both phases and still
+   fails closed unless the registry returns the exact release version before
+   any container or appliance work begins.
    This step runs **before** every container and appliance surface on purpose. It
    used to sit after the image smoke, which meant a Docker, StartOS, or Umbrel
    failure skipped npm entirely — that is how `0.24.2` built and signed a release

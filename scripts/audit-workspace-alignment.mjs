@@ -172,6 +172,7 @@ const releaseSecretsTemplate = readText(hiverelayRoot, 'scripts', 'write-release
 const ecosystemConsumersAudit = readText(hiverelayRoot, 'scripts', 'audit-ecosystem-consumers.mjs')
 const ecosystemConsumersSync = readText(hiverelayRoot, 'scripts', 'sync-ecosystem-consumers.mjs')
 const npmLatestCheck = readText(hiverelayRoot, 'scripts', 'check-npm-latest.mjs')
+const npmDistTagReadback = readText(hiverelayRoot, 'scripts', 'ensure-npm-dist-tag.mjs')
 const releaseBlockersCheck = readText(hiverelayRoot, 'scripts', 'check-release-blockers.mjs')
 const npmPackagePackCheck = readText(hiverelayRoot, 'scripts', 'check-npm-package-pack.mjs')
 const auditOwnedDiffCheck = readText(hiverelayRoot, 'scripts', 'check-audit-owned-diff.mjs')
@@ -476,6 +477,7 @@ const githubReleaseSecretsApplyTest = readText(hiverelayRoot, 'test', 'unit', 'g
 const releaseSecretsTemplateTest = readText(hiverelayRoot, 'test', 'unit', 'release-secret-template.test.js')
 const ecosystemConsumersAuditTest = readText(hiverelayRoot, 'test', 'unit', 'ecosystem-consumers.test.js')
 const npmLatestCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-latest-check.test.js')
+const npmDistTagReadbackTest = readText(hiverelayRoot, 'test', 'unit', 'npm-dist-tag-readback.test.js')
 const releaseBlockersCheckTest = readText(hiverelayRoot, 'test', 'unit', 'release-blockers-check.test.js')
 const npmPackagePackCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-package-pack-check.test.js')
 const publicArtifactSecretsAuditTest = readText(hiverelayRoot, 'test', 'unit', 'public-artifact-secret-scan.test.js')
@@ -7523,8 +7525,18 @@ if (
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
   releaseWorkflow.includes('npm publish "./$pkg" --access public --tag "$dist_tag"') &&
-  releaseWorkflow.includes('npm dist-tag add "$name@$version" "$dist_tag"') &&
-  releaseWorkflow.includes('npm view "$name" "dist-tags.$dist_tag"') &&
+  releaseWorkflow.includes('node scripts/ensure-npm-dist-tag.mjs') &&
+  releaseWorkflow.includes('--attempts 12') &&
+  releaseWorkflow.includes('--initial-delay-ms 2000') &&
+  releaseWorkflow.includes('--max-delay-ms 15000') &&
+  npmDistTagReadback.includes('export async function ensureNpmDistTag') &&
+  npmDistTagReadback.includes("npmOutput(['dist-tag', 'add'") &&
+  npmDistTagReadback.includes('DEFAULT_ATTEMPTS = 12') &&
+  npmDistTagReadback.includes('DEFAULT_MAX_DELAY_MS = 15000') &&
+  npmDistTagReadbackTest.includes('retries package visibility and stale registry reads') &&
+  npmDistTagReadbackTest.includes('fails closed when package visibility never converges') &&
+  npmDistTagReadbackTest.includes('fails closed when the tag stays stale') &&
+  npmDistTagReadbackTest.includes('before downstream surfaces') &&
   releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
   // Prereleases move `next`, stable moves `latest`, and the evidence status
   // carries the matching -next suffix.

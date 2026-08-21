@@ -569,15 +569,17 @@ jobs:
               npm publish "./$pkg" --access public --tag "$dist_tag"
               published=1
             fi
-            current="$(npm view "$name" "dist-tags.$dist_tag" 2>/dev/null || true)"
-            if [ "$current" != "$version" ]; then
-              npm dist-tag add "$name@$version" "$dist_tag"
-            fi
-            current="$(npm view "$name" "dist-tags.$dist_tag")"
-            if [ "$current" != "$version" ]; then
-              echo "$name $dist_tag dist-tag is $current; expected $version" >&2
-              exit 1
-            fi
+            # npm publication and dist-tag reads are eventually consistent.
+            # Wait for the immutable tarball to become visible, request the
+            # desired tag idempotently, and fail closed unless bounded readback
+            # confirms the exact version before downstream image/app surfaces.
+            node scripts/ensure-npm-dist-tag.mjs \
+              --package "$name" \
+              --version "$version" \
+              --tag "$dist_tag" \
+              --attempts 12 \
+              --initial-delay-ms 2000 \
+              --max-delay-ms 15000
           done
           # check-npm-latest only understands the `latest` dist-tag; the `next`
           # line is verified inline by the loop above.
