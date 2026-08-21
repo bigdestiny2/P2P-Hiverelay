@@ -86,6 +86,11 @@ test('prepare-release defaults full release channel to both', async (t) => {
   t.ok(startosManifest.includes('HexOS.\nlicense: apache-2.0'), 'StartOS release-notes block is newline-terminated')
   const startosReadme = await readFile(path.join(repo, 'startos', 'README.md'), 'utf8')
   t.ok(startosReadme.includes('Status: `v9.9.9`, one-page dashboard'), 'backticked StartOS status is parsed and canonicalized')
+  const startos04Version = await readFile(path.join(repo, 'startos-0.4', 'startos', 'versions', 'current.ts'), 'utf8')
+  const startos04Manifest = await readFile(path.join(repo, 'startos-0.4', 'startos', 'manifest', 'index.ts'), 'utf8')
+  t.ok(startos04Version.includes("version: '9.9.9:1'"), 'StartOS 0.4 package version is synchronized')
+  t.ok(startos04Manifest.includes("'ghcr.io/bigdestiny2/p2p-hiverelay:9.9.9'"), 'StartOS 0.4 authoring image fallback is synchronized')
+  t.ok(startos04Manifest.includes('source: { dockerTag: releaseImageRef }'), 'StartOS 0.4 release image override remains wired')
 
   const truenasManifest = await readFile(path.join(repo, 'truenas-app', 'app.yaml'), 'utf8')
   const truenasImages = await readFile(path.join(repo, 'truenas-app', 'ix_values.yaml'), 'utf8')
@@ -529,6 +534,11 @@ async function writeMinimalReleaseFixture (repo) {
   await writeText(path.join(repo, 'startos', 'manifest.yaml'), 'id: blindspark\nversion: 0.16.3\nrelease-notes: |\n  old\nlicense: apache-2.0\n')
   await writeText(path.join(repo, 'startos', 'Makefile'), 'VERSION ?= $(shell sed -n \'s/.*"version"[[:space:]]*:[[:space:]]*"\\([^"]*\\)".*/\\1/p\' ../package.json | head -n 1)\n')
   await writeText(path.join(repo, 'startos', 'README.md'), 'Status: `v0.16.3`, one-page dashboard\n')
+  await writeText(path.join(repo, 'startos-0.4', 'startos', 'versions', 'current.ts'), "export const current = { version: '0.16.3:1' }\n")
+  await writeText(
+    path.join(repo, 'startos-0.4', 'startos', 'manifest', 'index.ts'),
+    "const releaseImageRef = process.env.HIVERELAY_STARTOS_04_IMAGE_REF || 'ghcr.io/bigdestiny2/p2p-hiverelay:0.16.3'\nsource: { dockerTag: releaseImageRef }\n"
+  )
   await writeText(path.join(repo, 'truenas-app', 'app.yaml'), 'app_version: 0.16.3\nversion: 1.0.0\n')
   await writeText(path.join(repo, 'truenas-app', 'ix_values.yaml'), 'images:\n  image:\n    repository: ghcr.io/bigdestiny2/p2p-hiverelay\n    tag: 0.16.3\n')
   await writeText(path.join(repo, 'truenas-app', 'README.md'), '- Upstream HiveRelay release: `0.16.3`\n')

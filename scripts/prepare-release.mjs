@@ -393,10 +393,12 @@ function syncStartOs () {
   syncStartOs04()
 }
 
-// The 0.4-line package pins its version and image in TypeScript rather than
-// manifest.yaml, so it was invisible to this script and drifted on every bump.
-// audit-workspace-alignment.mjs requires both to equal the monorepo version.
-// Skipped when absent so older checkout shapes still prepare.
+// The 0.4-line package pins its version and local-authoring image fallback in
+// TypeScript rather than manifest.yaml, so it was invisible to this script and
+// drifted on every bump. Release CI overrides that fallback with a verified
+// digest-qualified ref. audit-workspace-alignment.mjs requires the authored
+// version and fallback to equal the monorepo version. Skipped when absent so
+// older checkout shapes still prepare.
 function syncStartOs04 () {
   const versionFile = path.join(repoRoot, 'startos-0.4', 'startos', 'versions', 'current.ts')
   const manifestFile = path.join(repoRoot, 'startos-0.4', 'startos', 'manifest', 'index.ts')
@@ -411,9 +413,9 @@ function syncStartOs04 () {
   )
   replaceInFile(
     manifestFile,
-    /dockerTag: 'ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^']+'/,
-    `dockerTag: 'ghcr.io/bigdestiny2/p2p-hiverelay:${version}'`,
-    'StartOS 0.4 package image tag'
+    /'ghcr\.io\/bigdestiny2\/p2p-hiverelay:[^']+'/,
+    `'ghcr.io/bigdestiny2/p2p-hiverelay:${version}'`,
+    'StartOS 0.4 package authoring image tag'
   )
 }
 

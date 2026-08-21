@@ -1068,7 +1068,12 @@ verified `.s9pk` is built.
 A second package tree in [startos-0.4/](startos-0.4/) targets the StartOS 0.4
 packaging format alongside the 0.3.5.x package above. GitHub Releases expose it
 as `blindspark-startos-0.4.s9pk`; the legacy package keeps the existing
-`blindspark.s9pk` asset name.
+`blindspark.s9pk` asset name. The 0.4 package is dispatched only after the main
+release's source job succeeds, is pinned to that run's exact source-bound
+multi-arch digest, and is paired with immutable
+`startos-0.4-release-evidence.json` handoff evidence. The parent waits for the
+child and verifies those published closure assets before it can report
+success.
 
 ### TrueNAS
 

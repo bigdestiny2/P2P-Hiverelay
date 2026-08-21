@@ -788,6 +788,66 @@ cd startos
 make verify IMAGE_DIGEST=sha256:<multi-arch-digest>
 ```
 
+### StartOS 0.4 package handoff
+
+The TypeScript-SDK package in `startos-0.4/` remains isolated from the legacy
+package above. It is not triggered directly by release publication. A separate
+`dispatch-startos-04` job, with `needs: sync` and job-scoped `actions: write`,
+dispatches it only after the source `sync` job succeeds. The dispatch uses the
+exact release tag as both workflow ref and input and passes that
+`release-surfaces` run id as runtime authority. The parent then waits, with a
+bounded timeout, for the exact child run to succeed and independently verifies
+the four published source/package evidence assets before the overall release
+workflow can pass.
+
+Before any signing key or package build, the downstream workflow verifies the
+exact tag checkout, release evidence/tag-SHA agreement, the multi-arch image
+digest and child digests, and the amd64/arm64 child config
+`org.opencontainers.image.revision` labels. Release builds set
+`REQUIRE_RELEASE_IMAGE_DIGEST=1`, and the packed manifest must contain the
+same tag-plus-digest ref. Structured manifest inspection also requires the
+exact authored StartOS id/version, its sole runtime-image key, and the expected
+architecture set; unrelated text cannot satisfy the image-ref check.
+
+An equivalent source-workflow rerun reuses the existing evidence-bound image
+index from an earlier successful `sync` job and recreates only the mutable tag
+alias. It does not rebuild a timestamp-bearing provenance index under the same
+semver tag. This keeps the immutable StartOS package and sidecar bound to one
+canonical multi-arch digest while still permitting recovery when a prior
+parent run failed later in its StartOS closure job.
+
+The setup action is commit-pinned, and the installed `start-cli 1.1.0` binary
+must match its reviewed SHA-256 before key configuration. The deterministic
+`startos-0.4-release-evidence.json` sidecar binds the tag SHA, image ref/digest,
+per-platform child digests/revisions, pinned action/CLI/SDK identities, package
+SHA-256, and the exact inspected package commitment. It excludes run ids,
+timestamps, and mutable upstream evidence hashes, so an equivalent successful
+source-workflow rerun remains verifiable. `start-cli 1.1.0` does not expose a
+signer fingerprint through `s9pk inspect`; the sidecar records that limitation
+instead of making an unproved signer claim.
+
+The toolchain section is explicitly a declared source/workflow build contract
+plus the current inspection runtime, not an assertion that a recovered package
+embeds verifiable original-build provenance. The `.s9pk` format/CLI exposes no
+such provenance. This distinction keeps package-without-sidecar recovery
+honest: the artifact proof is its bytes, commitment, and structured manifest,
+while the SDK/action/CLI pins describe the tag's required build contract.
+
+Both `blindspark-startos-0.4.s9pk` and its sidecar are immutable release
+assets. Reruns verify matching existing assets and never use `--clobber`. If
+the package exists without its sidecar, the workflow inspects that published
+package and recovers the evidence without a nondeterministic rebuild. A
+different package, mismatched commitment/image binding, or orphaned sidecar is
+a hard failure. This additive sidecar is the StartOS 0.4 handoff record; the
+legacy `release-evidence.json` continues to describe `blindspark.s9pk` and its
+existing registry contract.
+
+Because GitHub loads a dispatched workflow and its scripts from `--ref`, these
+controls can run only for a release tag that already contains them. They do not
+retrofit the existing `v0.26.0-rc.3` tag; the first eligible release is the next
+new tag cut from a commit containing this workflow. Moving an existing tag is
+not an accepted recovery path.
+
 ## Local Use
 
 Prepare a release locally after the GHCR image exists:

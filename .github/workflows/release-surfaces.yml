@@ -34,6 +34,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: write
   packages: write
   # cosign keyless (OIDC) image signing — no long-lived signing key stored
@@ -51,6 +52,10 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.rel.outputs.version }}
+      is_branch_candidate: ${{ steps.rel.outputs.is_branch_candidate }}
+      release_sha: ${{ steps.source.outputs.release_sha }}
     env:
       UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
       UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
@@ -262,6 +267,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Verify release ref
+        id: source
         working-directory: hiverelay
         shell: bash
         run: |
@@ -272,6 +278,7 @@ jobs:
             tag_sha="${{ github.sha }}"
             git cat-file -e "$tag_sha^{commit}"
             echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+            echo "release_sha=$tag_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           tag_sha="$(git rev-parse "${{ steps.rel.outputs.version }}^{commit}")"
@@ -326,6 +333,7 @@ jobs:
             echo "HIVERELAY_RELEASE_MAINTENANCE_BRANCH=$maintenance_branch" >> "$GITHUB_ENV"
             echo "HIVERELAY_RELEASE_MAINTENANCE_BASE=$fork_tag" >> "$GITHUB_ENV"
             echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+            echo "release_sha=$tag_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ -n "$maintenance_branch" ]; then
@@ -334,6 +342,7 @@ jobs:
             exit 1
           fi
           echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+          echo "release_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
       # Keep this before any public GitHub Release lookup/create or asset upload.
       # The standalone release-distribution-preflight.yml workflow runs the same
@@ -622,7 +631,61 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A successful earlier run for the same immutable tag/SHA is the
+      # canonical image authority. Reusing its verified digest prevents a
+      # duplicate build's timestamped attestations from changing the index
+      # digest underneath immutable downstream package assets.
+      - name: Resolve reusable source-bound release image
+        id: prior_image
+        if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "reuse=false" >> "$GITHUB_OUTPUT"
+          asset_names="$(gh release view "${{ steps.rel.outputs.version }}" --json assets --jq '.assets[].name')"
+          has_release_evidence=false
+          has_manifest_evidence=false
+          if printf '%s\n' "$asset_names" | grep -Fxq 'release-evidence.json'; then
+            has_release_evidence=true
+          fi
+          if printf '%s\n' "$asset_names" | grep -Fxq 'release-image-manifest-evidence.json'; then
+            has_manifest_evidence=true
+          fi
+          if [ "$has_release_evidence" != "$has_manifest_evidence" ]; then
+            echo "Existing release image authority is incomplete; refusing to rebuild over it." >&2
+            exit 1
+          fi
+          if [ "$has_release_evidence" != "true" ]; then
+            exit 0
+          fi
+          evidence_dir="$RUNNER_TEMP/reusable-release-image"
+          mkdir -p "$evidence_dir"
+          gh release download "${{ steps.rel.outputs.version }}" \
+            --pattern 'release-evidence.json' \
+            --pattern 'release-image-manifest-evidence.json' \
+            --dir "$evidence_dir"
+          node scripts/resolve-reusable-release-image.mjs \
+            --tag "${{ steps.rel.outputs.version }}" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --release-evidence "$evidence_dir/release-evidence.json" \
+            --image-manifest-evidence "$evidence_dir/release-image-manifest-evidence.json" \
+            --github-env "$GITHUB_ENV"
+          previous_run_id="$(jq -r '.release.workflow.runId' "$evidence_dir/release-evidence.json")"
+          previous_run="$(gh run view "$previous_run_id" --repo "$GITHUB_REPOSITORY" --json workflowName,jobs)"
+          if ! jq -e '
+            .workflowName == "Release surfaces" and
+            ([.jobs[] | select(.name == "sync")] | length) == 1 and
+            ([.jobs[] | select(.name == "sync")][0] | .status == "completed" and .conclusion == "success")
+          ' <<<"$previous_run" >/dev/null; then
+            echo "Reusable release image authority did not come from exactly one terminal successful Release surfaces sync job: $previous_run" >&2
+            exit 1
+          fi
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+
       - name: Build and push multi-arch image
+        if: ${{ steps.prior_image.outputs.reuse != 'true' }}
         working-directory: hiverelay
         run: |
           set -euo pipefail
@@ -644,6 +707,26 @@ jobs:
             exit 1
           fi
           echo "HIVERELAY_IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
+
+      - name: Restore release image tags to reusable digest
+        if: ${{ steps.prior_image.outputs.reuse == 'true' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          tags=("$IMAGE_NAME:${{ steps.rel.outputs.semver }}")
+          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
+            tags+=("$IMAGE_NAME:latest")
+          fi
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create --tag "$tag" "$IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST"
+            raw_manifest="$RUNNER_TEMP/$(printf '%s' "$tag" | tr '/:' '__').json"
+            docker buildx imagetools inspect "$tag" --raw > "$raw_manifest"
+            actual_digest="sha256:$(sha256sum "$raw_manifest" | cut -d ' ' -f 1)"
+            if [ "$actual_digest" != "$HIVERELAY_IMAGE_DIGEST" ]; then
+              echo "Retagged image $tag resolved to $actual_digest; expected $HIVERELAY_IMAGE_DIGEST" >&2
+              exit 1
+            fi
+          done
 
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
@@ -1367,3 +1450,133 @@ jobs:
             --dir "$handoff_dir/startos" \
             --clobber
           npm run release:verify-handoff-evidence -- --bundle-dir "$handoff_dir"
+
+  # Keep the new-format toolchain isolated and grant Actions write authority
+  # only to this bounded dispatcher. `needs: sync` means no StartOS 0.4 build
+  # can start before the source release job has passed; this job then waits for
+  # and verifies the downstream package before the parent workflow can pass.
+  dispatch-startos-04:
+    needs: sync
+    if: ${{ needs.sync.result == 'success' && needs.sync.outputs.is_branch_candidate != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Checkout exact released source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.sync.outputs.version }}
+          fetch-depth: 0
+          path: hiverelay
+
+      - name: Verify dispatcher source identity
+        env:
+          RELEASE_TAG: ${{ needs.sync.outputs.version }}
+          RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(git -C hiverelay rev-parse --verify "$RELEASE_TAG^{commit}")"
+          head_sha="$(git -C hiverelay rev-parse HEAD)"
+          if [ "$tag_sha" != "$RELEASE_SHA" ] || [ "$head_sha" != "$RELEASE_SHA" ]; then
+            echo "StartOS 0.4 dispatcher source mismatch: tag=$tag_sha head=$head_sha expected=$RELEASE_SHA" >&2
+            exit 1
+          fi
+
+      - name: Dispatch and await source-bound StartOS 0.4 package release
+        id: child
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.sync.outputs.version }}
+          RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          workflow='release-startos-0.4.yml'
+          export EXPECTED_TITLE="StartOS 0.4 $RELEASE_TAG from release-surfaces $GITHUB_RUN_ID"
+          list_runs() {
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --event workflow_dispatch \
+              --limit 100 \
+              --json databaseId,displayTitle,status,conclusion,headSha
+          }
+          runs_json="$(list_runs)"
+          successful_id="$(jq -r '[.[] | select(.displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA and .conclusion == "success")] | sort_by(.databaseId) | last | .databaseId // empty' <<<"$runs_json")"
+          active_id="$(jq -r '[.[] | select(.displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA and .status != "completed")] | sort_by(.databaseId) | last | .databaseId // empty' <<<"$runs_json")"
+          if [ -n "$successful_id" ]; then
+            child_id="$successful_id"
+            echo "Reusing successful StartOS 0.4 child run $child_id."
+          elif [ -n "$active_id" ]; then
+            child_id="$active_id"
+            echo "Waiting for existing StartOS 0.4 child run $child_id."
+          else
+            previous_max="$(jq -r '[.[].databaseId] | max // 0' <<<"$runs_json")"
+            gh workflow run "$workflow" \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "$RELEASE_TAG" \
+              --raw-field "tag=$RELEASE_TAG" \
+              --raw-field "release_surfaces_run_id=$GITHUB_RUN_ID"
+            child_id=''
+            for attempt in $(seq 1 30); do
+              runs_json="$(list_runs)"
+              child_id="$(jq -r --argjson minimum "$previous_max" '[.[] | select(.displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA and .databaseId > $minimum)] | sort_by(.databaseId) | last | .databaseId // empty' <<<"$runs_json")"
+              if [ -n "$child_id" ]; then
+                break
+              fi
+              sleep 2
+            done
+            if [ -z "$child_id" ]; then
+              echo "Dispatched StartOS 0.4 workflow did not become visible within 60 seconds." >&2
+              exit 1
+            fi
+          fi
+          for attempt in $(seq 1 420); do
+            run_json="$(gh run view "$child_id" --repo "$GITHUB_REPOSITORY" --json workflowName,displayTitle,headSha,status,conclusion,url)"
+            if ! jq -e '.workflowName == "Release StartOS 0.4 package" and .displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA' <<<"$run_json" >/dev/null; then
+              echo "StartOS 0.4 child run identity drifted: $run_json" >&2
+              exit 1
+            fi
+            status="$(jq -r '.status' <<<"$run_json")"
+            if [ "$status" = "completed" ]; then
+              conclusion="$(jq -r '.conclusion' <<<"$run_json")"
+              if [ "$conclusion" != "success" ]; then
+                echo "StartOS 0.4 child run $child_id concluded $conclusion." >&2
+                exit 1
+              fi
+              echo "StartOS 0.4 child run $child_id completed successfully."
+              echo "child_run_id=$child_id" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" = "420" ]; then
+              echo "StartOS 0.4 child run $child_id did not complete within 70 minutes." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Verify published StartOS 0.4 closure assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.sync.outputs.version }}
+          RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          closure_dir="$RUNNER_TEMP/startos-0.4-release-closure"
+          mkdir -p "$closure_dir"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'release-evidence.json' \
+            --pattern 'release-image-manifest-evidence.json' \
+            --pattern 'blindspark-startos-0.4.s9pk' \
+            --pattern 'startos-0.4-release-evidence.json' \
+            --dir "$closure_dir"
+          node hiverelay/scripts/verify-published-startos-04-release.mjs \
+            --tag "$RELEASE_TAG" \
+            --tag-sha "$RELEASE_SHA" \
+            --release-surfaces-run-id "$GITHUB_RUN_ID" \
+            --release-evidence "$closure_dir/release-evidence.json" \
+            --image-manifest-evidence "$closure_dir/release-image-manifest-evidence.json" \
+            --package "$closure_dir/blindspark-startos-0.4.s9pk" \
+            --startos-0.4-evidence "$closure_dir/startos-0.4-release-evidence.json"

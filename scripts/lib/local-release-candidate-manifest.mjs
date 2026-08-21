@@ -173,7 +173,7 @@ export function collectLocalReleaseSnapshot (repoRoot, options = {}) {
       startos04: {
         version: tsSingleQuotedValue(startos04VersionSource, 'version').split(':')[0],
         versionWithRevision: tsSingleQuotedValue(startos04VersionSource, 'version'),
-        imageRef: tsSingleQuotedValue(startos04Manifest, 'dockerTag'),
+        imageRef: parseStartos04AuthoringImageRef(startos04Manifest),
         packageFormat: 'startos-0.4',
         artifactName: 'blindspark-startos-0.4.s9pk'
       }
@@ -590,6 +590,12 @@ function tsSingleQuotedValue (value, key) {
   const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   const match = new RegExp(`${escaped}:\\s*'([^']+)'`).exec(value)
   return match ? match[1] : ''
+}
+
+export function parseStartos04AuthoringImageRef (value) {
+  const overrideFallback = /const\s+releaseImageRef\s*=\s*process\.env\.HIVERELAY_STARTOS_04_IMAGE_REF\s*\|\|\s*'([^']+)'/.exec(value)
+  if (overrideFallback) return overrideFallback[1]
+  return tsSingleQuotedValue(value, 'dockerTag')
 }
 
 function requireSemver (value, label) {

@@ -1,4 +1,5 @@
 name: Release StartOS 0.4 package
+run-name: StartOS 0.4 ${{ inputs.tag }} from release-surfaces ${{ inputs.release_surfaces_run_id }}
 
 # Builds the StartOS 0.4 (TypeScript-SDK) Blindspark package from startos-0.4/
 # and attaches the sideloadable .s9pk to the GitHub Release.
@@ -7,7 +8,9 @@ name: Release StartOS 0.4 package
 # toolchain is entirely different (start-cli + @start9labs/start-sdk + the new
 # signed .s9pk format) from the 0.3.5.x path (startbox/start-sdk + manifest.yaml),
 # so a failure in the new 0.4 build can never break the live 0.3 release + fleet
-# pipeline. The two package channels coexist during the transition.
+# pipeline. release-surfaces dispatches this workflow only after its source-
+# bound multi-arch image and release evidence have passed. The two package
+# channels coexist during the transition.
 #
 # Signing: with STARTOS_DEV_KEY set, the package is signed and registry-
 # publishable. Without it, the build falls back to an ephemeral key — fine for a
@@ -17,37 +20,201 @@ name: Release StartOS 0.4 package
 # startos-0.4/README.md.
 
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:
         description: Release tag to build + attach the .s9pk to (e.g. v0.24.3)
         required: true
+      release_surfaces_run_id:
+        description: Release surfaces run whose successful sync job published the source-bound image/evidence
+        required: true
 
 permissions:
+  actions: read
   contents: write
 
 concurrency:
-  group: release-startos-0.4-${{ github.event.release.tag_name || github.event.inputs.tag }}
+  group: release-startos-0.4-${{ inputs.tag }}
   cancel-in-progress: false
 
 jobs:
   build-and-upload:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       STARTOS_04_RELEASE_ASSET: blindspark-startos-0.4.s9pk
+      STARTOS_04_RELEASE_EVIDENCE: startos-0.4-release-evidence.json
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve exact release tag
+        env:
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          tag="$DISPATCH_TAG"
+          if ! [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "StartOS 0.4 release tag is malformed: $tag" >&2
+            exit 1
+          fi
+          tag_ref="refs/tags/$tag"
+          if [ "$GITHUB_REF" != "$tag_ref" ]; then
+            echo "workflow_dispatch ref $GITHUB_REF does not match exact tag $tag_ref; dispatch with --ref $tag" >&2
+            exit 1
+          fi
+          git fetch --force origin "$tag_ref:$tag_ref"
+          tag_sha="$(git rev-parse --verify "$tag_ref^{commit}")"
+          git checkout --detach "$tag_ref"
+          head_sha="$(git rev-parse HEAD)"
+          if [ "$head_sha" != "$tag_sha" ]; then
+            echo "Checked-out HEAD $head_sha does not match $tag^{commit} $tag_sha" >&2
+            exit 1
+          fi
+          package_version="$(node -p "require('./package.json').version")"
+          if [ "v$package_version" != "$tag" ]; then
+            echo "Release tag $tag does not match package.json version v$package_version" >&2
+            exit 1
+          fi
+          echo "HIVERELAY_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+
+      - name: Resolve source-bound release image
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_RELEASE_SURFACES_RUN_ID: ${{ inputs.release_surfaces_run_id }}
+        run: |
+          set -euo pipefail
+          evidence_dir="$RUNNER_TEMP/startos-0.4-source-evidence"
+          mkdir -p "$evidence_dir"
+          gh release download "$HIVERELAY_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'release-evidence.json' \
+            --dir "$evidence_dir"
+          gh release download "$HIVERELAY_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'release-image-manifest-evidence.json' \
+            --dir "$evidence_dir"
+          node scripts/resolve-startos-04-release.mjs \
+            --tag "$HIVERELAY_RELEASE_TAG" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --release-surfaces-run-id "$EXPECTED_RELEASE_SURFACES_RUN_ID" \
+            --release-evidence "$evidence_dir/release-evidence.json" \
+            --image-manifest-evidence "$evidence_dir/release-image-manifest-evidence.json" \
+            --github-env "$GITHUB_ENV"
+          echo "HIVERELAY_RELEASE_EVIDENCE_PATH=$evidence_dir/release-evidence.json" >> "$GITHUB_ENV"
+          echo "HIVERELAY_IMAGE_MANIFEST_EVIDENCE_PATH=$evidence_dir/release-image-manifest-evidence.json" >> "$GITHUB_ENV"
+
+      # The parent workflow awaits this child, so requiring the whole parent
+      # run to be terminal would deadlock. Authenticate the already-terminal
+      # source `sync` job instead; its uploaded evidence is what this child
+      # consumes, while the parent dispatcher remains in progress.
+      - name: Verify release-surfaces sync authority
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          run_json="$(gh run view "$HIVERELAY_RELEASE_SURFACES_RUN_ID" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json workflowName,jobs)"
+          node -e '
+            const run = JSON.parse(process.argv[1])
+            if (run.workflowName !== "Release surfaces") throw new Error(`unexpected source workflow: ${run.workflowName}`)
+            const syncJobs = (run.jobs || []).filter(job => job.name === "sync")
+            if (syncJobs.length !== 1) throw new Error(`expected one sync job; got ${syncJobs.length}`)
+            const sync = syncJobs[0]
+            if (sync.status !== "completed" || sync.conclusion !== "success") {
+              throw new Error(`Release surfaces sync job is ${sync.status}/${sync.conclusion}`)
+            }
+          ' "$run_json"
+
+      - name: Inspect existing immutable release assets
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          existing_dir="$RUNNER_TEMP/startos-0.4-existing"
+          mkdir -p "$existing_dir"
+          asset_names="$(gh release view "$HIVERELAY_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json assets \
+            --jq '.assets[].name')"
+          package_exists=false
+          evidence_exists=false
+          if printf '%s\n' "$asset_names" | grep -Fxq "$STARTOS_04_RELEASE_ASSET"; then
+            package_exists=true
+          fi
+          if printf '%s\n' "$asset_names" | grep -Fxq "$STARTOS_04_RELEASE_EVIDENCE"; then
+            evidence_exists=true
+          fi
+          if [ "$evidence_exists" = "true" ] && [ "$package_exists" != "true" ]; then
+            echo "$STARTOS_04_RELEASE_EVIDENCE exists without $STARTOS_04_RELEASE_ASSET; refusing an orphaned handoff." >&2
+            exit 1
+          fi
+          if [ "$package_exists" = "true" ]; then
+            gh release download "$HIVERELAY_RELEASE_TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --pattern "$STARTOS_04_RELEASE_ASSET" \
+              --dir "$existing_dir"
+            cp "$existing_dir/$STARTOS_04_RELEASE_ASSET" "startos-0.4/$STARTOS_04_RELEASE_ASSET"
+          fi
+          if [ "$package_exists" = "true" ]; then
+            echo "needs_build=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_build=true" >> "$GITHUB_OUTPUT"
+          fi
+          if [ "$evidence_exists" = "true" ]; then
+            echo "needs_evidence=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needs_evidence=true" >> "$GITHUB_OUTPUT"
+          fi
 
       # Start9's maintained composite action installs the 0.4 toolchain
       # (start-cli + docker + node) — reused so this stays correct as Start9
-      # evolves the packaging toolchain, rather than hand-rolling the install.
+      # evolves the packaging toolchain. Pin the reviewed action commit; its
+      # installer selects the newest CLI asset, so the next step additionally
+      # enforces the reviewed start-cli 1.1.0 binary hash before any key exists.
       - name: Set up StartOS build environment
-        uses: Start9Labs/start-technologies/.github/actions/setup-build-env@master
+        uses: Start9Labs/start-technologies/.github/actions/setup-build-env@21507e89e717a303cb1064ac4c853d28b96d323b
+
+      - name: Verify pinned StartOS CLI
+        run: |
+          set -euo pipefail
+          expected_sha='70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a'
+          cli_path="$(command -v start-cli)"
+          actual_sha="$(sha256sum "$cli_path" | cut -d ' ' -f 1)"
+          if [ "$actual_sha" != "$expected_sha" ]; then
+            echo "start-cli checksum mismatch: got $actual_sha, expected $expected_sha for start-cli_x86_64-linux v1.1.0" >&2
+            exit 1
+          fi
+          cli_version="$(start-cli --version)"
+          if [ "$cli_version" != 'start-cli 1.1.0' ]; then
+            echo "start-cli version mismatch: got '$cli_version', expected 'start-cli 1.1.0'" >&2
+            exit 1
+          fi
+
+      - name: Verify release image source revisions
+        run: |
+          set -euo pipefail
+          verify_child() {
+            architecture="$1"
+            digest="$2"
+            image_json="$(docker buildx imagetools inspect \
+              "$HIVERELAY_IMAGE_NAME@$digest" \
+              --format '{{json .Image}}')"
+            printf '%s' "$image_json" | node scripts/verify-startos-04-image-revision.mjs \
+              --os linux \
+              --architecture "$architecture" \
+              --revision "$HIVERELAY_RELEASE_SHA"
+          }
+          verify_child amd64 "$HIVERELAY_IMAGE_AMD64_DIGEST"
+          verify_child arm64 "$HIVERELAY_IMAGE_ARM64_DIGEST"
 
       - name: Configure StartOS developer key
+        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         working-directory: startos-0.4
         env:
           STARTOS_DEV_KEY: ${{ secrets.STARTOS_DEV_KEY }}
@@ -75,30 +242,135 @@ jobs:
           chmod 600 ../.startos/build.key.pem
 
       - name: Build the StartOS 0.4 package
+        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         working-directory: startos-0.4
         run: |
           set -euo pipefail
           npm ci
-          make universal
+          make universal REQUIRE_RELEASE_IMAGE_DIGEST=1 IMAGE_DIGEST="$HIVERELAY_IMAGE_DIGEST"
           if [ ! -s blindspark.s9pk ]; then
             echo "StartOS 0.4 universal package is missing or empty." >&2
             exit 1
           fi
-          start-cli s9pk inspect blindspark.s9pk commitment >/dev/null
           mv blindspark.s9pk "$STARTOS_04_RELEASE_ASSET"
+
+      - name: Verify package image binding
+        working-directory: startos-0.4
+        run: |
+          set -euo pipefail
+          if [ ! -s "$STARTOS_04_RELEASE_ASSET" ]; then
+            echo "StartOS 0.4 release package is missing or empty." >&2
+            exit 1
+          fi
+          commitment_file="$RUNNER_TEMP/startos-0.4-package-commitment.txt"
+          start-cli s9pk inspect "$STARTOS_04_RELEASE_ASSET" commitment > "$commitment_file"
+          if [ ! -s "$commitment_file" ]; then
+            echo "StartOS 0.4 package commitment is missing or empty." >&2
+            exit 1
+          fi
+          manifest_file="$RUNNER_TEMP/startos-0.4-packed-manifest.json"
+          start-cli s9pk inspect "$STARTOS_04_RELEASE_ASSET" manifest --format json > "$manifest_file"
+          node ../scripts/verify-startos-04-package-manifest.mjs \
+            --tag "$HIVERELAY_RELEASE_TAG" \
+            --package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION" \
+            --image-ref "$HIVERELAY_STARTOS_04_IMAGE_REF" < "$manifest_file"
           s9pk_sha="$(sha256sum "$STARTOS_04_RELEASE_ASSET" | cut -d ' ' -f 1)"
           if ! [[ "$s9pk_sha" =~ ^[a-f0-9]{64}$ ]]; then
             echo "StartOS 0.4 package SHA-256 is malformed." >&2
             exit 1
           fi
+          echo "HIVERELAY_STARTOS_04_PACKAGE_SHA256=$s9pk_sha" >> "$GITHUB_ENV"
+          echo "HIVERELAY_STARTOS_04_COMMITMENT_PATH=$commitment_file" >> "$GITHUB_ENV"
+          echo "HIVERELAY_STARTOS_04_MANIFEST_PATH=$manifest_file" >> "$GITHUB_ENV"
           echo "Built $STARTOS_04_RELEASE_ASSET ($s9pk_sha)"
 
-      - name: Upload .s9pk to the GitHub Release
+      - name: Upload immutable .s9pk to the GitHub Release
+        if: ${{ steps.existing.outputs.needs_build == 'true' }}
         working-directory: startos-0.4
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          tag="${{ github.event.release.tag_name || github.event.inputs.tag }}"
-          gh release upload "$tag" "$STARTOS_04_RELEASE_ASSET" --clobber
-          echo "Attached $STARTOS_04_RELEASE_ASSET to release $tag"
+          tag="$HIVERELAY_RELEASE_TAG"
+          verify_dir="$(mktemp -d)"
+          asset_exists=false
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$STARTOS_04_RELEASE_ASSET"; then
+            asset_exists=true
+          fi
+          if [ "$asset_exists" = "false" ]; then
+            if ! gh release upload "$tag" "$STARTOS_04_RELEASE_ASSET" --repo "$GITHUB_REPOSITORY"; then
+              echo "Upload raced with another writer; verifying the existing immutable asset." >&2
+            fi
+          fi
+          gh release download "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$STARTOS_04_RELEASE_ASSET" \
+            --dir "$verify_dir"
+          if ! cmp "$STARTOS_04_RELEASE_ASSET" "$verify_dir/$STARTOS_04_RELEASE_ASSET"; then
+            echo "Existing $STARTOS_04_RELEASE_ASSET differs; refusing to replace a published StartOS 0.4 package." >&2
+            exit 1
+          fi
+          echo "Published immutable $STARTOS_04_RELEASE_ASSET ($HIVERELAY_STARTOS_04_PACKAGE_SHA256) on $tag"
+
+      - name: Write StartOS 0.4 release evidence
+        if: ${{ steps.existing.outputs.needs_evidence == 'true' }}
+        run: |
+          set -euo pipefail
+          node scripts/write-startos-04-release-evidence.mjs \
+            --tag "$HIVERELAY_RELEASE_TAG" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --release-surfaces-run-id "$HIVERELAY_RELEASE_SURFACES_RUN_ID" \
+            --release-evidence "$HIVERELAY_RELEASE_EVIDENCE_PATH" \
+            --image-manifest-evidence "$HIVERELAY_IMAGE_MANIFEST_EVIDENCE_PATH" \
+            --package "startos-0.4/$STARTOS_04_RELEASE_ASSET" \
+            --commitment "$HIVERELAY_STARTOS_04_COMMITMENT_PATH" \
+            --manifest "$HIVERELAY_STARTOS_04_MANIFEST_PATH" \
+            --out "$STARTOS_04_RELEASE_EVIDENCE"
+
+      - name: Upload immutable StartOS 0.4 evidence
+        if: ${{ steps.existing.outputs.needs_evidence == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          tag="$HIVERELAY_RELEASE_TAG"
+          verify_dir="$(mktemp -d)"
+          evidence_exists=false
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$STARTOS_04_RELEASE_EVIDENCE"; then
+            evidence_exists=true
+          fi
+          if [ "$evidence_exists" = "false" ]; then
+            if ! gh release upload "$tag" "$STARTOS_04_RELEASE_EVIDENCE" --repo "$GITHUB_REPOSITORY"; then
+              echo "Evidence upload raced with another writer; verifying the existing immutable sidecar." >&2
+            fi
+          fi
+          gh release download "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$STARTOS_04_RELEASE_EVIDENCE" \
+            --dir "$verify_dir"
+          cmp "$STARTOS_04_RELEASE_EVIDENCE" "$verify_dir/$STARTOS_04_RELEASE_EVIDENCE"
+
+      - name: Verify published StartOS 0.4 handoff
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          handoff_dir="$(mktemp -d)"
+          gh release download "$HIVERELAY_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$STARTOS_04_RELEASE_ASSET" \
+            --dir "$handoff_dir"
+          gh release download "$HIVERELAY_RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern "$STARTOS_04_RELEASE_EVIDENCE" \
+            --dir "$handoff_dir"
+          node scripts/write-startos-04-release-evidence.mjs \
+            --tag "$HIVERELAY_RELEASE_TAG" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --release-surfaces-run-id "$HIVERELAY_RELEASE_SURFACES_RUN_ID" \
+            --release-evidence "$HIVERELAY_RELEASE_EVIDENCE_PATH" \
+            --image-manifest-evidence "$HIVERELAY_IMAGE_MANIFEST_EVIDENCE_PATH" \
+            --package "$handoff_dir/$STARTOS_04_RELEASE_ASSET" \
+            --commitment "$HIVERELAY_STARTOS_04_COMMITMENT_PATH" \
+            --manifest "$HIVERELAY_STARTOS_04_MANIFEST_PATH" \
+            --verify "$handoff_dir/$STARTOS_04_RELEASE_EVIDENCE"
