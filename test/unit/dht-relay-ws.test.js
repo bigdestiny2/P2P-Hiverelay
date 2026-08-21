@@ -66,6 +66,51 @@ test('DHTRelayWS: port 0 restart does not reuse an occupied old port', async (t)
   t.is(transport.server.address().port, transport.port, 'effective port matches the restarted listener')
 })
 
+test('DHTRelayWS: concurrent port 0 starts materialize one listener', async (t) => {
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1' })
+  t.teardown(() => transport.stop())
+  let started = 0
+  transport.on('started', () => { started++ })
+
+  await Promise.all([transport.start(), transport.start()])
+
+  t.is(started, 1, 'concurrent starts emit one successful lifecycle transition')
+  t.ok(transport.running, 'transport is running')
+  t.is(transport.server.address().port, transport.port, 'one tracked listener owns the effective port')
+
+  const server = transport.server
+  await transport.stop()
+  t.absent(transport.running, 'transport stopped cleanly')
+  t.is(server.address(), null, 'the only materialized listener was closed')
+})
+
+test('DHTRelayWS: stop during a pending start cancels the listener', async (t) => {
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1' })
+  t.teardown(() => transport.stop())
+  let started = 0
+  transport.on('started', () => { started++ })
+
+  const starting = transport.start()
+  // Let the queued start construct its WebSocketServer, but stay ahead of the
+  // asynchronous `listening` event so stop exercises the pending-start path.
+  await Promise.resolve()
+  t.ok(transport.server, 'start has materialized a pending server')
+  const pendingServer = transport.server
+  const stopping = transport.stop()
+
+  await Promise.all([starting, stopping])
+
+  t.is(started, 0, 'cancelled start never advertises a running transport')
+  t.absent(transport.running, 'stop resolves with the transport stopped')
+  t.is(transport.server, null, 'cancelled listener is no longer tracked')
+  t.is(pendingServer.address(), null, 'cancelled listener is closed')
+
+  await transport.start()
+  t.ok(transport.running, 'a later sequential start still succeeds')
+  t.is(started, 1, 'only the later successful start is advertised')
+  t.ok(transport.port > 0, 'later start receives an effective ephemeral port')
+})
+
 test('DHTRelayWS: enforces maxConnections', async (t) => {
   const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1', maxConnections: 1 })
   await transport.start()

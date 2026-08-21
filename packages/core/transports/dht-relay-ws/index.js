@@ -192,6 +192,13 @@ export class DHTRelayWS extends EventEmitter {
     }
 
     this.server = null
+    // Serialize lifecycle calls so `running === false` cannot let concurrent
+    // starts overwrite `this.server` and leak the first listener. Stops also
+    // cancel every start requested before them; a later start remains queued
+    // after that stop and is allowed to bind normally.
+    this._lifecycleTail = Promise.resolve()
+    this._lifecycleSequence = 0
+    this._cancelStartThrough = 0
     // Map<socket, conn record> — see _newConn for the record shape.
     this.connections = new Map()
     this.running = false
@@ -301,10 +308,23 @@ export class DHTRelayWS extends EventEmitter {
     }
   }
 
-  async start () {
-    if (this.running) return
+  start () {
+    const sequence = ++this._lifecycleSequence
+    return this._enqueueLifecycle(() => this._start(sequence))
+  }
 
-    this.server = new WebSocketServer({
+  _enqueueLifecycle (operation) {
+    const result = this._lifecycleTail.then(operation)
+    // A failed bind must reject its caller without poisoning later stop/start
+    // requests. The internal tail recovers only for lifecycle serialization.
+    this._lifecycleTail = result.catch(() => {})
+    return result
+  }
+
+  async _start (sequence) {
+    if (this.running || sequence <= this._cancelStartThrough) return
+
+    const server = new WebSocketServer({
       port: this._bindPort,
       host: this.host,
       perMessageDeflate: false, // dht-relay carries its own framed binary
@@ -332,18 +352,34 @@ export class DHTRelayWS extends EventEmitter {
         cb(true)
       }
     })
+    this.server = server
 
-    await new Promise((resolve, reject) => {
-      this.server.on('listening', resolve)
-      this.server.on('error', reject)
-    })
+    try {
+      await new Promise((resolve, reject) => {
+        server.on('listening', resolve)
+        server.on('error', reject)
+      })
+    } catch (err) {
+      if (this.server === server) this.server = null
+      throw err
+    }
+
+    // stop() can be requested while the kernel bind is pending. It marks this
+    // sequence cancelled immediately, then waits in the lifecycle queue. Close
+    // the just-materialized listener before either promise resolves so stop()
+    // can never return with an untracked live server.
+    if (sequence <= this._cancelStartThrough) {
+      await new Promise((resolve) => server.close(() => resolve()))
+      if (this.server === server) this.server = null
+      return
+    }
 
     // Preserve the effective port in events/stats and give callers a safe
     // address for connecting when they requested an ephemeral port.
-    const address = this.server.address()
+    const address = server.address()
     if (address && typeof address === 'object') this.port = address.port
 
-    this.server.on('connection', (socket, req) => {
+    server.on('connection', (socket, req) => {
       // MUST match the verifyClient key exactly (same trustProxy/XFF
       // derivation) or the reservation consume + slot release would target
       // a different bucket than the one verifyClient reserved.
@@ -546,7 +582,12 @@ export class DHTRelayWS extends EventEmitter {
     }
   }
 
-  async stop () {
+  stop () {
+    this._cancelStartThrough = ++this._lifecycleSequence
+    return this._enqueueLifecycle(() => this._stop())
+  }
+
+  async _stop () {
     if (!this.running) return
     this.running = false
 
