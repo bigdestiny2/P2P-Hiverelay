@@ -3,6 +3,7 @@ import { readFile } from 'node:fs/promises'
 import {
   ensureNpmDistTag,
   execOutputWithTimeout,
+  normalizeNpmCommandError,
   probeNpmPackageVersion
 } from '../../scripts/ensure-npm-dist-tag.mjs'
 
@@ -147,16 +148,42 @@ test('npm existence probe distinguishes an explicit E404 from a published versio
     viewPackageVersion: async () => VERSION
   })
   const missingError = Object.assign(new Error('npm view failed'), {
+    code: 1,
     stderr: `npm error code E404\nnpm error 404 ${PACKAGE}@${VERSION} is not in this registry`
   })
   const missing = await probeNpmPackageVersion({
     packageName: PACKAGE,
     version: VERSION,
-    viewPackageVersion: async () => { throw missingError }
+    viewPackageVersion: async () => { throw normalizeNpmCommandError(missingError) }
   })
 
   t.is(visible, true)
   t.is(missing, false)
+  t.is(normalizeNpmCommandError(missingError).code, 'E404')
+  t.is(normalizeNpmCommandError(missingError).exitCode, 1)
+})
+
+test('npm existence probe rejects transport failures even when proxy text contains 404', async (t) => {
+  const transportError = Object.assign(new Error('socket reset while reading registry response'), {
+    code: 'ECONNRESET',
+    stderr: 'proxy returned 404 Not Found for the upstream request'
+  })
+
+  await t.exception(
+    probeNpmPackageVersion({
+      packageName: PACKAGE,
+      version: VERSION,
+      viewPackageVersion: async () => { throw transportError }
+    }),
+    /Could not determine whether p2p-hiverelay-client@0\.26\.0-rc\.3 already exists on npm: proxy returned 404 Not Found/
+  )
+
+  const conflictingCodes = Object.assign(new Error('npm view failed ambiguously'), {
+    code: 1,
+    stderr: 'npm error code E404\nnpm error code ECONNRESET'
+  })
+  t.is(normalizeNpmCommandError(conflictingCodes), conflictingCodes)
+  t.is(conflictingCodes.code, 1)
 })
 
 test('npm existence probe fails closed on registry timeouts and ambiguous output', async (t) => {
@@ -189,6 +216,7 @@ test('release workflow verifies bounded npm readback before downstream surfaces'
   const publish = workflow.indexOf('npm publish "./$pkg" --access public --tag "$dist_tag"')
   const readback = workflow.indexOf('node scripts/ensure-npm-dist-tag.mjs', publish)
   const docker = workflow.indexOf('- name: Setup Docker Buildx')
+  const publishStep = workflow.slice(workflow.lastIndexOf('- name: Publish npm packages', publish), docker)
 
   t.ok(probe >= 0)
   t.ok(publish > probe)
@@ -198,6 +226,7 @@ test('release workflow verifies bounded npm readback before downstream surfaces'
   t.ok(workflow.includes('--initial-delay-ms 2000'))
   t.ok(workflow.includes('--max-delay-ms 15000'))
   t.is(workflow.match(/--command-timeout-ms 30000/g)?.length, 2)
+  t.ok(publishStep.includes('timeout-minutes: 120'))
   t.absent(workflow.includes('if npm view "$name@$version" version'))
   t.absent(workflow.includes('current="$(npm view "$name" "dist-tags.$dist_tag")"'))
 })

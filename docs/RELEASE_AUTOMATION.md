@@ -425,6 +425,11 @@ manually dispatched, the workflow:
    existence probe, also has a 30-second timeout and is killed if it hangs. The
    release fails closed unless the registry returns the exact release version
    before any container or appliance work begins.
+   The helper only runs `npm view` and `npm dist-tag add`; neither invokes
+   package lifecycle scripts, so its direct-child kill cannot orphan a package
+   script. The containing GitHub Actions step has a 120-minute outer timeout,
+   which also bounds `npm publish`, its lifecycle scripts, and the complete
+   four-package retry budget.
    This step runs **before** every container and appliance surface on purpose. It
    used to sit after the image smoke, which meant a Docker, StartOS, or Umbrel
    failure skipped npm entirely — that is how `0.24.2` built and signed a release

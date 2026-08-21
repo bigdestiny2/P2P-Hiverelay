@@ -7525,6 +7525,7 @@ if (
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
   releaseWorkflow.includes('npm publish "./$pkg" --access public --tag "$dist_tag"') &&
+  releaseWorkflow.includes('timeout-minutes: 120') &&
   releaseWorkflow.includes('node scripts/ensure-npm-dist-tag.mjs') &&
   releaseWorkflow.includes('--probe-only') &&
   releaseWorkflow.includes('--attempts 12') &&
@@ -7536,6 +7537,8 @@ if (
   npmDistTagReadback.includes('export async function probeNpmPackageVersion') &&
   npmDistTagReadback.includes('DEFAULT_COMMAND_TIMEOUT_MS = 30000') &&
   npmDistTagReadback.includes("killSignal: 'SIGKILL'") &&
+  npmDistTagReadback.includes('do not run package lifecycle') &&
+  npmDistTagReadback.includes("return err?.code === 'E404'") &&
   npmDistTagReadback.includes("npmOutput(['dist-tag', 'add'") &&
   npmDistTagReadback.includes('DEFAULT_ATTEMPTS = 12') &&
   npmDistTagReadback.includes('DEFAULT_MAX_DELAY_MS = 15000') &&
@@ -7544,7 +7547,10 @@ if (
   npmDistTagReadbackTest.includes('fails closed when the tag stays stale') &&
   npmDistTagReadbackTest.includes('kills a hung registry subprocess') &&
   npmDistTagReadbackTest.includes('existence probe fails closed on registry timeouts') &&
+  npmDistTagReadbackTest.includes('rejects transport failures even when proxy text contains 404') &&
   npmDistTagReadbackTest.includes('before downstream surfaces') &&
+  releaseAutomationDocs.includes('120-minute outer timeout') &&
+  releaseAutomationDocs.includes('direct-child kill') &&
   releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
   // Prereleases move `next`, stable moves `latest`, and the evidence status
   // carries the matching -next suffix.

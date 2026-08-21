@@ -536,6 +536,11 @@ jobs:
 
       - name: Publish npm packages
         id: npm
+        # Four packages can consume about 92 minutes if every bounded registry
+        # command exhausts all retries. Leave headroom for normal publish
+        # lifecycle scripts while still bounding a hung `npm publish` and the
+        # entire registry gate before Docker/appliance work.
+        timeout-minutes: 120
         # Branch candidates publish nothing. A TAGGED prerelease publishes to the
         # `next` dist-tag and leaves `latest` alone; only a stable tag moves
         # `latest`. Gating this on is_prerelease was why 0.24.x and every

@@ -71,6 +71,11 @@ export async function execOutputWithTimeout (command, args, {
 } = {}) {
   timeoutMs = positiveInteger(timeoutMs, 'timeoutMs')
 
+  // Node's execFile timeout kills the direct child, not a detached process
+  // tree. The production caller below deliberately limits this helper to
+  // `npm view` and `npm dist-tag add`, which do not run package lifecycle
+  // scripts. `npm publish` stays under the workflow's outer step timeout,
+  // where publish lifecycle scripts are bounded with the containing step.
   try {
     const { stdout } = await execFile(command, args, {
       encoding: 'utf8',
@@ -91,8 +96,39 @@ export async function execOutputWithTimeout (command, args, {
   }
 }
 
+export function normalizeNpmCommandError (err) {
+  // A string error code already carries a semantic transport/process result
+  // (for example ECONNRESET, ENOENT, or our ETIMEDOUT). Never let a proxy's
+  // textual 404 overwrite it and turn an unverified registry failure into an
+  // authorization to publish.
+  if (!err || (typeof err.code === 'string' && !/^\d+$/.test(err.code))) return err
+
+  const codes = new Set()
+  const stderr = cleanOutput(err.stderr)
+  for (const match of stderr.matchAll(/^\s*npm\s+(?:ERR!|error)\s+code\s+([A-Z][A-Z0-9_]*)\s*$/gim)) {
+    codes.add(match[1].toUpperCase())
+  }
+  // Conflicting or absent npm code lines are ambiguous and stay fail-closed.
+  if (codes.size !== 1) return err
+
+  const normalized = new Error(cleanOutput(err.message) || 'npm command failed')
+  normalized.name = err.name || 'Error'
+  normalized.code = codes.values().next().value
+  normalized.exitCode = err.code
+  normalized.stdout = err.stdout
+  normalized.stderr = err.stderr
+  normalized.signal = err.signal
+  normalized.killed = err.killed
+  normalized.cause = err
+  return normalized
+}
+
 async function npmOutput (args, commandTimeoutMs) {
-  return execOutputWithTimeout('npm', args, { timeoutMs: commandTimeoutMs })
+  try {
+    return await execOutputWithTimeout('npm', args, { timeoutMs: commandTimeoutMs })
+  } catch (err) {
+    throw normalizeNpmCommandError(err)
+  }
 }
 
 async function defaultViewPackageVersion (packageName, version, commandTimeoutMs) {
@@ -108,9 +144,7 @@ async function defaultAddDistTag (packageName, version, distTag, commandTimeoutM
 }
 
 function npmPackageIsMissing (err) {
-  if (err?.code === 'ETIMEDOUT') return false
-  const detail = `${cleanOutput(err?.stderr)}\n${cleanOutput(err?.stdout)}`
-  return /\bE404\b|\b404 Not Found\b|is not in this registry/i.test(detail)
+  return err?.code === 'E404'
 }
 
 export async function probeNpmPackageVersion ({
