@@ -122,7 +122,12 @@ test('release blocker closure reports missing full-release evidence', async (t) 
   t.is(item(report, 'evidence.official-umbrel-pr').status, 'blocker')
   t.is(item(report, 'evidence.official-umbrel-pr').command, 'npm run release:write-official-umbrel-pr-evidence -- --out official-umbrel-pr-evidence.json')
   t.is(item(report, 'evidence.umbrel-runtime-review').status, 'blocker')
+  t.is(item(report, 'artifact.startos04-package').status, 'blocker')
+  t.is(item(report, 'evidence.startos04-release').status, 'blocker')
+  t.is(item(report, 'evidence.release-closure').status, 'blocker')
   t.is(item(report, 'release.handoff.verify').status, 'blocker')
+  t.is(item(report, 'release.closure.verify').status, 'blocker')
+  t.is(item(report, 'release.closure.verify').command, 'npm run release:verify-closure-evidence -- --bundle-dir <dir>')
   t.absent(res.stdout.includes(TEST_GITHUB_TOKEN))
   t.absent(res.stdout.includes(TEST_NPM_TOKEN))
 })
@@ -201,6 +206,9 @@ test('release blocker closure recommends artifact-producing commands for missing
   t.is(item(report, 'evidence.official-umbrel-pr').command, 'npm run release:write-official-umbrel-pr-evidence -- --out official-umbrel-pr-evidence.json')
   t.is(item(report, 'evidence.umbrel-runtime-review').command, 'npm run umbrel:write-runtime-review -- --out umbrel-runtime-review-evidence.json --release v<version> --official-pr-url https://github.com/getumbrel/umbrel-apps/pull/<number>')
   t.is(item(report, 'evidence.startos-registry').command, 'npm run release:write-startos-registry-evidence -- --out startos-registry-evidence.json')
+  t.is(item(report, 'artifact.startos04-package').command, 'Download blindspark-startos-0.4.s9pk from the exact GitHub Release tag')
+  t.is(item(report, 'evidence.startos04-release').command, 'Download startos-0.4-release-evidence.json from the exact GitHub Release tag')
+  t.is(item(report, 'evidence.release-closure').command, 'npm run release:verify-closure-evidence -- --bundle-dir <dir>')
   t.is(item(report, 'evidence.fleet-rollout').command, 'npm run fleet:check-rollout -- --target v<version> --channel both --evidence fleet-rollout-evidence.json')
 })
 
@@ -268,6 +276,20 @@ test('release blocker closure rejects empty and oversized JSON evidence candidat
   t.is(manifest.status, 'blocker')
   t.is(manifest.summary, 'GHCR image manifest evidence is not usable')
   t.ok(manifest.detail.includes(`release-image-manifest-evidence.json must be ${MAX_EVIDENCE_JSON_BYTES} bytes or smaller`))
+})
+
+test('release blocker closure rejects an empty StartOS 0.4 package artifact', async (t) => {
+  const dir = await tempDir(t)
+  await writeFile(path.join(dir, 'blindspark-startos-0.4.s9pk'), '')
+
+  const res = await runCheck(['--json', '--skip-git', '--bundle-dir', dir])
+  const report = JSON.parse(res.stdout)
+  const artifact = item(report, 'artifact.startos04-package')
+
+  t.is(res.status, 1)
+  t.is(artifact.status, 'blocker')
+  t.is(artifact.summary, 'StartOS 0.4 package artifact is not usable')
+  t.ok(artifact.detail.includes('blindspark-startos-0.4.s9pk must not be empty'))
 })
 
 test('release blocker closure rejects malformed and non-object JSON evidence candidates', async (t) => {

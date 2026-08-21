@@ -68,6 +68,7 @@
     "release:write-official-umbrel-pr-evidence": "node scripts/write-official-umbrel-pr-evidence.mjs",
     "release:write-startos-registry-evidence": "node scripts/write-startos-registry-evidence.mjs",
     "release:verify-evidence": "node scripts/verify-release-evidence.mjs",
+    "release:verify-closure-evidence": "node scripts/verify-release-closure-evidence.mjs",
     "release:verify-handoff-evidence": "node scripts/verify-release-handoff-evidence.mjs",
     "release:verify-review-ready-handoff": "node scripts/verify-release-handoff-evidence.mjs --require-umbrel-runtime-review",
     "release:write-local-manifest": "node scripts/write-local-release-candidate-manifest.mjs",

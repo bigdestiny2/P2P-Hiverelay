@@ -5,6 +5,13 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import {
+  RELEASE_CLOSURE_EVIDENCE,
+  RELEASE_SYNC_WORKFLOW_SCOPE,
+  isSuccessfulReleaseSyncEvidence,
+  releaseClosureStatus,
+  releaseSyncEvidenceStatus
+} from './lib/release-evidence-contract.mjs'
 
 const usage = `
 Usage:
@@ -42,6 +49,8 @@ const releaseSha = env('HIVERELAY_RELEASE_SHA')
 const metadataSha = env('HIVERELAY_RELEASE_SURFACES_SHA') || gitRevParse('HEAD')
 const repository = env('GITHUB_REPOSITORY')
 const runId = env('GITHUB_RUN_ID')
+const candidate = env('HIVERELAY_RELEASE_CANDIDATE') === 'true'
+const jobStatus = env('HIVERELAY_WORKFLOW_STATUS') || env('JOB_STATUS') || 'unknown'
 const startosRegistryStatus = status('HIVERELAY_STARTOS_REGISTRY_STATUS')
 const publicGateway = publicGatewayEvidence()
 const fleetChannelConfigPath = env('HIVERELAY_FLEET_CHANNEL_CONFIG') ||
@@ -55,18 +64,23 @@ const evidence = {
     semver,
     channel: env('HIVERELAY_RELEASE_CHANNEL'),
     prerelease: env('HIVERELAY_RELEASE_PRERELEASE') === 'true',
-    candidate: env('HIVERELAY_RELEASE_CANDIDATE') === 'true',
+    candidate,
     tagSha: releaseSha,
     metadataSha,
     ...(publicGateway ? { publicGateway } : {}),
     workflow: {
-      status: env('HIVERELAY_WORKFLOW_STATUS') || env('JOB_STATUS') || 'unknown',
+      scope: RELEASE_SYNC_WORKFLOW_SCOPE,
+      status: releaseSyncEvidenceStatus({ jobStatus, candidate }),
       repository,
       runId,
       runAttempt: env('GITHUB_RUN_ATTEMPT'),
       runUrl: repository && runId
         ? `${env('GITHUB_SERVER_URL') || 'https://github.com'}/${repository}/actions/runs/${runId}`
         : ''
+    },
+    closure: {
+      status: releaseClosureStatus({ jobStatus, candidate }),
+      evidence: candidate ? '' : RELEASE_CLOSURE_EVIDENCE
     }
   },
   image: {
@@ -276,7 +290,7 @@ async function validateEvidence (body) {
 }
 
 async function validateSuccessfulRun (body) {
-  if (body.release.workflow.status !== 'success') return
+  if (!isSuccessfulReleaseSyncEvidence(body.release)) return
 
   requirePattern('successful release workflow repository', body.release.workflow.repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
   requireEqual('successful release workflow repository', body.release.workflow.repository, EXPECTED_RELEASE_REPOSITORY)

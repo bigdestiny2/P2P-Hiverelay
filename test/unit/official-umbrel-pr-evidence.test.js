@@ -105,12 +105,14 @@ function releaseEvidenceBytes (overrides = {}) {
       version: 'v9.9.9',
       semver: '9.9.9',
       workflow: {
-        status: 'success',
+        scope: 'release-surfaces/pre-handoff-checkpoint',
+        status: 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure',
         repository: REPOSITORY,
         runId: '12345',
         runAttempt: '2',
         runUrl: `https://github.com/${REPOSITORY}/actions/runs/12345`
-      }
+      },
+      closure: { status: 'pending-startos-0.4', evidence: 'release-closure-evidence.json' }
     },
     artifacts: {
       startosPackage: {
@@ -378,6 +380,27 @@ test('official Umbrel PR evidence writer rejects release evidence drift before w
 
   t.ok(err)
   t.ok(err.stderr.includes('release evidence official Umbrel PR head OID'))
+})
+
+test('official Umbrel PR evidence writer requires an explicit pending closure contract', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-official-pr-evidence-'))
+  t.teardown(async () => rm(dir, { recursive: true, force: true }))
+
+  await writeLinkedArtifacts(dir, {
+    'release-evidence.json': releaseEvidenceBytes({
+      release: { closure: { status: 'verified', evidence: '' } }
+    })
+  })
+
+  let err = null
+  try {
+    await runWriter(path.join(dir, 'bad-closure.json'), env(), { cwd: dir, linkedArtifacts: false })
+  } catch (e) {
+    err = e
+  }
+
+  t.ok(err)
+  t.ok(err.stderr.includes('release checkpoint evidence must be valid and closure-scoped'))
 })
 
 test('official Umbrel PR evidence writer rejects unsafe StartOS registry package URLs', async (t) => {

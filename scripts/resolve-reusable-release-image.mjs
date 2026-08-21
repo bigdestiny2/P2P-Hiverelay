@@ -19,9 +19,15 @@ try {
     imageManifestEvidencePath: required(args, 'imageManifestEvidence')
   })
   appendGitHubEnv(required(args, 'githubEnv'), {
-    HIVERELAY_IMAGE_DIGEST: binding.imageDigest
+    HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID: binding.releaseSurfacesRunId,
+    HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ATTEMPT: binding.releaseSurfacesRunAttempt,
+    HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_URL: binding.releaseSurfacesRunUrl,
+    HIVERELAY_IMAGE_NAME: binding.imageName,
+    HIVERELAY_IMAGE_DIGEST: binding.imageDigest,
+    HIVERELAY_IMAGE_AMD64_DIGEST: binding.platforms.find(platform => platform.architecture === 'amd64').digest,
+    HIVERELAY_IMAGE_ARM64_DIGEST: binding.platforms.find(platform => platform.architecture === 'arm64').digest
   })
-  console.log(`Reusing source-bound release image ${binding.imageRef} from successful run ${binding.releaseSurfacesRunId}`)
+  console.log(`Reusing source-bound release image ${binding.imageRef} from completed checkpoint run ${binding.releaseSurfacesRunId} attempt ${binding.releaseSurfacesRunAttempt}`)
 } catch (err) {
   console.error(err.message)
   process.exit(1)

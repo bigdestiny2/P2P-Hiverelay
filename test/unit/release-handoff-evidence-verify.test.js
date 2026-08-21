@@ -105,11 +105,16 @@ function releaseEvidence (opts = {}) {
       tagSha: TAG_SHA,
       metadataSha: TAG_SHA,
       workflow: {
-        status: 'success',
+        scope: 'release-surfaces/pre-handoff-checkpoint',
+        status: 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure',
         repository: REPOSITORY,
         runId: RUN_ID,
         runAttempt: '2',
         runUrl: WORKFLOW_URL
+      },
+      closure: {
+        status: 'pending-startos-0.4',
+        evidence: 'release-closure-evidence.json'
       }
     },
     image: {

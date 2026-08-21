@@ -796,9 +796,10 @@ package above. It is not triggered directly by release publication. A separate
 dispatches it only after the source `sync` job succeeds. The dispatch uses the
 exact release tag as both workflow ref and input and passes that
 `release-surfaces` run id as runtime authority. The parent then waits, with a
-bounded timeout, for the exact child run to succeed and independently verifies
-the four published source/package evidence assets before the overall release
-workflow can pass.
+bounded timeout, for the exact child run to succeed. A separate least-privilege
+closure job then downloads the exact child's immutable Actions artifact,
+independently inspects its package, compares it to current Release bytes, and
+publishes the final closure certificate before the overall workflow can pass.
 
 Before any signing key or package build, the downstream workflow verifies the
 exact tag checkout, release evidence/tag-SHA agreement, the multi-arch image
@@ -810,43 +811,107 @@ exact authored StartOS id/version, its sole runtime-image key, and the expected
 architecture set; unrelated text cannot satisfy the image-ref check.
 
 An equivalent source-workflow rerun reuses the existing evidence-bound image
-index from an earlier successful `sync` job and recreates only the mutable tag
-alias. It does not rebuild a timestamp-bearing provenance index under the same
-semver tag. This keeps the immutable StartOS package and sidecar bound to one
-canonical multi-arch digest while still permitting recovery when a prior
-parent run failed later in its StartOS closure job.
+index from an earlier completed pre-handoff checkpoint and recreates only the
+mutable tag alias. It does not rebuild a timestamp-bearing provenance index
+under the same semver tag. This keeps the immutable StartOS package and sidecar
+bound to one canonical multi-arch digest while still permitting recovery when
+a prior parent run failed after that checkpoint.
 
-The setup action is commit-pinned, and the installed `start-cli 1.1.0` binary
-must match its reviewed SHA-256 before key configuration. The deterministic
-`startos-0.4-release-evidence.json` sidecar binds the tag SHA, image ref/digest,
-per-platform child digests/revisions, pinned action/CLI/SDK identities, package
-SHA-256, and the exact inspected package commitment. It excludes run ids,
-timestamps, and mutable upstream evidence hashes, so an equivalent successful
-source-workflow rerun remains verifiable. `start-cli 1.1.0` does not expose a
-signer fingerprint through `s9pk inspect`; the sidecar records that limitation
-instead of making an unproved signer claim.
+The retry pointer is a single immutable, digest-bearing Actions artifact
+uploaded immediately after local verification; mutable GitHub Release assets
+are never reuse authority. The retry gate selects the exact non-expired REST
+artifact for the tag/SHA, authenticates its numeric id, source run, archive
+URL, size, ZIP SHA-256, and exact two-file inventory, then requires the embedded
+run id/attempt to match. Before any retag or new signature, it verifies that
+run id and URL name `.github/workflows/release-surfaces.yml` (with display name
+`Release surfaces`) at the exact tag ref and tag SHA, that its event is `push`,
+`release`, or `workflow_dispatch`, and that
+exactly one `sync` job reached `completed` with every enumerated pre-handoff
+checkpoint step successful. It then verifies the existing index signature against the exact
+`release-surfaces.yml@refs/tags/<tag>` GitHub OIDC identity and issuer, and
+live-inspects the evidence-bound amd64/arm64 child digests for the exact OS,
+architecture, and `org.opencontainers.image.revision` source SHA. The `sync`
+job or parent run may have failed after that durable checkpoint; terminal job
+or whole-run success is deliberately not the reuse authority because it would
+prevent safe recovery from a later transient failure.
+
+The secret-bearing child does not run Start9's setup composite: that composite
+calls mutable nested actions and downloads a live CLI before local
+authentication. Required actions are pinned to full reviewed commit SHAs. The
+workflow instead downloads the exact `start-cli 1.1.0` Linux asset from its
+fixed release URL into a private temporary directory and verifies SHA-256
+`70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a`
+before `chmod`, PATH exposure, first execution, or developer-key exposure. The
+lockfile-verified `npm ci` also completes before developer-key exposure. The
+deterministic `startos-0.4-release-evidence.json` sidecar binds the tag SHA,
+image ref/digest, per-platform child digests/revisions, pinned action/CLI/SDK
+identities, package SHA-256, exact inspected manifest identity, and package
+commitment. It excludes timestamps and mutable parent-run material, so an
+equivalent retry remains verifiable. `start-cli 1.1.0` does not expose a signer
+fingerprint through `s9pk inspect`; the sidecar records that limitation instead
+of making an unproved signer claim.
 
 The toolchain section is explicitly a declared source/workflow build contract
-plus the current inspection runtime, not an assertion that a recovered package
-embeds verifiable original-build provenance. The `.s9pk` format/CLI exposes no
-such provenance. This distinction keeps package-without-sidecar recovery
-honest: the artifact proof is its bytes, commitment, and structured manifest,
-while the SDK/action/CLI pins describe the tag's required build contract.
+plus the current inspection runtime, not an assertion that a package embeds
+verifiable original-build provenance. The `.s9pk` format/CLI exposes no such
+provenance. The artifact proof is therefore its bytes, commitment, structured
+manifest, and the exact successful child's immutable Actions artifact, while
+the SDK/action/CLI pins describe the tag's required build contract.
 
-Both `blindspark-startos-0.4.s9pk` and its sidecar are immutable release
-assets. Reruns verify matching existing assets and never use `--clobber`. If
-the package exists without its sidecar, the workflow inspects that published
-package and recovers the evidence without a nondeterministic rebuild. A
-different package, mismatched commitment/image binding, or orphaned sidecar is
-a hard failure. This additive sidecar is the StartOS 0.4 handoff record; the
-legacy `release-evidence.json` continues to describe `blindspark.s9pk` and its
-existing registry contract.
+Both `blindspark-startos-0.4.s9pk` and its sidecar are an immutable release
+pair. Reruns accept only one non-empty `uploaded` record of each name with a
+valid GitHub SHA-256 digest and matching downloaded bytes; they never delete or
+`--clobber` either asset. A package without its sidecar, a sidecar without its
+package, duplicate names, or a zero-byte/`starter` record fails closed for
+audited manual recovery. Package-only evidence recovery is deliberately
+forbidden because the published package alone cannot prove its build
+provenance. A new child uploads the pair together and preserves the same bytes
+in a run/attempt-named `actions/upload-artifact` archive.
+
+`release-evidence.json` is a **pre-handoff checkpoint** certificate, not a
+terminal `sync`-job or overall workflow-success claim. For a tag release it records
+`checkpoint-passed-pending-sync-completion-and-startos-0.4-closure` and points to
+`release-closure-evidence.json`. The child queries the exact recorded parent
+run attempt and requires its `sync` job to be terminal and successful. Image
+reuse queries that same exact attempt but requires the enumerated image-sign,
+manifest, smoke, evidence-write, and local-verification steps to be successful,
+while the independently authenticated artifact proves its own completed upload;
+a later transient `sync` failure therefore
+does not wedge the immutable image authority. Only after the exact child succeeds does the parent download
+that child's non-expired, digest-bearing Actions artifact by numeric REST id,
+authenticate the downloaded ZIP size and SHA-256 against that same REST record,
+authenticate `start-cli`, independently inspect the `.s9pk` commitment and
+structured manifest, and prove the artifact package/sidecar are byte-identical
+to the current GitHub Release pair. It then publishes and verifies
+`release-closure-evidence.json`, re-downloads the entire closure bundle, and
+reruns the offline verifier so a post-inspection Release-asset substitution
+cannot make the final job green. The blocker board requires that certificate
+and its offline verifier for stable/GA closure.
+
+The public evidence upload itself remains a non-atomic multi-asset GitHub
+Release update: `gh release upload --clobber` may replace only a subset before
+failing. That public surface is therefore never the image-reuse pointer. The
+prior immutable Actions artifact lets a retry restore and republish the same
+source-bound digest and evidence. The artifact uses the repository's explicit
+90-day retention boundary. If it has expired or been deleted after public
+release state exists, the workflow fails closed for audited
+recovery instead of rebuilding a different index beneath immutable packages.
+
+The workflow is intentionally non-atomic: GHCR, npm, the legacy StartOS
+package/registry, the StartOS 0.4 package/evidence Release pair, fleet channels,
+and Umbrel/ecosystem metadata can already have changed before a downstream
+closure failure. A failed closure therefore
+leaves the parent red and blocks stable/GA completion; it does not claim that
+earlier external writes were rolled back. The legacy `blindspark.s9pk` asset
+contract remains unchanged.
 
 Because GitHub loads a dispatched workflow and its scripts from `--ref`, these
 controls can run only for a release tag that already contains them. They do not
 retrofit the existing `v0.26.0-rc.3` tag; the first eligible release is the next
 new tag cut from a commit containing this workflow. Moving an existing tag is
-not an accepted recovery path.
+not an accepted recovery path. Manual runs must also load the workflow from the
+exact tag, for example `gh workflow run release-surfaces.yml --ref vX.Y.Z -f
+version=vX.Y.Z ...`; a branch-loaded dispatch fails before release writes.
 
 ## Local Use
 

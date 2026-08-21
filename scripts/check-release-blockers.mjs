@@ -89,6 +89,24 @@ const EVIDENCE_FILES = Object.freeze([
     command: 'npm run release:write-startos-registry-evidence -- --out startos-registry-evidence.json'
   },
   {
+    id: 'artifact.startos04-package',
+    label: 'StartOS 0.4 package artifact',
+    files: ['blindspark-startos-0.4.s9pk', 'startos-0.4/blindspark-startos-0.4.s9pk'],
+    command: 'Download blindspark-startos-0.4.s9pk from the exact GitHub Release tag'
+  },
+  {
+    id: 'evidence.startos04-release',
+    label: 'StartOS 0.4 release evidence',
+    files: ['startos-0.4-release-evidence.json'],
+    command: 'Download startos-0.4-release-evidence.json from the exact GitHub Release tag'
+  },
+  {
+    id: 'evidence.release-closure',
+    label: 'final StartOS 0.4 release closure evidence',
+    files: ['release-closure-evidence.json'],
+    command: 'npm run release:verify-closure-evidence -- --bundle-dir <dir>'
+  },
+  {
     id: 'evidence.fleet-rollout',
     label: 'fleet rollout evidence',
     files: ['fleet-rollout-evidence.json'],
@@ -493,6 +511,13 @@ function addReleaseVerifierChecks () {
       detail: missing.join(', '),
       command: 'npm run release:verify-review-ready-handoff -- --bundle-dir <dir>'
     })
+    addItem({
+      id: 'release.closure.verify',
+      status: 'blocker',
+      summary: 'final StartOS 0.4 closure verifier was not run because required files are missing',
+      detail: missing.join(', '),
+      command: 'npm run release:verify-closure-evidence -- --bundle-dir <dir>'
+    })
     return
   }
 
@@ -514,6 +539,16 @@ function addReleaseVerifierChecks () {
     argv: ['--bundle-dir', bundleDir, '--require-umbrel-runtime-review'],
     timeout: 120000,
     command: `npm run release:verify-review-ready-handoff -- --bundle-dir ${bundleDir}`
+  })
+
+  addCommandItem({
+    id: 'release.closure.verify',
+    passSummary: 'final StartOS 0.4 release closure binds the exact child artifact and current release assets',
+    failSummary: 'final StartOS 0.4 release closure failed verification',
+    script: 'verify-release-closure-evidence.mjs',
+    argv: ['--bundle-dir', bundleDir],
+    timeout: 120000,
+    command: `npm run release:verify-closure-evidence -- --bundle-dir ${bundleDir}`
   })
 }
 
@@ -624,7 +659,7 @@ function evidenceFileStatus (file) {
     if (!stat.isFile()) {
       return { exists: true, ok: false, error: `${rel} must be a regular file` }
     }
-    if (rel.endsWith('.json') && stat.size === 0) {
+    if (stat.size === 0) {
       return { exists: true, ok: false, error: `${rel} must not be empty` }
     }
     if (rel.endsWith('.json') && stat.size > MAX_EVIDENCE_JSON_BYTES) {

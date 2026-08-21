@@ -130,6 +130,27 @@ cosign verify \
 
 Pin `--certificate-identity` to an exact workflow ref for the strictest check.
 
+Release-image reuse does exactly that before it mutates a tag or adds another
+signature:
+
+```sh
+cosign verify \
+  --certificate-identity \
+    'https://github.com/bigdestiny2/P2P-Hiverelay/.github/workflows/release-surfaces.yml@refs/tags/vX.Y.Z' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  ghcr.io/bigdestiny2/p2p-hiverelay@sha256:<digest>
+```
+
+The reuse gate starts from one immutable, digest-bearing Actions artifact, not
+the public multi-asset Release update. It binds the artifact's numeric REST id,
+source run, archive URL, size, ZIP SHA-256, and exact evidence-file inventory,
+then binds the embedded run id/attempt, tag ref, head SHA, accepted release
+event, exact `.github/workflows/release-surfaces.yml` path, and the completed
+`sync` job's successful pre-handoff checkpoint
+steps. It then live-inspects both evidence-bound platform child configs for
+that same source revision. Mutable GitHub Release evidence alone is never
+sufficient authority for a retag.
+
 ### Verification hook
 
 `scripts/verify-image-signature.sh <image-ref>` wraps the `cosign verify`
@@ -137,3 +158,69 @@ invocation above with the repo's expected identity/issuer baked in, so CI, the
 StartOS/Umbrel packaging steps, and operators can gate on a signed image with
 one command. It exits non-zero (fail-closed) if the signature is missing or the
 identity does not match.
+
+---
+
+## 4. StartOS 0.4 package and closure authority
+
+The StartOS 0.4 child workflow keeps signing secrets behind an authenticated
+toolchain boundary. It does not execute Start9's setup composite. Checkout and
+artifact-upload actions are pinned to full commit SHAs, and
+`scripts/install-startos-cli.sh` downloads only the fixed StartOS CLI 1.1.0
+asset over HTTPS. The script requires SHA-256
+`70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a`
+before chmod, PATH exposure, version execution, or developer-key exposure. The
+lockfile-verified dependency install also completes before key exposure. The
+SDK version, resolved tarball, and npm integrity are independently bound to the
+source manifest and lockfile.
+
+The GitHub Release package and deterministic sidecar form one immutable pair.
+CI accepts only exactly one non-empty `uploaded` record of each name with a
+valid GitHub digest and matching downloaded bytes. It rejects partial pairs,
+duplicate names, and zero-byte/`starter` records without deleting or clobbering
+them. A successful child also preserves the exact pair in a run/attempt-named,
+digest-bearing Actions artifact.
+
+`release-evidence.json` certifies a `release-surfaces/pre-handoff-checkpoint`,
+not a completed `sync` job, and remains
+`checkpoint-passed-pending-sync-completion-and-startos-0.4-closure`. The child
+authenticates the exact recorded parent run attempt and its terminal successful
+`sync` job through the Actions API. Reusable-image recovery instead requires
+the exact attempt's enumerated image-sign, manifest, smoke, evidence-write,
+and local-verification steps, while the separately authenticated artifact
+proves its own completed upload; it can recover
+from a later terminal `sync` failure without weakening that authority. The final parent job uses the exact child's
+immutable Actions artifact as package authority, installs the
+hash-authenticated CLI, independently inspects the package commitment and
+structured manifest, and compares those artifact bytes with the current
+Release pair. Only then does it publish `release-closure-evidence.json`,
+re-download the entire published bundle, and run the offline closure verifier
+against those current bytes.
+Stable/GA blocker checks require that certificate and reverify its hash links
+against the current bundle, so later package or sidecar substitution fails.
+
+The parent selects the child artifact by numeric REST id, verifies the downloaded
+ZIP size and SHA-256 against that exact REST record, and rejects an expired or
+missing attempt-named artifact so a later parent retry can dispatch a fresh child.
+`start-cli 1.1.0` exposes the package commitment but no signer fingerprint.
+The evidence records this limitation and restricts the proof to inspected
+GitHub-sideload package bytes; it does not claim StartOS registry signer
+identity. Publication is also non-atomic: earlier GHCR, npm, legacy StartOS,
+the StartOS 0.4 Release pair, fleet, or Umbrel/ecosystem writes may precede closure. A child failure leaves
+the parent red and blocks stable/GA completion, but does not imply rollback of
+those external writes.
+
+Reusable-image recovery verifies the signed index itself before any retag sink:
+the raw index bytes must hash to the authenticated digest, and its exact
+`linux/amd64` and `linux/arm64` child descriptors must match the evidence before
+each child config is checked for the release revision label. Manual release
+dispatches must use the exact tag as the workflow ref; branch-loaded dispatches
+are rejected before release writes.
+
+The public checkpoint update uses a non-atomic multi-asset GitHub Release
+`--clobber`. A partial replacement can make those public files temporarily
+incomplete, but it cannot become image-reuse authority or force a rebuild: the
+retry restores the evidence-bound digest from the prior immutable Actions
+artifact. Once public release state exists, a missing or expired authority
+artifact—including after its explicit 90-day retention window—fails closed for
+audited recovery rather than silently changing the index digest.

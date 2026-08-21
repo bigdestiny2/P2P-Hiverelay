@@ -21,6 +21,7 @@ try {
   })
   appendGitHubEnv(required(args, 'githubEnv'), {
     HIVERELAY_RELEASE_SURFACES_RUN_ID: binding.releaseSurfacesRunId,
+    HIVERELAY_RELEASE_SURFACES_RUN_ATTEMPT: binding.releaseSurfacesRunAttempt,
     HIVERELAY_IMAGE_NAME: binding.imageName,
     HIVERELAY_IMAGE_DIGEST: binding.imageDigest,
     HIVERELAY_STARTOS_04_IMAGE_REF: binding.imageRef,

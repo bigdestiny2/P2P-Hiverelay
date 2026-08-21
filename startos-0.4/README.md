@@ -104,37 +104,73 @@ progress because it waits for this child; requiring the whole parent to finish
 would deadlock. The child also inspects the amd64 and arm64 image configs and requires each
 `org.opencontainers.image.revision` label to equal the tag commit.
 
-The Start9 setup action is pinned to reviewed commit
-`21507e89e717a303cb1064ac4c853d28b96d323b`. Because that action installs the
-newest matching CLI asset rather than accepting a version/checksum input, CI
-immediately requires `start-cli 1.1.0` and SHA-256
+The secret-bearing job does not execute Start9's setup composite, because that
+composite calls mutable nested actions and downloads a live CLI before local
+authentication. Required checkout/artifact actions are pinned to full reviewed
+commit SHAs. CI downloads the exact `start-cli 1.1.0` Linux asset from its fixed
+release URL and requires SHA-256
 `70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a`
-before the signing key is configured. The package lock pins
-`@start9labs/start-sdk` to `2.0.1`; all three toolchain identities are recorded
-in the release sidecar. They are labelled as the source/workflow build contract
-and current inspection runtime: the package format does not embed enough
-information to prove the original build toolchain of a recovered package.
+before chmod, PATH exposure, first execution, or developer-key exposure. The
+lockfile-verified `npm ci` also completes before key exposure. The package lock
+pins `@start9labs/start-sdk` to `2.0.1`; the manifest, lock root,
+resolved tarball, and integrity must all agree. These identities are recorded
+in the sidecar as the source/workflow build contract and current inspection
+runtime: the package format does not embed enough information to prove its
+original build toolchain.
 
-Published 0.4 assets are immutable. A retry accepts an existing package only
-after structured inspection proves its exact service id, authored package
-version/build, sole runtime image ref and architecture set, and after its
-commitment, package SHA-256, and deterministic
-`startos-0.4-release-evidence.json` sidecar match. If the package exists but
-the sidecar is missing, CI inspects the existing package and writes the missing
-sidecar without rebuilding or replacing package bytes. Equivalent source
-reruns reuse the prior successful sync job's canonical image digest instead of
-rebuilding a potentially different provenance-bearing index. Any semantic mismatch,
-or an orphaned sidecar without its package, fails closed.
+Published 0.4 assets are an immutable package/evidence pair. A retry accepts
+them only when exactly one non-empty `uploaded` record of each name has a valid
+GitHub SHA-256 digest and the downloaded bytes match. Package-only or
+sidecar-only recovery, duplicate names, and zero-byte/`starter` records fail
+closed for audited manual recovery; the workflow never deletes or clobbers an
+existing 0.4 asset. A new child uploads the pair together and copies those same
+bytes into a non-expired, digest-bearing Actions artifact named for the exact
+child run and attempt.
 
-The parent dispatcher waits up to its bounded timeout for the exact child run
-and then downloads and verifies the source evidence, image-manifest evidence,
-0.4 package, and 0.4 sidecar. A release-surfaces run therefore cannot report
-success while the StartOS 0.4 closure is missing or failed.
+Equivalent source reruns reuse the prior completed release checkpoint's canonical image
+digest instead of rebuilding a potentially different provenance-bearing index.
+The pointer is a single immutable, digest-bearing Actions artifact uploaded
+after local evidence verification; the non-atomic public Release evidence
+update is never trusted as that pointer. CI authenticates the artifact's exact
+REST id/source/size/ZIP digest/inventory, binds its embedded prior Actions run
+attempt to the exact release-surfaces workflow path/tag/SHA/event, and requires the enumerated image/evidence
+checkpoint steps to have succeeded. The artifact's verified REST record and
+ZIP bytes prove the upload itself without depending on the action's terminal
+client-side conclusion. This permits recovery from a later
+transient `sync` failure or partial public evidence replacement. CI then verifies the
+keyless signature against the exact release-workflow tag identity, hashes the
+live raw index and binds its exact amd64/arm64 descriptor digests, then checks
+both child configs for the source revision. Any semantic mismatch fails closed.
+The authority artifact has an explicit 90-day retention boundary. If it has
+expired or been deleted after public release state exists, CI requires audited
+recovery rather than silently rebuilding a different index beneath an
+immutable package.
+
+The parent dispatcher waits up to its bounded timeout for the exact child run.
+Its final closure job installs the same hash-authenticated CLI, downloads the
+exact immutable child Actions artifact by numeric REST id, authenticates the ZIP
+size/SHA-256, independently inspects the `.s9pk`
+commitment and structured manifest, and proves the artifact bytes match the
+current GitHub Release package/sidecar pair. It then publishes
+`release-closure-evidence.json`, re-downloads the complete published bundle,
+and reruns offline closure verification against those current bytes. The earlier
+`release-evidence.json` describes
+only a pre-handoff checkpoint, not terminal `sync` success, and explicitly remains
+`checkpoint-passed-pending-sync-completion-and-startos-0.4-closure`; stable/GA blocker checks require the
+final closure certificate, so the release cannot be reported complete while
+the child is missing or failed.
+
+Release publication is non-atomic. GHCR, npm, the legacy StartOS path, the
+StartOS 0.4 package/evidence Release pair, fleet channels, and Umbrel/ecosystem
+metadata may already have changed before a closure failure. Such a failure
+leaves the parent red and blocks stable/GA closure; it
+does not roll back or claim success for those earlier external writes.
 
 The workflow must already exist in the tag used as `--ref`. These controls
 cannot be used to retrofit `v0.26.0-rc.3`, whose tag predates them; use the next
 new release tag containing this implementation rather than moving an existing
-tag.
+tag. Manual parent dispatches must likewise use that exact tag as `--ref`; a
+branch-loaded dispatch is rejected before release writes.
 
 `start-cli 1.1.0` exposes the package root sighash/max-size commitment, but no
 signer identity or public-key fingerprint through `s9pk inspect`. The sidecar

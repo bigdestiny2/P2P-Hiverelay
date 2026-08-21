@@ -86,7 +86,7 @@ function ensureImageManifestSidecar (argv) {
   }
   if (!releaseFile || explicitFlag !== -1 || !existsSync(releaseFile)) return
   const release = JSON.parse(readFileSync(releaseFile, 'utf8'))
-  if (release.release?.workflow?.status !== 'success') return
+  if (!['checkpoint-passed-pending-sync-completion-and-startos-0.4-closure', 'checkpoint-passed-branch-candidate'].includes(release.release?.workflow?.status)) return
   const sidecarPath = path.join(path.dirname(releaseFile), release.gates?.imageManifestEvidence?.path || 'release-image-manifest-evidence.json')
   if (existsSync(sidecarPath)) return
   writeJsonSync(sidecarPath, releaseImageManifestEvidence({ release }))
@@ -104,7 +104,7 @@ function ensureStartosRegistrySidecar (argv) {
   }
   if (!releaseFile || explicitFlag !== -1 || !existsSync(releaseFile)) return
   const release = JSON.parse(readFileSync(releaseFile, 'utf8'))
-  if (release.release?.prerelease || release.release?.workflow?.status !== 'success') return
+  if (release.release?.prerelease || release.release?.workflow?.status !== 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure') return
   const sidecarPath = path.join(path.dirname(releaseFile), release.surfaces?.startosRegistryEvidence?.path || 'startos-registry-evidence.json')
   if (existsSync(sidecarPath)) return
   writeJsonSync(sidecarPath, startosRegistryEvidence({ release }))
@@ -142,11 +142,16 @@ function releaseEvidence (opts) {
       tagSha: TAG_SHA,
       metadataSha: TAG_SHA,
       workflow: {
-        status: 'success',
+        scope: 'release-surfaces/pre-handoff-checkpoint',
+        status: candidate ? 'checkpoint-passed-branch-candidate' : 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure',
         repository: EXPECTED_REPOSITORY,
         runId: '123',
         runAttempt: '1',
         runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/123`
+      },
+      closure: {
+        status: candidate ? 'not-required-branch-candidate' : 'pending-startos-0.4',
+        evidence: candidate ? '' : 'release-closure-evidence.json'
       }
     },
     image: {
@@ -452,7 +457,7 @@ test('release evidence verifier validates full-release sidecars and hashes', asy
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 })
 
 test('release evidence verifier accepts only a bound public gateway release for deferred fleet rollout', async (t) => {
@@ -494,7 +499,7 @@ test('release evidence verifier accepts only a bound public gateway release for 
     '--umbrel-package-smoke', umbrelSmokeFile,
     '--startos-package', s9pkFile
   ])
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 
   delete release.release.publicGateway
   await writeJson(releaseFile, release)
@@ -578,7 +583,7 @@ test('release evidence verifier auto-discovers a downloaded release bundle direc
 
   const res = await runVerify(['--bundle-dir', dir])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 })
 
 test('release evidence verifier rejects symlinked evidence sidecars', async (t) => {
@@ -1021,7 +1026,7 @@ test('release evidence verifier honors explicit StartOS registry sidecar paths',
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 })
 
 test('release evidence verifier rejects unsupported StartOS registry sidecar fields', async (t) => {
@@ -1973,7 +1978,26 @@ test('release evidence verifier rejects failed workflow evidence by default', as
   }
 
   t.ok(err)
-  t.ok(err.stderr.includes('release workflow status must be "success"'))
+  t.ok(err.stderr.includes('release checkpoint evidence must be valid and closure-scoped'))
+})
+
+test('release evidence verifier rejects legacy overall-success claims before final closure', async (t) => {
+  const dir = await fixtureDir(t)
+  const releaseFile = path.join(dir, 'release-evidence.json')
+  const release = releaseEvidence({})
+  release.release.workflow.status = 'success'
+
+  await writeJson(releaseFile, release)
+
+  let err = null
+  try {
+    await runVerify(['--release', releaseFile])
+  } catch (e) {
+    err = e
+  }
+
+  t.ok(err)
+  t.ok(err.stderr.includes('release checkpoint evidence must be valid and closure-scoped'))
 })
 
 test('release evidence verifier accepts failed workflow evidence only as an explicit diagnostic', async (t) => {
@@ -2656,7 +2680,7 @@ test('release evidence verifier accepts successful prereleases without fleet sid
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9-beta.1'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9-beta.1'))
 })
 
 test('release evidence verifier accepts successful branch candidates without release assets', async (t) => {
@@ -2685,7 +2709,7 @@ test('release evidence verifier accepts successful branch candidates without rel
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9-beta.1'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (not-required-branch-candidate): v9.9.9-beta.1'))
 })
 
 test('release evidence verifier rejects malformed prerelease boundary facts', async (t) => {
