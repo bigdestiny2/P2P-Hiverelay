@@ -101,7 +101,7 @@ export class DHTRelayWS extends EventEmitter {
   /**
    * @param {object} opts
    * @param {object} opts.dht - HyperDHT instance to expose (typically swarm.dht)
-   * @param {number} [opts.port]
+   * @param {number} [opts.port=8766] - use 0 for a kernel-assigned ephemeral port
    * @param {string} [opts.host]
    * @param {number} [opts.maxConnections]
    * @param {boolean} [opts.trustProxy=false] - derive client IP from X-Forwarded-For (set when behind a TLS reverse proxy)
@@ -125,7 +125,10 @@ export class DHTRelayWS extends EventEmitter {
     super()
     if (!opts.dht) throw new Error('DHTRelayWS: dht is required')
     this.dht = opts.dht
-    this.port = opts.port || DEFAULT_PORT
+    // `0` asks the kernel for an available ephemeral port. Tests and other
+    // short-lived callers rely on that atomic allocation to avoid the usual
+    // "pick a random port, then bind it" race.
+    this.port = opts.port ?? DEFAULT_PORT
     this.host = opts.host || '0.0.0.0'
     this.maxConnections = opts.maxConnections || 256
     // When the pipe sits behind a TLS-terminating reverse proxy (the
@@ -333,6 +336,11 @@ export class DHTRelayWS extends EventEmitter {
       this.server.on('listening', resolve)
       this.server.on('error', reject)
     })
+
+    // Preserve the effective port in events/stats and give callers a safe
+    // address for connecting when they requested an ephemeral port.
+    const address = this.server.address()
+    if (address && typeof address === 'object') this.port = address.port
 
     this.server.on('connection', (socket, req) => {
       // MUST match the verifyClient key exactly (same trustProxy/XFF

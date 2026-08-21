@@ -19,10 +19,6 @@ import test from 'brittle'
 import { WebSocket } from 'ws'
 import { DHTRelayWS } from 'p2p-hiverelay/transports/dht-relay-ws/index.js'
 
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
-}
-
 function fakeDHT () {
   return {}
 }
@@ -53,16 +49,17 @@ function until (predicate, timeoutMs = 5000, everyMs = 25) {
 }
 
 test('prod: connection that never sends a frame is reaped at the first-frame deadline', async (t) => {
-  const port = pickPort()
   const relay = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     keepalive: { intervalMs: 100, firstFrameTimeoutMs: 150 }
   })
   const reaped = []
   relay.on('connection-reaped', (e) => reaped.push(e))
   await relay.start()
   t.teardown(() => relay.stop())
+  const port = relay.port
 
   const client = openClient(port)
   await until(() => client.opened)
@@ -81,14 +78,15 @@ test('prod: connection that never sends a frame is reaped at the first-frame dea
 })
 
 test('prod: frame-sending client survives many supervisor sweeps (ws auto-pong keeps it alive)', async (t) => {
-  const port = pickPort()
   const relay = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     keepalive: { intervalMs: 60, firstFrameTimeoutMs: 100 }
   })
   await relay.start()
   t.teardown(() => relay.stop())
+  const port = relay.port
 
   const client = openClient(port)
   await until(() => client.opened)
@@ -104,10 +102,10 @@ test('prod: frame-sending client survives many supervisor sweeps (ws auto-pong k
 })
 
 test('prod: ingress rate cap closes a flooding connection (content untouched, lengths only)', async (t) => {
-  const port = pickPort()
   const relay = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     keepalive: { intervalMs: 5000 }, // supervisor idle — the cap fires inline
     flow: { maxRxBytesPerSec: 1024 }
   })
@@ -115,6 +113,7 @@ test('prod: ingress rate cap closes a flooding connection (content untouched, le
   relay.on('connection-reaped', (e) => reaped.push(e))
   await relay.start()
   t.teardown(() => relay.stop())
+  const port = relay.port
 
   const client = openClient(port)
   await until(() => client.opened)
@@ -129,14 +128,15 @@ test('prod: ingress rate cap closes a flooding connection (content untouched, le
 })
 
 test('prod: maxPayload caps a single frame at the ws parser (1009 message too big)', async (t) => {
-  const port = pickPort()
   const relay = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     flow: { maxPayloadBytes: 1024 }
   })
   await relay.start()
   t.teardown(() => relay.stop())
+  const port = relay.port
 
   const client = openClient(port)
   await until(() => client.opened)
@@ -147,10 +147,10 @@ test('prod: maxPayload caps a single frame at the ws parser (1009 message too bi
 })
 
 test('prod: aborted upgrades no longer leak concurrency slots (pending reservations expire)', async (t) => {
-  const port = pickPort()
   const relay = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     rateLimit: { maxConcurrentPerIp: 2, pendingTtlMs: 50 }
   })
   await relay.start()
@@ -171,11 +171,10 @@ test('prod: aborted upgrades no longer leak concurrency slots (pending reservati
 })
 
 test('prod: trustProxy keys rate limiting on X-Forwarded-For, not the shared proxy socket IP', async (t) => {
-  const port = pickPort()
   // Behind a proxy every socket IP is the proxy's; without trustProxy the
   // limiter collapses to one bucket. With it, distinct XFF hops are distinct
   // clients. Drive _checkRateLimit through fake reqs to assert the keying.
-  const relay = new DHTRelayWS({ dht: fakeDHT(), port, trustProxy: true, rateLimit: { maxConcurrentPerIp: 1 } })
+  const relay = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1', trustProxy: true, rateLimit: { maxConcurrentPerIp: 1 } })
   await relay.start()
   t.teardown(() => relay.stop())
 
@@ -191,10 +190,10 @@ test('prod: trustProxy keys rate limiting on X-Forwarded-For, not the shared pro
 })
 
 test('prod: getStats exposes aggregate-only metering (bytes, reaps, bounds config)', async (t) => {
-  const port = pickPort()
-  const relay = new DHTRelayWS({ dht: fakeDHT(), port })
+  const relay = new DHTRelayWS({ dht: fakeDHT(), port: 0 })
   await relay.start()
   t.teardown(() => relay.stop())
+  const port = relay.port
 
   const client = openClient(port)
   await until(() => client.opened)

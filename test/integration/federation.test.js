@@ -24,10 +24,6 @@ function tmpStorage () {
   return storage
 }
 
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
-}
-
 function createNode (testnet, overrides = {}) {
   return new RelayNode({
     storage: tmpStorage(),
@@ -51,8 +47,7 @@ test('e2e federation: follow real peer in review mode → app lands in pending q
 
   // Source relay: serves a /catalog.json over HTTP. Open accept mode so it
   // accepts a self-seed quickly.
-  const srcPort = pickPort()
-  const src = createNode(testnet, { enableAPI: true, apiPort: srcPort, acceptMode: 'open' })
+  const src = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1', acceptMode: 'open' })
   // Subscriber: in review mode, follows src.
   const sub = createNode(testnet, { acceptMode: 'review', enableAPI: false })
 
@@ -63,6 +58,7 @@ test('e2e federation: follow real peer in review mode → app lands in pending q
   })
 
   await src.start()
+  const srcPort = src.api.server.address().port
   await sub.start()
 
   // Have src publish a fake app entry into its catalog by adding to appRegistry
@@ -112,8 +108,7 @@ test('e2e federation: follow real peer in review mode → app lands in pending q
 test('e2e federation: follow real peer in closed mode → app rejected, never queues', async (t) => {
   const testnet = await createTestnet(3, t.teardown)
 
-  const srcPort = pickPort()
-  const src = createNode(testnet, { enableAPI: true, apiPort: srcPort, acceptMode: 'open' })
+  const src = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1', acceptMode: 'open' })
   const sub = createNode(testnet, { acceptMode: 'closed', enableAPI: false })
 
   t.teardown(async () => {
@@ -123,6 +118,7 @@ test('e2e federation: follow real peer in closed mode → app rejected, never qu
   })
 
   await src.start()
+  const srcPort = src.api.server.address().port
   await sub.start()
 
   const fakeAppKey = randomBytes(32).toString('hex')
@@ -190,14 +186,14 @@ test('federation rejects missing, zero, and unsafe catalog storage bounds', asyn
 
 test('e2e federation: /catalog.json from a real RelayNode advertises federation field', async (t) => {
   const testnet = await createTestnet(2, t.teardown)
-  const port = pickPort()
-  const node = createNode(testnet, { enableAPI: true, apiPort: port, acceptMode: 'review' })
+  const node = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1', acceptMode: 'review' })
   t.teardown(async () => {
     await node.stop()
     await testnet.destroy()
   })
 
   await node.start()
+  const port = node.api.server.address().port
   // Prime federation state so /catalog.json has something to advertise
   node.federation.follow('http://upstream-a.example')
   node.federation.mirror('http://trusted-b.example', { pubkey: 'b'.repeat(64) })

@@ -2,12 +2,6 @@ import test from 'brittle'
 import { WebSocket } from 'ws'
 import { DHTRelayWS } from 'p2p-hiverelay/transports/dht-relay-ws/index.js'
 
-// Find a free port without binding twice. Quick-and-dirty: pick a high
-// random port; collisions in CI are vanishingly unlikely for 65k range.
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
-}
-
 // Minimal DHT stand-in. The real @hyperswarm/dht-relay only touches the DHT
 // inside `relay()` after a successful protocol handshake. For start/stop
 // lifecycle tests we never get that far — tests that exercise an actual
@@ -26,12 +20,16 @@ test('DHTRelayWS: requires dht', (t) => {
   }
 })
 
-test('DHTRelayWS: start opens a WebSocket server, stop closes it', async (t) => {
-  const port = pickPort()
-  const transport = new DHTRelayWS({ dht: fakeDHT(), port })
+test('DHTRelayWS: port 0 atomically allocates a connectable ephemeral port', async (t) => {
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1' })
+  t.is(transport.port, 0, 'preserves the ephemeral-port request before start')
 
   await transport.start()
   t.ok(transport.running, 'running after start')
+  const port = transport.port
+  t.ok(Number.isInteger(port) && port > 0, 'exposes the kernel-assigned port after start')
+  t.is(transport.server.address().port, port, 'reported port matches the bound listener')
+  t.is(transport.getStats().port, port, 'stats expose the effective port')
 
   // Confirm the port is actually listening by opening a client socket.
   const client = new WebSocket(`ws://127.0.0.1:${port}`)
@@ -47,10 +45,10 @@ test('DHTRelayWS: start opens a WebSocket server, stop closes it', async (t) => 
 })
 
 test('DHTRelayWS: enforces maxConnections', async (t) => {
-  const port = pickPort()
-  const transport = new DHTRelayWS({ dht: fakeDHT(), port, maxConnections: 1 })
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1', maxConnections: 1 })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   // First client gets in.
   const c1 = new WebSocket(`ws://127.0.0.1:${port}`)
@@ -70,10 +68,10 @@ test('DHTRelayWS: enforces maxConnections', async (t) => {
 })
 
 test('DHTRelayWS: getStats reports operating numbers', async (t) => {
-  const port = pickPort()
-  const transport = new DHTRelayWS({ dht: fakeDHT(), port })
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1' })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   const before = transport.getStats()
   t.is(before.running, true)

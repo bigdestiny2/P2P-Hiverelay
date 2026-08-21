@@ -26,10 +26,6 @@ function tmpStorage () {
   return storage
 }
 
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
-}
-
 function keyPair () {
   const publicKey = b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES)
   const secretKey = b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
@@ -68,8 +64,7 @@ test('e2e gateway denylist: takedown on one relay propagates through federation 
   const adminPub = b4a.toString(admin.publicKey, 'hex')
   const takenDownKey = randomBytes(32).toString('hex')
 
-  const srcPort = pickPort()
-  const src = createNode(testnet, { enableAPI: true, apiPort: srcPort, acceptMode: 'open' })
+  const src = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1', acceptMode: 'open' })
   // Follower: trusts ONLY the admin pubkey — no local takedown entries.
   const sub = createNode(testnet, {
     acceptMode: 'review',
@@ -84,6 +79,7 @@ test('e2e gateway denylist: takedown on one relay propagates through federation 
   })
 
   await src.start()
+  const srcPort = src.api.server.address().port
   await sub.start()
 
   // Source relay itself does not trust the admin key — its own gateway would
@@ -142,10 +138,10 @@ test('e2e gateway denylist: follower with no trust anchors merges nothing', asyn
   const adminPub = b4a.toString(admin.publicKey, 'hex')
   const takenDownKey = randomBytes(32).toString('hex')
 
-  const srcPort = pickPort()
   const src = createNode(testnet, {
     enableAPI: true,
-    apiPort: srcPort,
+    apiPort: 0,
+    apiHost: '127.0.0.1',
     acceptMode: 'open',
     gatewayDenylist: { trustedAdmins: [adminPub] }
   })
@@ -158,6 +154,7 @@ test('e2e gateway denylist: follower with no trust anchors merges nothing', asyn
   })
 
   await src.start()
+  const srcPort = src.api.server.address().port
   await sub.start()
 
   src.gatewayDenylist.issue({

@@ -366,8 +366,7 @@ test('integration: circuit relay forwards data between two peers', async (t) => 
 
 test('integration: HTTP API returns health and status', async (t) => {
   const testnet = await createTestnet(3)
-  const port = 9200 + Math.floor(Math.random() * 800)
-  const node = createNode(testnet, { enableAPI: true, apiPort: port })
+  const node = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1' })
 
   t.teardown(async () => {
     await node.stop()
@@ -375,6 +374,7 @@ test('integration: HTTP API returns health and status', async (t) => {
   })
 
   await node.start()
+  const port = node.api.server.address().port
 
   // Health endpoint
   const healthRes = await fetch(`http://127.0.0.1:${port}/health`)
@@ -402,9 +402,8 @@ test('integration: HTTP API returns health and status', async (t) => {
 
 test('integration: HTTP API seed and unseed', async (t) => {
   const testnet = await createTestnet(3)
-  const port = 9200 + Math.floor(Math.random() * 800)
   const apiKey = 'test-api-key-' + randomBytes(8).toString('hex')
-  const node = createNode(testnet, { enableAPI: true, apiPort: port, apiKey })
+  const node = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1', apiKey })
 
   t.teardown(async () => {
     await node.stop()
@@ -412,6 +411,7 @@ test('integration: HTTP API seed and unseed', async (t) => {
   })
 
   await node.start()
+  const port = node.api.server.address().port
 
   const appKey = await authorLocalDrive(node, {
     '/api-seed.txt': b4a.from('production API seed fixture')
