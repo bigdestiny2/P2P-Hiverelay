@@ -23,11 +23,11 @@
  *
  *   Sigma protocol (Fiat-Shamir):
  *     1. Prover picks random k. Computes A = G^k, B = C1^k.
- *     2. Challenge e = H(G || Y || C1 || D || A || B).
+ *     2. Challenge e = H(context || G || Y || C1 || D || A || B).
  *     3. Response z = k + e*x  (mod the ed25519 group order ℓ).
  *
  *   Verification:
- *     - e' = H(G || Y || C1 || D || A || B)    (recompute, must equal e)
+ *     - e' = H(context || G || Y || C1 || D || A || B)
  *     - G^z  == A + Y^e        (point addition; non-multiplicative notation)
  *     - C1^z == B + D^e
  *
@@ -77,15 +77,29 @@ if (nobleEd25519.Point.Fn.ORDER !== ED25519_ORDER) {
 }
 const NOBLE_FN = nobleEd25519.Point.Fn
 
-// Domain separator for the Fiat-Shamir hash. Any change to this string
-// rotates all prior proofs out of validity, so DO NOT change it without a
-// version bump in the evidence shape — proofs in the wild would silently
-// stop verifying.
-const FS_DOMAIN = 'hiverelay/poker/chaum-pedersen/v1'
+// DRI-387 replaces the unpublished game-protocol-v3 proof schema in place.
+// The game protocol version and the independently versioned proof domain are
+// transcript fields: changing either invalidates every earlier proof rather
+// than allowing replay into a new hand/card/recipient. Later game-protocol
+// versions remain reserved by their own Linear issues.
+const CARD_SHARE_PROTOCOL = 'p2poker/game-entry'
+const CARD_SHARE_PROTOCOL_VERSION = 3
+const CARD_SHARE_TRANSCRIPT_VERSION = 2
+const FS_DOMAIN = 'p2poker/card-share/chaum-pedersen/v2'
+const PROOF_KINDS = new Set(['share-commit', 'share-precommit', 'share-deliver', 'hole-reveal'])
 
 const POINT_BYTES = 32
 const SCALAR_BYTES = 32
 const HASH_BYTES = 64 // we hash into 64 bytes then reduce mod ℓ
+
+// CVE-2025-69277 regression vector. A vulnerable libsodium build accepted this
+// mixed-order encoding as a prime-order ed25519 point. Failing at module load
+// protects every caller (client prover/verifier and relay arbitration) even if
+// package resolution or a native prebuild changes underneath the lockfile.
+const CVE_2025_69277_POINT = b4a.from('95' + '99'.repeat(31), 'hex')
+if (sodium.crypto_core_ed25519_is_valid_point(CVE_2025_69277_POINT)) {
+  throw new Error('chaum-pedersen: unsafe sodium runtime (CVE-2025-69277 vector accepted)')
+}
 
 // ─── Public API ─────────────────────────────────────────────────────────────
 
@@ -105,6 +119,13 @@ const HASH_BYTES = 64 // we hash into 64 bytes then reduce mod ℓ
 export function verifyShareEquality (args) {
   const G = args.G || baseG()
   const { Y, C1, D, A, B, z } = args
+
+  let context
+  try {
+    context = canonicalShareContext(args.context)
+  } catch (error) {
+    return { valid: false, reason: 'bad-context:' + error.message }
+  }
 
   // Shape checks — return reason strings rather than throwing so the
   // arbitration verifier can map them to 'inconclusive' verdicts cleanly.
@@ -140,7 +161,7 @@ export function verifyShareEquality (args) {
   }
 
   // Recompute challenge e' = H(G || Y || C1 || D || A || B), reduce mod ℓ.
-  const e = fsChallenge(G, Y, C1, D, A, B)
+  const e = fsChallenge(context, G, Y, C1, D, A, B)
 
   // Check G^z == A + Y^e.
   let lhs1, rhs1
@@ -202,6 +223,7 @@ export function proveShareEquality (args) {
   const { x, Y, C1, D } = args
   const G = args.G || baseG()
   if (!x || x.byteLength !== SCALAR_BYTES) throw new Error('proveShareEquality: bad x')
+  const context = canonicalShareContext(args.context)
 
   // Subgroup-validity checks on every externally-sourced point. Same
   // rationale as verifyShareEquality — without these, a malicious or
@@ -226,7 +248,7 @@ export function proveShareEquality (args) {
   const B = pointMul(k, C1)
 
   // Challenge e = H(G || Y || C1 || D || A || B) mod ℓ.
-  const e = fsChallenge(G, Y, C1, D, A, B)
+  const e = fsChallenge(context, G, Y, C1, D, A, B)
 
   // Response z = k + e*x mod ℓ.
   // Uses noble-curves' constant-time scalar-field multiplication (Fn.mul)
@@ -309,18 +331,104 @@ function pointAdd (p, q) {
  * scheme can't pretend to be a proof from a different one that also
  * uses ed25519 point arithmetic).
  */
-function fsChallenge (G, Y, C1, D, A, B) {
+function fsChallenge (context, G, Y, C1, D, A, B) {
   const buf = b4a.alloc(HASH_BYTES)
-  const domain = b4a.from(FS_DOMAIN, 'utf8')
-  // crypto_generichash with input as a single concatenated buffer. The
-  // transcript ordering matters; both prover and verifier must use the
-  // same ordering. We pin it to (G, Y, C1, D, A, B) — same as the doc.
-  const input = b4a.concat([domain, G, Y, C1, D, A, B])
+  // Every component is tagged and length-framed. This removes concat
+  // ambiguity and makes the precise table/hand/writer/kind/card/recipient
+  // statement part of the Fiat-Shamir challenge.
+  const fields = [
+    ['protocol', b4a.from(CARD_SHARE_PROTOCOL, 'utf8')],
+    ['protocolVersion', u32be(context.protocolVersion)],
+    ['domain', b4a.from(FS_DOMAIN, 'utf8')],
+    ['transcriptVersion', u32be(CARD_SHARE_TRANSCRIPT_VERSION)],
+    ['tableKey', context.tableKey],
+    ['hand', u64be(context.hand)],
+    ['writer', context.writer],
+    ['proofKind', b4a.from(context.proofKind, 'utf8')],
+    ['cardIndex', u32be(context.cardIndex)],
+    ['recipient', encodeRecipient(context.recipientSeat)],
+    ['G', G],
+    ['Y', Y],
+    ['C1', C1],
+    ['D', D],
+    ['A', A],
+    ['B', B]
+  ]
+  const input = b4a.concat(fields.map(([tag, value]) => frame(tag, value)))
   sodium.crypto_generichash(buf, input)
   // Reduce 64 → 32 mod ℓ for use as a scalar.
   const reduced = b4a.alloc(SCALAR_BYTES)
   sodium.crypto_core_ed25519_scalar_reduce(reduced, buf)
   return reduced
+}
+
+/**
+ * Normalize and validate the public statement context shared by the live
+ * client verifier and arbitration verifier. Hex and byte inputs normalize to
+ * the same 32-byte representation; all returned buffers are defensive copies.
+ */
+export function canonicalShareContext (value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('missing')
+  if (value.protocolVersion !== CARD_SHARE_PROTOCOL_VERSION) throw new Error('protocol-version')
+  const tableKey = hexOrBytes32(value.tableKey, 'tableKey')
+  const writer = hexOrBytes32(value.writer, 'writer')
+  if (!Number.isSafeInteger(value.hand) || value.hand < 0) throw new Error('hand')
+  if (!PROOF_KINDS.has(value.proofKind)) throw new Error('proof-kind')
+  if (!Number.isInteger(value.cardIndex) || value.cardIndex < 0 || value.cardIndex > 51) {
+    throw new Error('card-index')
+  }
+  const recipientSeat = value.recipientSeat == null ? null : value.recipientSeat
+  if (value.proofKind === 'share-deliver') {
+    if (!Number.isInteger(recipientSeat) || recipientSeat < 0 || recipientSeat > 8) {
+      throw new Error('recipient')
+    }
+  } else if (recipientSeat !== null) {
+    throw new Error('recipient-for-kind')
+  }
+  return {
+    protocolVersion: CARD_SHARE_PROTOCOL_VERSION,
+    tableKey,
+    hand: value.hand,
+    writer,
+    proofKind: value.proofKind,
+    cardIndex: value.cardIndex,
+    recipientSeat
+  }
+}
+
+function hexOrBytes32 (value, name) {
+  if (typeof value === 'string') {
+    if (!/^[0-9a-f]{64}$/i.test(value)) throw new Error(name)
+    return b4a.from(value.toLowerCase(), 'hex')
+  }
+  if (!value || value.byteLength !== 32) throw new Error(name)
+  return b4a.from(value)
+}
+
+function frame (tag, value) {
+  const tagBytes = b4a.from(tag, 'utf8')
+  return b4a.concat([u32be(tagBytes.byteLength), tagBytes, u32be(value.byteLength), value])
+}
+
+function u32be (value) {
+  if (!Number.isInteger(value) || value < 0 || value > 0xffffffff) throw new Error('u32')
+  const out = b4a.alloc(4)
+  out[0] = (value >>> 24) & 0xff
+  out[1] = (value >>> 16) & 0xff
+  out[2] = (value >>> 8) & 0xff
+  out[3] = value & 0xff
+  return out
+}
+
+function u64be (value) {
+  if (!Number.isSafeInteger(value) || value < 0) throw new Error('u64')
+  const high = Math.floor(value / 0x100000000)
+  const low = value - high * 0x100000000
+  return b4a.concat([u32be(high), u32be(low)])
+}
+
+function encodeRecipient (seat) {
+  return seat == null ? b4a.from([0]) : b4a.concat([b4a.from([1]), u32be(seat)])
 }
 
 /**
@@ -363,4 +471,13 @@ function scalarMulMod (aBytes, bBytes) {
   return b4a.from(NOBLE_FN.toBytes(c))
 }
 
-export { ED25519_ORDER, FS_DOMAIN, POINT_BYTES, SCALAR_BYTES }
+export {
+  ED25519_ORDER,
+  CARD_SHARE_PROTOCOL,
+  CARD_SHARE_PROTOCOL_VERSION,
+  CARD_SHARE_TRANSCRIPT_VERSION,
+  FS_DOMAIN,
+  POINT_BYTES,
+  SCALAR_BYTES,
+  CVE_2025_69277_POINT
+}

@@ -117,9 +117,10 @@ Slashing-grade disputes go through the arbitration service:
 Submit shape and evidence schemas are documented at the top of
 [`arbitration-service.js`](../../../services/builtin/arbitration-service.js).
 Operators can register their own cryptographic verifier via
-`arbitration.setAppEvidenceVerifier(type, fn)` — the bundled verifier is
-deliberately a stub that returns `inconclusive` until a real shuffle/share
-proof library is wired in.
+`arbitration.setAppEvidenceVerifier(type, fn)`. The bundled invalid-share
+verifier checks a context-bound Chaum-Pedersen proof plus the respondent
+signatures on both the share/reveal entry and its DKG round-2 publisher key.
+Malformed or unauthenticated provenance is fail-closed as `inconclusive`.
 
 ## Operator wiring
 
@@ -186,14 +187,18 @@ without WS, persistence without the verifier, etc.
      mirrors successful appends, rehydrates on restart, 'mirror-error'
      event on append failure (in-memory log stays source of truth)
 - ✅ Reference share-equality verifier: Chaum-Pedersen over ed25519 with
-     Fiat-Shamir; pluggable into `arbitration.setAppEvidenceVerifier(
+     a tagged, length-framed Fiat-Shamir transcript bound to game protocol,
+     proof-domain version, table, hand, writer, proof kind, card index, and
+     canonical recipient; pluggable into `arbitration.setAppEvidenceVerifier(
      'poker/invalid-share', ...)`. **Reference quality, hardened against
      two specific attack classes**: (a) ed25519 cofactor / mixed-order
      point planting (every external point passes `crypto_core_ed25519_
-     is_valid_point` on both prove and verify paths), and (b) timing leak
+     is_valid_point` on both prove and verify paths, with the official
+     CVE-2025-69277 regression point rejected at module load), and (b) timing leak
      of the prover's secret x (the `e * x mod ℓ` step uses
      `@noble/curves` ed25519 scalar field — best-effort constant time in
-     pure JS, not native-C-grade). Still not end-to-end audited for
+     pure JS, not native-C-grade). Arbitration also authenticates the
+     respondent-signed share and DKG-key provenance. Still not end-to-end audited for
      production real-money stake; operators with audited crypto should
      register their own via the same hook
 - ⏳ Autobase-per-table persistence (follow-up for a model where each
