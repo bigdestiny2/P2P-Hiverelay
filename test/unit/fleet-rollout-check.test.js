@@ -68,7 +68,7 @@ test('fleet rollout check verifies target sha and health through ssh probe', asy
 set -euo pipefail
 printf '%s\n' "$@" > ${sh(sshArgsPath)}
 cat >/dev/null
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\n' '${TARGET_SHA}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\n' '${TARGET_SHA}'
 `)
   await chmod(sshPath, 0o755)
 
@@ -125,6 +125,61 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
   t.absent(evidence.relays[0].sshKey, 'ssh key is not written to public rollout evidence')
 })
 
+test('fleet rollout check refuses green evidence when the updater control plane is not ready', async (t) => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-fleet-rollout-'))
+  t.teardown(async () => {
+    await rm(dir, { recursive: true, force: true })
+  })
+
+  const relaysPath = path.join(dir, 'relays.json')
+  const sshPath = path.join(dir, 'mock-ssh.sh')
+  const evidencePath = path.join(dir, 'fleet-rollout-evidence.json')
+  const channelsPath = await writeFixtureChannels(dir)
+  await writeFile(relaysPath, JSON.stringify({
+    relays: [{
+      name: 'mock-canary',
+      publicIp: '127.0.0.1',
+      sshKey: 'default',
+      channel: 'canary'
+    }]
+  }))
+  await writeFile(sshPath, `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\tfalse\\n' '${TARGET_SHA}'
+`)
+  await chmod(sshPath, 0o755)
+
+  let err = null
+  try {
+    await runCheck([
+      '--target', 'v9.9.9',
+      '--target-sha', TARGET_SHA,
+      '--channel', 'canary',
+      '--relays', relaysPath,
+      '--channels', channelsPath,
+      '--ssh-command', sshPath,
+      '--evidence', evidencePath,
+      '--timeout-ms', '120',
+      '--interval-ms', '25'
+    ])
+  } catch (e) {
+    err = e
+  }
+
+  t.ok(err, 'an unmanaged relay cannot produce verified rollout evidence')
+  t.ok(err.stdout.includes('waiting-updater'))
+  t.ok(err.stderr.includes('Fleet rollout did not converge'))
+  const evidence = JSON.parse(await readFile(evidencePath, 'utf8'))
+  t.is(evidence.status, 'failed')
+  t.is(evidence.summary.updated, 1)
+  t.is(evidence.summary.packageVersionMatches, 1)
+  t.is(evidence.summary.runtimeVersionMatches, 1)
+  t.is(evidence.summary.healthy, 0, 'healthy now includes updater readiness')
+  t.is(evidence.relays[0].healthy, false)
+  t.is(evidence.relays[0].note, 'waiting-updater')
+})
+
 test('fleet rollout check defaults to both fleet channels', async (t) => {
   const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-fleet-rollout-'))
   t.teardown(async () => {
@@ -159,7 +214,7 @@ test('fleet rollout check defaults to both fleet channels', async (t) => {
   await writeFile(sshPath, `#!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\n' '${TARGET_SHA}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\n' '${TARGET_SHA}'
 `)
   await chmod(sshPath, 0o755)
 
@@ -212,7 +267,7 @@ test('fleet rollout check rejects unsafe verified proof timing before writing ev
   await writeFile(sshPath, `#!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\n' '${TARGET_SHA}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\n' '${TARGET_SHA}'
 `)
   await chmod(sshPath, 0o755)
 
@@ -542,7 +597,7 @@ test('fleet rollout check rejects updated repo with stale live health version', 
   await writeFile(sshPath, `#!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.8\\t{"running":true,"version":"9.9.8"}\\n' '${TARGET_SHA}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.8\\t{"running":true,"version":"9.9.8"}\\ttrue\\n' '${TARGET_SHA}'
 `)
   await chmod(sshPath, 0o755)
 
@@ -598,7 +653,7 @@ test('fleet rollout check rejects updated repo with stale package version', asyn
   await writeFile(sshPath, `#!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-printf '%s\\tv9.9.8\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\n' '${TARGET_SHA}'
+printf '%s\\tv9.9.8\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\n' '${TARGET_SHA}'
 `)
   await chmod(sshPath, 0o755)
 
@@ -910,7 +965,7 @@ test('fleet rollout check keeps probe config out of SSH command argv', async (t)
 set -euo pipefail
 printf '%s\\n' "$@" > ${sh(argvPath)}
 cat > ${sh(stdinPath)}
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\n' '${TARGET_SHA}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\n' '${TARGET_SHA}'
 `)
   await chmod(sshPath, 0o755)
 
@@ -1093,7 +1148,7 @@ test('fleet rollout opt-in gateway evidence is remotely verified and gates conve
 set -euo pipefail
 printf '%s\\n' "$@" > ${sh(argvPath)}
 cat > ${sh(stdinPath)}
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\t%s\\n' '${release.targetSha}' '${gatewayToken}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\ttrue\\t%s\\n' '${release.targetSha}' '${gatewayToken}'
 `)
   await chmod(sshPath, 0o755)
 
@@ -1136,6 +1191,20 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
   t.ok(remote.includes('--require-mode fleet'))
   t.ok(remote.includes(`expected_origin=${sh(release.entry.origin)}`))
   t.ok(remote.includes('--expected-nginx-sha256 "$expected_nginx_sha256"'))
+  t.ok(remote.includes("expected_channel='canary'"))
+  t.ok(remote.includes("expected_relay_name='mock-canary'"))
+  t.ok(remote.includes('updater_config_equals CHANNEL "$expected_channel"'))
+  t.ok(remote.includes('updater_config_equals RELAY_NAME "$expected_relay_name"'))
+  t.ok(remote.includes('updater_config_equals REPO_DIR "$repo"'))
+  t.ok(remote.includes('installed_matches_release fleet/updater-launcher.sh "$updater_launcher" 1'))
+  t.ok(remote.includes('installed_matches_release fleet/hiverelay-updater.service "$updater_service_unit"'))
+  t.ok(remote.includes('installed_matches_release fleet/hiverelay-updater.timer "$updater_timer_unit"'))
+  t.ok(remote.includes('git hash-object --no-filters -- "$installed"'))
+  t.ok(remote.includes('loaded_unit_matches hiverelay-updater.service "$updater_service_unit"'))
+  t.ok(remote.includes('loaded_unit_matches hiverelay-updater.timer "$updater_timer_unit"'))
+  t.ok(remote.includes('/usr/bin/systemctl is-enabled --quiet hiverelay-updater.timer'))
+  t.ok(remote.includes('/usr/bin/systemctl is-active --quiet hiverelay-updater.timer'))
+  t.ok(remote.includes('"$updater_launcher" --verify-only "$release_target"'))
   t.ok(remote.includes('diff --no-ext-diff --quiet "$release_sha" --'))
   t.ok(remote.includes('diff --no-ext-diff --cached --quiet "$release_sha" --'))
   t.ok(remote.indexOf('target worktree is dirty') < remote.indexOf('node "$verifier"'),
@@ -1186,7 +1255,7 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
   await writeFile(sshPath, `#!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\tfalse\\t\\n' '${release.targetSha}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\tfalse\\t\\n' '${release.targetSha}'
 `)
   await chmod(sshPath, 0o755)
   let redErr = null
@@ -1220,7 +1289,7 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
   await writeFile(sshPath, `#!/usr/bin/env bash
 set -euo pipefail
 cat >/dev/null
-printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\t%s\\n' '${release.targetSha}' '${gatewayToken}'
+printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\ttrue\\ttrue\\t%s\\n' '${release.targetSha}' '${gatewayToken}'
 `)
   await chmod(sshPath, 0o755)
   let observingErr = null
