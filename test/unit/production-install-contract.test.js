@@ -41,6 +41,7 @@ test('production lifecycle dependencies and clean-install CI gate are retained',
   t.ok(workflow.includes('container: node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0'))
   t.ok(workflow.includes(install))
   t.ok(workflow.includes('test ! -e node_modules/@hiverelay/blind-peercred'))
+  t.ok(workflow.includes('-type d -name node_modules -prune'))
   t.ok(workflow.includes('/tmp/source-before.sha256'))
   t.ok(workflow.includes('diff -u /tmp/source-before.sha256 /tmp/source-after.sha256'))
   t.absent(workflow.includes('git diff --exit-code'))
