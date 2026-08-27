@@ -4,6 +4,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import {
+  RELEASE_CLOSURE_EVIDENCE,
+  RELEASE_SYNC_WORKFLOW_SCOPE,
+  expectedReleaseClosureStatus,
+  isSuccessfulReleaseSyncEvidence
+} from './lib/release-evidence-contract.mjs'
 
 const usage = `
 Usage:
@@ -245,7 +251,16 @@ function verifyReleaseBasics (body) {
   requirePattern('release.tagSha', body.release?.tagSha, /^[a-f0-9]{40}$/i)
   validatePublicGatewayBinding(body)
   requirePattern('release.metadataSha', body.release?.metadataSha, /^[a-f0-9]{40}$/i)
-  requireEqual('release workflow status', body.release.workflow?.status, 'success')
+  if (!isSuccessfulReleaseSyncEvidence(body.release)) {
+    die(`release checkpoint evidence must be valid and closure-scoped; got ${JSON.stringify(body.release.workflow?.status || '')}`)
+  }
+  requireEqual('release workflow scope', body.release.workflow?.scope, RELEASE_SYNC_WORKFLOW_SCOPE)
+  requireEqual('release closure status', body.release.closure?.status, expectedReleaseClosureStatus(body.release))
+  requireEqual(
+    'release closure evidence path',
+    body.release.closure?.evidence,
+    body.release.candidate === true ? '' : RELEASE_CLOSURE_EVIDENCE
+  )
   requirePattern('release workflow repository', body.release.workflow?.repository, /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
   requireEqual('release workflow repository', body.release.workflow.repository, EXPECTED_RELEASE_REPOSITORY)
   requirePattern('release workflow run id', body.release.workflow?.runId, POSITIVE_INTEGER_PATTERN)
@@ -281,7 +296,8 @@ function assertReleaseEvidenceSchema (body) {
     'tagSha',
     'metadataSha',
     'publicGateway',
-    'workflow'
+    'workflow',
+    'closure'
   ])
   if (body.release.publicGateway != null) {
     requireOnlyKeys('release evidence public gateway binding', body.release.publicGateway, [
@@ -296,12 +312,14 @@ function assertReleaseEvidenceSchema (body) {
     ])
   }
   requireOnlyKeys('release evidence workflow', body.release.workflow, [
+    'scope',
     'status',
     'repository',
     'runId',
     'runAttempt',
     'runUrl'
   ])
+  requireOnlyKeys('release evidence closure', body.release.closure, ['status', 'evidence'])
   requireOnlyKeys('release evidence image', body.image, ['name', 'digest', 'ref'])
   requireOnlyKeys('release evidence artifacts', body.artifacts, ['startosPackage'])
   requireOnlyKeys('release evidence StartOS package artifact', body.artifacts.startosPackage, ['path', 'sha256'])

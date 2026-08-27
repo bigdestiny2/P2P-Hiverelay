@@ -1,6 +1,6 @@
 <Container version="2">
   <Name>Blindspark</Name>
-  <Repository>ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.3</Repository>
+  <Repository>ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.4@sha256:0fb632fd2f479e3853d866cf840ae1b24922a2a8b4d1e9ed772b0a859bd15f41</Repository>
   <Registry>https://ghcr.io/bigdestiny2/p2p-hiverelay</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -19,8 +19,8 @@
   <Category>Tools:System</Category>
   <ExtraSearchTerms>hiverelay pear holepunch p2p relay hypercore</ExtraSearchTerms>
   <Requires>A unique management API key of at least 32 characters. Keep the dashboard on a trusted network.</Requires>
-  <Changes>HiveRelay 0.26.0-rc.3</Changes>
-  <Date>2026-08-06</Date>
+  <Changes>HiveRelay 0.26.0-rc.4</Changes>
+  <Date>2026-08-27</Date>
   <MinVer>6.12</MinVer>
   <License>Apache-2.0</License>
 

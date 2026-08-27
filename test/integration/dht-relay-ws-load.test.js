@@ -15,10 +15,6 @@ import test from 'brittle'
 import { WebSocket } from 'ws'
 import { DHTRelayWS } from 'p2p-hiverelay/transports/dht-relay-ws/index.js'
 
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
-}
-
 // Stand-in DHT — dht-relay's relay() reaches into this only when the client
 // completes its protocol handshake. Our raw `ws` clients never do, so the
 // fake never gets touched in a meaningful way.
@@ -77,15 +73,15 @@ async function waitForSettled (clients, timeoutMs = 5000) {
 }
 
 test('load: ~100 concurrent clients under a generous per-IP cap all succeed', async (t) => {
-  const port = pickPort()
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
     host: '127.0.0.1',
     rateLimit: { connectionsPerMinutePerIp: 1000, maxConcurrentPerIp: 200 }
   })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   const N = 100
   const clients = openClients(port, N)
@@ -110,11 +106,11 @@ test('load: ~100 concurrent clients under a generous per-IP cap all succeed', as
 })
 
 test('load: 50-burst against default 5/concurrent gets exactly 5 through, rest rejected at upgrade', async (t) => {
-  const port = pickPort()
   // Use defaults: 10/min, 5 concurrent.
-  const transport = new DHTRelayWS({ dht: fakeDHT(), port, host: '127.0.0.1' })
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1' })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   const N = 50
   const clients = openClients(port, N)
@@ -142,10 +138,10 @@ test('load: 50-burst against default 5/concurrent gets exactly 5 through, rest r
 })
 
 test('load: closing some connections frees concurrent slots for new ones', async (t) => {
-  const port = pickPort()
-  const transport = new DHTRelayWS({ dht: fakeDHT(), port, host: '127.0.0.1' })
+  const transport = new DHTRelayWS({ dht: fakeDHT(), port: 0, host: '127.0.0.1' })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   // Open the 5 allowed concurrent connections sequentially so the per-minute
   // tokens drain by exactly 5 (we still have 5 tokens left for the second wave).
@@ -188,15 +184,15 @@ test('load: closing some connections frees concurrent slots for new ones', async
 })
 
 test('load: server stays responsive — fresh client opens quickly under load', async (t) => {
-  const port = pickPort()
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
     host: '127.0.0.1',
     rateLimit: { connectionsPerMinutePerIp: 1000, maxConcurrentPerIp: 200 }
   })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   // Stand up 50+ background connections.
   const background = openClients(port, 60)
@@ -221,14 +217,14 @@ test('load: server stays responsive — fresh client opens quickly under load', 
 })
 
 test('load: stop() with 50+ open connections cleans up state and timers', async (t) => {
-  const port = pickPort()
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
     host: '127.0.0.1',
     rateLimit: { connectionsPerMinutePerIp: 1000, maxConcurrentPerIp: 200 }
   })
   await transport.start()
+  const port = transport.port
 
   // Server must have its cleanup interval armed after start.
   t.ok(transport._cleanupTimer, 'cleanup interval timer is set after start')

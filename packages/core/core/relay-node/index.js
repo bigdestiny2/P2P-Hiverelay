@@ -1714,7 +1714,7 @@ export class RelayNode extends EventEmitter {
         const dhtRelayWsCfg = this.config.dhtRelayWs || {}
         this.dhtRelayWs = new DHTRelayWS({
           dht: this.swarm.dht,
-          port: this.config.dhtRelayWsPort || 8766,
+          port: this.config.dhtRelayWsPort ?? 8766,
           // Behind a TLS reverse proxy (the supported deploy), bind loopback
           // so the plaintext ws:// port is never publicly reachable; Caddy
           // owns public 443. Falls back to the transport default (0.0.0.0)

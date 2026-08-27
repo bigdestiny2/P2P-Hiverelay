@@ -23,9 +23,10 @@ Options:
   --channel <name|both|all>   Relay channel to check (default: both)
   --relays <path>             Fleet inventory JSON (default: fleet/relays.json)
   --channels <path>           Fleet channel targets JSON (default: fleet/channels.json)
-  --ssh-command <path>        SSH executable/fixture command (default: ssh)
+  --ssh-command <path>        Explicit SSH wrapper/executable (default: ssh)
   --ssh-key <path>            SSH key to use for every relay
-  --known-hosts <path>        Pinned OpenSSH known_hosts file (required for gateway)
+  --known-hosts <path>        Pinned OpenSSH known_hosts file (required unless an
+                              explicit --ssh-command wrapper owns host-key policy)
   --allowed-signers <path>    Trusted release signers (default: fleet/allowed-signers)
   --ssh-user <user>           SSH username (default: root)
   --repo <path>               Git repository containing the target tag
@@ -102,7 +103,8 @@ const channel = args.channel || process.env.HIVERELAY_FLEET_CHANNEL || 'both'
 const repoRoot = path.resolve(args.repo || defaultRepoRoot)
 const relaysPath = path.resolve(args.relays || path.join(repoRoot, 'fleet', 'relays.json'))
 const channelsPath = path.resolve(args.channels || path.join(repoRoot, 'fleet', 'channels.json'))
-const sshCommand = validateLocalCommand(args.sshCommand || process.env.HIVERELAY_FLEET_SSH_COMMAND || 'ssh')
+const explicitSshCommand = args.sshCommand || process.env.HIVERELAY_FLEET_SSH_COMMAND || ''
+const sshCommand = validateLocalCommand(explicitSshCommand || 'ssh')
 const sshKey = validateLocalPath(args.sshKey || process.env.HIVERELAY_FLEET_SSH_KEY || '', 'ssh-key')
 const knownHosts = validateLocalPath(args.knownHosts || process.env.HIVERELAY_FLEET_KNOWN_HOSTS || '', 'known-hosts')
 const allowedSignersPath = path.resolve(args.allowedSigners || path.join(repoRoot, 'fleet', 'allowed-signers'))
@@ -147,13 +149,12 @@ if (!relays.length) die(`No relays matched channel "${channel}" in ${relaysPath}
 
 if (gatewayEvidencePath) {
   if (!gatewayManifestPath) die('--gateway-manifest is required with --gateway-evidence.')
-  if (!knownHosts) die('--known-hosts is required with --gateway-evidence; accept-new host keys are refused.')
+  if (!knownHosts) die('--known-hosts is required with --gateway-evidence; unpinned host keys are refused.')
   if (!gatewayWindowStatePath) die('--gateway-window-state is required with --gateway-evidence.')
   if (!evidenceFile) die('--evidence is required with --gateway-evidence so the manifest-bound result is retained.')
   if (!['canary', 'stable', 'both'].includes(channel)) {
     die('Public gateway rollout requires --channel canary, stable, or both.')
   }
-  assertKnownHostsFile(knownHosts)
   readFleetMetadataFile(allowedSignersPath, 'trusted release allowed_signers')
   await verifySignedTargetTag(target)
   const taggedSha = await resolveTargetSha(target)
@@ -176,6 +177,11 @@ if (gatewayEvidencePath) {
   }
 } else if (gatewayManifestPath || gatewayWindowStatePath) {
   die('--gateway-manifest and --gateway-window-state require --gateway-evidence.')
+}
+
+if (knownHosts) assertKnownHostsFile(knownHosts)
+if (!dryRun && !knownHosts && !explicitSshCommand) {
+  die('--known-hosts is required for live rollout checks unless an explicit --ssh-command wrapper owns pinned host-key policy.')
 }
 
 console.log(`Fleet rollout target: ${target} (${targetSha})`)
@@ -752,15 +758,15 @@ async function probeRelay (relay) {
   const key = sshKey || normalizeInventoryKey(relay.sshKey)
   const sshArgs = [
     '-o', 'BatchMode=yes',
-    '-o', `StrictHostKeyChecking=${gatewayEvidencePath ? 'yes' : 'accept-new'}`,
+    '-o', 'StrictHostKeyChecking=yes',
+    '-o', 'UpdateHostKeys=no',
     '-o', 'ConnectTimeout=10',
     '-o', 'ServerAliveInterval=5',
     '-o', 'ServerAliveCountMax=2'
   ]
-  if (gatewayEvidencePath) {
-    // The operator-provisioned pin file is the only host-key authority for a
-    // gateway rollout. Do not silently accept a matching key or CA from the
-    // machine-wide OpenSSH trust store.
+  if (knownHosts) {
+    // When a pin file is provided it is the only host-key authority. Do not
+    // silently accept a matching key or CA from machine-wide OpenSSH trust.
     sshArgs.push('-o', `UserKnownHostsFile=${expandHome(knownHosts)}`)
     sshArgs.push('-o', 'GlobalKnownHostsFile=/dev/null')
   }
@@ -785,10 +791,15 @@ async function probeRelay (relay) {
   }
 
   const line = result.stdout.trim().split(/\r?\n/).pop() || ''
-  const [headSha, version, running, disk, healthVersion, health, gatewayState, gatewayToken] = line.split('\t')
+  const [headSha, version, running, disk, healthVersion, health, updaterState, gatewayState, gatewayToken] = line.split('\t')
   const updated = headSha === targetSha
   const packageVersionMatches = version === target
-  const healthy = running === 'true'
+  const serviceHealthy = running === 'true'
+  const updaterReady = updaterState === 'true'
+  // Keep the public evidence schema compatible while strengthening its
+  // `healthy` predicate: a relay is not promotable unless its signed updater
+  // control plane can deliver the next channel transition too.
+  const healthy = serviceHealthy && updaterReady
   const runtimeVersionMatches = healthVersion === targetVersion
   let gateway = null
   if (gatewayEvidencePath && gatewayState === 'true') {
@@ -804,6 +815,8 @@ async function probeRelay (relay) {
     updated,
     packageVersionMatches,
     healthy,
+    serviceHealthy,
+    updaterReady,
     runtimeVersionMatches,
     headSha,
     version,
@@ -835,6 +848,8 @@ function remoteProbeScript (relay) {
   const gatewayEvidenceLine = `gateway_evidence=${shellQuote(gatewayEvidencePath)}`
   const releaseTargetLine = `release_target=${shellQuote(target)}`
   const releaseShaLine = `release_sha=${shellQuote(targetSha)}`
+  const expectedChannelLine = `expected_channel=${shellQuote(relay.channel)}`
+  const expectedRelayNameLine = `expected_relay_name=${shellQuote(relay.name)}`
   const entry = gatewayEvidencePath ? gatewayCohortByRelay.get(relay.name) : null
   const gatewayExpectedLines = entry
     ? [
@@ -869,6 +884,8 @@ ${apiLine}
 ${gatewayEvidenceLine}
 ${releaseTargetLine}
 ${releaseShaLine}
+${expectedChannelLine}
+${expectedRelayNameLine}
 ${gatewayExpectedLines}
 env_file="\${HIVERELAY_ENV_FILE:-/etc/hiverelay/hiverelay.env}"
 cd -- "$repo"
@@ -890,6 +907,78 @@ if [ -n "$gateway_evidence" ]; then
 fi
 version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' package.json | head -n 1)"
 [ -n "$version" ] && version="v$version"
+updater_config=/etc/hiverelay-updater.conf
+updater_launcher=/usr/local/bin/hiverelay-updater
+updater_service_unit=/etc/systemd/system/hiverelay-updater.service
+updater_timer_unit=/etc/systemd/system/hiverelay-updater.timer
+updater_ready=false
+read_updater_config_value() {
+  local wanted="$1"
+  /usr/bin/awk -v wanted="$wanted" '
+    /^[[:space:]]*($|#)/ { next }
+    {
+      line = $0
+      key = line
+      sub(/[[:space:]]*=.*/, "", key)
+      sub(/^[[:space:]]*/, "", key)
+      sub(/[[:space:]]*$/, "", key)
+      if (key != wanted) next
+      sub(/^[^=]*=[[:space:]]*/, "", line)
+      values[++count] = line
+    }
+    END {
+      if (count != 1) exit 1
+      print values[1]
+    }
+  ' "$updater_config"
+}
+strip_updater_config_quotes() {
+  local value="$1"
+  if [[ "$value" == \"*\" && "$value" == *\" ]]; then
+    value="\${value#\"}"
+    value="\${value%\"}"
+  elif [[ "$value" == \'*\' && "$value" == *\' ]]; then
+    value="\${value#\'}"
+    value="\${value%\'}"
+  fi
+  printf '%s\n' "$value"
+}
+updater_config_equals() {
+  local key="$1" expected="$2" actual
+  actual="$(read_updater_config_value "$key")" || return 1
+  actual="$(strip_updater_config_quotes "$actual")"
+  [ "$actual" = "$expected" ]
+}
+installed_matches_release() {
+  local source="$1" installed="$2" require_executable="\${3:-0}" expected actual
+  [ -f "$installed" ] && [ ! -L "$installed" ] || return 1
+  [ "$require_executable" != 1 ] || [ -x "$installed" ] || return 1
+  expected="$(git rev-parse --verify "$release_sha:$source" 2>/dev/null)" || return 1
+  actual="$(git hash-object --no-filters -- "$installed" 2>/dev/null)" || return 1
+  [ "$actual" = "$expected" ]
+}
+loaded_unit_matches() {
+  local unit="$1" fragment="$2" loaded dropins reload
+  loaded="$(/usr/bin/systemctl show "$unit" -p FragmentPath --value 2>/dev/null)" || return 1
+  dropins="$(/usr/bin/systemctl show "$unit" -p DropInPaths --value 2>/dev/null)" || return 1
+  reload="$(/usr/bin/systemctl show "$unit" -p NeedDaemonReload --value 2>/dev/null)" || return 1
+  [ "$loaded" = "$fragment" ] && [ -z "$dropins" ] && [ "$reload" = no ]
+}
+if [ -f "$updater_config" ] && [ ! -L "$updater_config" ] &&
+  updater_config_equals CHANNEL "$expected_channel" &&
+  updater_config_equals RELAY_NAME "$expected_relay_name" &&
+  updater_config_equals REPO_DIR "$repo" &&
+  installed_matches_release fleet/updater-launcher.sh "$updater_launcher" 1 &&
+  installed_matches_release fleet/hiverelay-updater.service "$updater_service_unit" &&
+  installed_matches_release fleet/hiverelay-updater.timer "$updater_timer_unit" &&
+  loaded_unit_matches hiverelay-updater.service "$updater_service_unit" &&
+  loaded_unit_matches hiverelay-updater.timer "$updater_timer_unit" &&
+  /usr/bin/systemctl is-enabled --quiet hiverelay-updater.timer &&
+  /usr/bin/systemctl is-active --quiet hiverelay-updater.timer &&
+  /usr/bin/env -i HOME=/root PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+    "$updater_launcher" --verify-only "$release_target" >/dev/null 2>&1; then
+  updater_ready=true
+fi
 read_api_key() {
   local key
   key="$(systemctl show "$service" -p Environment 2>/dev/null | awk 'BEGIN{RS=" "} /^HIVERELAY_API_KEY=/{sub(/^HIVERELAY_API_KEY=/,""); print; exit}' || true)"
@@ -951,9 +1040,9 @@ if [ -n "$gateway_evidence" ]; then
     if [[ "$gateway_token" =~ ^[A-Za-z0-9_-]{32,8192}$ ]]; then gateway_healthy=true; else gateway_token=""; fi
   fi
 fi
-printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
   "$head_sha" "$version" "$running" "$disk" "$health_version" \
-  "$(printf '%s' "$health" | tr '\n\t' '  ' | cut -c1-180)" \
+  "$(printf '%s' "$health" | tr '\n\t' '  ' | cut -c1-180)" "$updater_ready" \
   "$gateway_healthy" "$gateway_token"
 `
 }
@@ -1109,11 +1198,13 @@ function printResults (results, opts = {}) {
                     ? 'waiting-package-version'
                     : !result.runtimeVersionMatches
                         ? 'waiting-runtime-version'
-                        : !result.healthy
+                        : !result.serviceHealthy
                             ? 'waiting-health'
-                            : !result.gatewayHealthy
-                                ? 'waiting-gateway-evidence'
-                                : 'waiting-observation-window'
+                            : !result.updaterReady
+                                ? 'waiting-updater'
+                                : !result.gatewayHealthy
+                                    ? 'waiting-gateway-evidence'
+                                    : 'waiting-observation-window'
         )
       : result.error
     write(formatRow([
@@ -1135,7 +1226,8 @@ function resultIsGreen (result) {
 }
 
 function resultIsRelayGreen (result) {
-  return result.updated && result.packageVersionMatches && result.healthy && result.runtimeVersionMatches &&
+  return result.updated && result.packageVersionMatches && result.healthy && result.updaterReady &&
+    result.runtimeVersionMatches &&
     (!gatewayEvidencePath || result.gatewayHealthy === true)
 }
 
@@ -1444,7 +1536,8 @@ function rolloutNote (result) {
   if (!result.updated) return 'waiting-repo'
   if (!result.packageVersionMatches) return 'waiting-package-version'
   if (!result.runtimeVersionMatches) return 'waiting-runtime-version'
-  if (!result.healthy) return 'waiting-health'
+  if (!result.serviceHealthy) return 'waiting-health'
+  if (!result.updaterReady) return 'waiting-updater'
   if (gatewayEvidencePath && !result.gatewayHealthy) return 'waiting-gateway-evidence'
   if (gatewayEvidencePath && !gatewayWindow?.complete) return 'waiting-observation-window'
   return 'ok'

@@ -62,16 +62,67 @@ test('fleet updater accepts channel authority only from signed monotonic Git con
 })
 
 test('fleet updater routes dependency-install failures through rollback', (t) => {
+  const scopedInstall = [
+    'npm ci --omit=dev --no-audit --no-fund',
+    '--include-workspace-root',
+    '--workspace packages/core',
+    '--workspace packages/services',
+    '--workspace packages/client',
+    '--workspace packages/verifier'
+  ]
+
   t.ok(updater.includes('rollback_to_previous'))
   t.ok(updater.includes('deps_if_changed "$CUR_SHA" "$TARGET_SHA" || rollback_to_previous'))
-  t.ok(updater.includes('if ! git checkout --quiet "$CUR_SHA"; then'))
+  t.ok(updater.includes('if ! git checkout --quiet --force "$CUR_SHA"; then'))
   t.ok(updater.includes('CRITICAL could not checkout previous SHA'))
   t.ok(updater.includes('if ! deps_if_changed "$TARGET_SHA" "$CUR_SHA"; then'))
-  t.ok(updater.includes('npm ci --omit=dev --no-audit --no-fund'))
+  for (const argument of scopedInstall) t.ok(updater.includes(argument))
+  t.absent(updater.includes('--workspace packages/blind-'))
   t.absent(updater.includes('npm install --omit=dev'), 'npm ci failure cannot fall back to a non-lockfile install')
   t.ok(updater.includes('verify_raw_tracked_tree || rollback_to_previous "dependency install changed tracked release bytes on $TARGET"'))
   t.ok(updater.includes('if ! verify_raw_tracked_tree; then'))
+  t.ok(updater.includes('git checkout --quiet --force "$CUR_SHA" || die "target checkout failed and prior SHA restoration also failed"'))
   t.absent(updater.includes('git checkout --quiet "$CUR_SHA" || log "CRITICAL could not checkout previous SHA"'))
+})
+
+test('fleet updater and direct deploy fail closed below Node.js 20', (t) => {
+  const updaterGate = updater.indexOf('require_supported_node')
+  const controlResolution = updater.indexOf('CONTROL_RESOLUTION=')
+  const deployGate = deployVps.indexOf('Node.js >=20 is required before deployment')
+  const deployFetch = deployVps.indexOf('git fetch --force origin')
+
+  t.ok(updater.includes('Node.js >=20 is required; found $version'))
+  t.ok(updaterGate !== -1 && updaterGate < controlResolution)
+  t.ok(deployVps.includes('NODE_VERSION="\\$(/usr/bin/node --version 2>/dev/null)"'))
+  t.ok(deployGate !== -1 && deployGate < deployFetch)
+})
+
+test('direct deploy accepts only an explicit active relay and exact signed release', (t) => {
+  for (const argument of [
+    'npm ci --omit=dev --no-audit --no-fund',
+    '--include-workspace-root',
+    '--workspace packages/core',
+    '--workspace packages/services',
+    '--workspace packages/client',
+    '--workspace packages/verifier'
+  ]) t.ok(deployVps.includes(argument))
+
+  t.ok(deployVps.includes('HIVERELAY_RELEASE_TARGET:?Set HIVERELAY_RELEASE_TARGET to an exact signed release tag'))
+  t.ok(deployVps.includes('gpg.ssh.allowedSignersFile=/etc/hiverelay/allowed-signers'))
+  t.ok(deployVps.includes('gpg.ssh.program=/usr/bin/ssh-keygen'))
+  t.ok(deployVps.includes('core.hooksPath=/dev/null'))
+  t.ok(deployVps.includes('verify-tag --raw "' + '$' + '{RELEASE_TARGET}"'))
+  t.ok(deployVps.includes('checkout --detach --force "' + '$' + '{RELEASE_TARGET}^{commit}"'))
+  t.ok(deployVps.includes('git status --porcelain=v1 --untracked-files=all'))
+  t.ok(deployVps.includes('exit 1\n        fi\n\n        echo "Deployment complete'))
+  t.absent(deployVps.includes('git fetch origin main'))
+  t.absent(deployVps.includes('git reset --hard origin/main'))
+  t.absent(deployVps.includes('npm install --production'))
+  t.absent(deployVps.includes('git push origin main'))
+  t.absent(deployVps.includes('TARGET=' + '$' + '{1:-all}'))
+  t.absent(deployVps.includes('    all)'))
+  t.absent(deployVps.includes('144.172.101.215'), 'retired relay is not a deploy target')
+  t.absent(deployVps.includes('45.59.123.112'), 'held relay is not a deploy target')
 })
 
 test('fleet updater health-gates target and rollback runtime versions', (t) => {
@@ -206,6 +257,12 @@ test('deploy script keeps API keys out of world-readable systemd units', (t) => 
   t.ok(deployVps.includes('chmod 0600 /etc/hiverelay/hiverelay.env'))
   t.absent(deployVps.includes('Environment=HIVERELAY_API_KEY=API_KEY_PLACEHOLDER'))
   t.absent(deployVps.includes('sed -i "s/API_KEY_PLACEHOLDER'))
+  t.ok(deployVps.includes('HIVERELAY_FLEET_KNOWN_HOSTS'))
+  t.ok(deployVps.includes('StrictHostKeyChecking=yes'))
+  t.ok(deployVps.includes('UpdateHostKeys=no'))
+  t.ok(deployVps.includes('UserKnownHostsFile="$KNOWN_HOSTS"'))
+  t.ok(deployVps.includes('GlobalKnownHostsFile=/dev/null'))
+  t.absent(deployVps.includes('accept-new'))
 })
 
 test('deploy script computes MemoryHigh correctly for gigabyte relay limits', (t) => {

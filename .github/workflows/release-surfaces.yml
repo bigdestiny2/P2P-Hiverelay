@@ -34,6 +34,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: write
   packages: write
   # cosign keyless (OIDC) image signing — no long-lived signing key stored
@@ -51,6 +52,11 @@ env:
 jobs:
   sync:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.rel.outputs.version }}
+      is_branch_candidate: ${{ steps.rel.outputs.is_branch_candidate }}
+      release_sha: ${{ steps.source.outputs.release_sha }}
+      startos_image_authority_artifact_id: ${{ steps.startos_image_authority.outputs.artifact-id }}
     env:
       UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
       UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
@@ -64,7 +70,7 @@ jobs:
 
     steps:
       - name: Checkout HiveRelay
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           fetch-depth: 0
           path: hiverelay
@@ -78,6 +84,7 @@ jobs:
           RELEASE_IS_PRERELEASE: ${{ github.event.release.prerelease }}
           PUSH_REF_NAME: ${{ github.ref_name }}
           PUSH_SHA: ${{ github.sha }}
+          WORKFLOW_REF: ${{ github.ref }}
           DISPATCH_VERSION: ${{ inputs.version }}
           DISPATCH_CHANNEL: ${{ inputs.channel }}
           DISPATCH_MAINTENANCE_BRANCH: ${{ inputs.maintenance_branch }}
@@ -117,6 +124,10 @@ jobs:
           fi
           semver="${BASH_REMATCH[1]}"
           version="v$semver"
+          if [ "$RELEASE_EVENT_NAME" = "workflow_dispatch" ] && [ "$WORKFLOW_REF" != "refs/tags/$version" ]; then
+            echo "Release workflow_dispatch ref $WORKFLOW_REF does not match exact tag refs/tags/$version; dispatch with --ref $version." >&2
+            exit 1
+          fi
           is_prerelease=false
           if [[ "$semver" == *-* || "$release_prerelease" = "true" ]]; then
             is_prerelease=true
@@ -262,6 +273,7 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Verify release ref
+        id: source
         working-directory: hiverelay
         shell: bash
         run: |
@@ -272,6 +284,7 @@ jobs:
             tag_sha="${{ github.sha }}"
             git cat-file -e "$tag_sha^{commit}"
             echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+            echo "release_sha=$tag_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           tag_sha="$(git rev-parse "${{ steps.rel.outputs.version }}^{commit}")"
@@ -326,6 +339,7 @@ jobs:
             echo "HIVERELAY_RELEASE_MAINTENANCE_BRANCH=$maintenance_branch" >> "$GITHUB_ENV"
             echo "HIVERELAY_RELEASE_MAINTENANCE_BASE=$fork_tag" >> "$GITHUB_ENV"
             echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+            echo "release_sha=$tag_sha" >> "$GITHUB_OUTPUT"
             exit 0
           fi
           if [ -n "$maintenance_branch" ]; then
@@ -334,6 +348,7 @@ jobs:
             exit 1
           fi
           echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
+          echo "release_sha=$tag_sha" >> "$GITHUB_OUTPUT"
 
       # Keep this before any public GitHub Release lookup/create or asset upload.
       # The standalone release-distribution-preflight.yml workflow runs the same
@@ -378,7 +393,7 @@ jobs:
         id: store_checkout
         if: ${{ env.UMBREL_STORE_TOKEN != '' }}
         continue-on-error: true
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           repository: bigdestiny2/blindspark-umbrel-store
           token: ${{ env.UMBREL_STORE_TOKEN }}
@@ -390,7 +405,7 @@ jobs:
 
       - name: Checkout official Umbrel fork
         if: ${{ env.UMBREL_OFFICIAL_PR_TOKEN != '' && env.UMBREL_OFFICIAL_FORK != '' && steps.rel.outputs.is_prerelease != 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           repository: ${{ env.UMBREL_OFFICIAL_FORK }}
           token: ${{ env.UMBREL_OFFICIAL_PR_TOKEN }}
@@ -399,7 +414,7 @@ jobs:
 
       - name: Checkout PearBrowser ecosystem consumer
         if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           repository: bigdestiny2/pearbrowser-desktop
           ref: feat/p2p-infra-naming
@@ -409,7 +424,7 @@ jobs:
 
       - name: Checkout PearPaste ecosystem consumer
         if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           repository: bigdestiny2/pearpaste
           ref: feat/pear-runtime-electron-forge
@@ -419,7 +434,7 @@ jobs:
 
       - name: Checkout p2pbuilders ecosystem consumer
         if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           repository: bigdestiny2/p2pbuilders
           ref: main
@@ -429,7 +444,7 @@ jobs:
 
       - name: Checkout Opengit ecosystem consumer
         if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           repository: bigdestiny2/Opengit
           ref: main
@@ -439,7 +454,7 @@ jobs:
 
       - name: Checkout anonGPT ecosystem consumer
         if: ${{ steps.rel.outputs.is_prerelease != 'true' }}
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
         with:
           repository: bigdestiny2/anongpt
           ref: main
@@ -448,7 +463,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6 (Node 24)
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
@@ -536,6 +551,11 @@ jobs:
 
       - name: Publish npm packages
         id: npm
+        # Four packages can consume about 92 minutes if every bounded registry
+        # command exhausts all retries. Leave headroom for normal publish
+        # lifecycle scripts while still bounding a hung `npm publish` and the
+        # entire registry gate before Docker/appliance work.
+        timeout-minutes: 120
         # Branch candidates publish nothing. A TAGGED prerelease publishes to the
         # `next` dist-tag and leaves `latest` alone; only a stable tag moves
         # `latest`. Gating this on is_prerelease was why 0.24.x and every
@@ -563,21 +583,36 @@ jobs:
               echo "$name package.json version is $version; expected $expected" >&2
               exit 1
             fi
-            if npm view "$name@$version" version >/dev/null 2>&1; then
+            # Reuse the bounded registry helper for the pre-publish existence
+            # probe. Only an explicit npm E404 becomes "missing"; timeouts and
+            # other registry failures stop the release instead of risking an
+            # ambiguous republish.
+            probe="$(node scripts/ensure-npm-dist-tag.mjs \
+              --probe-only \
+              --package "$name" \
+              --version "$version" \
+              --command-timeout-ms 30000)"
+            if [ "$probe" = "visible" ]; then
               echo "$name@$version already exists on npm; leaving tarball immutable."
-            else
+            elif [ "$probe" = "missing" ]; then
               npm publish "./$pkg" --access public --tag "$dist_tag"
               published=1
-            fi
-            current="$(npm view "$name" "dist-tags.$dist_tag" 2>/dev/null || true)"
-            if [ "$current" != "$version" ]; then
-              npm dist-tag add "$name@$version" "$dist_tag"
-            fi
-            current="$(npm view "$name" "dist-tags.$dist_tag")"
-            if [ "$current" != "$version" ]; then
-              echo "$name $dist_tag dist-tag is $current; expected $version" >&2
+            else
+              echo "Unexpected npm package probe result for $name@$version: $probe" >&2
               exit 1
             fi
+            # npm publication and dist-tag reads are eventually consistent.
+            # Wait for the immutable tarball to become visible, request the
+            # desired tag idempotently, and fail closed unless bounded readback
+            # confirms the exact version before downstream image/app surfaces.
+            node scripts/ensure-npm-dist-tag.mjs \
+              --package "$name" \
+              --version "$version" \
+              --tag "$dist_tag" \
+              --attempts 12 \
+              --initial-delay-ms 2000 \
+              --max-delay-ms 15000 \
+              --command-timeout-ms 30000
           done
           # check-npm-latest only understands the `latest` dist-tag; the `next`
           # line is verified inline by the loop above.
@@ -593,16 +628,177 @@ jobs:
           echo "status=$status" >> "$GITHUB_OUTPUT"
 
       - name: Setup Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Login to GHCR
-        uses: docker/login-action@v4
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Reuse is a release sink: install the verifier before resolving any
+      # prior digest so an existing image cannot be retagged or re-signed until
+      # its original keyless release signature has been authenticated.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      # A completed immutable authority artifact from an earlier attempt for
+      # the same tag/SHA is the canonical image authority. The public Release
+      # evidence upload is multi-asset and non-atomic, so it is never used as
+      # the retry pointer. Reusing the artifact's verified digest prevents a
+      # duplicate build's timestamped attestations from changing the index
+      # digest underneath immutable downstream package assets.
+      - name: Resolve reusable source-bound release image
+        id: prior_image
+        if: ${{ steps.rel.outputs.is_branch_candidate != 'true' }}
+        working-directory: hiverelay
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          echo "reuse=false" >> "$GITHUB_OUTPUT"
+          evidence_dir="$RUNNER_TEMP/reusable-release-image"
+          mkdir -p "$evidence_dir"
+          authority_name="release-image-authority-${{ steps.rel.outputs.version }}"
+          gh api --method GET "repos/$GITHUB_REPOSITORY/actions/artifacts" \
+            -f "name=$authority_name" \
+            -f per_page=100 > "$evidence_dir/artifacts.json"
+          node scripts/select-reusable-release-image-artifact.mjs \
+            --artifacts "$evidence_dir/artifacts.json" \
+            --tag "${{ steps.rel.outputs.version }}" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --github-env "$evidence_dir/reusable-artifact.env"
+          while IFS='=' read -r name value; do
+            export "$name=$value"
+          done < "$evidence_dir/reusable-artifact.env"
+          if [ "$HIVERELAY_REUSABLE_ARTIFACT_FOUND" != "true" ]; then
+            # Once public release/closure assets exist, silently rebuilding a
+            # different provenance-bearing index is unsafe. Artifact expiry or
+            # deletion therefore requires an explicit audited recovery.
+            release_id="$(gh api \
+              "repos/$GITHUB_REPOSITORY/releases/tags/${{ steps.rel.outputs.version }}" \
+              --jq '.id')"
+            if ! [[ "$release_id" =~ ^[1-9][0-9]*$ ]]; then
+              echo "GitHub Release id is malformed while checking prior image authority: $release_id" >&2
+              exit 1
+            fi
+            published_assets="$(gh api --paginate \
+              "repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100" \
+              --jq '.[].name')"
+            if printf '%s\n' "$published_assets" | grep -Eq '^(release-evidence\.json|release-image-manifest-evidence\.json|blindspark-startos-0\.4\.s9pk|startos-0\.4-release-evidence\.json|release-closure-evidence\.json)$'; then
+              echo "Published release state exists but its immutable reusable image authority artifact is absent or expired; audited recovery is required." >&2
+              exit 1
+            fi
+            exit 0
+          fi
+
+          # Authenticate the source workflow path before opening the archive.
+          # Exact attempt and checkpoint steps are verified again below after
+          # the embedded attempt has been parsed.
+          source_run="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$HIVERELAY_REUSABLE_ARTIFACT_SOURCE_RUN_ID")"
+          if ! jq -e \
+            --arg run_id "$HIVERELAY_REUSABLE_ARTIFACT_SOURCE_RUN_ID" \
+            --arg sha "$HIVERELAY_RELEASE_SHA" \
+            --arg ref "${{ steps.rel.outputs.version }}" '
+              (.id | tostring) == $run_id and
+              .name == "Release surfaces" and
+              (
+                .path == ".github/workflows/release-surfaces.yml" or
+                .path == (".github/workflows/release-surfaces.yml@" + $ref) or
+                .path == (".github/workflows/release-surfaces.yml@refs/tags/" + $ref)
+              ) and
+              .head_sha == $sha and
+              .head_branch == $ref and
+              (.event == "push" or .event == "release" or .event == "workflow_dispatch")
+            ' <<<"$source_run" >/dev/null; then
+            echo "Reusable image authority artifact source workflow identity is invalid." >&2
+            exit 1
+          fi
+
+          artifact_zip="$evidence_dir/reusable-image-authority.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$HIVERELAY_REUSABLE_ARTIFACT_ID/zip" > "$artifact_zip"
+          archive_size="$(stat -c '%s' "$artifact_zip")"
+          if [ "$archive_size" != "$HIVERELAY_REUSABLE_ARTIFACT_SIZE" ]; then
+            echo "Reusable image authority archive size is $archive_size; expected $HIVERELAY_REUSABLE_ARTIFACT_SIZE." >&2
+            exit 1
+          fi
+          archive_digest="sha256:$(sha256sum "$artifact_zip" | cut -d ' ' -f 1)"
+          if [ "$archive_digest" != "$HIVERELAY_REUSABLE_ARTIFACT_DIGEST" ]; then
+            echo "Reusable image authority archive digest is $archive_digest; expected $HIVERELAY_REUSABLE_ARTIFACT_DIGEST." >&2
+            exit 1
+          fi
+          entries="$(unzip -Z1 "$artifact_zip" | LC_ALL=C sort)"
+          expected_entries="$(printf '%s\n' release-evidence.json release-image-manifest-evidence.json | LC_ALL=C sort)"
+          if [ "$entries" != "$expected_entries" ]; then
+            echo "Reusable image authority artifact has unexpected entries:" >&2
+            printf '%s\n' "$entries" >&2
+            exit 1
+          fi
+          unzip -q "$artifact_zip" -d "$evidence_dir"
+          node scripts/resolve-reusable-release-image.mjs \
+            --tag "${{ steps.rel.outputs.version }}" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA" \
+            --release-evidence "$evidence_dir/release-evidence.json" \
+            --image-manifest-evidence "$evidence_dir/release-image-manifest-evidence.json" \
+            --github-env "$evidence_dir/reusable-image.env"
+          while IFS='=' read -r name value; do
+            export "$name=$value"
+          done < "$evidence_dir/reusable-image.env"
+          if [ "$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID" != "$HIVERELAY_REUSABLE_ARTIFACT_SOURCE_RUN_ID" ]; then
+            echo "Reusable image authority evidence run $HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID does not match artifact source run $HIVERELAY_REUSABLE_ARTIFACT_SOURCE_RUN_ID." >&2
+            exit 1
+          fi
+
+          previous_run="$(gh run view "$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID" \
+            --attempt "$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ATTEMPT" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,attempt,url,workflowName,headSha,headBranch,event,status,conclusion,jobs)"
+          previous_run_path="$(gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID/attempts/$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ATTEMPT" \
+            --jq '.path')"
+          previous_run="$(jq --arg workflowPath "$previous_run_path" '. + {workflowPath: $workflowPath}' <<<"$previous_run")"
+          printf '%s' "$previous_run" | node scripts/verify-reusable-release-run.mjs \
+            --run-id "$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID" \
+            --run-attempt "$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ATTEMPT" \
+            --run-url "$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_URL" \
+            --tag "${{ steps.rel.outputs.version }}" \
+            --tag-sha "$HIVERELAY_RELEASE_SHA"
+
+          expected_identity="https://github.com/bigdestiny2/P2P-Hiverelay/.github/workflows/release-surfaces.yml@refs/tags/${{ steps.rel.outputs.version }}"
+          cosign verify \
+            --certificate-identity "$expected_identity" \
+            --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+            "$IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST" >/dev/null
+
+          raw_index="$RUNNER_TEMP/reusable-release-image-index.json"
+          docker buildx imagetools inspect \
+            "$IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST" \
+            --raw > "$raw_index"
+          node scripts/verify-startos-04-image-index.mjs \
+            --index-digest "$HIVERELAY_IMAGE_DIGEST" \
+            --amd64-digest "$HIVERELAY_IMAGE_AMD64_DIGEST" \
+            --arm64-digest "$HIVERELAY_IMAGE_ARM64_DIGEST" < "$raw_index"
+
+          verify_child() {
+            architecture="$1"
+            digest="$2"
+            image_json="$(docker buildx imagetools inspect \
+              "$IMAGE_NAME@$digest" \
+              --format '{{json .Image}}')"
+            printf '%s' "$image_json" | node scripts/verify-startos-04-image-revision.mjs \
+              --os linux \
+              --architecture "$architecture" \
+              --revision "$HIVERELAY_RELEASE_SHA"
+          }
+          verify_child amd64 "$HIVERELAY_IMAGE_AMD64_DIGEST"
+          verify_child arm64 "$HIVERELAY_IMAGE_ARM64_DIGEST"
+
+          cat "$evidence_dir/reusable-image.env" >> "$GITHUB_ENV"
+          echo "reuse=true" >> "$GITHUB_OUTPUT"
+
       - name: Build and push multi-arch image
+        if: ${{ steps.prior_image.outputs.reuse != 'true' }}
         working-directory: hiverelay
         run: |
           set -euo pipefail
@@ -625,8 +821,25 @@ jobs:
           fi
           echo "HIVERELAY_IMAGE_DIGEST=$digest" >> "$GITHUB_ENV"
 
-      - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+      - name: Restore release image tags to reusable digest
+        if: ${{ steps.prior_image.outputs.reuse == 'true' }}
+        working-directory: hiverelay
+        run: |
+          set -euo pipefail
+          tags=("$IMAGE_NAME:${{ steps.rel.outputs.semver }}")
+          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
+            tags+=("$IMAGE_NAME:latest")
+          fi
+          for tag in "${tags[@]}"; do
+            docker buildx imagetools create --tag "$tag" "$IMAGE_NAME@$HIVERELAY_IMAGE_DIGEST"
+            raw_manifest="$RUNNER_TEMP/$(printf '%s' "$tag" | tr '/:' '__').json"
+            docker buildx imagetools inspect "$tag" --raw > "$raw_manifest"
+            actual_digest="sha256:$(sha256sum "$raw_manifest" | cut -d ' ' -f 1)"
+            if [ "$actual_digest" != "$HIVERELAY_IMAGE_DIGEST" ]; then
+              echo "Retagged image $tag resolved to $actual_digest; expected $HIVERELAY_IMAGE_DIGEST" >&2
+              exit 1
+            fi
+          done
 
       # Keyless (OIDC) signature over the pushed multi-arch manifest digest —
       # the SAME digest that gets pinned into docker-compose.yml, the StartOS
@@ -1104,9 +1317,38 @@ jobs:
           fi
           npm run release:verify-evidence -- "${args[@]}"
 
+      # This single immutable archive is the retry authority. It is uploaded
+      # before the public multi-asset Release update, whose --clobber operation
+      # is explicitly non-atomic and may fail after replacing only some files.
+      - name: Upload immutable reusable image authority
+        if: ${{ success() && steps.rel.outputs.is_branch_candidate != 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
+        with:
+          name: release-image-authority-${{ steps.rel.outputs.version }}
+          path: |
+            hiverelay/release-evidence.json
+            hiverelay/release-image-manifest-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
+      # The fixed-name artifact above is the parent retry pointer. The exact
+      # run+attempt archive below is the immutable authority consumed by the
+      # awaited StartOS child; public Release JSON is compare-only.
+      - name: Upload exact StartOS image authority
+        id: startos_image_authority
+        if: ${{ success() && steps.rel.outputs.is_branch_candidate != 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
+        with:
+          name: release-image-authority-${{ steps.rel.outputs.version }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            hiverelay/release-evidence.json
+            hiverelay/release-image-manifest-evidence.json
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Upload release evidence artifact
         if: ${{ always() && !cancelled() && hashFiles('hiverelay/release-evidence.json') != '' }}
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
         with:
           name: release-evidence-${{ steps.rel.outputs.version }}
           path: |
@@ -1347,3 +1589,431 @@ jobs:
             --dir "$handoff_dir/startos" \
             --clobber
           npm run release:verify-handoff-evidence -- --bundle-dir "$handoff_dir"
+
+  # Keep the new-format toolchain isolated and grant Actions write authority
+  # only to this bounded dispatcher. `needs: sync` means no StartOS 0.4 build
+  # can start before the source release job has passed; this job then waits for
+  # and verifies the downstream package before the parent workflow can pass.
+  dispatch-startos-04:
+    needs: sync
+    if: ${{ needs.sync.result == 'success' && needs.sync.outputs.is_branch_candidate != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    permissions:
+      actions: write
+      contents: read
+    outputs:
+      child_run_id: ${{ steps.child.outputs.child_run_id }}
+    steps:
+      - name: Checkout exact released source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
+        with:
+          ref: ${{ needs.sync.outputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: hiverelay
+
+      - name: Verify dispatcher source identity
+        env:
+          RELEASE_TAG: ${{ needs.sync.outputs.version }}
+          RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          tag_sha="$(git -C hiverelay rev-parse --verify "$RELEASE_TAG^{commit}")"
+          head_sha="$(git -C hiverelay rev-parse HEAD)"
+          if [ "$tag_sha" != "$RELEASE_SHA" ] || [ "$head_sha" != "$RELEASE_SHA" ]; then
+            echo "StartOS 0.4 dispatcher source mismatch: tag=$tag_sha head=$head_sha expected=$RELEASE_SHA" >&2
+            exit 1
+          fi
+
+      - name: Dispatch and await source-bound StartOS 0.4 package release
+        id: child
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.sync.outputs.version }}
+          RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+          IMAGE_AUTHORITY_ARTIFACT_ID: ${{ needs.sync.outputs.startos_image_authority_artifact_id }}
+        run: |
+          set -euo pipefail
+          if ! [[ "$IMAGE_AUTHORITY_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Exact StartOS image-authority artifact id is malformed: $IMAGE_AUTHORITY_ARTIFACT_ID" >&2
+            exit 1
+          fi
+          workflow='release-startos-0.4.yml'
+          export EXPECTED_TITLE="StartOS 0.4 $RELEASE_TAG from release-surfaces $GITHUB_RUN_ID attempt $GITHUB_RUN_ATTEMPT"
+          list_runs() {
+            gh run list \
+              --repo "$GITHUB_REPOSITORY" \
+              --workflow "$workflow" \
+              --event workflow_dispatch \
+              --limit 100 \
+              --json databaseId,displayTitle,status,conclusion,headSha
+          }
+          live_closure_artifact() {
+            run_id="$1"
+            run_record="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id")"
+            run_attempt="$(jq -r '.run_attempt // empty' <<<"$run_record")"
+            if ! [[ "$run_attempt" =~ ^[1-9][0-9]*$ ]]; then
+              return 1
+            fi
+            artifact_name="startos-0.4-closure-$run_id-$run_attempt"
+            artifacts="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts?per_page=100&name=$artifact_name")"
+            jq -e \
+              --arg name "$artifact_name" \
+              --argjson run_id "$run_id" \
+              --arg sha "$RELEASE_SHA" \
+              --arg ref "$RELEASE_TAG" '
+                (.total_count == 1) and
+                ([.artifacts[] | select(
+                  .name == $name and
+                  .expired == false and
+                  (.size_in_bytes | type == "number" and . > 0) and
+                  (.digest | type == "string" and test("^sha256:[a-f0-9]{64}$")) and
+                  .workflow_run.id == $run_id and
+                  .workflow_run.head_sha == $sha and
+                  .workflow_run.head_branch == $ref
+                )] | length == 1)
+              ' <<<"$artifacts" >/dev/null
+          }
+          runs_json="$(list_runs)"
+          successful_id=''
+          while IFS= read -r candidate_id; do
+            if [ -n "$candidate_id" ] && live_closure_artifact "$candidate_id"; then
+              successful_id="$candidate_id"
+              break
+            fi
+          done < <(jq -r '[.[] | select(.displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA and .conclusion == "success")] | sort_by(.databaseId) | reverse | .[].databaseId' <<<"$runs_json")
+          active_id="$(jq -r '[.[] | select(.displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA and .status != "completed")] | sort_by(.databaseId) | last | .databaseId // empty' <<<"$runs_json")"
+          if [ -n "$successful_id" ]; then
+            child_id="$successful_id"
+            echo "Reusing successful StartOS 0.4 child run $child_id."
+          elif [ -n "$active_id" ]; then
+            child_id="$active_id"
+            echo "Waiting for existing StartOS 0.4 child run $child_id."
+          else
+            previous_max="$(jq -r '[.[].databaseId] | max // 0' <<<"$runs_json")"
+            gh workflow run "$workflow" \
+              --repo "$GITHUB_REPOSITORY" \
+              --ref "$RELEASE_TAG" \
+              --raw-field "tag=$RELEASE_TAG" \
+              --raw-field "release_surfaces_run_id=$GITHUB_RUN_ID" \
+              --raw-field "release_surfaces_run_attempt=$GITHUB_RUN_ATTEMPT" \
+              --raw-field "release_image_authority_artifact_id=$IMAGE_AUTHORITY_ARTIFACT_ID"
+            child_id=''
+            for attempt in $(seq 1 30); do
+              runs_json="$(list_runs)"
+              child_id="$(jq -r --argjson minimum "$previous_max" '[.[] | select(.displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA and .databaseId > $minimum)] | sort_by(.databaseId) | last | .databaseId // empty' <<<"$runs_json")"
+              if [ -n "$child_id" ]; then
+                break
+              fi
+              sleep 2
+            done
+            if [ -z "$child_id" ]; then
+              echo "Dispatched StartOS 0.4 workflow did not become visible within 60 seconds." >&2
+              exit 1
+            fi
+          fi
+          for attempt in $(seq 1 420); do
+            run_json="$(gh run view "$child_id" --repo "$GITHUB_REPOSITORY" --json workflowName,displayTitle,headSha,status,conclusion,url)"
+            if ! jq -e '.workflowName == "Release StartOS 0.4 package" and .displayTitle == env.EXPECTED_TITLE and .headSha == env.RELEASE_SHA' <<<"$run_json" >/dev/null; then
+              echo "StartOS 0.4 child run identity drifted: $run_json" >&2
+              exit 1
+            fi
+            status="$(jq -r '.status' <<<"$run_json")"
+            if [ "$status" = "completed" ]; then
+              conclusion="$(jq -r '.conclusion' <<<"$run_json")"
+              if [ "$conclusion" != "success" ]; then
+                echo "StartOS 0.4 child run $child_id concluded $conclusion." >&2
+                exit 1
+              fi
+              echo "StartOS 0.4 child run $child_id completed successfully."
+              echo "child_run_id=$child_id" >> "$GITHUB_OUTPUT"
+              break
+            fi
+            if [ "$attempt" = "420" ]; then
+              echo "StartOS 0.4 child run $child_id did not complete within 70 minutes." >&2
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Verify published StartOS 0.4 closure assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ needs.sync.outputs.version }}
+          RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+        run: |
+          set -euo pipefail
+          closure_dir="$RUNNER_TEMP/startos-0.4-release-closure"
+          mkdir -p "$closure_dir"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'release-evidence.json' \
+            --pattern 'release-image-manifest-evidence.json' \
+            --pattern 'blindspark-startos-0.4.s9pk' \
+            --pattern 'startos-0.4-release-evidence.json' \
+            --dir "$closure_dir"
+          node hiverelay/scripts/verify-published-startos-04-release.mjs \
+            --tag "$RELEASE_TAG" \
+            --tag-sha "$RELEASE_SHA" \
+            --release-surfaces-run-id "$GITHUB_RUN_ID" \
+            --release-evidence "$closure_dir/release-evidence.json" \
+            --image-manifest-evidence "$closure_dir/release-image-manifest-evidence.json" \
+            --package "$closure_dir/blindspark-startos-0.4.s9pk" \
+            --startos-0.4-evidence "$closure_dir/startos-0.4-release-evidence.json"
+
+  # The pre-handoff checkpoint certificate intentionally remains pending until
+  # terminal sync success and this final job.
+  # Use the exact child's immutable Actions artifact as package authority,
+  # independently inspect its .s9pk with the hash-authenticated CLI, compare it
+  # to current GitHub Release bytes, and only then publish closure proof. Keep
+  # Actions read and Release write authority isolated from the dispatcher.
+  publish-startos-04-closure:
+    needs: [sync, dispatch-startos-04]
+    if: ${{ needs.sync.result == 'success' && needs.dispatch-startos-04.result == 'success' && needs.sync.outputs.is_branch_candidate != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: write
+    env:
+      RELEASE_TAG: ${{ needs.sync.outputs.version }}
+      RELEASE_SHA: ${{ needs.sync.outputs.release_sha }}
+      CHILD_RUN_ID: ${{ needs.dispatch-startos-04.outputs.child_run_id }}
+      RELEASE_SURFACES_RUN_ATTEMPT: ${{ github.run_attempt }}
+      IMAGE_AUTHORITY_ARTIFACT_ID: ${{ needs.sync.outputs.startos_image_authority_artifact_id }}
+      RELEASE_CLOSURE_EVIDENCE: release-closure-evidence.json
+    steps:
+      - name: Checkout exact released source for closure
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
+        with:
+          ref: ${{ needs.sync.outputs.version }}
+          fetch-depth: 0
+          persist-credentials: false
+          path: hiverelay
+
+      - name: Verify closure source identity
+        run: |
+          set -euo pipefail
+          if ! [[ "$CHILD_RUN_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "StartOS 0.4 child run id is malformed: $CHILD_RUN_ID" >&2
+            exit 1
+          fi
+          if ! [[ "$RELEASE_SURFACES_RUN_ATTEMPT" =~ ^[1-9][0-9]*$ ]] || \
+             ! [[ "$IMAGE_AUTHORITY_ARTIFACT_ID" =~ ^[1-9][0-9]*$ ]]; then
+            echo "Release-surfaces attempt or image-authority artifact id is malformed." >&2
+            exit 1
+          fi
+          tag_sha="$(git -C hiverelay rev-parse --verify "$RELEASE_TAG^{commit}")"
+          head_sha="$(git -C hiverelay rev-parse HEAD)"
+          if [ "$tag_sha" != "$RELEASE_SHA" ] || [ "$head_sha" != "$RELEASE_SHA" ]; then
+            echo "StartOS 0.4 closure source mismatch: tag=$tag_sha head=$head_sha expected=$RELEASE_SHA" >&2
+            exit 1
+          fi
+
+      - name: Install authenticated StartOS CLI for independent inspection
+        run: bash hiverelay/scripts/install-startos-cli.sh "$RUNNER_TEMP/startos-cli-1.1.0" "$GITHUB_PATH"
+
+      - name: Download exact child artifact and current release assets
+        id: inputs
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          closure_dir="$RUNNER_TEMP/startos-0.4-final-closure"
+          artifact_dir="$closure_dir/child-artifact"
+          image_authority_dir="$closure_dir/image-authority"
+          release_dir="$closure_dir/release-assets"
+          mkdir -p "$artifact_dir" "$image_authority_dir" "$release_dir"
+
+          parent_view="$closure_dir/release-surfaces-run-view.json"
+          parent_rest="$closure_dir/release-surfaces-run-rest.json"
+          gh run view "$GITHUB_RUN_ID" \
+            --attempt "$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --repo "$GITHUB_REPOSITORY" \
+            --json databaseId,attempt,url,workflowName,headSha,headBranch,event,status,conclusion,jobs > "$parent_view"
+          gh api \
+            "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --jq '{workflowPath: .path}' > "$parent_rest"
+          jq -s '.[0] + .[1]' "$parent_view" "$parent_rest" > "$closure_dir/release-surfaces-run.json"
+          node hiverelay/scripts/verify-startos-04-parent-run.mjs \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --run-url "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --tag "$RELEASE_TAG" \
+            --tag-sha "$RELEASE_SHA" < "$closure_dir/release-surfaces-run.json"
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$IMAGE_AUTHORITY_ARTIFACT_ID" \
+            > "$closure_dir/image-authority-artifact.json"
+          jq -ce '{total_count: 1, artifacts: [.]} ' "$closure_dir/image-authority-artifact.json" \
+            > "$closure_dir/image-authority-artifact-response.json"
+          image_authority_env="$closure_dir/image-authority.env"
+          node hiverelay/scripts/select-startos-04-release-image-authority.mjs \
+            --artifacts "$closure_dir/image-authority-artifact-response.json" \
+            --tag "$RELEASE_TAG" \
+            --tag-sha "$RELEASE_SHA" \
+            --run-id "$GITHUB_RUN_ID" \
+            --run-attempt "$RELEASE_SURFACES_RUN_ATTEMPT" \
+            --artifact-id "$IMAGE_AUTHORITY_ARTIFACT_ID" \
+            --github-env "$image_authority_env"
+          set -a
+          source "$image_authority_env"
+          set +a
+          image_authority_zip="$closure_dir/image-authority-$IMAGE_AUTHORITY_ARTIFACT_ID.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$IMAGE_AUTHORITY_ARTIFACT_ID/zip" > "$image_authority_zip"
+          image_authority_size="$(wc -c < "$image_authority_zip" | tr -d ' ')"
+          image_authority_digest="sha256:$(sha256sum "$image_authority_zip" | cut -d ' ' -f 1)"
+          if [ "$image_authority_size" != "$HIVERELAY_STARTOS_IMAGE_AUTHORITY_SIZE" ] || \
+             [ "$image_authority_digest" != "$HIVERELAY_STARTOS_IMAGE_AUTHORITY_DIGEST" ]; then
+            echo "Downloaded image-authority archive does not match its exact REST size/digest." >&2
+            exit 1
+          fi
+          image_authority_entries="$(unzip -Z1 "$image_authority_zip" | LC_ALL=C sort)"
+          expected_image_authority_entries="$(printf '%s\n' release-evidence.json release-image-manifest-evidence.json | LC_ALL=C sort)"
+          if [ "$image_authority_entries" != "$expected_image_authority_entries" ]; then
+            echo "Image-authority archive has unexpected or missing entries: $image_authority_entries" >&2
+            exit 1
+          fi
+          unzip -q "$image_authority_zip" -d "$image_authority_dir"
+
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CHILD_RUN_ID" > "$closure_dir/child-run.json"
+          child_attempt="$(jq -r '.run_attempt // empty' "$closure_dir/child-run.json")"
+          if ! [[ "$child_attempt" =~ ^[1-9][0-9]*$ ]]; then
+            echo "StartOS 0.4 child run attempt is malformed: $child_attempt" >&2
+            exit 1
+          fi
+          artifact_name="startos-0.4-closure-$CHILD_RUN_ID-$child_attempt"
+          artifacts_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$CHILD_RUN_ID/artifacts?per_page=100&name=$artifact_name")"
+          artifact_count="$(jq --arg name "$artifact_name" '[.artifacts[] | select(.name == $name)] | length' <<<"$artifacts_json")"
+          if [ "$artifact_count" != "1" ]; then
+            echo "Expected exactly one immutable child artifact named $artifact_name; got $artifact_count." >&2
+            exit 1
+          fi
+          jq --arg name "$artifact_name" '.artifacts[] | select(.name == $name)' \
+            <<<"$artifacts_json" > "$closure_dir/child-artifact.json"
+          artifact_expired="$(jq -r '.expired' "$closure_dir/child-artifact.json")"
+          artifact_size="$(jq -r '.size_in_bytes // 0' "$closure_dir/child-artifact.json")"
+          artifact_digest="$(jq -r '.digest // empty' "$closure_dir/child-artifact.json")"
+          artifact_id="$(jq -r '.id // empty' "$closure_dir/child-artifact.json")"
+          artifact_url="$(jq -r '.archive_download_url // empty' "$closure_dir/child-artifact.json")"
+          artifact_source_id="$(jq -r '.workflow_run.id // empty' "$closure_dir/child-artifact.json")"
+          artifact_source_sha="$(jq -r '.workflow_run.head_sha // empty' "$closure_dir/child-artifact.json")"
+          artifact_source_ref="$(jq -r '.workflow_run.head_branch // empty' "$closure_dir/child-artifact.json")"
+          if [ "$artifact_expired" != "false" ] || ! [[ "$artifact_size" =~ ^[1-9][0-9]*$ ]] || \
+             ! [[ "$artifact_digest" =~ ^sha256:[a-f0-9]{64}$ ]] || ! [[ "$artifact_id" =~ ^[1-9][0-9]*$ ]] || \
+             [ "$artifact_url" != "https://api.github.com/repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" ] || \
+             [ "$artifact_source_id" != "$CHILD_RUN_ID" ] || [ "$artifact_source_sha" != "$RELEASE_SHA" ] || \
+             [ "$artifact_source_ref" != "$RELEASE_TAG" ]; then
+            echo "Child artifact is expired, empty, or missing its immutable digest." >&2
+            exit 1
+          fi
+          artifact_zip="$closure_dir/child-artifact-$artifact_id.zip"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$artifact_id/zip" > "$artifact_zip"
+          downloaded_size="$(wc -c < "$artifact_zip" | tr -d ' ')"
+          downloaded_digest="sha256:$(sha256sum "$artifact_zip" | cut -d ' ' -f 1)"
+          if [ "$downloaded_size" != "$artifact_size" ] || [ "$downloaded_digest" != "$artifact_digest" ]; then
+            echo "Downloaded child artifact archive does not match exact REST id=$artifact_id size/digest authority." >&2
+            exit 1
+          fi
+          archive_entries="$(unzip -Z1 "$artifact_zip" | LC_ALL=C sort)"
+          expected_entries="$(printf '%s\n' blindspark-startos-0.4.s9pk startos-0.4-release-evidence.json | LC_ALL=C sort)"
+          if [ "$archive_entries" != "$expected_entries" ]; then
+            echo "Child artifact archive has unexpected or missing entries: $archive_entries" >&2
+            exit 1
+          fi
+          unzip -q "$artifact_zip" -d "$artifact_dir"
+
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'release-evidence.json' \
+            --pattern 'release-image-manifest-evidence.json' \
+            --pattern 'blindspark-startos-0.4.s9pk' \
+            --pattern 'startos-0.4-release-evidence.json' \
+            --dir "$release_dir"
+          cmp "$image_authority_dir/release-evidence.json" "$release_dir/release-evidence.json"
+          cmp "$image_authority_dir/release-image-manifest-evidence.json" "$release_dir/release-image-manifest-evidence.json"
+          echo "closure_dir=$closure_dir" >> "$GITHUB_OUTPUT"
+          echo "artifact_dir=$artifact_dir" >> "$GITHUB_OUTPUT"
+          echo "release_dir=$release_dir" >> "$GITHUB_OUTPUT"
+
+      - name: Independently inspect exact child package
+        env:
+          ARTIFACT_DIR: ${{ steps.inputs.outputs.artifact_dir }}
+          CLOSURE_DIR: ${{ steps.inputs.outputs.closure_dir }}
+          RELEASE_DIR: ${{ steps.inputs.outputs.release_dir }}
+        run: |
+          set -euo pipefail
+          package="$ARTIFACT_DIR/blindspark-startos-0.4.s9pk"
+          commitment="$CLOSURE_DIR/parent-inspected-commitment.txt"
+          manifest="$CLOSURE_DIR/parent-inspected-manifest.json"
+          start-cli s9pk inspect "$package" commitment > "$commitment"
+          start-cli s9pk inspect "$package" manifest --format json > "$manifest"
+          if [ ! -s "$commitment" ] || [ ! -s "$manifest" ]; then
+            echo "Parent StartOS 0.4 inspection produced empty commitment or manifest evidence." >&2
+            exit 1
+          fi
+          node hiverelay/scripts/verify-startos-04-package-manifest.mjs \
+            --tag "$RELEASE_TAG" \
+            --package-version "$(sed -n "s/.*version: '\([^']*\)'.*/\1/p" hiverelay/startos-0.4/startos/versions/current.ts | head -n 1)" \
+            --image-ref "$(jq -r '.image.ref' "$RELEASE_DIR/release-evidence.json")" \
+            < "$manifest"
+
+      - name: Write and locally verify final release closure
+        env:
+          CLOSURE_DIR: ${{ steps.inputs.outputs.closure_dir }}
+          ARTIFACT_DIR: ${{ steps.inputs.outputs.artifact_dir }}
+          RELEASE_DIR: ${{ steps.inputs.outputs.release_dir }}
+        run: |
+          set -euo pipefail
+          common=(
+            --tag "$RELEASE_TAG"
+            --tag-sha "$RELEASE_SHA"
+            --release-surfaces-run-id "$GITHUB_RUN_ID"
+            --release-evidence "$RELEASE_DIR/release-evidence.json"
+            --image-manifest-evidence "$RELEASE_DIR/release-image-manifest-evidence.json"
+            --artifact-package "$ARTIFACT_DIR/blindspark-startos-0.4.s9pk"
+            --artifact-startos-evidence "$ARTIFACT_DIR/startos-0.4-release-evidence.json"
+            --release-package "$RELEASE_DIR/blindspark-startos-0.4.s9pk"
+            --release-startos-evidence "$RELEASE_DIR/startos-0.4-release-evidence.json"
+            --commitment "$CLOSURE_DIR/parent-inspected-commitment.txt"
+            --manifest "$CLOSURE_DIR/parent-inspected-manifest.json"
+            --child-run "$CLOSURE_DIR/child-run.json"
+            --child-run-id "$CHILD_RUN_ID"
+            --artifact-metadata "$CLOSURE_DIR/child-artifact.json"
+            --image-authority-metadata "$CLOSURE_DIR/image-authority-artifact.json"
+            --image-authority-artifact-id "$IMAGE_AUTHORITY_ARTIFACT_ID"
+          )
+          node hiverelay/scripts/write-release-closure-evidence.mjs \
+            "${common[@]}" \
+            --out "$CLOSURE_DIR/$RELEASE_CLOSURE_EVIDENCE"
+          node hiverelay/scripts/write-release-closure-evidence.mjs \
+            "${common[@]}" \
+            --verify "$CLOSURE_DIR/$RELEASE_CLOSURE_EVIDENCE"
+
+      - name: Publish and verify final release closure
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CLOSURE_DIR: ${{ steps.inputs.outputs.closure_dir }}
+          ARTIFACT_DIR: ${{ steps.inputs.outputs.artifact_dir }}
+          RELEASE_DIR: ${{ steps.inputs.outputs.release_dir }}
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            "$CLOSURE_DIR/$RELEASE_CLOSURE_EVIDENCE" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+          published_dir="$CLOSURE_DIR/published"
+          mkdir -p "$published_dir"
+          gh release download "$RELEASE_TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --pattern 'release-evidence.json' \
+            --pattern 'release-image-manifest-evidence.json' \
+            --pattern 'blindspark-startos-0.4.s9pk' \
+            --pattern 'startos-0.4-release-evidence.json' \
+            --pattern "$RELEASE_CLOSURE_EVIDENCE" \
+            --dir "$published_dir"
+          cmp "$CLOSURE_DIR/$RELEASE_CLOSURE_EVIDENCE" "$published_dir/$RELEASE_CLOSURE_EVIDENCE"
+          node hiverelay/scripts/verify-release-closure-evidence.mjs \
+            --bundle-dir "$published_dir" \
+            --live-github \
+            --allow-in-progress-parent

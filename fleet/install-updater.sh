@@ -62,6 +62,25 @@ if [[ ! "$RELAY_NAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
   exit 1
 fi
 
+NODE_BIN="${HIVERELAY_NODE_BIN:-/usr/bin/node}"
+case "$NODE_BIN" in
+  /*) ;;
+  *) echo "HIVERELAY_NODE_BIN must be an absolute path" >&2; exit 1 ;;
+esac
+if [ ! -x "$NODE_BIN" ] || [ ! -f "$NODE_BIN" ]; then
+  echo "Node.js >=20 is required; executable not found at $NODE_BIN" >&2
+  exit 1
+fi
+NODE_VERSION="$($NODE_BIN --version 2>/dev/null)" || {
+  echo "Node.js >=20 is required; could not read $NODE_BIN --version" >&2
+  exit 1
+}
+if [[ ! "$NODE_VERSION" =~ ^v([0-9]+)(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$ ]] ||
+  [ "${BASH_REMATCH[1]:-0}" -lt 20 ]; then
+  echo "Node.js >=20 is required; found $NODE_VERSION" >&2
+  exit 1
+fi
+
 [ -d "$SRC" ] || { echo "fleet/ not found in $REPO_DIR — clone/pull the repo first"; exit 1; }
 [ -f "$SRC/updater-launcher.sh" ] || { echo "updater launcher not found in $SRC"; exit 1; }
 [ -f "$SRC/quarantine-public-gateway.sh" ] || { echo "gateway quarantine helper not found in $SRC"; exit 1; }

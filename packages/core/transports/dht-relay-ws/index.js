@@ -31,6 +31,10 @@
  *     after the connection's last activity. This is the minimum needed
  *     for rate limiting to work. The bucket is opaque to anything
  *     outside this file.
+ *   - Accepted TCP socket objects while they are connected, including sockets
+ *     whose HTTP upgrade is incomplete. Ownership exists only so shutdown can
+ *     destroy every live handle deterministically; sockets are removed on
+ *     close and the set is cleared on stop.
  *
  * What the transport DOES NOT EXPOSE externally:
  *   - Emitted events (`client-connected`, `client-disconnected`,
@@ -54,6 +58,7 @@
 
 import { EventEmitter } from 'events'
 import { createHash } from 'crypto'
+import { createServer as createHttpServer, STATUS_CODES } from 'http'
 import { WebSocketServer } from 'ws'
 // VENDORED @hyperswarm/dht-relay@0.4.3 (upstream: "do not use in production").
 // Pinned + vendored under ./vendor/dht-relay so the exact code that proxies
@@ -72,6 +77,8 @@ const DEFAULT_MAX_CONCURRENT_PER_IP = 5
 const DEFAULT_RATE_LIMIT_WINDOW_MS = 60_000
 const DEFAULT_CLEANUP_INTERVAL_MS = 60_000
 const DEFAULT_STALE_AFTER_MS = 5 * 60_000
+const DEFAULT_SHUTDOWN_GRACE_MS = 1_000
+const DEFAULT_SHUTDOWN_FORCE_MS = 1_000
 
 // ─── Prod-readiness bounds (Phase 5 pure-pipe hardening) ────────────────
 //
@@ -101,7 +108,7 @@ export class DHTRelayWS extends EventEmitter {
   /**
    * @param {object} opts
    * @param {object} opts.dht - HyperDHT instance to expose (typically swarm.dht)
-   * @param {number} [opts.port]
+   * @param {number} [opts.port=8766] - use 0 for a kernel-assigned ephemeral port
    * @param {string} [opts.host]
    * @param {number} [opts.maxConnections]
    * @param {boolean} [opts.trustProxy=false] - derive client IP from X-Forwarded-For (set when behind a TLS reverse proxy)
@@ -125,7 +132,11 @@ export class DHTRelayWS extends EventEmitter {
     super()
     if (!opts.dht) throw new Error('DHTRelayWS: dht is required')
     this.dht = opts.dht
-    this.port = opts.port || DEFAULT_PORT
+    // Keep the configured bind request separate from the effective port.
+    // After a `port: 0` listen, `this.port` is materialized for callers while
+    // a later start still asks the kernel for a fresh atomic allocation.
+    this._bindPort = opts.port ?? DEFAULT_PORT
+    this.port = this._bindPort
     this.host = opts.host || '0.0.0.0'
     this.maxConnections = opts.maxConnections || 256
     // When the pipe sits behind a TLS-terminating reverse proxy (the
@@ -188,6 +199,18 @@ export class DHTRelayWS extends EventEmitter {
     }
 
     this.server = null
+    this._httpServer = null
+    this._httpConnectionHandler = null
+    // Own every accepted TCP socket, including HTTP requests that never finish
+    // upgrading and therefore never become entries in WebSocketServer.clients.
+    this._tcpSockets = new Set()
+    // Serialize lifecycle calls so `running === false` cannot let concurrent
+    // starts overwrite `this.server` and leak the first listener. Stops also
+    // cancel every start requested before them; a later start remains queued
+    // after that stop and is allowed to bind normally.
+    this._lifecycleTail = Promise.resolve()
+    this._lifecycleSequence = 0
+    this._cancelStartThrough = 0
     // Map<socket, conn record> — see _newConn for the record shape.
     this.connections = new Map()
     this.running = false
@@ -297,12 +320,35 @@ export class DHTRelayWS extends EventEmitter {
     }
   }
 
-  async start () {
-    if (this.running) return
+  start () {
+    const sequence = ++this._lifecycleSequence
+    return this._enqueueLifecycle(() => this._start(sequence))
+  }
 
-    this.server = new WebSocketServer({
-      port: this.port,
-      host: this.host,
+  _enqueueLifecycle (operation) {
+    const result = this._lifecycleTail.then(operation)
+    // A failed bind must reject its caller without poisoning later stop/start
+    // requests. The internal tail recovers only for lifecycle serialization.
+    this._lifecycleTail = result.catch(() => {})
+    return result
+  }
+
+  async _start (sequence) {
+    if (this.running || sequence <= this._cancelStartThrough) return
+
+    // Supply an explicitly owned HTTP server instead of asking ws to create an
+    // internal one. This gives shutdown visibility into sockets that stall
+    // before the WebSocket upgrade completes.
+    const httpServer = createHttpServer((_, res) => {
+      const body = STATUS_CODES[426]
+      res.writeHead(426, {
+        'Content-Length': body.length,
+        'Content-Type': 'text/plain'
+      })
+      res.end(body)
+    })
+    const server = new WebSocketServer({
+      server: httpServer,
       perMessageDeflate: false, // dht-relay carries its own framed binary
       // Single-frame ceiling, enforced by the ws parser before any payload
       // is buffered whole. The ws default is 100 MiB — no dht-relay
@@ -328,13 +374,41 @@ export class DHTRelayWS extends EventEmitter {
         cb(true)
       }
     })
+    const trackTcpSocket = (socket) => {
+      this._tcpSockets.add(socket)
+      socket.once('close', () => this._tcpSockets.delete(socket))
+    }
+    httpServer.on('connection', trackTcpSocket)
+    this.server = server
+    this._httpServer = httpServer
+    this._httpConnectionHandler = trackTcpSocket
 
-    await new Promise((resolve, reject) => {
-      this.server.on('listening', resolve)
-      this.server.on('error', reject)
-    })
+    try {
+      await new Promise((resolve, reject) => {
+        server.on('listening', resolve)
+        server.on('error', reject)
+        httpServer.listen(this._bindPort, this.host)
+      })
+    } catch (err) {
+      await this._shutdownOwnedServer(server, httpServer, { graceful: false })
+      throw err
+    }
 
-    this.server.on('connection', (socket, req) => {
+    // stop() can be requested while the kernel bind is pending. It marks this
+    // sequence cancelled immediately, then waits in the lifecycle queue. Close
+    // the just-materialized listener before either promise resolves so stop()
+    // can never return with an untracked live server.
+    if (sequence <= this._cancelStartThrough) {
+      await this._shutdownOwnedServer(server, httpServer, { graceful: false })
+      return
+    }
+
+    // Preserve the effective port in events/stats and give callers a safe
+    // address for connecting when they requested an ephemeral port.
+    const address = server.address()
+    if (address && typeof address === 'object') this.port = address.port
+
+    server.on('connection', (socket, req) => {
       // MUST match the verifyClient key exactly (same trustProxy/XFF
       // derivation) or the reservation consume + slot release would target
       // a different bucket than the one verifyClient reserved.
@@ -537,7 +611,12 @@ export class DHTRelayWS extends EventEmitter {
     }
   }
 
-  async stop () {
+  stop () {
+    this._cancelStartThrough = ++this._lifecycleSequence
+    return this._enqueueLifecycle(() => this._stop())
+  }
+
+  async _stop () {
     if (!this.running) return
     this.running = false
 
@@ -550,17 +629,60 @@ export class DHTRelayWS extends EventEmitter {
       this._supervisorTimer = null
     }
 
-    for (const socket of this.connections.keys()) {
-      try { socket.close(1001, 'SERVER_SHUTDOWN') } catch (_) {}
+    await this._shutdownOwnedServer(this.server, this._httpServer)
+    this.emit('stopped')
+  }
+
+  async _shutdownOwnedServer (server, httpServer, { graceful = true } = {}) {
+    // Stop accepting new upgrades first. With an externally owned HTTP server,
+    // ws.close() detaches its upgrade listeners while http.close() owns the TCP
+    // listener. Each callback is folded into one completion promise.
+    const closed = Promise.all([
+      closeWebSocketServer(server),
+      closeHttpServer(httpServer)
+    ])
+
+    if (graceful && server?.clients) {
+      for (const socket of Array.from(server.clients)) {
+        try { socket.close(1001, 'SERVER_SHUTDOWN') } catch (_) {}
+      }
     }
+
+    const closedGracefully = graceful && await settlesWithin(closed, DEFAULT_SHUTDOWN_GRACE_MS)
+    if (!closedGracefully) {
+      // An upgraded peer can ignore the WS close handshake, and an incomplete
+      // HTTP upgrade is not present in server.clients at all. Terminate both
+      // ownership sets, then give close callbacks one final bounded drain.
+      if (server?.clients) {
+        for (const socket of Array.from(server.clients)) {
+          try { socket.terminate() } catch (_) {}
+        }
+      }
+      for (const socket of Array.from(this._tcpSockets)) {
+        try { socket.destroy() } catch (_) {}
+      }
+      if (typeof httpServer?.closeAllConnections === 'function') {
+        try { httpServer.closeAllConnections() } catch (_) {}
+      }
+      await settlesWithin(closed, DEFAULT_SHUTDOWN_FORCE_MS)
+    }
+
+    if (httpServer && this._httpConnectionHandler) {
+      httpServer.removeListener('connection', this._httpConnectionHandler)
+    }
+    // Force destruction is idempotent and ensures no socket accepted during a
+    // close race remains live even if a close callback misbehaved.
+    for (const socket of Array.from(this._tcpSockets)) {
+      try { socket.destroy() } catch (_) {}
+    }
+    this._tcpSockets.clear()
     this.connections.clear()
     this._ipBuckets.clear()
-
-    await new Promise((resolve) => {
-      this.server.close(() => resolve())
-    })
-    this.server = null
-    this.emit('stopped')
+    if (server?.clients) server.clients.clear()
+    if (server) server.removeAllListeners()
+    if (this.server === server) this.server = null
+    if (this._httpServer === httpServer) this._httpServer = null
+    this._httpConnectionHandler = null
   }
 
   getStats () {
@@ -587,6 +709,32 @@ export class DHTRelayWS extends EventEmitter {
       flow: { ...this.flow }
     }
   }
+}
+
+function closeWebSocketServer (server) {
+  if (!server) return Promise.resolve()
+  return new Promise((resolve) => {
+    try { server.close(() => resolve()) } catch (_) { resolve() }
+  })
+}
+
+function closeHttpServer (server) {
+  if (!server) return Promise.resolve()
+  return new Promise((resolve) => {
+    try { server.close(() => resolve()) } catch (_) { resolve() }
+  })
+}
+
+async function settlesWithin (promise, timeoutMs) {
+  let timer = null
+  const settled = await Promise.race([
+    promise.then(() => true, () => true),
+    new Promise((resolve) => {
+      timer = setTimeout(() => resolve(false), timeoutMs)
+    })
+  ])
+  if (timer) clearTimeout(timer)
+  return settled
 }
 
 // Length of a ws 'message'/send payload without touching its contents.

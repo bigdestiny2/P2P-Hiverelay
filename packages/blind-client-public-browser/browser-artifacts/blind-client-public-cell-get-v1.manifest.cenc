@@ -3,7 +3,7 @@
   "version": 1,
   "acceptedSourceCommit": "1a114f64c97547cab6a18102c2ef4bff930e53ed",
   "acceptedSourceTree": "5a341ba17a3d91a750cac94ba51116fe3552a6aa",
-  "sourceClosureHash": "ce33095a14c19a1f8db6445de134b13a26502a52bc40643fd63d3a48032e61e9",
+  "sourceClosureHash": "cda629027f6e17bafc3bb5c6e3bbcfab18015cd8bac4c682f2e1b882898d4ad6",
   "profile": "hiverelay.blind-client-public-browser.cell-get.v1",
   "artifactHashDomain": "hiverelay.blind-client-public-browser.cell-get-artifact-hash.v1",
   "manifestHashDomain": "hiverelay.blind-client-public-browser.cell-get-manifest-hash.v1",
@@ -18,7 +18,7 @@
     "napi": "10",
     "esbuild": "0.28.1"
   },
-  "tupleHash": "efb480e9f6c8c451277b5d0a17e120a9d1ddbe2e7d1148df1017c1c50348f042",
+  "tupleHash": "f8c48c511999d8043f488a083e4e6ddb7f8f03885de8690134bea39e56dfa746",
   "artifactLength": 191474,
   "artifactHash": "ef60c0a45fe093d214cddb17f207675dfdf1df3bb5861bc9ea24542376bffb1c"
 }

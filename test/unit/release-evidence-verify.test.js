@@ -19,14 +19,11 @@ const FLEET_INVENTORY_SHA = crypto.createHash('sha256').update(readFileSync('fle
 const FLEET_CHANNEL_CONFIG_SHA = '3'.repeat(64)
 const VERIFY_RELEASE_EVIDENCE_SCRIPT = path.join(process.cwd(), 'scripts/verify-release-evidence.mjs')
 const FLEET_RELAYS = Object.freeze([
-  ['utah', 'canary', '42%'],
   ['utah-us', 'stable', '51%'],
-  ['utah-2gb-a', 'stable', '50%'],
-  ['utah-0.5gb', 'canary', '49%'],
+  ['utah-2gb-a', 'canary', '50%'],
   ['utah-8gb', 'stable', '48%'],
   ['sing-1', 'stable', '52%'],
   ['sing-2', 'stable', '53%'],
-  ['bern', 'canary', '54%'],
   ['dubai', 'stable', '47%']
 ])
 
@@ -86,7 +83,7 @@ function ensureImageManifestSidecar (argv) {
   }
   if (!releaseFile || explicitFlag !== -1 || !existsSync(releaseFile)) return
   const release = JSON.parse(readFileSync(releaseFile, 'utf8'))
-  if (release.release?.workflow?.status !== 'success') return
+  if (!['checkpoint-passed-pending-sync-completion-and-startos-0.4-closure', 'checkpoint-passed-branch-candidate'].includes(release.release?.workflow?.status)) return
   const sidecarPath = path.join(path.dirname(releaseFile), release.gates?.imageManifestEvidence?.path || 'release-image-manifest-evidence.json')
   if (existsSync(sidecarPath)) return
   writeJsonSync(sidecarPath, releaseImageManifestEvidence({ release }))
@@ -104,7 +101,7 @@ function ensureStartosRegistrySidecar (argv) {
   }
   if (!releaseFile || explicitFlag !== -1 || !existsSync(releaseFile)) return
   const release = JSON.parse(readFileSync(releaseFile, 'utf8'))
-  if (release.release?.prerelease || release.release?.workflow?.status !== 'success') return
+  if (release.release?.prerelease || release.release?.workflow?.status !== 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure') return
   const sidecarPath = path.join(path.dirname(releaseFile), release.surfaces?.startosRegistryEvidence?.path || 'startos-registry-evidence.json')
   if (existsSync(sidecarPath)) return
   writeJsonSync(sidecarPath, startosRegistryEvidence({ release }))
@@ -142,11 +139,16 @@ function releaseEvidence (opts) {
       tagSha: TAG_SHA,
       metadataSha: TAG_SHA,
       workflow: {
-        status: 'success',
+        scope: 'release-surfaces/pre-handoff-checkpoint',
+        status: candidate ? 'checkpoint-passed-branch-candidate' : 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure',
         repository: EXPECTED_REPOSITORY,
         runId: '123',
         runAttempt: '1',
         runUrl: `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/123`
+      },
+      closure: {
+        status: candidate ? 'not-required-branch-candidate' : 'pending-startos-0.4',
+        evidence: candidate ? '' : 'release-closure-evidence.json'
       }
     },
     image: {
@@ -452,7 +454,7 @@ test('release evidence verifier validates full-release sidecars and hashes', asy
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 })
 
 test('release evidence verifier accepts only a bound public gateway release for deferred fleet rollout', async (t) => {
@@ -494,7 +496,7 @@ test('release evidence verifier accepts only a bound public gateway release for 
     '--umbrel-package-smoke', umbrelSmokeFile,
     '--startos-package', s9pkFile
   ])
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 
   delete release.release.publicGateway
   await writeJson(releaseFile, release)
@@ -578,7 +580,7 @@ test('release evidence verifier auto-discovers a downloaded release bundle direc
 
   const res = await runVerify(['--bundle-dir', dir])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 })
 
 test('release evidence verifier rejects symlinked evidence sidecars', async (t) => {
@@ -791,7 +793,7 @@ test('release evidence verifier rejects unsupported fleet rollout sidecar fields
     ['targets', fleet => { fleet.channelConfig.targets.beta = 'v9.9.9' }, 'fleet rollout channel config targets has unsupported fields: beta'],
     ['probes', fleet => { fleet.probes.gateway = 'https://relay.example.com' }, 'fleet rollout probes has unsupported fields: gateway'],
     ['summary', fleet => { fleet.summary.marketplaceReady = fleet.relays.length }, 'fleet rollout summary has unsupported fields: marketplaceReady'],
-    ['relay', fleet => { fleet.relays[0].region = 'utah' }, 'fleet rollout relay utah has unsupported fields: region']
+    ['relay', fleet => { fleet.relays[0].region = 'utah' }, 'fleet rollout relay utah-us has unsupported fields: region']
   ]
 
   for (const [name, mutate, message] of cases) {
@@ -1021,7 +1023,7 @@ test('release evidence verifier honors explicit StartOS registry sidecar paths',
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9'))
 })
 
 test('release evidence verifier rejects unsupported StartOS registry sidecar fields', async (t) => {
@@ -1973,7 +1975,26 @@ test('release evidence verifier rejects failed workflow evidence by default', as
   }
 
   t.ok(err)
-  t.ok(err.stderr.includes('release workflow status must be "success"'))
+  t.ok(err.stderr.includes('release checkpoint evidence must be valid and closure-scoped'))
+})
+
+test('release evidence verifier rejects legacy overall-success claims before final closure', async (t) => {
+  const dir = await fixtureDir(t)
+  const releaseFile = path.join(dir, 'release-evidence.json')
+  const release = releaseEvidence({})
+  release.release.workflow.status = 'success'
+
+  await writeJson(releaseFile, release)
+
+  let err = null
+  try {
+    await runVerify(['--release', releaseFile])
+  } catch (e) {
+    err = e
+  }
+
+  t.ok(err)
+  t.ok(err.stderr.includes('release checkpoint evidence must be valid and closure-scoped'))
 })
 
 test('release evidence verifier accepts failed workflow evidence only as an explicit diagnostic', async (t) => {
@@ -2124,7 +2145,7 @@ test('release evidence verifier rejects incomplete fleet package-version converg
       mutate: (body) => { body.summary.packageVersionMatches = body.relays.length - 1 }
     },
     {
-      label: 'fleet rollout relay utah packageVersionMatches',
+      label: 'fleet rollout relay utah-us packageVersionMatches',
       mutate: (body) => { body.relays[0].packageVersionMatches = false }
     }
   ]
@@ -2172,7 +2193,7 @@ test('release evidence verifier rejects stale fleet relay observation timestamps
 
   const cases = [
     {
-      label: 'fleet rollout relay utah observedAt',
+      label: 'fleet rollout relay utah-us observedAt',
       mutate: (body) => { delete body.relays[0].observedAt }
     },
     {
@@ -2656,7 +2677,7 @@ test('release evidence verifier accepts successful prereleases without fleet sid
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9-beta.1'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (pending-startos-0.4): v9.9.9-beta.1'))
 })
 
 test('release evidence verifier accepts successful branch candidates without release assets', async (t) => {
@@ -2685,7 +2706,7 @@ test('release evidence verifier accepts successful branch candidates without rel
     '--startos-package', s9pkFile
   ])
 
-  t.ok(res.stdout.includes('Release evidence verified: v9.9.9-beta.1'))
+  t.ok(res.stdout.includes('Release checkpoint evidence verified (not-required-branch-candidate): v9.9.9-beta.1'))
 })
 
 test('release evidence verifier rejects malformed prerelease boundary facts', async (t) => {

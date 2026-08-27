@@ -10,7 +10,7 @@ import {
 const SOURCE = '1'.repeat(40)
 const ARTIFACT = 'a'.repeat(64)
 
-test('current fleet fails closed because canary targets three relays', async () => {
+test('current fleet keeps Bern held and isolates one controlled canary', async () => {
   const [inventory, channels, gatewayRelease] = await Promise.all([
     readJson('./relays.json'),
     readJson('./channels.json'),
@@ -29,19 +29,21 @@ test('current fleet fails closed because canary targets three relays', async () 
 
   assert.equal(report.status, 'blocked')
   assert.equal(report.inventory.relayCount, 9)
-  assert.equal(report.inventory.canaryCount, 3)
-  assert.equal(report.inventory.stableCount, 6)
-  assert.deepEqual(report.inventory.canaryRelays, ['bern', 'utah', 'utah-0.5gb'])
+  assert.equal(report.inventory.canaryCount, 1)
+  assert.equal(report.inventory.stableCount, 5)
+  assert.deepEqual(report.inventory.canaryRelays, ['utah-2gb-a'])
+  assert.equal(report.inventory.target.channel, 'hold')
   assert.equal(report.inventory.target.declaredDiskGB, 484)
   assert.equal(report.inventory.declaredNominalDiskGB, 2138)
   assert.equal(report.gateway.remainsDisabled, true)
   assert.equal(report.currentControlPlane.bernOnlyPilot, false)
+  assert.ok(report.blockers.some(blocker => blocker.id === 'TARGET_NOT_PILOT_ELIGIBLE'))
   assert.ok(report.blockers.some(blocker => blocker.id === 'PILOT_NOT_ISOLATED'))
   assert.equal(report.options[0].id, 'dedicated-pilot-channel')
   assert.equal(report.options[0].recommended, true)
   assert.equal(report.options[0].status, 'requires-reviewed-tooling-change')
-  assert.deepEqual(report.options[1].rebindToStable, ['utah', 'utah-0.5gb'])
-  assert.equal(report.options[1].status, 'requires-human-fleet-lease')
+  assert.deepEqual(report.options[1].rebindToStable, ['utah-2gb-a'])
+  assert.equal(report.options[1].status, 'blocked-by-channel-target-drift')
   assert.equal(report.authority.authorizesMutation, false)
   assert.equal(report.authority.authorizesPublication, false)
   assert.equal(report.authority.authorizesHttpsActivation, false)

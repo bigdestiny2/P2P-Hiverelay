@@ -4,6 +4,7 @@ import {
   buildLocalReleaseCandidateManifest,
   calculateManifestDigest,
   normalizeDeclaredBlockers,
+  parseStartos04AuthoringImageRef,
   verifyLocalReleaseManifestDigest
 } from '../../scripts/lib/local-release-candidate-manifest.mjs'
 
@@ -103,6 +104,18 @@ test('release workflow explicitly requests SBOM and max-mode provenance attestat
   t.ok(workflow.includes('--platform linux/amd64,linux/arm64'))
 })
 
+test('local release snapshot reads the StartOS 0.4 env-backed authoring image fallback', async (t) => {
+  const source = await readFile('startos-0.4/startos/manifest/index.ts', 'utf8')
+  const version = JSON.parse(await readFile('package.json', 'utf8')).version
+
+  t.is(parseStartos04AuthoringImageRef(source), `ghcr.io/bigdestiny2/p2p-hiverelay:${version}`)
+  t.is(
+    parseStartos04AuthoringImageRef("source: { dockerTag: 'ghcr.io/bigdestiny2/p2p-hiverelay:1.2.3' }"),
+    'ghcr.io/bigdestiny2/p2p-hiverelay:1.2.3',
+    'legacy literal manifests remain readable'
+  )
+})
+
 function fixtureSnapshot () {
   const semver = '9.9.9'
   return {
@@ -158,7 +171,8 @@ function fixtureSnapshot () {
         version: semver,
         versionWithRevision: `${semver}:0`,
         imageRef: `ghcr.io/bigdestiny2/p2p-hiverelay:${semver}`,
-        packageFormat: 'startos-0.4'
+        packageFormat: 'startos-0.4',
+        artifactName: 'blindspark-startos-0.4.s9pk'
       }
     },
     fleetChannels: {

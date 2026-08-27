@@ -1,9 +1,10 @@
 # Fleet management
 
 The current channel boundary is deliberate: `stable` and `hold` target
-`v0.24.3`, while `canary` targets `v0.25.0-rc.9`. The `1.0.0-rc.1` blind
+`v0.24.3`, while `canary` targets `v0.26.0-rc.3`. The `1.0.0-rc.1` blind
 substrate work on `main` is a separate development track and is not a fleet
-stable claim. See [Stable HiveRelay v0.24.3](../docs/STABLE-0.24.3.md).
+stable claim. A channel pointer is desired state, not proof that each relay has
+converged. See [Stable HiveRelay v0.24.4](../docs/STABLE-0.24.4.md).
 
 Tooling for the **raw systemd fleet** — the relay boxes we operate
 directly (utah, utah-us, utah-2gb-a, utah-0.5gb, utah-8gb, sing-1, sing-2, bern, dubai). The Umbrel and StartOS
@@ -393,6 +394,7 @@ sudo systemctl start hiverelay-updater.service # exercise the real unit/env now
 Repeat on each box with its configured channel and exact name from
 `fleet/relays.json`; the second argument is mandatory.
 
-`channels.json` ships with `stable: v0.20.1` and `canary: v0.20.1`, so
-installing the agent on a box already at the current release is a
-**no-op** until you promote the channel to a newer tag.
+`channels.json` currently ships with `stable: v0.24.3`, `hold: v0.24.3`, and
+`canary: v0.26.0-rc.3`. Installing the agent is a **no-op** when the box is
+already at its channel target; otherwise the updater applies the configured
+target and requires its health gate to pass.

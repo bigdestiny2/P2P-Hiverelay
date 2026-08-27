@@ -2,11 +2,6 @@ import test from 'brittle'
 import { WebSocket } from 'ws'
 import { DHTRelayWS } from 'p2p-hiverelay/transports/dht-relay-ws/index.js'
 
-// Match the existing dht-relay-ws.test.js helper.
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
-}
-
 function fakeDHT () {
   return { /* stand-in — relay() runs but is never exercised end-to-end */ }
 }
@@ -79,12 +74,12 @@ test('DHTRelayWS rate limit: defaults are 10/min and 5 concurrent', (t) => {
 })
 
 test('DHTRelayWS rate limit: 11th connection within window is rejected at upgrade', async (t) => {
-  const port = pickPort()
   // Generous concurrent cap so we hit the per-minute limit, not the
   // concurrent limit. Long window so refill doesn't kick in mid-test.
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     rateLimit: {
       connectionsPerMinutePerIp: 10,
       maxConcurrentPerIp: 100,
@@ -93,6 +88,7 @@ test('DHTRelayWS rate limit: 11th connection within window is rejected at upgrad
   })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   let rateLimitedEvents = 0
   let lastReason = null
@@ -128,10 +124,10 @@ test('DHTRelayWS rate limit: 11th connection within window is rejected at upgrad
 })
 
 test('DHTRelayWS rate limit: 6th simultaneous connection is rejected', async (t) => {
-  const port = pickPort()
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     rateLimit: {
       // High per-minute cap so we hit the concurrent limit only.
       connectionsPerMinutePerIp: 1000,
@@ -141,6 +137,7 @@ test('DHTRelayWS rate limit: 6th simultaneous connection is rejected', async (t)
   })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   let rateLimitedReason = null
   transport.on('rate-limited', (ev) => {
@@ -170,10 +167,10 @@ test('DHTRelayWS rate limit: 6th simultaneous connection is rejected', async (t)
 })
 
 test('DHTRelayWS rate limit: totalRateLimited increments per rejection', async (t) => {
-  const port = pickPort()
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     rateLimit: {
       connectionsPerMinutePerIp: 1000,
       maxConcurrentPerIp: 2,
@@ -182,6 +179,7 @@ test('DHTRelayWS rate limit: totalRateLimited increments per rejection', async (
   })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   // Hold 2 open.
   const a = await openClient(port)
@@ -200,11 +198,11 @@ test('DHTRelayWS rate limit: totalRateLimited increments per rejection', async (
 })
 
 test('DHTRelayWS rate limit: window refill restores capacity', async (t) => {
-  const port = pickPort()
   // Tiny window so the bucket refills within the test.
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     rateLimit: {
       connectionsPerMinutePerIp: 2,
       maxConcurrentPerIp: 100,
@@ -213,6 +211,7 @@ test('DHTRelayWS rate limit: window refill restores capacity', async (t) => {
   })
   await transport.start()
   t.teardown(() => transport.stop())
+  const port = transport.port
 
   // Burn the bucket: open + close 2 connections, then verify #3 is rejected.
   for (let i = 0; i < 2; i++) {
@@ -240,10 +239,10 @@ test('DHTRelayWS rate limit: window refill restores capacity', async (t) => {
 })
 
 test('DHTRelayWS rate limit: getStats exposes totalRateLimited and config', async (t) => {
-  const port = pickPort()
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     rateLimit: {
       connectionsPerMinutePerIp: 3,
       maxConcurrentPerIp: 7
@@ -259,10 +258,10 @@ test('DHTRelayWS rate limit: getStats exposes totalRateLimited and config', asyn
 })
 
 test('DHTRelayWS rate limit: stop() clears the cleanup interval', async (t) => {
-  const port = pickPort()
   const transport = new DHTRelayWS({
     dht: fakeDHT(),
-    port,
+    port: 0,
+    host: '127.0.0.1',
     rateLimit: { cleanupIntervalMs: 50 }
   })
   await transport.start()

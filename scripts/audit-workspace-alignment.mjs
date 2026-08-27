@@ -118,6 +118,7 @@ const pearBrowserDemoManifest = readJson(hiverelayRoot, 'examples', 'pearbrowser
 const pearBrowserDemoReadme = readText(hiverelayRoot, 'examples', 'pearbrowser-marketplace-demo', 'README.md')
 const pearBrowserDemoHtml = readText(hiverelayRoot, 'examples', 'pearbrowser-marketplace-demo', 'index.html')
 const releaseAutomationDocs = readText(hiverelayRoot, 'docs', 'RELEASE_AUTOMATION.md')
+const supplyChainDocs = readText(hiverelayRoot, 'docs', 'SUPPLY-CHAIN.md')
 const servicesDocs = readText(hiverelayRoot, 'docs', 'SERVICES.md')
 const architectureGraphDoc = readText(hiverelayRoot, 'docs', 'HIVERELAY-ARCHITECTURE-GRAPH.md')
 const architectureGraphSvg = readText(hiverelayRoot, 'docs', 'assets', 'hiverelay-core3-architecture.svg')
@@ -142,13 +143,33 @@ const releaseWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release
 const startOs04Manifest = readText(hiverelayRoot, 'startos-0.4', 'startos', 'manifest', 'index.ts')
 const startOs04Version = readText(hiverelayRoot, 'startos-0.4', 'startos', 'versions', 'current.ts')
 const startOs04Main = readText(hiverelayRoot, 'startos-0.4', 'startos', 'main.ts')
+const startOs04Makefile = readText(hiverelayRoot, 'startos-0.4', 'Makefile')
+const startOs04Readme = readText(hiverelayRoot, 'startos-0.4', 'README.md')
+const startOs04AssetsReadme = readText(hiverelayRoot, 'startos-0.4', 'assets', 'README.md')
 const releaseStartos04Workflow = readText(hiverelayRoot, '.github', 'workflows', 'release-startos-0.4.yml')
+const resolveStartos04Release = readText(hiverelayRoot, 'scripts', 'resolve-startos-04-release.mjs')
+const resolveReusableReleaseImage = readText(hiverelayRoot, 'scripts', 'resolve-reusable-release-image.mjs')
+const selectReusableReleaseImageArtifact = readText(hiverelayRoot, 'scripts', 'select-reusable-release-image-artifact.mjs')
+const verifyReusableReleaseRun = readText(hiverelayRoot, 'scripts', 'verify-reusable-release-run.mjs')
+const selectStartos04ReleaseImageAuthority = readText(hiverelayRoot, 'scripts', 'select-startos-04-release-image-authority.mjs')
+const verifyStartos04ParentRun = readText(hiverelayRoot, 'scripts', 'verify-startos-04-parent-run.mjs')
+const verifyStartos04ImageIndex = readText(hiverelayRoot, 'scripts', 'verify-startos-04-image-index.mjs')
+const verifyStartos04ImageRevision = readText(hiverelayRoot, 'scripts', 'verify-startos-04-image-revision.mjs')
+const verifyStartos04PackageManifest = readText(hiverelayRoot, 'scripts', 'verify-startos-04-package-manifest.mjs')
+const verifyPublishedStartos04Release = readText(hiverelayRoot, 'scripts', 'verify-published-startos-04-release.mjs')
+const writeStartos04ReleaseEvidence = readText(hiverelayRoot, 'scripts', 'write-startos-04-release-evidence.mjs')
+const installStartos04Cli = readText(hiverelayRoot, 'scripts', 'install-startos-cli.sh')
+const writeReleaseClosureEvidence = readText(hiverelayRoot, 'scripts', 'write-release-closure-evidence.mjs')
+const verifyReleaseClosureEvidence = readText(hiverelayRoot, 'scripts', 'verify-release-closure-evidence.mjs')
+const releaseEvidenceContract = readText(hiverelayRoot, 'scripts', 'lib', 'release-evidence-contract.mjs')
+const startos04ReleaseEvidenceLib = readText(hiverelayRoot, 'scripts', 'lib', 'startos-04-release-evidence.mjs')
 const releasePreflightWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'release-distribution-preflight.yml')
 const dockerPublishWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'docker-publish.yml')
 const umbrelAppValidateWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'umbrel-app-validate.yml')
 const testWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'test.yml')
 const workflowTexts = [
   releaseWorkflow,
+  releaseStartos04Workflow,
   releasePreflightWorkflow,
   dockerPublishWorkflow,
   umbrelAppValidateWorkflow,
@@ -172,6 +193,7 @@ const releaseSecretsTemplate = readText(hiverelayRoot, 'scripts', 'write-release
 const ecosystemConsumersAudit = readText(hiverelayRoot, 'scripts', 'audit-ecosystem-consumers.mjs')
 const ecosystemConsumersSync = readText(hiverelayRoot, 'scripts', 'sync-ecosystem-consumers.mjs')
 const npmLatestCheck = readText(hiverelayRoot, 'scripts', 'check-npm-latest.mjs')
+const npmDistTagReadback = readText(hiverelayRoot, 'scripts', 'ensure-npm-dist-tag.mjs')
 const releaseBlockersCheck = readText(hiverelayRoot, 'scripts', 'check-release-blockers.mjs')
 const npmPackagePackCheck = readText(hiverelayRoot, 'scripts', 'check-npm-package-pack.mjs')
 const auditOwnedDiffCheck = readText(hiverelayRoot, 'scripts', 'check-audit-owned-diff.mjs')
@@ -476,6 +498,7 @@ const githubReleaseSecretsApplyTest = readText(hiverelayRoot, 'test', 'unit', 'g
 const releaseSecretsTemplateTest = readText(hiverelayRoot, 'test', 'unit', 'release-secret-template.test.js')
 const ecosystemConsumersAuditTest = readText(hiverelayRoot, 'test', 'unit', 'ecosystem-consumers.test.js')
 const npmLatestCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-latest-check.test.js')
+const npmDistTagReadbackTest = readText(hiverelayRoot, 'test', 'unit', 'npm-dist-tag-readback.test.js')
 const releaseBlockersCheckTest = readText(hiverelayRoot, 'test', 'unit', 'release-blockers-check.test.js')
 const npmPackagePackCheckTest = readText(hiverelayRoot, 'test', 'unit', 'npm-package-pack-check.test.js')
 const publicArtifactSecretsAuditTest = readText(hiverelayRoot, 'test', 'unit', 'public-artifact-secret-scan.test.js')
@@ -487,6 +510,8 @@ const packageEntryPointsTest = readText(hiverelayRoot, 'test', 'unit', 'package-
 const officialUmbrelPrEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'official-umbrel-pr-evidence.test.js')
 const startosRegistryEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'startos-registry-evidence.test.js')
 const startosPackageGuardTest = readText(hiverelayRoot, 'test', 'unit', 'startos-package-guard.test.js')
+const releaseStartos04WorkflowTest = readText(hiverelayRoot, 'test', 'unit', 'release-startos-04-workflow.test.js')
+const startos04ReleaseEvidenceTest = readText(hiverelayRoot, 'test', 'unit', 'startos-04-release-evidence.test.js')
 const releaseSmokeEvidenceWriterTest = readText(hiverelayRoot, 'test', 'unit', 'release-smoke-evidence-writer.test.js')
 const umbrelUiControlsTest = readText(hiverelayRoot, 'test', 'unit', 'umbrel-ui-controls.test.js')
 const dashboardIndexUiTest = readText(hiverelayRoot, 'test', 'unit', 'dashboard-index-ui.test.js')
@@ -7523,8 +7548,32 @@ if (
   releaseWorkflow.includes('registry-url: https://registry.npmjs.org') &&
   releaseWorkflow.includes('for pkg in packages/core packages/client packages/verifier packages/services') &&
   releaseWorkflow.includes('npm publish "./$pkg" --access public --tag "$dist_tag"') &&
-  releaseWorkflow.includes('npm dist-tag add "$name@$version" "$dist_tag"') &&
-  releaseWorkflow.includes('npm view "$name" "dist-tags.$dist_tag"') &&
+  releaseWorkflow.includes('timeout-minutes: 120') &&
+  releaseWorkflow.includes('node scripts/ensure-npm-dist-tag.mjs') &&
+  releaseWorkflow.includes('--probe-only') &&
+  releaseWorkflow.includes('--attempts 12') &&
+  releaseWorkflow.includes('--initial-delay-ms 2000') &&
+  releaseWorkflow.includes('--max-delay-ms 15000') &&
+  releaseWorkflow.includes('--command-timeout-ms 30000') &&
+  !releaseWorkflow.includes('if npm view "$name@$version" version') &&
+  npmDistTagReadback.includes('export async function ensureNpmDistTag') &&
+  npmDistTagReadback.includes('export async function probeNpmPackageVersion') &&
+  npmDistTagReadback.includes('DEFAULT_COMMAND_TIMEOUT_MS = 30000') &&
+  npmDistTagReadback.includes("killSignal: 'SIGKILL'") &&
+  npmDistTagReadback.includes('do not run package lifecycle') &&
+  npmDistTagReadback.includes("return err?.code === 'E404'") &&
+  npmDistTagReadback.includes("npmOutput(['dist-tag', 'add'") &&
+  npmDistTagReadback.includes('DEFAULT_ATTEMPTS = 12') &&
+  npmDistTagReadback.includes('DEFAULT_MAX_DELAY_MS = 15000') &&
+  npmDistTagReadbackTest.includes('retries package visibility and stale registry reads') &&
+  npmDistTagReadbackTest.includes('fails closed when package visibility never converges') &&
+  npmDistTagReadbackTest.includes('fails closed when the tag stays stale') &&
+  npmDistTagReadbackTest.includes('kills a hung registry subprocess') &&
+  npmDistTagReadbackTest.includes('existence probe fails closed on registry timeouts') &&
+  npmDistTagReadbackTest.includes('rejects transport failures even when proxy text contains 404') &&
+  npmDistTagReadbackTest.includes('before downstream surfaces') &&
+  releaseAutomationDocs.includes('120-minute outer timeout') &&
+  releaseAutomationDocs.includes('direct-child kill') &&
   releaseWorkflow.includes('npm run release:check-npm-latest -- --expected-version "$expected"') &&
   // Prereleases move `next`, stable moves `latest`, and the evidence status
   // carries the matching -next suffix.
@@ -7755,11 +7804,14 @@ if (
 // YAML package, but the version + image pins live in TypeScript (not
 // manifest.yaml), so guard them against silent drift on a version bump.
 const startOs04ExpectedImage = `ghcr.io/bigdestiny2/p2p-hiverelay:${expectedVersion}`
+const legacyStartOsReleaseUpload = 'gh release upload "$' + '{{ steps.rel.outputs.version }}" startos/blindspark.s9pk --clobber'
 if (
   startOs04Version.includes(`version: '${expectedVersion}:`) &&
-  startOs04Manifest.includes(`dockerTag: '${startOs04ExpectedImage}'`)
+  startOs04Manifest.includes(`'${startOs04ExpectedImage}'`) &&
+  startOs04Manifest.includes('process.env.HIVERELAY_STARTOS_04_IMAGE_REF') &&
+  startOs04Manifest.includes('source: { dockerTag: releaseImageRef }')
 ) {
-  pass(`StartOS 0.4 package pins its version + image to the monorepo (${expectedVersion})`)
+  pass(`StartOS 0.4 package aligns its version + authoring image to the monorepo (${expectedVersion}) and accepts an explicit release ref`)
 } else {
   fail(`StartOS 0.4 package version/image drift from monorepo ${expectedVersion} — bump startos-0.4/startos/versions/current.ts and startos-0.4/startos/manifest/index.ts together`)
 }
@@ -7777,16 +7829,281 @@ if (
 }
 
 if (
-  releaseStartos04Workflow.includes('setup-build-env') &&
+  startOs04Makefile.includes('TARGETS := universal') &&
+  startOs04Makefile.includes('include node_modules/@start9labs/start-sdk/s9pk.mk') &&
+  startOs04Makefile.includes('REQUIRE_RELEASE_IMAGE_DIGEST ?= 0') &&
+  startOs04Makefile.includes('HIVERELAY_STARTOS_04_IMAGE_REF := $(IMAGE_TAG)') &&
+  startOs04Makefile.includes('universal: check-release-image') &&
+  startOs04Makefile.includes("grep -Eq '^sha256:[a-f0-9]{64}$$'") &&
+  startOs04AssetsReadme.includes('requires this directory as an `s9pk` build ingredient')
+) {
+  pass('StartOS 0.4 Makefile selects the SDK universal target, keeps assets, and requires a digest for release packaging')
+} else {
+  fail('StartOS 0.4 Makefile is missing the universal-output, required-assets, or digest-bound release contract')
+}
+
+if (
+  resolveReusableReleaseImage.includes('HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID') &&
+  resolveReusableReleaseImage.includes('HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ATTEMPT') &&
+  resolveReusableReleaseImage.includes('HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_URL') &&
+  resolveReusableReleaseImage.includes('HIVERELAY_IMAGE_AMD64_DIGEST') &&
+  resolveReusableReleaseImage.includes('HIVERELAY_IMAGE_ARM64_DIGEST') &&
+  selectReusableReleaseImageArtifact.includes('selectReusableReleaseImageArtifact') &&
+  selectReusableReleaseImageArtifact.includes('HIVERELAY_REUSABLE_ARTIFACT_DIGEST') &&
+  selectReusableReleaseImageArtifact.includes('HIVERELAY_REUSABLE_ARTIFACT_SOURCE_RUN_ID') &&
+  verifyReusableReleaseRun.includes('verifyReusableReleaseRunAuthority') &&
+  startos04ReleaseEvidenceLib.includes("const ACCEPTED_RELEASE_EVENTS = new Set(['push', 'release', 'workflow_dispatch'])") &&
+  startos04ReleaseEvidenceLib.includes('reusable release run database id') &&
+  startos04ReleaseEvidenceLib.includes('reusable release run attempt') &&
+  startos04ReleaseEvidenceLib.includes('reusable release run head SHA') &&
+  startos04ReleaseEvidenceLib.includes('reusable release run head ref') &&
+  startos04ReleaseEvidenceLib.includes('reusable release workflow path') &&
+  startos04ReleaseEvidenceLib.includes('reusable release sync job count') &&
+  startos04ReleaseEvidenceLib.includes('REUSABLE_RELEASE_CHECKPOINT_STEPS') &&
+  startos04ReleaseEvidenceLib.includes('reusable release checkpoint step') &&
+  releaseWorkflow.includes('--attempt "$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ATTEMPT"') &&
+  releaseWorkflow.includes('--json databaseId,attempt,url,workflowName,headSha,headBranch,event,status,conclusion,jobs') &&
+  releaseWorkflow.includes('Upload immutable reusable image authority') &&
+  releaseWorkflow.includes('name: release-image-authority-$' + '{{ steps.rel.outputs.version }}') &&
+  releaseWorkflow.includes('actions/runs/$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID/attempts/$HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ATTEMPT') &&
+  releaseWorkflow.includes('actions/artifacts/$HIVERELAY_REUSABLE_ARTIFACT_ID/zip') &&
+  releaseWorkflow.includes('archive_digest="sha256:$(sha256sum "$artifact_zip"') &&
+  releaseWorkflow.includes('HIVERELAY_REUSABLE_RELEASE_SURFACES_RUN_ID" != "$HIVERELAY_REUSABLE_ARTIFACT_SOURCE_RUN_ID') &&
+  releaseWorkflow.includes('Published release state exists but its immutable reusable image authority artifact is absent or expired') &&
+  releaseWorkflow.includes('startos-0\\.4-release-evidence\\.json') &&
+  !releaseWorkflow.includes("--jq '.assets[].name' 2>/dev/null || true") &&
+  releaseWorkflow.includes('releases/$release_id/assets?per_page=100') &&
+  releaseWorkflow.includes('GitHub Release id is malformed while checking prior image authority') &&
+  releaseWorkflow.includes('Reusable image authority artifact source workflow identity is invalid') &&
+  releaseWorkflow.indexOf('source workflow identity is invalid') < releaseWorkflow.indexOf('unzip -q "$artifact_zip"') &&
+  releaseWorkflow.includes('sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2') &&
+  releaseWorkflow.includes('docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4') &&
+  releaseWorkflow.includes('docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4') &&
+  [...releaseWorkflow.matchAll(/^\s*uses:\s*([^\s#]+)/gm)].every(match => /@[a-f0-9]{40}$/.test(match[1])) &&
+  releaseWorkflow.includes('--certificate-identity "$expected_identity"') &&
+  releaseWorkflow.includes("--certificate-oidc-issuer 'https://token.actions.githubusercontent.com'") &&
+  verifyStartos04ImageIndex.includes('verifyStartos04ImageIndex') &&
+  releaseWorkflow.includes('node scripts/verify-startos-04-image-index.mjs') &&
+  releaseWorkflow.includes('--index-digest "$HIVERELAY_IMAGE_DIGEST"') &&
+  releaseWorkflow.includes('verify_child amd64 "$HIVERELAY_IMAGE_AMD64_DIGEST"') &&
+  releaseWorkflow.includes('verify_child arm64 "$HIVERELAY_IMAGE_ARM64_DIGEST"') &&
+  releaseWorkflow.includes('--revision "$HIVERELAY_RELEASE_SHA"') &&
+  releaseWorkflow.indexOf('- name: Install cosign') < releaseWorkflow.indexOf('- name: Resolve reusable source-bound release image') &&
+  releaseWorkflow.indexOf('cosign verify') < releaseWorkflow.indexOf('- name: Restore release image tags to reusable digest') &&
+  releaseWorkflow.indexOf('verify-startos-04-image-index.mjs') < releaseWorkflow.indexOf('- name: Restore release image tags to reusable digest') &&
+  releaseWorkflow.indexOf('verify_child amd64') < releaseWorkflow.indexOf('- name: Restore release image tags to reusable digest') &&
+  startos04ReleaseEvidenceTest.includes('completed checkpoint authority') &&
+  startos04ReleaseEvidenceTest.includes('reusable image authority selector binds one immutable exact-source artifact') &&
+  releaseStartos04WorkflowTest.includes('cosign verify')
+) {
+  pass('release image reuse authenticates the exact source run/attempt checkpoint, keyless tag identity, and live platform revisions before retag/sign sinks')
+} else {
+  fail('release image reuse can trust mutable evidence or reach retag/sign sinks without exact run, signature, and live child-image authority')
+}
+
+if (
+  !releaseStartos04Workflow.includes('release:\n    types: [published]') &&
+  releaseStartos04Workflow.includes('release_surfaces_run_id:') &&
+  releaseStartos04Workflow.includes('release_surfaces_run_attempt:') &&
+  releaseStartos04Workflow.includes('release_image_authority_artifact_id:') &&
+  releaseStartos04Workflow.includes('timeout-minutes: 60') &&
+  releaseStartos04Workflow.includes('git rev-parse --verify "$tag_ref^{commit}"') &&
+  releaseStartos04Workflow.includes('git checkout --detach "$tag_ref"') &&
+  releaseStartos04Workflow.includes('if [ "$head_sha" != "$tag_sha" ]') &&
+  releaseStartos04Workflow.includes('node scripts/resolve-startos-04-release.mjs') &&
+  releaseStartos04Workflow.includes('--attempt "$EXPECTED_RELEASE_SURFACES_RUN_ATTEMPT"') &&
+  releaseStartos04Workflow.includes('Resolve immutable release image authority') &&
+  releaseStartos04Workflow.includes('verify-startos-04-parent-run.mjs') &&
+  releaseStartos04Workflow.includes('select-startos-04-release-image-authority.mjs') &&
+  selectStartos04ReleaseImageAuthority.includes('selectStartos04ReleaseImageAuthorityArtifact') &&
+  verifyStartos04ParentRun.includes('verifyStartos04ParentRunAuthority') &&
+  startos04ReleaseEvidenceLib.includes('requireTaggedWorkflowPath') &&
+  releaseStartos04Workflow.includes('actions/runs/$EXPECTED_RELEASE_SURFACES_RUN_ID/artifacts?per_page=100&name=$authority_name') &&
+  releaseStartos04Workflow.includes('actions/artifacts/$HIVERELAY_STARTOS_IMAGE_AUTHORITY_ID/zip') &&
+  releaseStartos04Workflow.includes('Public release-evidence.json differs from immutable image authority') &&
+  releaseStartos04Workflow.includes("cosign-release: 'v3.0.6'") &&
+  releaseStartos04Workflow.includes("grep -F 'v3.0.6' >/dev/null") &&
+  releaseStartos04Workflow.includes('cosign verify --help > "$cosign_verify_help"') &&
+  releaseStartos04Workflow.includes("grep -F -- '--certificate-identity' \"$cosign_verify_help\"") &&
+  releaseStartos04Workflow.includes("grep -F -- '--certificate-oidc-issuer' \"$cosign_verify_help\"") &&
+  releaseStartos04Workflow.includes('cosign verify \\\n') &&
+  !releaseStartos04Workflow.includes('cosign verify --recursive') &&
+  releaseStartos04Workflow.includes('node scripts/verify-startos-04-image-index.mjs') &&
+  releaseStartos04Workflow.includes('uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)') &&
+  releaseStartos04Workflow.includes('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)') &&
+  !releaseStartos04Workflow.includes('setup-build-env@') &&
+  releaseStartos04Workflow.includes('run: bash scripts/install-startos-cli.sh "$RUNNER_TEMP/startos-cli-1.1.0" "$GITHUB_PATH"') &&
+  installStartos04Cli.includes('cli_url=\'https://github.com/Start9Labs/start-technologies/releases/download/start-cli%2Fv1.1.0/start-cli_x86_64-linux\'') &&
+  installStartos04Cli.includes('expected_sha=\'70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a\'') &&
+  installStartos04Cli.includes('cli_version="$("$cli_path" --version)"') &&
+  installStartos04Cli.indexOf('actual_sha=') < installStartos04Cli.indexOf('chmod 700 "$cli_path"') &&
+  installStartos04Cli.indexOf('actual_sha=') < installStartos04Cli.indexOf('cli_version=') &&
+  releaseStartos04Workflow.includes("--format '{{json .Image}}'") &&
+  releaseStartos04Workflow.includes('node scripts/verify-startos-04-image-revision.mjs') &&
   releaseStartos04Workflow.includes('working-directory: startos-0.4') &&
   releaseStartos04Workflow.includes('npm ci') &&
-  releaseStartos04Workflow.includes('make') &&
-  releaseStartos04Workflow.includes('gh release upload') &&
-  releaseStartos04Workflow.includes('blindspark.s9pk')
+  releaseStartos04Workflow.includes('cp "$key_path" ../.startos/build.key.pem') &&
+  releaseStartos04Workflow.includes('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1 IMAGE_DIGEST="$HIVERELAY_IMAGE_DIGEST"') &&
+  releaseStartos04Workflow.includes('start-cli s9pk inspect "$STARTOS_04_RELEASE_ASSET" commitment') &&
+  releaseStartos04Workflow.includes('manifest --format json') &&
+  releaseStartos04Workflow.includes('node ../scripts/verify-startos-04-package-manifest.mjs') &&
+  releaseStartos04Workflow.includes('--package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION"') &&
+  releaseStartos04Workflow.indexOf('Install authenticated StartOS CLI') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
+  releaseStartos04Workflow.indexOf('Install locked StartOS dependencies') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
+  releaseStartos04Workflow.indexOf('Verify signed release image authority') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
+  releaseWorkflow.includes('dispatch-startos-04:\n    needs: sync') &&
+  releaseWorkflow.includes('timeout-minutes: 75') &&
+  releaseWorkflow.includes('permissions:\n  actions: read\n  contents: write') &&
+  releaseWorkflow.includes('actions: write\n      contents: read') &&
+  releaseWorkflow.includes('Checkout exact released source\n        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)') &&
+  releaseWorkflow.includes('Release workflow_dispatch ref $WORKFLOW_REF does not match exact tag') &&
+  releaseWorkflow.includes('--ref "$RELEASE_TAG"') &&
+  releaseWorkflow.includes('--raw-field "release_surfaces_run_id=$GITHUB_RUN_ID"') &&
+  releaseWorkflow.includes('--raw-field "release_surfaces_run_attempt=$GITHUB_RUN_ATTEMPT"') &&
+  releaseWorkflow.includes('--raw-field "release_image_authority_artifact_id=$IMAGE_AUTHORITY_ARTIFACT_ID"') &&
+  releaseWorkflow.includes('Upload exact StartOS image authority') &&
+  releaseWorkflow.includes('Dispatch and await source-bound StartOS 0.4 package release') &&
+  releaseWorkflow.includes('Verify published StartOS 0.4 closure assets') &&
+  releaseWorkflow.includes('node hiverelay/scripts/verify-published-startos-04-release.mjs') &&
+  releaseWorkflow.includes('live_closure_artifact')
 ) {
-  pass('release-startos-0.4 workflow builds the 0.4 s9pk and uploads it to the GitHub Release (isolated from the 0.3 pipeline)')
+  pass('StartOS 0.4 release waits for a successful source run, checks out the exact tag, and authenticates pinned actions, CLI bytes, and child-image revisions before signing')
 } else {
-  fail('release-startos-0.4 workflow is missing the isolated build/upload steps for the 0.4 package')
+  fail('StartOS 0.4 release can run before source evidence, build a mismatched ref, or expose keys to an unverified action, CLI, or image')
+}
+
+if (
+  releaseStartos04Workflow.includes('STARTOS_04_RELEASE_ASSET: blindspark-startos-0.4.s9pk') &&
+  releaseStartos04Workflow.includes('STARTOS_04_RELEASE_EVIDENCE: startos-0.4-release-evidence.json') &&
+  releaseStartos04Workflow.includes('mv blindspark.s9pk "$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('gh release upload "$tag" "$package" "$evidence"') &&
+  !releaseStartos04Workflow.includes('--clobber') &&
+  !releaseStartos04Workflow.includes('needs_build=') &&
+  !releaseStartos04Workflow.includes('cp "$existing_dir/$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('this child will still build from exact source') &&
+  releaseStartos04Workflow.includes('cmp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$handoff_dir/$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('cp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$artifact_dir/$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('Package-only evidence recovery is forbidden') &&
+  releaseStartos04Workflow.includes('repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100') &&
+  releaseStartos04Workflow.includes('unexpected release-assets page shape') &&
+  !releaseStartos04Workflow.includes('gh release view "$HIVERELAY_RELEASE_TAG"') &&
+  releaseStartos04Workflow.includes('state" != "uploaded"') &&
+  releaseStartos04Workflow.includes('unowned/starter record') &&
+  releaseStartos04Workflow.includes("grep -Eqi 'already_exists|already exists'") &&
+  releaseStartos04Workflow.includes('No asset will be deleted or clobbered') &&
+  releaseStartos04Workflow.includes('Verify published StartOS 0.4 handoff') &&
+  releaseStartos04Workflow.includes('Upload immutable child closure artifact') &&
+  releaseStartos04Workflow.includes('startos-0.4-closure-$' + '{{ github.run_id }}-$' + '{{ github.run_attempt }}') &&
+  resolveStartos04Release.includes('resolveStartos04ReleaseBinding') &&
+  resolveReusableReleaseImage.includes('resolveReusableStartos04ReleaseBinding') &&
+  verifyStartos04ImageRevision.includes('verifyStartos04ImageRevision') &&
+  verifyStartos04PackageManifest.includes('verifyStartos04PackageManifest') &&
+  verifyPublishedStartos04Release.includes('verifyPublishedStartos04ReleaseAssets') &&
+  writeStartos04ReleaseEvidence.includes('verifyStartos04ReleaseEvidence') &&
+  startos04ReleaseEvidenceLib.includes("kind: 'startos-0.4-release'") &&
+  startos04ReleaseEvidenceLib.includes('tagSha: binding.tagSha') &&
+  startos04ReleaseEvidenceLib.includes('version: manifest.version') &&
+  startos04ReleaseEvidenceLib.includes('requireEqual(\'StartOS 0.4 package version\', manifest?.version, expectedPackageVersion)') &&
+  startos04ReleaseEvidenceLib.includes('requireArrayEqual(\'StartOS 0.4 package runtime image architectures\'') &&
+  startos04ReleaseEvidenceLib.includes('platforms: binding.platforms') &&
+  startos04ReleaseEvidenceLib.includes('STARTOS_04_CHECKOUT_ACTION_SHA') &&
+  startos04ReleaseEvidenceLib.includes('STARTOS_04_CHILD_ARTIFACT_ACTION_SHA') &&
+  startos04ReleaseEvidenceLib.includes('STARTOS_04_START_CLI_URL') &&
+  startos04ReleaseEvidenceLib.includes('STARTOS_04_START_CLI_SHA256') &&
+  startos04ReleaseEvidenceLib.includes('STARTOS_04_START_SDK_INTEGRITY') &&
+  startos04ReleaseEvidenceLib.includes('startosPackage.dependencies?.[\'@start9labs/start-sdk\']') &&
+  startos04ReleaseEvidenceLib.includes('lockfile root SDK dependency') &&
+  startos04ReleaseEvidenceLib.includes('lockedSdk?.integrity, STARTOS_04_START_SDK_INTEGRITY') &&
+  startos04ReleaseEvidenceLib.includes('evidenceSemantics: \'declared-source-build-contract-and-current-inspection-runtime\'') &&
+  startos04ReleaseEvidenceLib.includes('status: \'not-embedded-or-verifiable-from-s9pk\'') &&
+  startos04ReleaseEvidenceLib.includes('status: \'not-exposed-by-start-cli-1.1.0\'') &&
+  !startos04ReleaseEvidenceLib.includes('generatedAt') &&
+  releaseStartos04WorkflowTest.includes('child always builds source and treats a complete public pair as compare-only') &&
+  releaseStartos04WorkflowTest.includes('asset inventory rejects starter and package-only recovery states') &&
+  startos04ReleaseEvidenceTest.includes('deterministic across equivalent source workflow reruns') &&
+  startos04ReleaseEvidenceTest.includes('requires the exact source revision label') &&
+  startos04ReleaseEvidenceTest.includes('rejects unrelated digest text and wrong identity') &&
+  releaseStartos04WorkflowTest.includes('reuses one source-bound image digest across equivalent reruns') &&
+  releaseWorkflow.includes(legacyStartOsReleaseUpload) &&
+  releaseWorkflow.includes("--pattern 'blindspark-startos-0.4.s9pk'") &&
+  !/gh release upload[^\n]*blindspark-startos-0\.4/.test(releaseWorkflow)
+) {
+  pass('StartOS 0.4 publishes only complete immutable package/evidence pairs, preserves exact child artifact authority, and leaves the legacy asset contract unchanged')
+} else {
+  fail('StartOS 0.4 release assets can be replaced, recovered without provenance, wedged by unchecked starter records, or collide with the legacy asset contract')
+}
+
+if (
+  releaseEvidenceContract.includes("RELEASE_SYNC_WORKFLOW_SCOPE = 'release-surfaces/pre-handoff-checkpoint'") &&
+  releaseEvidenceContract.includes("RELEASE_SYNC_SUCCESS_PENDING_CLOSURE = 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure'") &&
+  releaseEvidenceContract.includes("RELEASE_CLOSURE_EVIDENCE = 'release-closure-evidence.json'") &&
+  releaseEvidence.includes('releaseSyncEvidenceStatus') &&
+  releaseEvidence.includes('releaseClosureStatus') &&
+  releaseEvidenceVerify.includes('isSuccessfulReleaseSyncEvidence') &&
+  releaseHandoffEvidenceVerify.includes('isSuccessfulReleaseSyncEvidence') &&
+  releaseWorkflow.includes('publish-startos-04-closure:') &&
+  releaseWorkflow.includes('needs: [sync, dispatch-startos-04]') &&
+  releaseWorkflow.includes('timeout-minutes: 20') &&
+  releaseWorkflow.includes('Install authenticated StartOS CLI for independent inspection') &&
+  !releaseWorkflow.includes('gh run download "$CHILD_RUN_ID"') &&
+  releaseWorkflow.includes('actions/artifacts/$artifact_id/zip') &&
+  releaseWorkflow.includes('actions/artifacts/$IMAGE_AUTHORITY_ARTIFACT_ID/zip') &&
+  releaseWorkflow.includes('--image-authority-metadata "$CLOSURE_DIR/image-authority-artifact.json"') &&
+  releaseWorkflow.includes('--image-authority-artifact-id "$IMAGE_AUTHORITY_ARTIFACT_ID"') &&
+  releaseWorkflow.includes('downloaded_digest="sha256:$(sha256sum "$artifact_zip"') &&
+  releaseWorkflow.includes('unzip -q "$artifact_zip" -d "$artifact_dir"') &&
+  releaseWorkflow.includes('.workflow_run.head_sha') &&
+  releaseWorkflow.includes('start-cli s9pk inspect "$package" commitment') &&
+  releaseWorkflow.includes('start-cli s9pk inspect "$package" manifest --format json') &&
+  releaseWorkflow.includes('write-release-closure-evidence.mjs') &&
+  releaseWorkflow.includes('verify-release-closure-evidence.mjs') &&
+  releaseWorkflow.includes('--bundle-dir "$published_dir"') &&
+  releaseWorkflow.includes('--live-github') &&
+  releaseWorkflow.includes('--allow-in-progress-parent') &&
+  writeReleaseClosureEvidence.includes('buildReleaseClosureEvidence') &&
+  writeReleaseClosureEvidence.includes('verifyReleaseClosureEvidence') &&
+  verifyReleaseClosureEvidence.includes('verifyPublishedReleaseClosureEvidence') &&
+  verifyReleaseClosureEvidence.includes('Offline JSON-only release closure verification is non-authoritative') &&
+  verifyReleaseClosureEvidence.includes('actions/runs/$' + '{recordedRunId}/attempts/$' + '{recordedRunAttempt}') &&
+  verifyReleaseClosureEvidence.includes('actions/artifacts/$' + '{recordedArtifactId}/zip') &&
+  verifyReleaseClosureEvidence.includes('actions/artifacts/$' + '{recordedImageAuthorityId}/zip') &&
+  verifyReleaseClosureEvidence.includes('readAndVerifyParentRun') &&
+  verifyReleaseClosureEvidence.includes('requireTerminalSuccess: !args.allowInProgressParent') &&
+  verifyReleaseClosureEvidence.includes('verifyInProgressParentContext') &&
+  verifyReleaseClosureEvidence.includes("GITHUB_JOB: 'publish-startos-04-closure'") &&
+  verifyReleaseClosureEvidence.includes('verifyCurrentImageAuthorityRecord') &&
+  verifyReleaseClosureEvidence.includes('releases/assets/$' + '{id}') &&
+  verifyReleaseClosureEvidence.includes('git/ref/tags/$' + '{tag}') &&
+  verifyReleaseClosureEvidence.includes('verifyCurrentReleaseInventory') &&
+  verifyReleaseClosureEvidence.includes('asset inventory changed during live closure verification') &&
+  verifyReleaseClosureEvidence.includes('verifyCurrentArtifactRecord') &&
+  verifyReleaseClosureEvidence.includes('REST artifact identity changed during closure verification') &&
+  verifyReleaseClosureEvidence.includes('release.prerelease must be a boolean') &&
+  verifyReleaseClosureEvidence.includes('does not match requested closure policy prerelease=') &&
+  verifyReleaseClosureEvidence.includes('timeout: COMMAND_TIMEOUT_MS') &&
+  verifyReleaseClosureEvidence.includes("killSignal: 'SIGTERM'") &&
+  startos04ReleaseEvidenceLib.includes("kind: 'hiverelay-release-closure'") &&
+  startos04ReleaseEvidenceLib.includes('sourceCheckpointEvidence:') &&
+  startos04ReleaseEvidenceLib.includes('authority: imageAuthority') &&
+  startos04ReleaseEvidenceLib.includes('selectStartos04ReleaseImageAuthorityArtifact') &&
+  startos04ReleaseEvidenceLib.includes('runAttempt: binding.releaseSurfacesRunAttempt') &&
+  startos04ReleaseEvidenceLib.includes('Published StartOS 0.4 package size must be between 1') &&
+  startos04ReleaseEvidenceLib.includes("atomicity: 'non-atomic'") &&
+  startos04ReleaseEvidenceLib.includes("stableGaPolicy: 'stable-and-ga-closure-requires-this-verified-certificate'") &&
+  releaseBlockersCheck.includes("id: 'evidence.release-closure'") &&
+  releaseBlockersCheck.includes("id: 'release.closure.verify'") &&
+  releaseBlockersCheck.includes("argv: ['--bundle-dir', bundleDir, '--live-github', '--expected-prerelease', String(prerelease)]") &&
+  releaseAutomationDocs.includes('**pre-handoff checkpoint** certificate') &&
+  releaseAutomationDocs.includes('workflow is intentionally non-atomic') &&
+  supplyChainDocs.includes('StartOS 0.4 package and closure authority') &&
+  startOs04Readme.includes('public Release bytes are never copied into a trusted Actions artifact') &&
+  startOs04Readme.includes('Offline JSON-only\nverification is explicitly non-authoritative') &&
+  startOs04Readme.includes('Release publication is non-atomic') &&
+  startos04ReleaseEvidenceTest.includes('final release closure binds exact child artifact, independent inspection, and current release bytes')
+) {
+  pass('release evidence remains a pre-handoff checkpoint until terminal sync success and parent inspection publish the exact child-artifact-backed StartOS 0.4 closure')
+} else {
+  fail('release evidence can claim completion before StartOS 0.4 closure, or final closure lacks exact child artifact, independent package inspection, stable gating, or non-atomic documentation')
 }
 
 if (
@@ -8317,7 +8634,8 @@ if (
   releaseEvidenceVerify.includes('--bundle-dir <path>') &&
   releaseEvidenceVerify.includes('--allow-failed-diagnostic') &&
   releaseEvidenceVerify.includes('resolveInputs') &&
-  releaseEvidenceVerify.includes('release workflow status must be "success"') &&
+  releaseEvidenceVerify.includes('isSuccessfulReleaseSyncEvidence') &&
+  releaseEvidenceVerify.includes('Release checkpoint evidence verified') &&
   releaseEvidenceVerify.includes('Diagnostic release evidence verified') &&
   releaseEvidenceVerify.includes('release-image-smoke-evidence.json') &&
   releaseEvidenceVerify.includes('umbrel-package-smoke-evidence.json') &&
@@ -8725,7 +9043,7 @@ if (
   releaseWorkflow.indexOf('Verify release evidence') < releaseWorkflow.indexOf('Upload release evidence artifact') &&
   releaseWorkflow.includes("always() && !cancelled() && hashFiles('hiverelay/scripts/write-release-evidence.mjs') != ''") &&
   releaseWorkflow.includes("always() && !cancelled() && hashFiles('hiverelay/release-evidence.json') != ''") &&
-  releaseWorkflow.includes('actions/upload-artifact@v7') &&
+  releaseWorkflow.includes('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)') &&
   releaseWorkflow.includes('release-evidence.json') &&
   releaseWorkflow.includes('release-image-smoke-evidence.json') &&
   releaseWorkflow.includes('umbrel-package-smoke-evidence.json') &&
@@ -8766,9 +9084,11 @@ if (
 
 const deprecatedNode20ActionRefs = [
   'actions/checkout@v4',
+  'actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683',
   'actions/setup-node@v4',
   'actions/upload-artifact@v4',
   'actions/upload-artifact@v5',
+  'actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02',
   'docker/setup-qemu-action@v3',
   'docker/setup-buildx-action@v3',
   'docker/login-action@v3',
@@ -8778,9 +9098,9 @@ const deprecatedNode20ActionRefs = [
 
 if (
   deprecatedNode20ActionRefs.every(ref => !workflowTexts.includes(ref)) &&
-  workflowTexts.includes('actions/checkout@v7') &&
-  workflowTexts.includes('actions/setup-node@v6') &&
-  workflowTexts.includes('actions/upload-artifact@v7') &&
+  (workflowTexts.includes('actions/checkout@v7') || workflowTexts.includes('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)')) &&
+  (workflowTexts.includes('actions/setup-node@v6') || workflowTexts.includes('actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6 (Node 24)')) &&
+  (workflowTexts.includes('actions/upload-artifact@v7') || workflowTexts.includes('actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)')) &&
   dockerPublishWorkflow.includes('docker/setup-qemu-action@v4') &&
   workflowTexts.includes('docker/setup-buildx-action@v4') &&
   workflowTexts.includes('docker/login-action@v4') &&

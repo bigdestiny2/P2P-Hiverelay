@@ -64,10 +64,6 @@ function tmpdir (t) {
   return dir
 }
 
-function pickPort () {
-  return 49000 + Math.floor(Math.random() * 10000)
-}
-
 function writerKeyPair (seedByte) {
   const publicKey = b4a.alloc(32)
   const secretKey = b4a.alloc(64)
@@ -114,13 +110,12 @@ test('journey namespace × blind: two apps share one relay under blind namespace
   fs.mkdirSync(relayStorage, { recursive: true })
 
   const testnet = await createTestnet(3)
-  const apiPort = pickPort()
 
   const relay = new RelayNode({
     storage: relayStorage,
     bootstrapNodes: testnet.bootstrap,
     enableAPI: true,
-    apiPort,
+    apiPort: 0,
     apiHost: '127.0.0.1',
     enableRelay: false,
     enableSeeding: true,
@@ -135,6 +130,7 @@ test('journey namespace × blind: two apps share one relay under blind namespace
     try { await testnet.destroy() } catch {}
   })
   await relay.start()
+  const apiPort = relay.api.server.address().port
 
   // Real OutboxLogApp registered into the running relay's real
   // ServiceRegistry — same provider object the PluginLoader would build,

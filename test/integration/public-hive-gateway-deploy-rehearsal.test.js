@@ -317,6 +317,7 @@ esac
 script="\${1:-}"
 shift || true
 case "$script" in
+  --version) printf 'v22.0.0\n' ;;
   */resolve-signed-fleet-channel.mjs)
     printf 'resolved\t%s\t%s\t%s\t%s\n' "$FIXTURE_TARGET" "$FIXTURE_TARGET_SHA" "$FIXTURE_CONTROL_COMMIT" "$FIXTURE_CONTROL_COMMIT"
     ;;

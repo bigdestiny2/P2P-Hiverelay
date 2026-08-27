@@ -2,7 +2,7 @@
 
 This is the canonical documentation entry point for the current stable
 HiveRelay operator/fleet baseline. It succeeds
-[Stable HiveRelay v0.24.3](./STABLE-0.24.3.md). Stable means the signed source
+[Stable HiveRelay v0.24.3](./STABLE-0.24.3.md). Stable means the exact source
 tag and published npm line named below; it does not mean every distribution
 surface has published `0.24.4` artifacts.
 
@@ -34,11 +34,11 @@ npm install p2p-hiverelay-verifier  # verification helpers
 ```
 
 The `next` dist-tag tracks the release-candidate lane (currently
-`0.25.0-rc.9`, moving to `0.26.0-rc.3`); it is not stable scope.
+`0.26.0-rc.3`); it is not stable scope.
 
 ## Reproducible stable source
 
-Use the signed release tag, not the tip of `main`:
+Use the exact release tag, not the tip of `main`:
 
 ```sh
 git clone https://github.com/bigdestiny2/P2P-Hiverelay.git
@@ -89,21 +89,22 @@ or development records. They are useful for the next train but are not stable
 
 ## Distribution reality
 
-The following was verified against the public registries on 2026-08-18:
+The following was verified against the public registries on 2026-08-21:
 
 - npm `latest` is `0.24.4` for `p2p-hiverelay`, `p2p-hiverelay-client`,
   `p2p-hiveservices`, and `p2p-hiverelay-verifier`; npm `next` is
-  `0.25.0-rc.9` (the superseded rc train's last tag, moving to
-  `0.26.0-rc.3`).
-- The `v0.24.4` git tag exists; no GitHub release object or attached assets
-  accompany it, so `releases/latest` must not be used as a stable selector.
+  `0.26.0-rc.3`.
+- The `v0.24.4` annotated git tag exists but has no embedded signature; no
+  GitHub release object or attached assets accompany it, so neither a
+  signature claim nor `releases/latest` may be used as a stable selector.
 - No stable `.s9pk` is attached to any release.
 - No `0.24.4` GHCR image exists; the immutable `0.24.3` index above is the
   newest digest-pinned stable container.
 - `fleet/channels.json` keeps `stable` and `hold` on `v0.24.3`; `canary`
-  points at `v0.25.0-rc.9` until the `v0.26.0-rc.3` promotion.
+  points at `v0.26.0-rc.3`. That pointer alone is not per-relay convergence
+  evidence.
 
 Those are distribution boundaries, not reasons to relabel a candidate as
-stable. Until a separately authorized release action changes them, the signed
+stable. Until a separately authorized release action changes them, the exact
 source tag, the npm `latest` packages, and the immutable container above are
 the stable artifacts.

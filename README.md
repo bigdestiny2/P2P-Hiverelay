@@ -49,7 +49,7 @@ dashboard configures only generic capacity, admission, transport/privacy roles,
 updates, evidence, and relay identity. Application/service selection belongs to
 the published compatibility appliance and does not carry into the blind product.
 
-**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.4** | **Canary: v0.26.0-rc.3** | **Status: v0.26.0-rc.3**
+**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.4** | **Canary: v0.26.0-rc.3** | **Status: v0.26.0-rc.4**
 
 License scope is explicit: HiveRelay-authored source is Apache-2.0, while
 `truenas-app/templates/library/base_v2_3_8/` is redistributed under
@@ -83,11 +83,11 @@ and StartOS metadata so the published release surfaces agree.
 | Surface | Current source state | Publication/evidence boundary |
 |---|---|---|
 | Stable source and fleet | Tag `v0.24.4` at `e5bb696f…`; `fleet/channels.json` keeps `stable` and `hold` on `v0.24.3` until a separately authorized fleet promotion | This is the application-aware compatibility product. It is not the isolated blind-substrate replacement described by the blind-* `1.0.0-rc.1` workspaces on `main`. |
-| npm packages | As verified 2026-08-18, npm `latest` is `0.24.4` for all four lockstep packages (`p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiveservices`, `p2p-hiverelay-verifier`). npm `next` is `0.25.0-rc.9`, moving to `0.26.0-rc.3` when the rc is cut. | npm `latest` is a supported stable install path. For immutable artifact identity, the signed source tag and digest-pinned container in the [stable guide](./docs/STABLE-0.24.4.md) remain authoritative. |
+| npm packages | As verified 2026-08-21, npm `latest` is `0.24.4` and npm `next` is `0.26.0-rc.3` for all four lockstep packages (`p2p-hiverelay`, `p2p-hiverelay-client`, `p2p-hiveservices`, `p2p-hiverelay-verifier`). | npm `latest` is a supported stable install path. For immutable artifact identity, use the exact source tag and digest-pinned container in the [stable guide](./docs/STABLE-0.24.4.md). |
 | Stable container | `ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8` is a verified multi-arch OCI index for Linux amd64 and arm64. `v0.24.4` was an npm-only maintenance release; no `0.24.4` image tag exists, so this remains the newest digest-pinned stable container. | Keep the digest. A bare or floating tag is not stable artifact identity. |
-| Canary | `fleet/channels.json` points `canary` at `v0.25.0-rc.9`, the last tag of the superseded 0.25.0-rc train; it moves to `v0.26.0-rc.3` when that rc is promoted | Canary is opt-in release-candidate scope and must not be described as stable or as blind-substrate GA. |
-| GitHub / StartOS distribution | The `v0.24.4` tag exists but has no GitHub release object or attached assets; the `v0.24.3` release is marked prerelease with no assets | There is no published stable `.s9pk`; `releases/latest` must not be used as a stable selector. Candidate and development appliance manifests remain separately gated. |
-| Blindspark appliance submissions | Umbrel, StartOS, TrueNAS, Runtipi, ZimaOS, Unraid, and HexOS source/checks are in-repo | Store or registry publication still requires the relevant upstream review and real-device evidence. Candidate manifests on `main` are not proof of a stable marketplace package. |
+| Canary | `fleet/channels.json` points `canary` at `v0.26.0-rc.3`; the release evidence proves the candidate artifacts, but no checked-in per-relay rollout evidence proves live canary convergence. | Canary is opt-in release-candidate scope and must not be described as stable or as blind-substrate GA. |
+| GitHub / StartOS distribution | The `v0.24.4` tag has no GitHub release object or attached assets. The `v0.26.0-rc.3` prerelease carries release evidence and a candidate `.s9pk`. | There is no published stable `.s9pk`; `releases/latest` must not be used as a stable selector. Candidate and development appliance manifests remain separately gated. |
+| Blindspark appliance submissions | Umbrel, StartOS, TrueNAS, Runtipi, ZimaOS, Unraid, and HexOS source/checks are in-repo; the rc.3 community Umbrel surface was updated. | Official store or registry publication still requires the relevant upstream review and real-device evidence. Candidate manifests on `main` are not proof of a stable marketplace package. |
 
 For stable installation, API, compatibility, and distribution details, use
 [Stable HiveRelay `v0.24.4`](./docs/STABLE-0.24.4.md). Historical release and
@@ -1066,7 +1066,17 @@ review. Full releases can publish to a configured StartOS registry after the
 verified `.s9pk` is built.
 
 A second package tree in [startos-0.4/](startos-0.4/) targets the StartOS 0.4
-packaging format alongside the 0.3.5.x package above.
+packaging format alongside the 0.3.5.x package above. GitHub Releases expose it
+as `blindspark-startos-0.4.s9pk`; the legacy package keeps the existing
+`blindspark.s9pk` asset name. The 0.4 package is dispatched only after the main
+release's source job succeeds, is pinned to that run's exact source-bound
+multi-arch digest through a run/attempt-named, REST-digest-bound Actions
+artifact whose keyless signature and raw index membership are verified before
+the package build, and is paired with immutable
+`startos-0.4-release-evidence.json` handoff evidence. The parent waits for the
+child. Its closure certificate records and live-rechecks both the parent image
+authority and child package artifacts before it can report success; stable/GA
+also requires the exact parent attempt to have completed successfully.
 
 ### TrueNAS
 
@@ -1175,7 +1185,7 @@ Important release commands:
 | Command | Purpose |
 |---|---|
 | `npm run release:prepare` | Sync package versions, ecosystem app defaults, fleet channels, Umbrel, and StartOS |
-| `npm run release:check-blockers` | Read-only closure board for the public full-release blockers: clean worktree, distribution env, npm latest, GHCR image proof, Umbrel PR/runtime proof, StartOS registry proof, fleet rollout, and final handoff bundle |
+| `npm run release:check-blockers` | Read-only closure board for the public full-release blockers, including `GH_TOKEN`-authenticated live GitHub Release/child-artifact authority and exact requested prerelease policy; offline closure JSON alone cannot clear stable/GA |
 | `npm run release:check-distribution-env` | Fail stable releases missing or malformed npm, fleet, Umbrel, or StartOS credentials; use `--env-file` to validate local candidate secrets before setting GitHub Secrets |
 | `npm run release:check-github-setup` | Verify the repo exposes release secret/variable names before tagging and print the safe secret-rotation repair path when names are missing; values are validated by the Actions preflight |
 | `npm run release:apply-github-secrets` | Validate a local release secret env-file, then apply those exact values to GitHub Secrets through `gh` stdin |

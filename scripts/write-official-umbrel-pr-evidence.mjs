@@ -3,6 +3,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { createHash } from 'node:crypto'
+import { isSuccessfulReleaseSyncEvidence } from './lib/release-evidence-contract.mjs'
 
 const usage = `
 Usage:
@@ -254,7 +255,9 @@ function verifyReleaseEvidenceAlignment (body, release) {
   requireEqual('release evidence release version', release.release?.version, body.release.version)
   requireEqual('release evidence release semver', release.release?.semver, body.release.semver)
   requireEqual('release evidence public gateway release flag', release.release?.publicGateway?.enabled === true, publicGatewayRelease)
-  requireEqual('release evidence workflow status', release.release?.workflow?.status, 'success')
+  if (!isSuccessfulReleaseSyncEvidence(release.release)) {
+    die(`release checkpoint evidence must be valid and closure-scoped; got ${JSON.stringify(release.release?.workflow?.status || '')}`)
+  }
   requireEqual('release evidence workflow repository', release.release?.workflow?.repository, body.workflow.repository)
   requireEqual('release evidence workflow run id', release.release?.workflow?.runId, body.workflow.runId)
   requireEqual('release evidence workflow run attempt', release.release?.workflow?.runAttempt, body.workflow.runAttempt)

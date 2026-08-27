@@ -362,12 +362,17 @@ test('integration: circuit relay forwards data between two peers', async (t) => 
   t.is(relayNode.relay.getStats().activeCircuits, 0, 'circuit closed')
 })
 
-// ─── API integration ───────────────────────────────────────────────
+// ─── DHT-relay WebSocket integration ──────────────────────────────
 
-test('integration: HTTP API returns health and status', async (t) => {
-  const testnet = await createTestnet(3)
-  const port = 9200 + Math.floor(Math.random() * 800)
-  const node = createNode(testnet, { enableAPI: true, apiPort: port })
+test('integration: RelayNode preserves dhtRelayWsPort 0 through transport startup', async (t) => {
+  const testnet = await createTestnet(2)
+  const node = createNode(testnet, {
+    enableRelay: false,
+    enableSeeding: false,
+    transports: { dhtRelayWs: true },
+    dhtRelayWsPort: 0,
+    dhtRelayWsHost: '127.0.0.1'
+  })
 
   t.teardown(async () => {
     await node.stop()
@@ -375,6 +380,26 @@ test('integration: HTTP API returns health and status', async (t) => {
   })
 
   await node.start()
+
+  t.is(node.config.dhtRelayWsPort, 0, 'RelayNode config preserves zero')
+  t.is(node.dhtRelayWs._bindPort, 0, 'RelayNode passes zero to DHTRelayWS')
+  t.ok(node.dhtRelayWs.port > 0, 'DHTRelayWS materializes the assigned port')
+  t.is(node.dhtRelayWs.server.address().port, node.dhtRelayWs.port, 'effective port matches the listener')
+})
+
+// ─── API integration ───────────────────────────────────────────────
+
+test('integration: HTTP API returns health and status', async (t) => {
+  const testnet = await createTestnet(3)
+  const node = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1' })
+
+  t.teardown(async () => {
+    await node.stop()
+    await testnet.destroy()
+  })
+
+  await node.start()
+  const port = node.api.server.address().port
 
   // Health endpoint
   const healthRes = await fetch(`http://127.0.0.1:${port}/health`)
@@ -402,9 +427,8 @@ test('integration: HTTP API returns health and status', async (t) => {
 
 test('integration: HTTP API seed and unseed', async (t) => {
   const testnet = await createTestnet(3)
-  const port = 9200 + Math.floor(Math.random() * 800)
   const apiKey = 'test-api-key-' + randomBytes(8).toString('hex')
-  const node = createNode(testnet, { enableAPI: true, apiPort: port, apiKey })
+  const node = createNode(testnet, { enableAPI: true, apiPort: 0, apiHost: '127.0.0.1', apiKey })
 
   t.teardown(async () => {
     await node.stop()
@@ -412,6 +436,7 @@ test('integration: HTTP API seed and unseed', async (t) => {
   })
 
   await node.start()
+  const port = node.api.server.address().port
 
   const appKey = await authorLocalDrive(node, {
     '/api-seed.txt': b4a.from('production API seed fixture')

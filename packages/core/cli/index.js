@@ -424,8 +424,8 @@ async function start () {
     // proxy (Caddy/nginx) on port 443; the relay itself binds plain ws://
     // on localhost. Override port via --dht-relay-ws-port or
     // HIVERELAY_DHT_RELAY_WS_PORT.
-    const port = args['dht-relay-ws-port'] || process.env.HIVERELAY_DHT_RELAY_WS_PORT
-    if (port) cliOverrides.dhtRelayWsPort = parseInt(port, 10)
+    const port = args['dht-relay-ws-port'] ?? process.env.HIVERELAY_DHT_RELAY_WS_PORT
+    if (port !== undefined && port !== '') cliOverrides.dhtRelayWsPort = parseInt(port, 10)
     // Default bind to 127.0.0.1 when the transport is enabled — the
     // reverse proxy talks to localhost, and the transport should never
     // be directly internet-exposed.

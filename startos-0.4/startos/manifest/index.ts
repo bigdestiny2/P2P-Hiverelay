@@ -9,6 +9,13 @@ import { long, short } from './i18n'
 // RELEASE: bump `version` here-adjacent in ../versions/current.ts AND the
 // image tag below together, so the package version and the image it runs stay
 // in lockstep with the HiveRelay monorepo version (see ../../package.json).
+// Release CI overrides the aligned authoring tag with the exact digest-qualified
+// ref proven by release-surfaces; local mechanics builds retain the authoring
+// tag so contributors can still run the SDK toolchain before an image exists.
+const releaseImageRef =
+  process.env.HIVERELAY_STARTOS_04_IMAGE_REF ||
+  'ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.4'
+
 export const manifest = setupManifest({
   id: 'blindspark',
   title: 'Blindspark',
@@ -21,7 +28,7 @@ export const manifest = setupManifest({
   volumes: ['main'],
   images: {
     blindspark: {
-      source: { dockerTag: 'ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.3' },
+      source: { dockerTag: releaseImageRef },
       arch: ['x86_64', 'aarch64'],
     },
   },

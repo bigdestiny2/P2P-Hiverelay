@@ -7,6 +7,24 @@ on:
     branches: [main]
 
 jobs:
+  production-install:
+    runs-on: ubuntu-latest
+    # Pin the multi-arch image index so this gate keeps modelling the relay's
+    # minimal production environment instead of inheriting hosted-runner tools.
+    container: node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0
+    steps:
+      - uses: actions/checkout@v7
+      # This is the exact dependency command used by the relay updater. Limit
+      # installation to public runtime workspaces so retired native blind
+      # workspaces cannot introduce an undeclared relay toolchain requirement.
+      - run: find . -path './.git' -prune -o -type d -name node_modules -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/source-before.sha256
+      - run: npm ci --omit=dev --no-audit --no-fund --include-workspace-root --workspace packages/core --workspace packages/services --workspace packages/client --workspace packages/verifier
+      - run: |
+          node -e "for (const name of ['p2p-hiverelay', 'p2p-hiveservices', 'p2p-hiverelay-client', 'p2p-hiverelay-verifier']) require.resolve(name)"
+          test ! -e node_modules/@hiverelay/blind-peercred
+          find . -path './.git' -prune -o -type d -name node_modules -prune -o -type f -print0 | sort -z | xargs -0 sha256sum > /tmp/source-after.sha256
+          diff -u /tmp/source-before.sha256 /tmp/source-after.sha256
+
   lint:
     runs-on: ubuntu-latest
     steps:

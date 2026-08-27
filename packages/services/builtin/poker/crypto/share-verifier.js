@@ -29,8 +29,8 @@
  *       proof: {
  *         A: <hex>, B: <hex>, z: <hex>  // each 32 bytes hex
  *       }
- *       // G is implied as the ed25519 base point. Override by adding
- *       // `G: <hex>` here if a future scheme uses a different generator.
+ *       // G is fixed to the canonical ed25519 base point. A redundant
+ *       // canonical encoding is accepted; any other value is inconclusive.
  *     }
  *   }
  *
@@ -45,25 +45,28 @@
  *
  * ─── What it does NOT do ───────────────────────────────────────────────────
  *
- * The verifier does NOT independently look up the proof on the table's
- * signed log to confirm the respondent actually published it. That's the
- * arbitrator's job — the witness here is taken at face value. A claimant
- * who fabricates a proof of validity (e.g. by re-running prove with the
- * correct x they don't actually know) cannot succeed: they'd need x, which
- * they don't have. A claimant who submits the WRONG proof and hopes the
- * verifier passes the wrong claim is what cross-referencing the signed
- * log catches.
+ * The verifier does not perform network or log lookups. Instead, evidence
+ * must carry the respondent-signed share entry and respondent-signed DKG
+ * round-2 publisher-key entry. It verifies both signatures and binds their
+ * payloads to the contextual proof before evaluating the equations.
  */
 
+import sodium from 'sodium-universal'
 import b4a from 'b4a'
-import { verifyShareEquality, POINT_BYTES, SCALAR_BYTES } from './chaum-pedersen.js'
+import { SignedLog } from '../signed-log.js'
+import {
+  verifyShareEquality,
+  canonicalShareContext,
+  baseG,
+  POINT_BYTES,
+  SCALAR_BYTES
+} from './chaum-pedersen.js'
 
 /**
  * Build a verifier function suitable for
  * `arbitration.setAppEvidenceVerifier('poker/invalid-share', fn)`.
  *
- * @param {object} [opts] Reserved for future extensions (curve override,
- *   transcript domain, etc.).
+ * @param {object} [opts] Reserved for future transcript extensions.
  * @returns {(ae: object) => { verdict: string, reason: string }}
  */
 export function makeInvalidShareVerifier (_opts = {}) {
@@ -84,17 +87,36 @@ export function makeInvalidShareVerifier (_opts = {}) {
     const A = hexBuf(proof.A, POINT_BYTES)
     const B = hexBuf(proof.B, POINT_BYTES)
     const z = hexBuf(proof.z, SCALAR_BYTES)
-    // Optional G override; default to ed25519 base point in verifier.
-    const G = witness.G ? hexBuf(witness.G, POINT_BYTES) : undefined
-    if (witness.G && !G) {
-      return { verdict: 'inconclusive', reason: 'G-bad-hex' }
+    let context
+    try {
+      context = canonicalShareContext(witness.context)
+    } catch (error) {
+      return { verdict: 'inconclusive', reason: 'bad-context:' + error.message }
+    }
+    // This protocol fixes G to the ed25519 base point. G is claimant-controlled
+    // and is not part of either respondent-signed entry, so accepting an
+    // alternate value would let a claimant change the Fiat-Shamir challenge
+    // and turn a valid proof into a slashable verification failure. Preserve
+    // compatibility with clients that redundantly serialize the canonical G.
+    if (witness.G !== undefined) {
+      const suppliedG = hexBuf(witness.G, POINT_BYTES)
+      if (!suppliedG) return { verdict: 'inconclusive', reason: 'G-bad-hex' }
+      if (!b4a.equals(suppliedG, baseG())) {
+        return { verdict: 'inconclusive', reason: 'noncanonical-generator' }
+      }
     }
 
     for (const [name, val] of [['C1', C1], ['D', D], ['Y', Y], ['A', A], ['B', B], ['z', z]]) {
       if (!val) return { verdict: 'inconclusive', reason: 'bad-hex:' + name }
     }
 
-    const r = verifyShareEquality({ G, Y, C1, D, A, B, z })
+    // Bind the accusation and public key to entries actually signed by the
+    // respondent. Without these checks a claimant can substitute an arbitrary
+    // writer/key/proof tuple and make a valid share appear invalid.
+    const provenance = verifyProvenance(ae, context)
+    if (!provenance.ok) return { verdict: 'inconclusive', reason: provenance.reason }
+
+    const r = verifyShareEquality({ Y, C1, D, A, B, z, context })
 
     if (r.valid) {
       // Proof verifies → share is valid → claimant's claim of invalidity
@@ -105,6 +127,69 @@ export function makeInvalidShareVerifier (_opts = {}) {
     // supported. Include the underlying reason for the operator log.
     return { verdict: 'claim-supported', reason: 'proof-fails:' + (r.reason || 'unknown') }
   }
+}
+
+function verifyProvenance (ae, context) {
+  if (!isHex64(ae && ae.respondent)) return { ok: false, reason: 'respondent-missing' }
+  const respondent = ae.respondent.toLowerCase()
+  if (b4a.toString(context.writer, 'hex') !== respondent) return { ok: false, reason: 'context-writer-mismatch' }
+  if (b4a.toString(context.tableKey, 'hex') !== String(ae.tableKey || '').toLowerCase()) return { ok: false, reason: 'context-table-mismatch' }
+  if (String(context.hand) !== ae.handId || context.cardIndex !== ae.cardIndex) return { ok: false, reason: 'context-position-mismatch' }
+
+  const shareEntry = ae.signedEntry
+  if (!verifySignedEntry(shareEntry, respondent)) return { ok: false, reason: 'share-entry-signature' }
+  const payload = shareEntry.payload
+  if (String(shareEntry.tableKey || '').toLowerCase() !== String(ae.tableKey || '').toLowerCase() ||
+      payload?.protocolVersion !== context.protocolVersion || payload?.kind !== context.proofKind ||
+      payload?.hand !== context.hand || payload?.cardIdx !== context.cardIndex ||
+      String(payload?.C1 || '').toLowerCase() !== String(ae.ciphertext || '').toLowerCase() ||
+      String(payload?.D || '').toLowerCase() !== String(ae.share || '').toLowerCase() ||
+      !sameProof(payload?.proof, ae.witness?.proof)) {
+    return { ok: false, reason: 'share-entry-payload' }
+  }
+  const recipient = context.recipientSeat
+  if (recipient == null ? payload.recipientSeat != null : payload.recipientSeat !== recipient) {
+    return { ok: false, reason: 'share-entry-recipient' }
+  }
+
+  const keyEntry = ae.publisherKeyEntry
+  if (!verifySignedEntry(keyEntry, respondent)) return { ok: false, reason: 'key-entry-signature' }
+  const keyPayload = keyEntry.payload
+  if (String(keyEntry.tableKey || '').toLowerCase() !== String(ae.tableKey || '').toLowerCase() ||
+      keyPayload?.protocolVersion !== context.protocolVersion || keyPayload?.kind !== 'dkg-commit' ||
+      keyPayload?.round !== 2 || keyPayload?.hand !== context.hand ||
+      String(keyPayload?.X || '').toLowerCase() !== String(ae.witness?.Y || '').toLowerCase()) {
+    return { ok: false, reason: 'key-entry-payload' }
+  }
+  return { ok: true }
+}
+
+function verifySignedEntry (entry, writer) {
+  if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
+      String(entry.writer || '').toLowerCase() !== writer ||
+      !isHex64(entry.tableKey) || !isHex128(entry.signature) ||
+      !Number.isSafeInteger(entry.seq) || entry.seq < 0 ||
+      typeof entry.ts !== 'number' || !Number.isFinite(entry.ts)) return false
+  try {
+    const signature = b4a.from(entry.signature, 'hex')
+    const publicKey = b4a.from(writer, 'hex')
+    return sodium.crypto_sign_verify_detached(signature, SignedLog.canonicalBytes(entry), publicKey)
+  } catch {
+    return false
+  }
+}
+
+function sameProof (a, b) {
+  return !!a && !!b && ['A', 'B', 'z'].every(key =>
+    typeof a[key] === 'string' && typeof b[key] === 'string' && a[key].toLowerCase() === b[key].toLowerCase())
+}
+
+function isHex64 (value) {
+  return typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value)
+}
+
+function isHex128 (value) {
+  return typeof value === 'string' && /^[0-9a-f]{128}$/i.test(value)
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

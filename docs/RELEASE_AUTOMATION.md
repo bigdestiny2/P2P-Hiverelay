@@ -297,8 +297,10 @@ the required sidecars to the GitHub Release.
 
 Before rerunning a public full release, or before calling a completed release
 ready, use the read-only closure board. It does not publish, upload, set
-secrets, update fleet metadata, open PRs, or contact npm unless
-`--check-npm-live` is passed explicitly. With `--npm-latest-json`, the npm
+secrets, update fleet metadata, or open PRs. It does authenticate read-only to
+GitHub because stable/GA closure must live-bind the current Release and exact
+Actions run/artifact; set `GH_TOKEN` with `actions:read` and `contents:read`.
+It does not contact npm unless `--check-npm-live` is passed explicitly. With `--npm-latest-json`, the npm
 proof is taken from a trusted offline fixture and the checker refuses incomplete
 fixtures instead of falling through to a live lookup. Once the live registry
 gate is green, write `npm-latest-evidence.json` beside the other downloaded
@@ -314,6 +316,7 @@ The npm-latest command refuses to write that sidecar unless every package
 `latest` tag is verified at the expected release version.
 
 ```sh
+export GH_TOKEN=<read-only-github-token>
 npm run release:check-blockers -- \
   --bundle-dir /path/to/downloaded-release-assets \
   --env-file /private/tmp/hiverelay-release-secrets.env \
@@ -328,7 +331,9 @@ manifest and image smoke, Umbrel package smoke, official Umbrel PR, real Umbrel
 runtime review, StartOS registry publication, StartOS package artifact, fleet
 rollout, and the strict review-ready handoff verifier. It exits non-zero until
 every blocker has a present evidence file and the existing release/handoff
-verifiers pass. The optional `--out release-blockers-report.json` file is a
+verifiers pass, including live closure verification. A coherent offline
+`release-closure-evidence.json` bundle remains diagnostic only and cannot make
+the board ready. The optional `--out release-blockers-report.json` file is a
 public-safe diagnostic report of the current board, not a release proof; it can
 be attached to handoff notes while blockers are still open. The printed and
 written reports redact token-looking values across top-level paths, row details,
@@ -419,6 +424,17 @@ manually dispatched, the workflow:
    dist-tag and leaves `latest` untouched; only a stable tag moves `latest`.
    Branch candidates publish nothing. The evidence record carries the matching
    `published-next`/`current-next` status.
+   npm package visibility and dist-tag readback are eventually consistent, so
+   the workflow uses bounded exponential backoff for both phases. Every registry
+   read and dist-tag mutation used by that gate, including the pre-publish
+   existence probe, also has a 30-second timeout and is killed if it hangs. The
+   release fails closed unless the registry returns the exact release version
+   before any container or appliance work begins.
+   The helper only runs `npm view` and `npm dist-tag add`; neither invokes
+   package lifecycle scripts, so its direct-child kill cannot orphan a package
+   script. The containing GitHub Actions step has a 120-minute outer timeout,
+   which also bounds `npm publish`, its lifecycle scripts, and the complete
+   four-package retry budget.
    This step runs **before** every container and appliance surface on purpose. It
    used to sit after the image smoke, which meant a Docker, StartOS, or Umbrel
    failure skipped npm entirely — that is how `0.24.2` built and signed a release
@@ -776,6 +792,162 @@ captured:
 cd startos
 make verify IMAGE_DIGEST=sha256:<multi-arch-digest>
 ```
+
+### StartOS 0.4 package handoff
+
+The TypeScript-SDK package in `startos-0.4/` remains isolated from the legacy
+package above. It is not triggered directly by release publication. A separate
+`dispatch-startos-04` job, with `needs: sync` and job-scoped `actions: write`,
+dispatches it only after the source `sync` job succeeds. The dispatch uses the
+exact release tag as both workflow ref and input and passes that
+`release-surfaces` run id, run attempt, and exact image-authority artifact id
+as runtime authority. The parent then waits, with a
+bounded timeout, for the exact child run to succeed. A separate least-privilege
+closure job then downloads the exact child's immutable Actions artifact,
+independently inspects its package, compares it to current Release bytes, and
+publishes the final closure certificate before the overall workflow can pass.
+
+Before any signing key or package build, the downstream workflow verifies the
+exact tag checkout and the parent run attempt/path/event/tag/SHA plus its
+successful `sync` and artifact-upload checkpoints. It accepts the parent
+workflow path only when the Actions API reports the bare file or that same file
+qualified by the exact release tag; another ref or suffix is rejected. It downloads the dispatched
+run/attempt-named image-authority artifact by numeric REST id, verifies its
+record, ZIP size/SHA-256, exact two-file inventory, and embedded attempt, then
+requires mutable public checkpoint files to be byte-identical before exporting
+image environment. It verifies the exact-tag cosign identity, raw multi-arch
+index hash and exact amd64/arm64 membership, and both child config
+`org.opencontainers.image.revision` labels. Release builds set
+`REQUIRE_RELEASE_IMAGE_DIGEST=1`, and the packed manifest must contain the
+same tag-plus-digest ref. Structured manifest inspection also requires the
+exact authored StartOS id/version, its sole runtime-image key, and the expected
+architecture set; unrelated text cannot satisfy the image-ref check.
+
+An equivalent source-workflow rerun reuses the existing evidence-bound image
+index from an earlier completed pre-handoff checkpoint and recreates only the
+mutable tag alias. It does not rebuild a timestamp-bearing provenance index
+under the same semver tag. This keeps the immutable StartOS package and sidecar
+bound to one canonical multi-arch digest while still permitting recovery when
+a prior parent run failed after that checkpoint.
+
+The retry pointer is a single immutable, digest-bearing Actions artifact
+uploaded immediately after local verification; mutable GitHub Release assets
+are never reuse authority. The retry gate selects the exact non-expired REST
+artifact for the tag/SHA, authenticates its numeric id, source run, archive
+URL, size, ZIP SHA-256, and exact two-file inventory, then requires the embedded
+run id/attempt to match. Before any retag or new signature, it verifies that
+run id and URL name `.github/workflows/release-surfaces.yml` (with display name
+`Release surfaces`) at the exact tag ref and tag SHA, that its event is `push`,
+`release`, or `workflow_dispatch`, and that
+exactly one `sync` job reached `completed` with every enumerated pre-handoff
+checkpoint step successful. It then verifies the existing index signature against the exact
+`release-surfaces.yml@refs/tags/<tag>` GitHub OIDC identity and issuer, and
+live-inspects the evidence-bound amd64/arm64 child digests for the exact OS,
+architecture, and `org.opencontainers.image.revision` source SHA. The `sync`
+job or parent run may have failed after that durable checkpoint; terminal job
+or whole-run success is deliberately not the reuse authority because it would
+prevent safe recovery from a later transient failure.
+
+The secret-bearing child does not run Start9's setup composite: that composite
+calls mutable nested actions and downloads a live CLI before local
+authentication. Required actions are pinned to full reviewed commit SHAs. The
+workflow instead downloads the exact `start-cli 1.1.0` Linux asset from its
+fixed release URL into a private temporary directory and verifies SHA-256
+`70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a`
+before `chmod`, PATH exposure, first execution, or developer-key exposure. The
+lockfile-verified `npm ci` also completes before developer-key exposure. The
+deterministic `startos-0.4-release-evidence.json` sidecar binds the tag SHA,
+image ref/digest, per-platform child digests/revisions, pinned action/CLI/SDK
+identities, package SHA-256, exact inspected manifest identity, and package
+commitment. It excludes timestamps and mutable parent-run material, so an
+equivalent retry remains verifiable. `start-cli 1.1.0` does not expose a signer
+fingerprint through `s9pk inspect`; the sidecar records that limitation instead
+of making an unproved signer claim.
+
+The toolchain section is explicitly a declared source/workflow build contract
+plus the current inspection runtime, not an assertion that a package embeds
+verifiable original-build provenance. The `.s9pk` format/CLI exposes no such
+provenance. The artifact proof is therefore its bytes, commitment, structured
+manifest, and the exact successful child's immutable Actions artifact, while
+the SDK/action/CLI pins describe the tag's required build contract.
+
+Both `blindspark-startos-0.4.s9pk` and its sidecar are an immutable release
+pair. Every child run installs the locked source dependencies and builds the
+package again from the exact tag and authenticated toolchain. Existing Release
+assets are compare-only: they can never be copied into a new trusted Actions
+artifact. Reruns accept only one non-empty `uploaded` record of each name with
+a valid GitHub SHA-256 digest, and the newly built bytes must match those
+records exactly; they never delete or `--clobber` either asset. A package
+without its sidecar, a sidecar without its package, duplicate names, a
+zero-byte/`starter` record, or a source rebuild mismatch fails closed for
+audited manual recovery. The child Actions artifact is populated only from the
+fresh local build after that comparison.
+
+`release-evidence.json` is a **pre-handoff checkpoint** certificate, not a
+terminal `sync`-job or overall workflow-success claim. For a tag release it records
+`checkpoint-passed-pending-sync-completion-and-startos-0.4-closure` and points to
+`release-closure-evidence.json`. The child queries the exact recorded parent
+run attempt and requires its `sync` job to be terminal and successful. Image
+reuse queries that same exact attempt but requires the enumerated image-sign,
+manifest, smoke, evidence-write, and local-verification steps to be successful,
+while the independently authenticated artifact proves its own completed upload;
+a later transient `sync` failure therefore
+does not wedge the immutable image authority. Only after the exact child succeeds does the parent independently download
+the recorded image-authority artifact and that child's non-expired,
+digest-bearing Actions artifact by numeric REST id,
+authenticate the downloaded ZIP size and SHA-256 against that same REST record,
+authenticate `start-cli`, independently inspect the `.s9pk` commitment and
+structured manifest, and prove the artifact package/sidecar are byte-identical
+to the current GitHub Release pair. It then publishes and verifies
+`release-closure-evidence.json` with normalized image-authority metadata,
+re-downloads the entire closure bundle, and runs the live GitHub verifier. That
+verifier re-fetches every current Release asset by numeric REST id and digest,
+authenticates the exact parent and child run attempts/workflow paths, downloads
+both exact non-expired artifact ids, checks their REST ZIP
+size/digest/inventory, requires the current GitHub tag to resolve to the recorded
+source commit, and requires their bytes to equal the Release checkpoint/pair.
+After those checks it
+re-fetches the Release and required asset inventory and requires every
+id/state/size/digest/URL to remain unchanged, re-resolves the tag, and re-fetches
+both exact Actions artifact records to reject deletion or expiry during the
+check. The in-workflow verifier permits its exact parent to remain in progress
+only when the GitHub Actions repository/workflow-ref/job/run/attempt/ref/SHA
+context matches that closure certificate;
+the stable blocker requires that recorded parent attempt to be terminal
+successful.
+The Release `draft`/`prerelease` state must exactly match the checkpoint evidence;
+the stable blocker additionally supplies `--expected-prerelease false`, so a
+prerelease certificate cannot clear GA. These terminal checks close the
+download-window replacement race. Offline JSON
+inspection is explicitly non-authoritative and cannot clear stable/GA. The
+blocker board therefore requires `GH_TOKEN` and this live verifier. Each live
+API/download/unzip subprocess is capped at 60 seconds, and the closure job has
+an explicit 20-minute bound.
+
+The public evidence upload itself remains a non-atomic multi-asset GitHub
+Release update: `gh release upload --clobber` may replace only a subset before
+failing. That public surface is therefore never the image-reuse pointer. The
+prior immutable Actions artifact lets a retry restore and republish the same
+source-bound digest and evidence. The artifact uses the repository's explicit
+90-day retention boundary. If it has expired or been deleted after public
+release state exists, the workflow fails closed for audited
+recovery instead of rebuilding a different index beneath immutable packages.
+
+The workflow is intentionally non-atomic: GHCR, npm, the legacy StartOS
+package/registry, the StartOS 0.4 package/evidence Release pair, fleet channels,
+and Umbrel/ecosystem metadata can already have changed before a downstream
+closure failure. A failed closure therefore
+leaves the parent red and blocks stable/GA completion; it does not claim that
+earlier external writes were rolled back. The legacy `blindspark.s9pk` asset
+contract remains unchanged.
+
+Because GitHub loads a dispatched workflow and its scripts from `--ref`, these
+controls can run only for a release tag that already contains them. They do not
+retrofit the existing `v0.26.0-rc.3` tag; the first eligible release is the next
+new tag cut from a commit containing this workflow. Moving an existing tag is
+not an accepted recovery path. Manual runs must also load the workflow from the
+exact tag, for example `gh workflow run release-surfaces.yml --ref vX.Y.Z -f
+version=vX.Y.Z ...`; a branch-loaded dispatch fails before release writes.
 
 ## Local Use
 

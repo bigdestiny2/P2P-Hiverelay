@@ -4,6 +4,12 @@ import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import {
+  RELEASE_CLOSURE_EVIDENCE,
+  RELEASE_SYNC_WORKFLOW_SCOPE,
+  expectedReleaseClosureStatus,
+  isSuccessfulReleaseSyncEvidence
+} from './lib/release-evidence-contract.mjs'
 
 const usage = `
 Usage:
@@ -105,8 +111,8 @@ await verifyReleaseEvidence(release, {
   allowFailedDiagnostic: Boolean(args.allowFailedDiagnostic)
 })
 
-if (release.release.workflow?.status === 'success') {
-  console.log(`Release evidence verified: ${release.release.version}`)
+if (isSuccessfulReleaseSyncEvidence(release.release)) {
+  console.log(`Release checkpoint evidence verified (${release.release.closure.status}): ${release.release.version}`)
 } else {
   console.log(`Diagnostic release evidence verified: ${release.release.version}`)
 }
@@ -219,15 +225,22 @@ async function verifyReleaseEvidence (body, opts) {
   requirePattern('release.tagSha', body.release?.tagSha, /^[a-f0-9]{40}$/i)
   const publicGatewayRelease = validatePublicGatewayBinding(body)
 
-  if (body.release.workflow?.status !== 'success') {
+  if (!isSuccessfulReleaseSyncEvidence(body.release)) {
     if (!opts.allowFailedDiagnostic) {
-      die(`release workflow status must be "success" for publishable release proof; got ${JSON.stringify(body.release.workflow?.status || '')}`)
+      die(`release checkpoint evidence must be valid and closure-scoped; got ${JSON.stringify(body.release.workflow?.status || '')}`)
     }
     verifyOptionalFleetRollout(body, opts)
     return
   }
 
   verifySuccessfulWorkflowIdentity(body)
+  requireEqual('release workflow scope', body.release.workflow.scope, RELEASE_SYNC_WORKFLOW_SCOPE)
+  requireEqual('release closure status', body.release.closure?.status, expectedReleaseClosureStatus(body.release))
+  requireEqual(
+    'release closure evidence path',
+    body.release.closure?.evidence,
+    body.release.candidate === true ? '' : RELEASE_CLOSURE_EVIDENCE
+  )
   requirePattern('release.metadataSha', body.release?.metadataSha, /^[a-f0-9]{40}$/i)
   requirePattern('image.name', body.image?.name, /^ghcr\.io\/[A-Za-z0-9_.-]+\/[A-Za-z0-9._/-]+$/)
   requireEqual('image.name', body.image?.name, EXPECTED_RELEASE_IMAGE_NAME)
@@ -354,7 +367,8 @@ function assertReleaseEvidenceSchema (body) {
     'tagSha',
     'metadataSha',
     'publicGateway',
-    'workflow'
+    'workflow',
+    'closure'
   ])
   if (body.release.publicGateway != null) {
     requireOnlyKeys('release evidence public gateway binding', body.release.publicGateway, [
@@ -369,12 +383,14 @@ function assertReleaseEvidenceSchema (body) {
     ])
   }
   requireOnlyKeys('release evidence workflow', body.release.workflow, [
+    'scope',
     'status',
     'repository',
     'runId',
     'runAttempt',
     'runUrl'
   ])
+  requireOnlyKeys('release evidence closure', body.release.closure, ['status', 'evidence'])
   requireOnlyKeys('release evidence image', body.image, ['name', 'digest', 'ref'])
   requireOnlyKeys('release evidence artifacts', body.artifacts, ['startosPackage'])
   requireOnlyKeys('release evidence StartOS package artifact', body.artifacts.startosPackage, ['path', 'sha256'])

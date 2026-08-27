@@ -226,7 +226,13 @@ test('release evidence writer records digest, gates, and external surfaces', asy
   t.is(body.release.version, 'v9.9.9')
   t.is(body.release.channel, 'canary')
   t.is(body.release.candidate, false)
+  t.is(body.release.workflow.scope, 'release-surfaces/pre-handoff-checkpoint')
+  t.is(body.release.workflow.status, 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure')
   t.is(body.release.workflow.runUrl, `https://github.com/${EXPECTED_REPOSITORY}/actions/runs/12345`)
+  t.alike(body.release.closure, {
+    status: 'pending-startos-0.4',
+    evidence: 'release-closure-evidence.json'
+  })
   t.is(body.image.ref, `${EXPECTED_IMAGE_NAME}:9.9.9@${DIGEST}`)
   t.is(body.artifacts.startosPackage.sha256, S9PK_SHA)
   t.is(body.gates.auditAndUnit, 'passed')
@@ -1310,6 +1316,9 @@ test('release evidence writer allows branch candidates to skip release asset pub
   const body = JSON.parse(await readFile(outFile, 'utf8'))
   t.is(body.release.prerelease, true)
   t.is(body.release.candidate, true)
+  t.is(body.release.workflow.scope, 'release-surfaces/pre-handoff-checkpoint')
+  t.is(body.release.workflow.status, 'checkpoint-passed-branch-candidate')
+  t.alike(body.release.closure, { status: 'not-required-branch-candidate', evidence: '' })
   t.is(body.surfaces.npmPackages, 'skipped')
   t.is(body.surfaces.startosReleaseAsset, 'skipped')
   t.is(body.surfaces.startosRegistryUrl, '')
@@ -1396,7 +1405,9 @@ test('release evidence writer supports partial failed-run evidence', async (t) =
   })
 
   const body = JSON.parse(await readFile(outFile, 'utf8'))
+  t.is(body.release.workflow.scope, 'release-surfaces/pre-handoff-checkpoint')
   t.is(body.release.workflow.status, 'failure')
+  t.alike(body.release.closure, { status: 'not-reached', evidence: 'release-closure-evidence.json' })
   t.is(body.image.digest, '')
   t.is(body.image.ref, '')
   t.is(body.gates.auditAndUnit, 'passed')

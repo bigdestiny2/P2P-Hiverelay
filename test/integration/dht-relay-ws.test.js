@@ -16,10 +16,6 @@ import RelayedDHT from '../../packages/core/transports/dht-relay-ws/vendor/dht-r
 import RelayedStream from '../../packages/core/transports/dht-relay-ws/vendor/dht-relay/ws.js'
 import { DHTRelayWS } from 'p2p-hiverelay/transports/dht-relay-ws/index.js'
 
-function pickPort () {
-  return 50000 + Math.floor(Math.random() * 10000)
-}
-
 test('e2e: relayed client completes handshake and ready() through the WS', async (t) => {
   // Critical "the protocol actually works" test. Proves that:
   //   1. The WS server accepts a real client socket
@@ -30,10 +26,10 @@ test('e2e: relayed client completes handshake and ready() through the WS', async
   const testnet = await createTestnet(2, t.teardown)
   const relayDHT = testnet.nodes[0]
 
-  const port = pickPort()
-  const relayWs = new DHTRelayWS({ dht: relayDHT, port, host: '127.0.0.1' })
+  const relayWs = new DHTRelayWS({ dht: relayDHT, port: 0, host: '127.0.0.1' })
   await relayWs.start()
   t.teardown(() => relayWs.stop())
+  const port = relayWs.port
 
   const socket = new WebSocket(`ws://127.0.0.1:${port}`)
   await new Promise((resolve, reject) => {
@@ -58,10 +54,10 @@ test('e2e: relayed client completes handshake and ready() through the WS', async
 test('e2e: WS server cleanly handles client disconnect mid-session', async (t) => {
   const testnet = await createTestnet(2, t.teardown)
   const relayDHT = testnet.nodes[0]
-  const port = pickPort()
-  const relayWs = new DHTRelayWS({ dht: relayDHT, port, host: '127.0.0.1' })
+  const relayWs = new DHTRelayWS({ dht: relayDHT, port: 0, host: '127.0.0.1' })
   await relayWs.start()
   t.teardown(() => relayWs.stop())
+  const port = relayWs.port
 
   // Connect, ready up, then yank the socket without graceful close.
   const socket = new WebSocket(`ws://127.0.0.1:${port}`)
@@ -96,10 +92,10 @@ test('crash-safety: a proxied DHT op that throws tears down only its connection,
     }
   })
 
-  const port = pickPort()
-  const relayWs = new DHTRelayWS({ dht: throwingDht, port, host: '127.0.0.1' })
+  const relayWs = new DHTRelayWS({ dht: throwingDht, port: 0, host: '127.0.0.1' })
   await relayWs.start()
   t.teardown(() => relayWs.stop())
+  const port = relayWs.port
 
   // A clean run already implies the process survived (brittle aborts on an
   // uncaught fault), but assert it explicitly by trapping any that escape.

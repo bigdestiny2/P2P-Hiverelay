@@ -248,6 +248,7 @@ shift
 exec "$@"
 `)
   executable(path.join(bin, 'node'), `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'v22.0.0'; exit 0; fi
 script="$1"
 shift
 case "$script" in
@@ -714,7 +715,7 @@ test('new public-t1 release failure quarantines the edge before management rollb
   const git = readFileSync(f.gitLog, 'utf8')
   const systemctl = readFileSync(f.systemctlLog, 'utf8')
   t.ok(git.includes('checkout --quiet v1.2.3'))
-  t.ok(git.includes(`checkout --quiet ${priorSha}`))
+  t.ok(git.includes(`checkout --quiet --force ${priorSha}`))
   t.ok(argsFrom(f.resolverArgs).includes('--require-public-t1'),
     'the updater never activates a historical legacy cohort')
   t.is(systemctl.split('\n').filter(line => line === 'restart hiverelay').length, 2)
@@ -827,7 +828,7 @@ test('retirement checkout/restart failures restore the exact prior SHA while lea
   t.not(checkoutFailure.status, 0)
   const checkoutGit = readFileSync(checkout.gitLog, 'utf8')
   t.ok(checkoutGit.includes('checkout --quiet v1.2.3'))
-  t.ok(checkoutGit.includes(`checkout --quiet ${priorSha}`))
+  t.ok(checkoutGit.includes(`checkout --quiet --force ${priorSha}`))
   t.ok(existsSync(checkout.quarantineArgs))
 
   const restart = fixture(t)
@@ -838,7 +839,7 @@ test('retirement checkout/restart failures restore the exact prior SHA while lea
   })
   t.not(restartFailure.status, 0)
   t.ok(restartFailure.stdout.includes('management service restart failed'))
-  t.ok(readFileSync(restart.gitLog, 'utf8').includes(`checkout --quiet ${priorSha}`))
+  t.ok(readFileSync(restart.gitLog, 'utf8').includes(`checkout --quiet --force ${priorSha}`))
   t.is(readFileSync(restart.systemctlLog, 'utf8').trim().split('\n').filter(line => line.startsWith('restart ')).length, 2,
     'failed activation and rollback each attempt one management restart')
   t.ok(existsSync(restart.quarantineArgs))

@@ -191,7 +191,7 @@ export class ArbitrationService extends ServiceProvider {
       }
       // Throws ARBITRATION_BAD_APP_EVIDENCE with a specific reason on
       // shape mismatch. Caught nowhere here — propagates to the caller.
-      this._validateAppEvidence(params.type, params.appEvidence)
+      this._validateAppEvidence(params.type, params.appEvidence, params.respondent)
     }
 
     const id = crypto.randomBytes(16).toString('hex')
@@ -380,7 +380,7 @@ export class ArbitrationService extends ServiceProvider {
   // cryptographic re-check is `_verifyAppEvidence`, run at `evidence()` time
   // and by voters before they cast their vote.
 
-  _validateAppEvidence (type, ae) {
+  _validateAppEvidence (type, ae, respondent = null) {
     const size = JSON.stringify(ae).length
     if (size > MAX_APP_EVIDENCE_BYTES) {
       throw new Error('ARBITRATION_BAD_APP_EVIDENCE:oversized')
@@ -389,7 +389,7 @@ export class ArbitrationService extends ServiceProvider {
       case 'poker/missing-share':
         return this._validateMissingShare(ae)
       case 'poker/invalid-share':
-        return this._validateInvalidShare(ae)
+        return this._validateInvalidShare(ae, respondent)
       case 'poker/refused-reveal':
         return this._validateRefusedReveal(ae)
       default:
@@ -437,10 +437,16 @@ export class ArbitrationService extends ServiceProvider {
    *     cardIndex:   <int>,
    *     ciphertext:  <hex>,   // the deck ciphertext at cardIndex
    *     share:       <hex>,   // the respondent's published share
-   *     witness:     <object> // the falsifying witness (proof equation inputs)
+   *     respondent:  <hex 64>,
+   *     signedEntry: <object>, // respondent-signed share/reveal entry
+   *     publisherKeyEntry: <object>, // respondent-signed DKG round-2 entry
+   *     witness: {
+   *       context: <object>,   // protocol/table/hand/writer/kind/card/recipient
+   *       ...                  // proof equation inputs
+   *     }
    *   }
    */
-  _validateInvalidShare (ae) {
+  _validateInvalidShare (ae, respondent = null) {
     if (!isHexKey(ae.tableKey)) throw new Error('ARBITRATION_BAD_APP_EVIDENCE:tableKey')
     if (typeof ae.handId !== 'string' || ae.handId.length === 0 || ae.handId.length > 128) {
       throw new Error('ARBITRATION_BAD_APP_EVIDENCE:handId')
@@ -456,6 +462,18 @@ export class ArbitrationService extends ServiceProvider {
     }
     if (!ae.witness || typeof ae.witness !== 'object') {
       throw new Error('ARBITRATION_BAD_APP_EVIDENCE:witness')
+    }
+    if (!isHexKey(ae.respondent) || (respondent && ae.respondent.toLowerCase() !== respondent.toLowerCase())) {
+      throw new Error('ARBITRATION_BAD_APP_EVIDENCE:respondent')
+    }
+    if (!ae.signedEntry || typeof ae.signedEntry !== 'object') {
+      throw new Error('ARBITRATION_BAD_APP_EVIDENCE:signedEntry')
+    }
+    if (!ae.publisherKeyEntry || typeof ae.publisherKeyEntry !== 'object') {
+      throw new Error('ARBITRATION_BAD_APP_EVIDENCE:publisherKeyEntry')
+    }
+    if (!ae.witness.context || typeof ae.witness.context !== 'object') {
+      throw new Error('ARBITRATION_BAD_APP_EVIDENCE:context')
     }
   }
 
