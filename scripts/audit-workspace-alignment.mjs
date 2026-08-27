@@ -148,6 +148,7 @@ const startOs04Makefile = readText(hiverelayRoot, 'startos-0.4', 'Makefile')
 const startOs04Readme = readText(hiverelayRoot, 'startos-0.4', 'README.md')
 const startOs04AssetsReadme = readText(hiverelayRoot, 'startos-0.4', 'assets', 'README.md')
 const releaseStartos04Workflow = readText(hiverelayRoot, '.github', 'workflows', 'release-startos-0.4.yml')
+const startos04ContainerStoreSmokeWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'startos-04-container-store-smoke.yml')
 const resolveStartos04Release = readText(hiverelayRoot, 'scripts', 'resolve-startos-04-release.mjs')
 const resolveReusableReleaseImage = readText(hiverelayRoot, 'scripts', 'resolve-reusable-release-image.mjs')
 const selectReusableReleaseImageArtifact = readText(hiverelayRoot, 'scripts', 'select-reusable-release-image-artifact.mjs')
@@ -171,6 +172,7 @@ const testWorkflow = readText(hiverelayRoot, '.github', 'workflows', 'test.yml')
 const workflowTexts = [
   releaseWorkflow,
   releaseStartos04Workflow,
+  startos04ContainerStoreSmokeWorkflow,
   releasePreflightWorkflow,
   dockerPublishWorkflow,
   umbrelAppValidateWorkflow,
@@ -7935,6 +7937,22 @@ if (
   !releaseStartos04Workflow.includes('setup-build-env@') &&
   releaseStartos04Workflow.includes('runs-on: ubuntu-24.04') &&
   !releaseStartos04Workflow.includes('runs-on: ubuntu-latest') &&
+  releaseStartos04Workflow.includes('Enable Docker containerd image store') &&
+  releaseStartos04Workflow.includes('.features["containerd-snapshotter"] = true') &&
+  releaseStartos04Workflow.includes('sudo systemctl restart docker.service') &&
+  releaseStartos04Workflow.includes("docker info --format '{{json .DriverStatus}}'") &&
+  releaseStartos04Workflow.includes('.[0] == "driver-type" and .[1] == "io.containerd.snapshotter.v1"') &&
+  releaseStartos04Workflow.includes('Verify immutable image resolves for both StartOS architectures') &&
+  releaseStartos04Workflow.includes('expected_ref="$HIVERELAY_IMAGE_NAME:$' + '{HIVERELAY_RELEASE_TAG#v}@$HIVERELAY_IMAGE_DIGEST"') &&
+  releaseStartos04Workflow.includes('docker create "--platform=$platform" "$HIVERELAY_STARTOS_04_IMAGE_REF"') &&
+  releaseStartos04Workflow.indexOf('linux/arm64') < releaseStartos04Workflow.indexOf('linux/amd64') &&
+  startos04ContainerStoreSmokeWorkflow.includes('runs-on: ubuntu-24.04') &&
+  startos04ContainerStoreSmokeWorkflow.includes('Enable Docker containerd image store') &&
+  startos04ContainerStoreSmokeWorkflow.includes('Verify immutable image resolves for both StartOS architectures') &&
+  startos04ContainerStoreSmokeWorkflow.includes('0.26.0-rc.6@sha256:77acc64979219a56303b7a0d39faf26d2b11d9e74e77c850ae929802e63f6a82') &&
+  !startos04ContainerStoreSmokeWorkflow.includes('STARTOS_DEV_KEY') &&
+  !startos04ContainerStoreSmokeWorkflow.includes('gh release') &&
+  releaseStartos04WorkflowTest.includes('pull smoke uses the exact production container-store steps') &&
   releaseStartos04Workflow.includes('Install pinned StartOS filesystem tools') &&
   releaseStartos04Workflow.includes('squashfs-tools-ng=1.2.0-1') &&
   releaseStartos04Workflow.includes('squashfs-tools=1:4.6.1-1build1') &&
@@ -7961,6 +7979,9 @@ if (
   releaseStartos04Workflow.includes('node ../scripts/verify-startos-04-package-manifest.mjs') &&
   releaseStartos04Workflow.includes('--package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION"') &&
   releaseStartos04Workflow.indexOf('Install pinned StartOS filesystem tools') < releaseStartos04Workflow.indexOf('Install authenticated StartOS CLI') &&
+  releaseStartos04Workflow.indexOf('Enable Docker containerd image store') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
+  releaseStartos04Workflow.indexOf('Verify immutable image resolves for both StartOS architectures') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
+  releaseStartos04Workflow.indexOf('Verify immutable image resolves for both StartOS architectures') < releaseStartos04Workflow.indexOf('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1') &&
   releaseStartos04Workflow.indexOf('Install authenticated StartOS CLI') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
   releaseStartos04Workflow.indexOf('Install locked StartOS dependencies') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
   releaseStartos04Workflow.indexOf('Verify signed release image authority') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
@@ -7980,9 +8001,9 @@ if (
   releaseWorkflow.includes('node hiverelay/scripts/verify-published-startos-04-release.mjs') &&
   releaseWorkflow.includes('live_closure_artifact')
 ) {
-  pass('StartOS 0.4 release waits for a successful source run, checks out the exact tag, and authenticates pinned actions, filesystem helpers, CLI bytes, and child-image revisions before signing')
+  pass('StartOS 0.4 release waits for a successful source run, checks out the exact tag, enables the multi-platform containerd store, and authenticates pinned actions, filesystem helpers, CLI bytes, and child-image revisions before signing')
 } else {
-  fail('StartOS 0.4 release can run before source evidence, build a mismatched ref, or expose keys to an unverified action, filesystem helper, CLI, or image')
+  fail('StartOS 0.4 release can run before source evidence, use the single-platform Docker store, build a mismatched ref, or expose keys to an unverified action, filesystem helper, CLI, or image')
 }
 
 if (

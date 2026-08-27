@@ -49,7 +49,7 @@ dashboard configures only generic capacity, admission, transport/privacy roles,
 updates, evidence, and relay identity. Application/service selection belongs to
 the published compatibility appliance and does not carry into the blind product.
 
-**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.4** | **Canary: v0.26.0-rc.3** | **Status: v0.26.0-rc.6**
+**Open source (Apache 2.0, with the documented LGPL-3.0-only TrueNAS vendor subtree exception)** | **[GitHub](https://github.com/bigdestiny2/P2P-Hiverelay)** | **[npm](https://www.npmjs.com/package/p2p-hiverelay)** | **Stable: v0.24.4** | **Canary: v0.26.0-rc.3** | **Status: v0.26.0-rc.7**
 
 License scope is explicit: HiveRelay-authored source is Apache-2.0, while
 `truenas-app/templates/library/base_v2_3_8/` is redistributed under

@@ -11,6 +11,22 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+## [0.26.0-rc.7] — 2026-08-27
+
+StartOS 0.4 multi-platform image-store repair candidate. RC6 cleared the
+filesystem-helper defect and authenticated the signed release image, then
+failed closed when Docker's classic graphdriver store tried to materialize a
+second architecture under the same canonical OCI index digest.
+
+### Release closure
+- Enable Docker's containerd image store in the isolated StartOS 0.4 child and
+  fail closed unless Docker reports the `io.containerd.snapshotter.v1` driver.
+- Before installing package dependencies or exposing the StartOS developer key,
+  create and remove arm64 and amd64 containers in the same order as start-cli's
+  universal packer using the authenticated `tag@digest` image reference.
+- Preserve the digest-qualified image binding, both StartOS architectures,
+  runtime protocol, public-gateway posture, and existing fleet channels.
+
 ## [0.26.0-rc.6] — 2026-08-27
 
 StartOS 0.4 packaging-toolchain repair candidate. RC5 proved the exact-attempt

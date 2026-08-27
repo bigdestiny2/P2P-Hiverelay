@@ -104,8 +104,8 @@ const FIXED_AUTHORITY_PATHS = Object.freeze([
   'node_modules/esbuild/package.json'
 ])
 const LEGACY_FROZEN_SHA256 = Object.freeze({
-  'package.json': '88a9a184d338cb0c73077bd7989670719b8a7b44cd0c543a53795f09a3550654',
-  'package-lock.json': 'a98b4137f47ec19eea44596c82a76d087f9df91e7c58a4639b047332b4609806',
+  'package.json': 'e3cd6a88c5dc4b1f9776e1c4a89135eaface3db1d4ee2d4426717b797a11908c',
+  'package-lock.json': '63d862bed292ef69070ec6dad92038027144b45a13579eccbf621da7c58f0ce5',
   'patches/hypercore-storage+3.2.0.patch': 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53',
   'packages/blind-client/package.json': 'bda10754b89b255d178ddb4f0190f877a209ad143bebcce10876be80aefbfb29',
   'packages/blind-client/browser-artifact.js': '92f4daa973af957f295ce96c11e9684ad9a2313247832934b952819d2710204e',

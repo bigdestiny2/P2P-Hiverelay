@@ -2,7 +2,7 @@ name: blindspark
 
 services:
   blindspark:
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.6@sha256:77cd3c3453d868086cd89c1ece3de13aa60520b419eca620cc143a7799e9f2c5
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.7@sha256:77cd3c3453d868086cd89c1ece3de13aa60520b419eca620cc143a7799e9f2c5
     container_name: blindspark
     restart: unless-stopped
     entrypoint:
@@ -79,10 +79,10 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "0.26.0-rc.6"
+  version: "0.26.0-rc.7"
   update_at: "2026-08-27"
   release_notes:
-    en_US: HiveRelay 0.26.0-rc.6 package
+    en_US: HiveRelay 0.26.0-rc.7 package
   website: https://hiverelay.com
   repo: https://github.com/bigdestiny2/P2P-Hiverelay
   support: https://github.com/bigdestiny2/P2P-Hiverelay/issues
