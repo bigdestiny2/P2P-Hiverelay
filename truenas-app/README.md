@@ -10,7 +10,7 @@ Blindspark runs the released HiveRelay container as a TrueNAS Community app. It 
 
 ## Install defaults
 
-- Upstream HiveRelay release: `0.26.0-rc.5`
+- Upstream HiveRelay release: `0.26.0-rc.6`
 - Dashboard port: `30452` on the TrueNAS host
 - Persistent state: one `ixVolume` mounted at `/data`
 - Runtime user and group: `999:999`

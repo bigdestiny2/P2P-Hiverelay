@@ -45,7 +45,10 @@ concurrency:
 
 jobs:
   build-and-upload:
-    runs-on: ubuntu-latest
+    # start-cli 1.1.0 invokes Linux filesystem helpers from PATH while packing.
+    # Pin the runner so the signed apt archive and exact package versions below
+    # remain stable instead of drifting with ubuntu-latest.
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
       STARTOS_04_RELEASE_ASSET: blindspark-startos-0.4.s9pk
@@ -263,6 +266,20 @@ jobs:
       # reviewed Linux binary instead, authenticate its bytes before chmod or
       # first execution, and only then add its private directory to PATH. The
       # developer-key step below cannot run until this step succeeds.
+      - name: Install pinned StartOS filesystem tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends \
+            squashfs-tools-ng=1.2.0-1 \
+            squashfs-tools=1:4.6.1-1build1
+          [ "$(dpkg-query -W -f='${Version}' squashfs-tools-ng)" = '1.2.0-1' ]
+          [ "$(dpkg-query -W -f='${Version}' squashfs-tools)" = '1:4.6.1-1build1' ]
+          dpkg --verify squashfs-tools-ng squashfs-tools
+          [ "$(command -v tar2sqfs)" = /usr/bin/tar2sqfs ]
+          [ "$(command -v mksquashfs)" = /usr/bin/mksquashfs ]
+          [ "$(command -v unsquashfs)" = /usr/bin/unsquashfs ]
+
       - name: Install authenticated StartOS CLI
         run: bash scripts/install-startos-cli.sh "$RUNNER_TEMP/startos-cli-1.1.0" "$GITHUB_PATH"
 

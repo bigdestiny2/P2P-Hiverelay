@@ -2,7 +2,7 @@ manifestVersion: 1.1
 id: blindspark
 category: networking
 name: Blindspark
-version: "0.26.0-rc.5"
+version: "0.26.0-rc.6"
 tagline: A blind relay that keeps peer-to-peer apps online
 description: >-
   Blindspark turns your Umbrel into a blind relay for the Pear / Holepunch

@@ -21,8 +21,12 @@ const COSIGN_INSTALLER_ACTION_SHA = '6f9f17788090df1f26f669e9d70d6ae9567deba6'
 const COSIGN_RELEASE = 'v3.0.6'
 const START_CLI_URL = 'https://github.com/Start9Labs/start-technologies/releases/download/start-cli%2Fv1.1.0/start-cli_x86_64-linux'
 const START_CLI_SHA256 = '70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a'
+const STARTOS_RUNNER = 'ubuntu-24.04'
+const SQUASHFS_TOOLS_NG_VERSION = '1.2.0-1'
+const SQUASHFS_TOOLS_VERSION = '1:4.6.1-1build1'
 const UPLOAD_ARTIFACT_ACTION_SHA = '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
 const GITHUB_EXPRESSION = '$' + '{{'
+const DPKG_VERSION_FORMAT = '$' + '{Version}'
 
 test('StartOS 0.4 release workflow copies the generated ephemeral key', async (t) => {
   const fixture = await workflowFixture(t, 'generated-key')
@@ -196,10 +200,22 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
     t.ok(/@[a-f0-9]{40}$/.test(uses[1]), `child action is immutable: ${uses[1]}`)
   }
   t.is(workflow.includes('setup-build-env@'), false)
+  t.ok(workflow.includes(`runs-on: ${STARTOS_RUNNER}`))
+  t.is(workflow.includes('runs-on: ubuntu-latest'), false)
+  t.ok(workflow.includes('Install pinned StartOS filesystem tools'))
+  t.ok(workflow.includes(`squashfs-tools-ng=${SQUASHFS_TOOLS_NG_VERSION}`))
+  t.ok(workflow.includes(`squashfs-tools=${SQUASHFS_TOOLS_VERSION}`))
+  t.ok(workflow.includes(`dpkg-query -W -f='${DPKG_VERSION_FORMAT}' squashfs-tools-ng`))
+  t.ok(workflow.includes(`dpkg-query -W -f='${DPKG_VERSION_FORMAT}' squashfs-tools`))
+  t.ok(workflow.includes('dpkg --verify squashfs-tools-ng squashfs-tools'))
+  t.ok(workflow.includes('[ "$(command -v tar2sqfs)" = /usr/bin/tar2sqfs ]'))
+  t.ok(workflow.includes('[ "$(command -v mksquashfs)" = /usr/bin/mksquashfs ]'))
+  t.ok(workflow.includes('[ "$(command -v unsquashfs)" = /usr/bin/unsquashfs ]'))
   t.ok(workflow.includes('bash scripts/install-startos-cli.sh'))
   t.ok(installer.includes(`cli_url='${START_CLI_URL}'`))
   t.ok(installer.includes(`expected_sha='${START_CLI_SHA256}'`))
   t.ok(installer.includes("expected 'start-cli 1.1.0'"))
+  const filesystemTools = workflow.indexOf('Install pinned StartOS filesystem tools')
   const install = workflow.indexOf('Install authenticated StartOS CLI')
   const installDependencies = workflow.indexOf('Install locked StartOS dependencies')
   const exposeKey = workflow.indexOf('STARTOS_DEV_KEY:', install)
@@ -208,6 +224,7 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   const makeExecutable = installer.indexOf('chmod 700 "$cli_path"')
   const firstExecution = installer.indexOf('cli_version="$("$cli_path" --version)"')
   const exposePath = installer.indexOf('echo "$install_dir" >> "$github_path_file"')
+  t.ok(filesystemTools >= 0 && filesystemTools < install)
   t.ok(install >= 0 && install < exposeKey)
   t.ok(installDependencies > install && installDependencies < exposeKey)
   t.ok(download >= 0)

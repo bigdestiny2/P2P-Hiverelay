@@ -11,6 +11,24 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+## [0.26.0-rc.6] — 2026-08-27
+
+StartOS 0.4 packaging-toolchain repair candidate. RC5 proved the exact-attempt
+parent-run URL validation fix, then failed closed while packing because the
+Linux runner did not provide `tar2sqfs`, an external helper required by
+`start-cli` 1.1.0.
+
+### Release closure
+- Pin the isolated StartOS 0.4 child to Ubuntu 24.04 instead of the moving
+  `ubuntu-latest` label.
+- Install exact Ubuntu archive versions of `squashfs-tools-ng` and
+  `squashfs-tools`, and verify their installed versions plus the presence of
+  `tar2sqfs`, `mksquashfs`, and `unsquashfs` before installing the
+  authenticated CLI or exposing the StartOS developer key.
+- Keep runtime protocol, public-gateway posture, and fleet channels unchanged;
+  this candidate still requires complete release closure and an isolated Utah
+  canary soak before any promotion.
+
 ## [0.26.0-rc.5] — 2026-08-27
 
 Release-closure repair candidate. RC4 completed its source, npm, signed-image,

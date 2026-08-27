@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 const here = path.dirname(fileURLToPath(import.meta.url))
 const hiverelayRoot = path.resolve(here, '..')
 const workspaceRoot = path.resolve(hiverelayRoot, '..', '..')
+const dpkgVersionFormat = '$' + '{Version}'
 
 // The cross-workspace alignment checks read sibling monorepo repos under
 // workspaceRoot (the pear-ecosystem root): 01-browser/{pearbrowser-desktop,
@@ -7932,6 +7933,17 @@ if (
   releaseStartos04Workflow.includes('uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)') &&
   releaseStartos04Workflow.includes('uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)') &&
   !releaseStartos04Workflow.includes('setup-build-env@') &&
+  releaseStartos04Workflow.includes('runs-on: ubuntu-24.04') &&
+  !releaseStartos04Workflow.includes('runs-on: ubuntu-latest') &&
+  releaseStartos04Workflow.includes('Install pinned StartOS filesystem tools') &&
+  releaseStartos04Workflow.includes('squashfs-tools-ng=1.2.0-1') &&
+  releaseStartos04Workflow.includes('squashfs-tools=1:4.6.1-1build1') &&
+  releaseStartos04Workflow.includes(`dpkg-query -W -f='${dpkgVersionFormat}' squashfs-tools-ng`) &&
+  releaseStartos04Workflow.includes(`dpkg-query -W -f='${dpkgVersionFormat}' squashfs-tools`) &&
+  releaseStartos04Workflow.includes('dpkg --verify squashfs-tools-ng squashfs-tools') &&
+  releaseStartos04Workflow.includes('[ "$(command -v tar2sqfs)" = /usr/bin/tar2sqfs ]') &&
+  releaseStartos04Workflow.includes('[ "$(command -v mksquashfs)" = /usr/bin/mksquashfs ]') &&
+  releaseStartos04Workflow.includes('[ "$(command -v unsquashfs)" = /usr/bin/unsquashfs ]') &&
   releaseStartos04Workflow.includes('run: bash scripts/install-startos-cli.sh "$RUNNER_TEMP/startos-cli-1.1.0" "$GITHUB_PATH"') &&
   installStartos04Cli.includes('cli_url=\'https://github.com/Start9Labs/start-technologies/releases/download/start-cli%2Fv1.1.0/start-cli_x86_64-linux\'') &&
   installStartos04Cli.includes('expected_sha=\'70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a\'') &&
@@ -7948,6 +7960,7 @@ if (
   releaseStartos04Workflow.includes('manifest --format json') &&
   releaseStartos04Workflow.includes('node ../scripts/verify-startos-04-package-manifest.mjs') &&
   releaseStartos04Workflow.includes('--package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION"') &&
+  releaseStartos04Workflow.indexOf('Install pinned StartOS filesystem tools') < releaseStartos04Workflow.indexOf('Install authenticated StartOS CLI') &&
   releaseStartos04Workflow.indexOf('Install authenticated StartOS CLI') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
   releaseStartos04Workflow.indexOf('Install locked StartOS dependencies') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
   releaseStartos04Workflow.indexOf('Verify signed release image authority') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
@@ -7967,9 +7980,9 @@ if (
   releaseWorkflow.includes('node hiverelay/scripts/verify-published-startos-04-release.mjs') &&
   releaseWorkflow.includes('live_closure_artifact')
 ) {
-  pass('StartOS 0.4 release waits for a successful source run, checks out the exact tag, and authenticates pinned actions, CLI bytes, and child-image revisions before signing')
+  pass('StartOS 0.4 release waits for a successful source run, checks out the exact tag, and authenticates pinned actions, filesystem helpers, CLI bytes, and child-image revisions before signing')
 } else {
-  fail('StartOS 0.4 release can run before source evidence, build a mismatched ref, or expose keys to an unverified action, CLI, or image')
+  fail('StartOS 0.4 release can run before source evidence, build a mismatched ref, or expose keys to an unverified action, filesystem helper, CLI, or image')
 }
 
 if (
