@@ -198,6 +198,11 @@ test('StartOS parent authority allows an in-progress parent but binds exact succ
   }
   const accepted = verifyStartos04ParentRunAuthority(args)
   t.is(accepted.syncConclusion, 'success')
+  const attemptQualified = verifyStartos04ParentRunAuthority({
+    ...args,
+    run: startosParentRun({ url: `${args.expectedRunUrl}/attempts/${args.expectedRunAttempt}` })
+  })
+  t.is(attemptQualified.runUrl, args.expectedRunUrl)
   t.exception(
     () => verifyStartos04ParentRunAuthority({ ...args, requireTerminalSuccess: true }),
     /terminal run status/
@@ -224,6 +229,7 @@ test('StartOS parent authority allows an in-progress parent but binds exact succ
     [{ databaseId: 778 }, 'database id'],
     [{ attempt: 4 }, 'run attempt'],
     [{ url: `${args.expectedRunUrl}/wrong` }, 'run URL'],
+    [{ url: `${args.expectedRunUrl}/attempts/4` }, 'run URL'],
     [{ workflowName: 'Decoy release' }, 'workflow name'],
     [{ workflowPath: `.github/workflows/decoy.yml@refs/tags/${TAG}` }, 'workflow path'],
     [{ workflowPath: '.github/workflows/release-surfaces.yml@refs/heads/main' }, 'workflow path'],
@@ -386,6 +392,16 @@ test('reusable release run verifier binds id, attempt, source, event, and comple
   )
   t.is(accepted.status, 0, accepted.stderr)
 
+  const acceptedAttemptUrl = await runWithInput(
+    'scripts/verify-reusable-release-run.mjs',
+    args,
+    JSON.stringify(reusableReleaseRun({
+      databaseId: Number(runId),
+      url: `${runUrl}/attempts/2`
+    }))
+  )
+  t.is(acceptedAttemptUrl.status, 0, acceptedAttemptUrl.stderr)
+
   for (const event of ['release', 'workflow_dispatch']) {
     const acceptedEvent = await runWithInput(
       'scripts/verify-reusable-release-run.mjs',
@@ -410,7 +426,7 @@ test('reusable release run verifier binds id, attempt, source, event, and comple
   const adversarial = [
     [{ databaseId: 99999, url: runUrl }, 'database id'],
     [{ databaseId: Number(runId), url: runUrl, attempt: 3 }, 'run attempt'],
-    [{ databaseId: Number(runId), url: `${runUrl}/attempts/2` }, 'run URL'],
+    [{ databaseId: Number(runId), url: `${runUrl}/attempts/3` }, 'run URL'],
     [{ databaseId: Number(runId), url: runUrl, workflowName: 'Release StartOS 0.4 package' }, 'workflow name'],
     [{ databaseId: Number(runId), url: runUrl, workflowPath: '.github/workflows/not-release-surfaces.yml' }, 'workflow path'],
     [{ databaseId: Number(runId), url: runUrl, status: 'in_progress' }, 'run status'],

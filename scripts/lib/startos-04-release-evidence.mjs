@@ -235,7 +235,7 @@ export function verifyStartos04ParentRunAuthority ({
     String(run?.attempt ?? run?.run_attempt ?? run?.runAttempt ?? ''),
     expectedRunAttempt
   )
-  requireEqual('StartOS parent run URL', run?.url, expectedRunUrl)
+  requireExactRunUrl('StartOS parent run URL', run?.url, expectedRunUrl, expectedRunAttempt)
   requireEqual('StartOS parent workflow name', run?.workflowName, 'Release surfaces')
   requireTaggedWorkflowPath(
     'StartOS parent workflow path',
@@ -383,7 +383,7 @@ export function verifyReusableReleaseRunAuthority ({
     String(run?.attempt ?? run?.run_attempt ?? run?.runAttempt ?? ''),
     expectedRunAttempt
   )
-  requireEqual('reusable release run URL', run?.url, expectedRunUrl)
+  requireExactRunUrl('reusable release run URL', run?.url, expectedRunUrl, expectedRunAttempt)
   requireEqual('reusable release workflow name', run?.workflowName, 'Release surfaces')
   requireTaggedWorkflowPath(
     'reusable release workflow path',
@@ -1145,6 +1145,19 @@ function requireTaggedWorkflowPath (label, actual, expectedPath, expectedTag) {
   fail(
     `${label} must be ${JSON.stringify(expectedPath)} at exact tag ${JSON.stringify(expectedTag)}; ` +
     `got ${JSON.stringify(actual)}`
+  )
+}
+
+// `gh run view --attempt` reports the selected attempt using an
+// attempt-qualified URL, while release evidence intentionally stores the
+// canonical run URL. Both identify the same already-bound run and exact
+// attempt; reject every other URL shape.
+function requireExactRunUrl (label, actual, expectedRunUrl, expectedRunAttempt) {
+  const attemptUrl = `${expectedRunUrl}/attempts/${expectedRunAttempt}`
+  if (actual === expectedRunUrl || actual === attemptUrl) return expectedRunUrl
+  fail(
+    `${label} must be ${JSON.stringify(expectedRunUrl)} or ` +
+    `${JSON.stringify(attemptUrl)}; got ${JSON.stringify(actual)}`
   )
 }
 
