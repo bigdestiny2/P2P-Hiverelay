@@ -29,8 +29,8 @@
  *       proof: {
  *         A: <hex>, B: <hex>, z: <hex>  // each 32 bytes hex
  *       }
- *       // G is implied as the ed25519 base point. Override by adding
- *       // `G: <hex>` here if a future scheme uses a different generator.
+ *       // G is fixed to the canonical ed25519 base point. A redundant
+ *       // canonical encoding is accepted; any other value is inconclusive.
  *     }
  *   }
  *
@@ -57,6 +57,7 @@ import { SignedLog } from '../signed-log.js'
 import {
   verifyShareEquality,
   canonicalShareContext,
+  baseG,
   POINT_BYTES,
   SCALAR_BYTES
 } from './chaum-pedersen.js'
@@ -65,8 +66,7 @@ import {
  * Build a verifier function suitable for
  * `arbitration.setAppEvidenceVerifier('poker/invalid-share', fn)`.
  *
- * @param {object} [opts] Reserved for future extensions (curve override,
- *   transcript domain, etc.).
+ * @param {object} [opts] Reserved for future transcript extensions.
  * @returns {(ae: object) => { verdict: string, reason: string }}
  */
 export function makeInvalidShareVerifier (_opts = {}) {
@@ -93,10 +93,17 @@ export function makeInvalidShareVerifier (_opts = {}) {
     } catch (error) {
       return { verdict: 'inconclusive', reason: 'bad-context:' + error.message }
     }
-    // Optional G override; default to ed25519 base point in verifier.
-    const G = witness.G ? hexBuf(witness.G, POINT_BYTES) : undefined
-    if (witness.G && !G) {
-      return { verdict: 'inconclusive', reason: 'G-bad-hex' }
+    // This protocol fixes G to the ed25519 base point. G is claimant-controlled
+    // and is not part of either respondent-signed entry, so accepting an
+    // alternate value would let a claimant change the Fiat-Shamir challenge
+    // and turn a valid proof into a slashable verification failure. Preserve
+    // compatibility with clients that redundantly serialize the canonical G.
+    if (witness.G !== undefined) {
+      const suppliedG = hexBuf(witness.G, POINT_BYTES)
+      if (!suppliedG) return { verdict: 'inconclusive', reason: 'G-bad-hex' }
+      if (!b4a.equals(suppliedG, baseG())) {
+        return { verdict: 'inconclusive', reason: 'noncanonical-generator' }
+      }
     }
 
     for (const [name, val] of [['C1', C1], ['D', D], ['Y', Y], ['A', A], ['B', B], ['z', z]]) {
@@ -109,7 +116,7 @@ export function makeInvalidShareVerifier (_opts = {}) {
     const provenance = verifyProvenance(ae, context)
     if (!provenance.ok) return { verdict: 'inconclusive', reason: provenance.reason }
 
-    const r = verifyShareEquality({ G, Y, C1, D, A, B, z, context })
+    const r = verifyShareEquality({ Y, C1, D, A, B, z, context })
 
     if (r.valid) {
       // Proof verifies → share is valid → claimant's claim of invalidity

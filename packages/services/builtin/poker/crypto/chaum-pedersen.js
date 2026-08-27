@@ -57,25 +57,25 @@
 
 import sodium from 'sodium-universal'
 import b4a from 'b4a'
-// noble-curves provides a best-effort constant-time scalar field for
-// ed25519 (the scalar field has prime order ℓ, the group order). We use it
-// ONLY for the prover's `e * x mod ℓ` step, where x is a long-term secret
-// and timing leaks matter. Noble's `Fn.mul` is hardened against operand-
-// dependent execution time — it doesn't reach the rigour of a native
-// constant-time impl in C, but it's the best portable JS path available
-// and is what every modern audited JS crypto stack ships against.
-import { ed25519 as nobleEd25519 } from '@noble/curves/ed25519.js'
+// noble-curves provides the scalar-field operations used for the prover's
+// `e * x mod ℓ` step. Import the field primitive directly: importing the full
+// Ed25519 module also evaluates unrelated FROST/hash code that requires a
+// global TextEncoder and therefore cannot load in the Bare relay runtime.
+import { Field } from '@noble/curves/abstract/modular.js'
+
+const POINT_BYTES = 32
+const SCALAR_BYTES = 32
+const HASH_BYTES = 64 // we hash into 64 bytes then reduce mod ℓ
 
 // ed25519 group order ℓ = 2^252 + 27742317777372353535851937790883648493.
 // Sourced from RFC 8032 §5.1. Kept for documentation; the scalar arithmetic
-// itself runs through noble's `ed25519.Point.Fn` which encodes the same
-// constant. We assert at module load that the two agree, so any future
-// noble curve-parameter change can't silently desync this module.
+// itself runs through noble's little-endian field primitive. Assert its shape
+// at module load so a future dependency change cannot silently desync it.
 const ED25519_ORDER = 7237005577332262213973186563042994240857116359379907606001950938285454250989n
-if (nobleEd25519.Point.Fn.ORDER !== ED25519_ORDER) {
+const NOBLE_FN = Field(ED25519_ORDER, { isLE: true })
+if (NOBLE_FN.ORDER !== ED25519_ORDER || NOBLE_FN.BYTES !== SCALAR_BYTES || !NOBLE_FN.isLE) {
   throw new Error('chaum-pedersen: noble ed25519 scalar field order does not match RFC 8032 ℓ')
 }
-const NOBLE_FN = nobleEd25519.Point.Fn
 
 // DRI-387 replaces the unpublished game-protocol-v3 proof schema in place.
 // The game protocol version and the independently versioned proof domain are
@@ -87,10 +87,6 @@ const CARD_SHARE_PROTOCOL_VERSION = 3
 const CARD_SHARE_TRANSCRIPT_VERSION = 2
 const FS_DOMAIN = 'p2poker/card-share/chaum-pedersen/v2'
 const PROOF_KINDS = new Set(['share-commit', 'share-precommit', 'share-deliver', 'hole-reveal'])
-
-const POINT_BYTES = 32
-const SCALAR_BYTES = 32
-const HASH_BYTES = 64 // we hash into 64 bytes then reduce mod ℓ
 
 // CVE-2025-69277 regression vector. A vulnerable libsodium build accepted this
 // mixed-order encoding as a prime-order ed25519 point. Failing at module load

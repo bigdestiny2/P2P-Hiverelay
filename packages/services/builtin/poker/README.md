@@ -167,6 +167,13 @@ ws.start()
 arbitrationService.setAppEvidenceVerifier('poker/invalid-share', makeInvalidShareVerifier())
 ```
 
+> **Verifier rollout:** the context-bound v2 Fiat-Shamir transcript replaces
+> the unpublished v1 proof wire in place. A v2 verifier treats older signed
+> proof entries as inconclusive, but a v1 verifier can misclassify a valid v2
+> proof as `claim-supported`. During a staggered relay/client upgrade, leave
+> this slashing-grade verifier unregistered (or treat its result as manual and
+> non-slashing) until every proof producer and voting verifier uses protocol v3.
+
 The substrate is opt-in: relays that don't instantiate `PokerApp` are
 unaffected. Each layer above PokerApp is also opt-in — you can ship HTTP
 without WS, persistence without the verifier, etc.
