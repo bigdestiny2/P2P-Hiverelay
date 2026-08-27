@@ -13,10 +13,16 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.26.0-rc.5
+version: 0.26.0-rc.6
 release-notes: |
-  RC5 corrects StartOS parent-run URL validation for GitHub attempt-qualified
-  workflow URLs; no runtime protocol or fleet channel changes.
+  Release-closure packaging repair candidate. RC5 proved the exact-attempt
+  parent-run URL validation fix, but the StartOS 0.4 child failed closed because
+  its Linux runner did not provide the tar2sqfs helper required by start-cli
+  1.1.0. Pin the StartOS 0.4 child to Ubuntu 24.04 and install exact
+  signed-archive versions of squashfs-tools-ng and squashfs-tools before the
+  authenticated CLI or developer-key steps. Assert that tar2sqfs, mksquashfs,
+  and unsquashfs are present at their package-owned paths. Runtime protocol,
+  public-gateway posture, and fleet channels remain unchanged.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
