@@ -74,6 +74,17 @@ test('fleet updater routes dependency-install failures through rollback', (t) =>
   t.absent(updater.includes('git checkout --quiet "$CUR_SHA" || log "CRITICAL could not checkout previous SHA"'))
 })
 
+test('fleet updater and direct deploy fail closed below Node.js 20', (t) => {
+  const updaterGate = updater.indexOf('require_supported_node')
+  const controlResolution = updater.indexOf('CONTROL_RESOLUTION=')
+  const deployGate = deployVps.indexOf('Node.js >=20 is required before deployment')
+  const deployPull = deployVps.indexOf('git fetch origin main')
+
+  t.ok(updater.includes('Node.js >=20 is required; found $version'))
+  t.ok(updaterGate !== -1 && updaterGate < controlResolution)
+  t.ok(deployGate !== -1 && deployGate < deployPull)
+})
+
 test('fleet updater health-gates target and rollback runtime versions', (t) => {
   const expectedVersionArg = 'expected_version="' + '$' + '{1:-}"'
   const targetHealthGate = 'if healthy "' + '$' + '{TARGET#v}"; then'
@@ -206,6 +217,12 @@ test('deploy script keeps API keys out of world-readable systemd units', (t) => 
   t.ok(deployVps.includes('chmod 0600 /etc/hiverelay/hiverelay.env'))
   t.absent(deployVps.includes('Environment=HIVERELAY_API_KEY=API_KEY_PLACEHOLDER'))
   t.absent(deployVps.includes('sed -i "s/API_KEY_PLACEHOLDER'))
+  t.ok(deployVps.includes('HIVERELAY_FLEET_KNOWN_HOSTS'))
+  t.ok(deployVps.includes('StrictHostKeyChecking=yes'))
+  t.ok(deployVps.includes('UpdateHostKeys=no'))
+  t.ok(deployVps.includes('UserKnownHostsFile="$KNOWN_HOSTS"'))
+  t.ok(deployVps.includes('GlobalKnownHostsFile=/dev/null'))
+  t.absent(deployVps.includes('accept-new'))
 })
 
 test('deploy script computes MemoryHigh correctly for gigabyte relay limits', (t) => {

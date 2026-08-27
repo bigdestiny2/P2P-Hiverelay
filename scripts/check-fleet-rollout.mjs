@@ -23,9 +23,10 @@ Options:
   --channel <name|both|all>   Relay channel to check (default: both)
   --relays <path>             Fleet inventory JSON (default: fleet/relays.json)
   --channels <path>           Fleet channel targets JSON (default: fleet/channels.json)
-  --ssh-command <path>        SSH executable/fixture command (default: ssh)
+  --ssh-command <path>        Explicit SSH wrapper/executable (default: ssh)
   --ssh-key <path>            SSH key to use for every relay
-  --known-hosts <path>        Pinned OpenSSH known_hosts file (required for gateway)
+  --known-hosts <path>        Pinned OpenSSH known_hosts file (required unless an
+                              explicit --ssh-command wrapper owns host-key policy)
   --allowed-signers <path>    Trusted release signers (default: fleet/allowed-signers)
   --ssh-user <user>           SSH username (default: root)
   --repo <path>               Git repository containing the target tag
@@ -102,7 +103,8 @@ const channel = args.channel || process.env.HIVERELAY_FLEET_CHANNEL || 'both'
 const repoRoot = path.resolve(args.repo || defaultRepoRoot)
 const relaysPath = path.resolve(args.relays || path.join(repoRoot, 'fleet', 'relays.json'))
 const channelsPath = path.resolve(args.channels || path.join(repoRoot, 'fleet', 'channels.json'))
-const sshCommand = validateLocalCommand(args.sshCommand || process.env.HIVERELAY_FLEET_SSH_COMMAND || 'ssh')
+const explicitSshCommand = args.sshCommand || process.env.HIVERELAY_FLEET_SSH_COMMAND || ''
+const sshCommand = validateLocalCommand(explicitSshCommand || 'ssh')
 const sshKey = validateLocalPath(args.sshKey || process.env.HIVERELAY_FLEET_SSH_KEY || '', 'ssh-key')
 const knownHosts = validateLocalPath(args.knownHosts || process.env.HIVERELAY_FLEET_KNOWN_HOSTS || '', 'known-hosts')
 const allowedSignersPath = path.resolve(args.allowedSigners || path.join(repoRoot, 'fleet', 'allowed-signers'))
@@ -147,13 +149,12 @@ if (!relays.length) die(`No relays matched channel "${channel}" in ${relaysPath}
 
 if (gatewayEvidencePath) {
   if (!gatewayManifestPath) die('--gateway-manifest is required with --gateway-evidence.')
-  if (!knownHosts) die('--known-hosts is required with --gateway-evidence; accept-new host keys are refused.')
+  if (!knownHosts) die('--known-hosts is required with --gateway-evidence; unpinned host keys are refused.')
   if (!gatewayWindowStatePath) die('--gateway-window-state is required with --gateway-evidence.')
   if (!evidenceFile) die('--evidence is required with --gateway-evidence so the manifest-bound result is retained.')
   if (!['canary', 'stable', 'both'].includes(channel)) {
     die('Public gateway rollout requires --channel canary, stable, or both.')
   }
-  assertKnownHostsFile(knownHosts)
   readFleetMetadataFile(allowedSignersPath, 'trusted release allowed_signers')
   await verifySignedTargetTag(target)
   const taggedSha = await resolveTargetSha(target)
@@ -176,6 +177,11 @@ if (gatewayEvidencePath) {
   }
 } else if (gatewayManifestPath || gatewayWindowStatePath) {
   die('--gateway-manifest and --gateway-window-state require --gateway-evidence.')
+}
+
+if (knownHosts) assertKnownHostsFile(knownHosts)
+if (!dryRun && !knownHosts && !explicitSshCommand) {
+  die('--known-hosts is required for live rollout checks unless an explicit --ssh-command wrapper owns pinned host-key policy.')
 }
 
 console.log(`Fleet rollout target: ${target} (${targetSha})`)
@@ -752,15 +758,15 @@ async function probeRelay (relay) {
   const key = sshKey || normalizeInventoryKey(relay.sshKey)
   const sshArgs = [
     '-o', 'BatchMode=yes',
-    '-o', `StrictHostKeyChecking=${gatewayEvidencePath ? 'yes' : 'accept-new'}`,
+    '-o', 'StrictHostKeyChecking=yes',
+    '-o', 'UpdateHostKeys=no',
     '-o', 'ConnectTimeout=10',
     '-o', 'ServerAliveInterval=5',
     '-o', 'ServerAliveCountMax=2'
   ]
-  if (gatewayEvidencePath) {
-    // The operator-provisioned pin file is the only host-key authority for a
-    // gateway rollout. Do not silently accept a matching key or CA from the
-    // machine-wide OpenSSH trust store.
+  if (knownHosts) {
+    // When a pin file is provided it is the only host-key authority. Do not
+    // silently accept a matching key or CA from machine-wide OpenSSH trust.
     sshArgs.push('-o', `UserKnownHostsFile=${expandHome(knownHosts)}`)
     sshArgs.push('-o', 'GlobalKnownHostsFile=/dev/null')
   }

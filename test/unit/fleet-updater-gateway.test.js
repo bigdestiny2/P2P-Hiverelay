@@ -248,6 +248,7 @@ shift
 exec "$@"
 `)
   executable(path.join(bin, 'node'), `#!/bin/sh
+if [ "$1" = "--version" ]; then printf '%s\n' 'v22.0.0'; exit 0; fi
 script="$1"
 shift
 case "$script" in

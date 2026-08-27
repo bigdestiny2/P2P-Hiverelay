@@ -24,13 +24,15 @@ function have (bin) {
   return spawnSync('sh', ['-c', `command -v ${bin}`], { stdio: 'ignore' }).status === 0
 }
 
-function runInstaller (destdir, channel = 'canary', relay = 'utah') {
+function runInstaller (destdir, channel = 'canary', relay = 'utah-2gb-a', extraEnv = {}) {
   return spawnSync('bash', [installer, channel, relay], {
     encoding: 'utf8',
     env: {
       ...process.env,
       DESTDIR: destdir,
-      HIVERELAY_REPO_DIR: repoRoot
+      HIVERELAY_REPO_DIR: repoRoot,
+      HIVERELAY_NODE_BIN: process.execPath,
+      ...extraEnv
     }
   })
 }
@@ -56,7 +58,7 @@ test('updater installer is idempotent and preserves its root-only environment', 
   writeFileSync(envFile, original)
   chmodSync(envFile, 0o600)
 
-  const first = runInstaller(root, 'canary', 'utah')
+  const first = runInstaller(root, 'canary', 'utah-2gb-a')
   t.is(first.status, 0, first.stderr || first.stdout)
   t.is(readFileSync(envFile, 'utf8'), original, 'install preserves every operator setting byte')
   t.is(statSync(envFile).mode & 0o777, 0o600, 'environment is root-only')
@@ -76,7 +78,7 @@ test('updater installer is idempotent and preserves its root-only environment', 
   )
   t.alike(
     readFileSync(path.join(root, 'etc', 'hiverelay-updater.conf'), 'utf8').trim().split('\n'),
-    ['CHANNEL=canary', 'RELAY_NAME=utah', `REPO_DIR=${repoRoot}`]
+    ['CHANNEL=canary', 'RELAY_NAME=utah-2gb-a', `REPO_DIR=${repoRoot}`]
   )
 
   const second = runInstaller(root, 'stable', 'sing-1')
@@ -85,6 +87,19 @@ test('updater installer is idempotent and preserves its root-only environment', 
   t.ok(readFileSync(path.join(root, 'etc', 'hiverelay-updater.conf'), 'utf8').startsWith('CHANNEL=stable\n'))
   t.ok(readFileSync(path.join(root, 'etc', 'hiverelay-updater.conf'), 'utf8').includes('RELAY_NAME=sing-1\n'))
   t.ok(second.stdout.includes('skipped systemctl'), 'DESTDIR regression path never calls host systemd')
+})
+
+test('updater installer rejects Node.js below 20 before writing host state', (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'hr-updater-install-node-'))
+  t.teardown(() => rmSync(root, { recursive: true, force: true }))
+  const oldNode = path.join(root, 'node18')
+  writeFileSync(oldNode, '#!/bin/sh\nprintf \'v18.20.8\\n\'\n')
+  chmodSync(oldNode, 0o755)
+
+  const result = runInstaller(root, 'canary', 'utah-2gb-a', { HIVERELAY_NODE_BIN: oldNode })
+  t.not(result.status, 0)
+  t.ok(result.stderr.includes('Node.js >=20 is required; found v18.20.8'))
+  t.absent(existsSync(path.join(root, 'etc', 'hiverelay-updater.conf')))
 })
 
 test('updater installer requires a bounded canonical relay identity', (t) => {

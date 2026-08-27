@@ -33,6 +33,8 @@ test('fleet rollout evidence writer keeps a closed public schema', async (t) => 
   t.ok(script.includes('function assertFleetRolloutEvidenceSchema'))
   t.ok(script.includes("requireOnlyKeys('fleet rollout evidence'"))
   t.ok(script.includes('has unsupported fields'))
+  t.ok(script.includes('--known-hosts is required for live rollout checks unless an explicit --ssh-command wrapper owns pinned host-key policy.'))
+  t.absent(script.includes('accept-new'))
 })
 
 test('fleet rollout check verifies target sha and health through ssh probe', async (t) => {
@@ -44,7 +46,10 @@ test('fleet rollout check verifies target sha and health through ssh probe', asy
   const relaysPath = path.join(dir, 'relays.json')
   const sshPath = path.join(dir, 'mock-ssh.sh')
   const evidencePath = path.join(dir, 'fleet-rollout-evidence.json')
+  const sshArgsPath = path.join(dir, 'ssh-args.txt')
+  const knownHostsPath = path.join(dir, 'known_hosts')
   const channelsPath = await writeFixtureChannels(dir)
+  await writeFile(knownHostsPath, '127.0.0.1 ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFixtureOnly\n')
 
   const relaysJson = JSON.stringify({
     relays: [
@@ -61,6 +66,7 @@ test('fleet rollout check verifies target sha and health through ssh probe', asy
 
   await writeFile(sshPath, `#!/usr/bin/env bash
 set -euo pipefail
+printf '%s\n' "$@" > ${sh(sshArgsPath)}
 cat >/dev/null
 printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\n' '${TARGET_SHA}'
 `)
@@ -73,6 +79,7 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
     '--relays', relaysPath,
     '--channels', channelsPath,
     '--ssh-command', sshPath,
+    '--known-hosts', knownHostsPath,
     '--evidence', evidencePath,
     '--timeout-ms', '600000',
     '--interval-ms', '5000'
@@ -80,6 +87,12 @@ printf '%s\\tv9.9.9\\ttrue\\t42%%\\t9.9.9\\t{"running":true,"version":"9.9.9"}\\
 
   t.ok(stdout.includes('Checking 1 relay(s) on channel canary: mock-canary'))
   t.ok(stdout.includes('Fleet rollout verified: 1/1 relay(s) on v9.9.9'))
+  const sshArgs = await readFile(sshArgsPath, 'utf8')
+  t.ok(sshArgs.includes('StrictHostKeyChecking=yes'))
+  t.ok(sshArgs.includes('UpdateHostKeys=no'))
+  t.ok(sshArgs.includes(`UserKnownHostsFile=${knownHostsPath}`))
+  t.ok(sshArgs.includes('GlobalKnownHostsFile=/dev/null'))
+  t.absent(sshArgs.includes('accept-new'))
 
   const evidence = JSON.parse(await readFile(evidencePath, 'utf8'))
   t.is(evidence.schemaVersion, 1)

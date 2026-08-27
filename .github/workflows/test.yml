@@ -7,6 +7,19 @@ on:
     branches: [main]
 
 jobs:
+  production-install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      # This is the exact dependency command used by the relay updater. A clean
+      # runner proves every unpublished internal package resolves as a workspace.
+      - run: npm ci --omit=dev --no-audit --no-fund
+      - run: git diff --exit-code
+
   lint:
     runs-on: ubuntu-latest
     steps:

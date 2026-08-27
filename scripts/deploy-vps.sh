@@ -8,7 +8,17 @@
 set -euo pipefail
 
 SSH_KEY="${SSH_KEY:-$HOME/.ssh/hiverelay_fleet}"
+KNOWN_HOSTS="${HIVERELAY_FLEET_KNOWN_HOSTS:?Set HIVERELAY_FLEET_KNOWN_HOSTS to an absolute pinned known_hosts file}"
 API_KEY="${HIVERELAY_API_KEY:?Set HIVERELAY_API_KEY environment variable}"
+
+case "$KNOWN_HOSTS" in
+    /*) ;;
+    *) echo "HIVERELAY_FLEET_KNOWN_HOSTS must be an absolute path" >&2; exit 1 ;;
+esac
+if [ ! -r "$KNOWN_HOSTS" ] || [ ! -f "$KNOWN_HOSTS" ] || [ -L "$KNOWN_HOSTS" ]; then
+    echo "Pinned known_hosts file is missing, unreadable, or unsafe: $KNOWN_HOSTS" >&2
+    exit 1
+fi
 
 # Server IPs
 UTAH_IP="${UTAH_IP:-144.172.101.215}"
@@ -63,12 +73,31 @@ deploy_server() {
     echo "  Deploying to $NAME ($IP) [region=$REGION, operator=$OPERATOR, mem=$MAX_MEM, heap=${HEAP}M]"
     echo "═══════════════════════════════════════════════════"
 
-    ssh -i "$SSH_KEY" -o StrictHostKeyChecking=accept-new root@"$IP" << REMOTE_SCRIPT
-        set -e
-        API_KEY_B64='${API_KEY_B64}'
-        API_KEY_VALUE="\$(printf '%s' "\$API_KEY_B64" | base64 -d)"
+    ssh -i "$SSH_KEY" -o BatchMode=yes -o StrictHostKeyChecking=yes \
+        -o UpdateHostKeys=no -o UserKnownHostsFile="$KNOWN_HOSTS" \
+        -o GlobalKnownHostsFile=/dev/null root@"$IP" << REMOTE_SCRIPT
+		set -e
+		API_KEY_B64='${API_KEY_B64}'
+		API_KEY_VALUE="\$(printf '%s' "\$API_KEY_B64" | base64 -d)"
 
-        cd /root
+		# Fail before pull/install/service mutation when the relay cannot run this
+		# release line. The repository engines floor is Node.js 20.
+		NODE_VERSION="\$(node --version 2>/dev/null)" || {
+			echo "Node.js >=20 is required before deployment" >&2
+			exit 1
+		}
+		case "\$NODE_VERSION" in
+			v[0-9]*.[0-9]*.[0-9]*) ;;
+			*) echo "Unrecognized Node.js version: \$NODE_VERSION" >&2; exit 1 ;;
+		esac
+		NODE_MAJOR="\${NODE_VERSION#v}"
+		NODE_MAJOR="\${NODE_MAJOR%%.*}"
+		if [ "\$NODE_MAJOR" -lt 20 ]; then
+			echo "Node.js >=20 is required before deployment; found \$NODE_VERSION" >&2
+			exit 1
+		fi
+
+		cd /root
 
         # ─── 1. Pull latest code ───
         if [ -d hiverelay ]; then

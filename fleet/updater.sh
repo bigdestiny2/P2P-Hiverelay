@@ -132,6 +132,21 @@ esac
 log() { echo "[updater $(date -u +%FT%TZ)] $*"; }
 die() { log "ERR $*"; exit 1; }
 
+require_supported_node() {
+  local version major
+  command -v node >/dev/null 2>&1 || die "Node.js >=20 is required; node is not installed on PATH"
+  version="$(node --version 2>/dev/null)" || die "Node.js >=20 is required; could not read node --version"
+  if [[ ! "$version" =~ ^v([0-9]+)(\.[0-9]+){2}([-.][0-9A-Za-z.-]+)?$ ]]; then
+    die "Node.js >=20 is required; unrecognized version '$version'"
+  fi
+  major="${BASH_REMATCH[1]}"
+  [ "$major" -ge 20 ] || die "Node.js >=20 is required; found $version"
+}
+
+# Fail before channel resolution, fetch, checkout, dependency install, or any
+# service mutation. Releases in this repository declare the same runtime floor.
+require_supported_node
+
 stat_record() {
   stat -c '%u|%a|%h|%s|%d|%i|%Y|%Z' "$1" 2>/dev/null || \
     stat -f '%u|%Lp|%l|%z|%d|%i|%m|%c' "$1" 2>/dev/null

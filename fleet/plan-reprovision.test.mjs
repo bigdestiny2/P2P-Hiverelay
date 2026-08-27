@@ -24,8 +24,9 @@ test('current raw inventory fails closed instead of becoming PG-7 evidence', asy
 
   assert.equal(report.status, 'blocked')
   assert.equal(report.inventory.relayCount, 9)
-  assert.equal(report.inventory.channels.canary, 3)
-  assert.equal(report.inventory.channels.stable, 6)
+  assert.equal(report.inventory.channels.canary, 1)
+  assert.equal(report.inventory.channels.stable, 5)
+  assert.equal(report.inventory.channels.hold, 3)
   assert.equal(report.inventory.regionCount, 4)
   assert.equal(report.inventory.declaredNominalDiskGB, 2138)
   assert.equal(report.inventory.declaredDiskIsObservedCapacityEvidence, false)

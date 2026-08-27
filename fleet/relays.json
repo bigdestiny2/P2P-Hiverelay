@@ -6,7 +6,7 @@
       "publicIp": "144.172.116.110",
       "tailnet": null,
       "sshKey": "default",
-      "channel": "canary",
+      "channel": "hold",
       "region": "NA",
       "diskGB": 350,
       "role": "canary"
@@ -26,20 +26,20 @@
       "publicIp": "216.126.237.3",
       "tailnet": null,
       "sshKey": "~/.ssh/hiverelay_fleet",
-      "channel": "stable",
+      "channel": "canary",
       "region": "NA",
       "diskGB": 60,
-      "role": "seed"
+      "role": "canary"
     },
     {
       "name": "utah-0.5gb",
       "publicIp": "144.172.101.215",
       "tailnet": null,
       "sshKey": "default",
-      "channel": "canary",
+      "channel": "hold",
       "region": "NA",
       "diskGB": 20,
-      "role": "canary"
+      "role": "retired"
     },
     {
       "name": "utah-8gb",
@@ -76,7 +76,7 @@
       "publicIp": "45.59.123.112",
       "tailnet": null,
       "sshKey": "~/.ssh/hiverelay_fleet",
-      "channel": "canary",
+      "channel": "hold",
       "region": "EU",
       "diskGB": 484,
       "role": "seed"
