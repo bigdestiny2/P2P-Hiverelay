@@ -19,14 +19,11 @@ const FLEET_INVENTORY_SHA = crypto.createHash('sha256').update(readFileSync('fle
 const FLEET_CHANNEL_CONFIG_SHA = '3'.repeat(64)
 const VERIFY_RELEASE_EVIDENCE_SCRIPT = path.join(process.cwd(), 'scripts/verify-release-evidence.mjs')
 const FLEET_RELAYS = Object.freeze([
-  ['utah', 'canary', '42%'],
   ['utah-us', 'stable', '51%'],
-  ['utah-2gb-a', 'stable', '50%'],
-  ['utah-0.5gb', 'canary', '49%'],
+  ['utah-2gb-a', 'canary', '50%'],
   ['utah-8gb', 'stable', '48%'],
   ['sing-1', 'stable', '52%'],
   ['sing-2', 'stable', '53%'],
-  ['bern', 'canary', '54%'],
   ['dubai', 'stable', '47%']
 ])
 
@@ -796,7 +793,7 @@ test('release evidence verifier rejects unsupported fleet rollout sidecar fields
     ['targets', fleet => { fleet.channelConfig.targets.beta = 'v9.9.9' }, 'fleet rollout channel config targets has unsupported fields: beta'],
     ['probes', fleet => { fleet.probes.gateway = 'https://relay.example.com' }, 'fleet rollout probes has unsupported fields: gateway'],
     ['summary', fleet => { fleet.summary.marketplaceReady = fleet.relays.length }, 'fleet rollout summary has unsupported fields: marketplaceReady'],
-    ['relay', fleet => { fleet.relays[0].region = 'utah' }, 'fleet rollout relay utah has unsupported fields: region']
+    ['relay', fleet => { fleet.relays[0].region = 'utah' }, 'fleet rollout relay utah-us has unsupported fields: region']
   ]
 
   for (const [name, mutate, message] of cases) {
@@ -2148,7 +2145,7 @@ test('release evidence verifier rejects incomplete fleet package-version converg
       mutate: (body) => { body.summary.packageVersionMatches = body.relays.length - 1 }
     },
     {
-      label: 'fleet rollout relay utah packageVersionMatches',
+      label: 'fleet rollout relay utah-us packageVersionMatches',
       mutate: (body) => { body.relays[0].packageVersionMatches = false }
     }
   ]
@@ -2196,7 +2193,7 @@ test('release evidence verifier rejects stale fleet relay observation timestamps
 
   const cases = [
     {
-      label: 'fleet rollout relay utah observedAt',
+      label: 'fleet rollout relay utah-us observedAt',
       mutate: (body) => { delete body.relays[0].observedAt }
     },
     {

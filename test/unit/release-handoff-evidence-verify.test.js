@@ -23,14 +23,11 @@ const VERIFY_RELEASE_HANDOFF_EVIDENCE_SCRIPT = path.join(process.cwd(), 'scripts
 const FLEET_INVENTORY_SHA = crypto.createHash('sha256').update(readFileSync('fleet/relays.json')).digest('hex')
 const FLEET_CHANNEL_CONFIG_SHA = '3'.repeat(64)
 const FLEET_RELAYS = Object.freeze([
-  ['utah', 'canary'],
   ['utah-us', 'stable'],
-  ['utah-2gb-a', 'stable'],
-  ['utah-0.5gb', 'canary'],
+  ['utah-2gb-a', 'canary'],
   ['utah-8gb', 'stable'],
   ['sing-1', 'stable'],
   ['sing-2', 'stable'],
-  ['bern', 'canary'],
   ['dubai', 'stable']
 ])
 
@@ -889,7 +886,7 @@ test('release handoff verifier rejects stale fleet rollout evidence', async (t) 
   }
 
   t.ok(err)
-  t.ok(err.stderr.includes('fleet rollout relay utah healthy'))
+  t.ok(err.stderr.includes('fleet rollout relay utah-us healthy'))
 })
 
 test('release handoff verifier rejects unsafe fleet rollout probe timing', async (t) => {
@@ -961,7 +958,7 @@ test('release handoff verifier rejects unsupported fleet rollout sidecar fields'
     ['targets', fleet => { fleet.channelConfig.targets.beta = 'v9.9.9' }, 'fleet rollout channel config targets has unsupported fields: beta'],
     ['probes', fleet => { fleet.probes.gateway = 'https://relay.example.com' }, 'fleet rollout probes has unsupported fields: gateway'],
     ['summary', fleet => { fleet.summary.marketplaceReady = fleet.relays.length }, 'fleet rollout summary has unsupported fields: marketplaceReady'],
-    ['relay', fleet => { fleet.relays[0].region = 'utah' }, 'fleet rollout relay utah has unsupported fields: region']
+    ['relay', fleet => { fleet.relays[0].region = 'utah' }, 'fleet rollout relay utah-us has unsupported fields: region']
   ]
 
   for (const [name, mutate, message] of cases) {
@@ -1001,7 +998,7 @@ test('release handoff verifier rejects incomplete fleet package-version converge
       mutate: (fleet) => { fleet.summary.packageVersionMatches = fleet.relays.length - 1 }
     },
     {
-      label: 'fleet rollout relay utah packageVersionMatches',
+      label: 'fleet rollout relay utah-us packageVersionMatches',
       mutate: (fleet) => { fleet.relays[0].packageVersionMatches = false }
     }
   ]
@@ -1113,7 +1110,7 @@ test('release handoff verifier rejects fleet channel config proof drift', async 
 test('release handoff verifier rejects stale fleet relay observation timestamps', async (t) => {
   const cases = [
     {
-      label: 'fleet rollout relay utah observedAt',
+      label: 'fleet rollout relay utah-us observedAt',
       mutate: (fleet) => { delete fleet.relays[0].observedAt }
     },
     {

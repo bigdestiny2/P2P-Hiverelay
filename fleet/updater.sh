@@ -1156,7 +1156,12 @@ verify_public_gateway_retired() {
 deps_if_changed() { # $1=from-ref $2=to-ref
   if ! git diff --quiet "$1" "$2" -- package-lock.json 2>/dev/null; then
     log "package-lock changed -> reinstalling deps"
-    npm ci --omit=dev --no-audit --no-fund 2>&1 | tail -2
+    npm ci --omit=dev --no-audit --no-fund \
+      --include-workspace-root \
+      --workspace packages/core \
+      --workspace packages/services \
+      --workspace packages/client \
+      --workspace packages/verifier 2>&1 | tail -2
   fi
 }
 
@@ -1169,7 +1174,7 @@ rollback_to_previous() {
     log "failed public-t1 transition: invalidating target evidence and quarantining public app HTTPS before management rollback"
     contain_up_to_date_gateway_failure || containment_failed=1
   fi
-  if ! git checkout --quiet "$CUR_SHA"; then
+  if ! git checkout --quiet --force "$CUR_SHA"; then
     log "CRITICAL could not checkout previous SHA"
     exit 1
   fi
@@ -1236,7 +1241,7 @@ if ! git checkout --quiet "$TARGET"; then
   if [ "$PUBLIC_GATEWAY_REQUIRED" = 1 ]; then
     contain_up_to_date_gateway_failure || log "CRITICAL public edge containment was incomplete after target checkout failure"
   fi
-  git checkout --quiet "$CUR_SHA" || die "target checkout failed and prior SHA restoration also failed"
+  git checkout --quiet --force "$CUR_SHA" || die "target checkout failed and prior SHA restoration also failed"
   git diff --cached --quiet HEAD -- && verify_raw_tracked_tree || \
     die "target checkout failed and restored prior checkout does not match raw tracked blobs"
   die "checkout $TARGET failed; prior SHA restored"

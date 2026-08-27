@@ -32,13 +32,18 @@ test('production install resolves every internal dependency from its workspace',
 
 test('production lifecycle dependencies and clean-install CI gate are retained', (t) => {
   const workflow = readFileSync('.github/workflows/test.yml', 'utf8')
+  const install = 'npm ci --omit=dev --no-audit --no-fund --include-workspace-root --workspace packages/core --workspace packages/services --workspace packages/client --workspace packages/verifier'
 
   t.is(root.dependencies['patch-package'], '^8.0.1')
   t.absent(root.devDependencies['patch-package'])
   t.absent(lock.packages['node_modules/patch-package'].dev)
   t.ok(workflow.includes('production-install:'))
-  t.ok(workflow.includes('npm ci --omit=dev --no-audit --no-fund'))
-  t.ok(workflow.includes('git diff --exit-code'))
+  t.ok(workflow.includes('container: node:20-bookworm-slim@sha256:2cf067cfed83d5ea958367df9f966191a942351a2df77d6f0193e162b5febfc0'))
+  t.ok(workflow.includes(install))
+  t.ok(workflow.includes('test ! -e node_modules/@hiverelay/blind-peercred'))
+  t.ok(workflow.includes('/tmp/source-before.sha256'))
+  t.ok(workflow.includes('diff -u /tmp/source-before.sha256 /tmp/source-after.sha256'))
+  t.absent(workflow.includes('git diff --exit-code'))
 })
 
 function json (file) {
