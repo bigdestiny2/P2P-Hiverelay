@@ -104,7 +104,7 @@ const FIXED_AUTHORITY_PATHS = Object.freeze([
   'node_modules/esbuild/package.json'
 ])
 const LEGACY_FROZEN_SHA256 = Object.freeze({
-  'package.json': '1b3d4e67856c35d5008ee8aa974dd7bf06513397d44199462e71245445d0909a',
+  'package.json': '6f24a0d95daf1df51eb59dd680a5f725db9919d65e26aba8aa6f43eea8f698c3',
   'package-lock.json': '1207031d5f530594d6c3deb9370bce1c5b31a0c6ede8caf292653e018c2d75d4',
   'patches/hypercore-storage+3.2.0.patch': 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53',
   'packages/blind-client/package.json': 'bda10754b89b255d178ddb4f0190f877a209ad143bebcce10876be80aefbfb29',
@@ -635,7 +635,11 @@ async function inspectScratch (tmpRoot, state) {
     throw error
   }
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('frozen v1 scratch is not a real directory')
-  const real = await fs.realpath(scratch)
+  let real
+  try { real = await fs.realpath(scratch) } catch (error) {
+    if (error && error.code === 'ENOENT') return
+    throw error
+  }
   if (path.dirname(real) !== await fs.realpath(tmpRoot)) throw new Error('frozen v1 scratch escaped inherited TMPDIR')
   const identity = `${stat.dev}:${stat.ino}`
   if (state.activeRoot == null) {
