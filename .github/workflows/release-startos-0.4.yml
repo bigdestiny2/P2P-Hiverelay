@@ -91,6 +91,46 @@ jobs:
           echo "HIVERELAY_RELEASE_TAG=$tag" >> "$GITHUB_ENV"
           echo "HIVERELAY_RELEASE_SHA=$tag_sha" >> "$GITHUB_ENV"
 
+      # start-cli 1.1.0 packs a universal service by creating arm64 and amd64
+      # containers sequentially from the same digest-qualified OCI index. The
+      # classic Docker graphdriver store can retain only one platform variant
+      # for a canonical digest and fails the second create with "cannot
+      # overwrite digest". Docker's containerd image store retains both
+      # variants under the same immutable index, which preserves the release
+      # binding without weakening it to a mutable tag.
+      - name: Enable Docker containerd image store
+        run: |
+          set -euo pipefail
+          current="$(mktemp "$RUNNER_TEMP/docker-daemon-current.XXXXXX")"
+          next="$(mktemp "$RUNNER_TEMP/docker-daemon-containerd.XXXXXX")"
+          trap 'rm -f "$current" "$next"' EXIT
+          if sudo test -f /etc/docker/daemon.json; then
+            sudo cat /etc/docker/daemon.json > "$current"
+          else
+            printf '{}\n' > "$current"
+          fi
+          jq -e 'type == "object"' "$current" >/dev/null
+          jq '.features = (.features // {}) | .features["containerd-snapshotter"] = true' \
+            "$current" > "$next"
+          sudo install -o root -g root -m 0644 "$next" /etc/docker/daemon.json
+          sudo systemctl restart docker.service
+          ready=0
+          for attempt in $(seq 1 30); do
+            if docker info >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            echo 'Docker did not become ready after enabling the containerd image store.' >&2
+            exit 1
+          fi
+          driver_status="$(docker info --format '{{json .DriverStatus}}')"
+          printf '%s\n' "$driver_status"
+          printf '%s\n' "$driver_status" | jq -e \
+            'any(.[]; .[0] == "driver-type" and .[1] == "io.containerd.snapshotter.v1")' >/dev/null
+
       - name: Install cosign verifier
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
         with:
@@ -323,6 +363,30 @@ jobs:
           }
           verify_child amd64 "$HIVERELAY_IMAGE_AMD64_DIGEST"
           verify_child arm64 "$HIVERELAY_IMAGE_ARM64_DIGEST"
+
+      # Rehearse the exact operation/order used by start-cli's universal packer
+      # before npm install or developer-key exposure. This deterministically
+      # reproduces the RC6 failure on the classic store and proves both variants
+      # can coexist under the authenticated top-level digest.
+      - name: Verify immutable image resolves for both StartOS architectures
+        run: |
+          set -euo pipefail
+          expected_ref="$HIVERELAY_IMAGE_NAME:${HIVERELAY_RELEASE_TAG#v}@$HIVERELAY_IMAGE_DIGEST"
+          if [ "$HIVERELAY_STARTOS_04_IMAGE_REF" != "$expected_ref" ]; then
+            echo 'StartOS image ref drifted from the authenticated release digest.' >&2
+            exit 1
+          fi
+          container=''
+          trap 'if [ -n "$container" ]; then docker rm -f "$container" >/dev/null 2>&1 || true; fi' EXIT
+          for platform in linux/arm64 linux/amd64; do
+            container="$(docker create "--platform=$platform" "$HIVERELAY_STARTOS_04_IMAGE_REF")"
+            if ! [[ "$container" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "Docker returned a malformed container id for $platform." >&2
+              exit 1
+            fi
+            docker rm "$container" >/dev/null
+            container=''
+          done
 
       - name: Install locked StartOS dependencies
         working-directory: startos-0.4

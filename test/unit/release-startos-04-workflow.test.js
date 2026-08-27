@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 
 const WORKFLOW = path.join(process.cwd(), '.github/workflows/release-startos-0.4.yml')
+const STORE_SMOKE_WORKFLOW = path.join(process.cwd(), '.github/workflows/startos-04-container-store-smoke.yml')
 const LEGACY_WORKFLOW = path.join(process.cwd(), '.github/workflows/release-surfaces.yml')
 const MAKEFILE = path.join(process.cwd(), 'startos-0.4/Makefile')
 const START_CLI_INSTALLER = path.join(process.cwd(), 'scripts/install-startos-cli.sh')
@@ -24,6 +25,7 @@ const START_CLI_SHA256 = '70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b1
 const STARTOS_RUNNER = 'ubuntu-24.04'
 const SQUASHFS_TOOLS_NG_VERSION = '1.2.0-1'
 const SQUASHFS_TOOLS_VERSION = '1:4.6.1-1build1'
+const CONTAINERD_DRIVER = 'io.containerd.snapshotter.v1'
 const UPLOAD_ARTIFACT_ACTION_SHA = '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
 const GITHUB_EXPRESSION = '$' + '{{'
 const DPKG_VERSION_FORMAT = '$' + '{Version}'
@@ -202,6 +204,16 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   t.is(workflow.includes('setup-build-env@'), false)
   t.ok(workflow.includes(`runs-on: ${STARTOS_RUNNER}`))
   t.is(workflow.includes('runs-on: ubuntu-latest'), false)
+  t.ok(workflow.includes('Enable Docker containerd image store'))
+  t.ok(workflow.includes('.features["containerd-snapshotter"] = true'))
+  t.ok(workflow.includes('sudo systemctl restart docker.service'))
+  t.ok(workflow.includes("docker info --format '{{json .DriverStatus}}'"))
+  t.ok(workflow.includes('.[0] == "driver-type"'))
+  t.ok(workflow.includes(`.[1] == "${CONTAINERD_DRIVER}"`))
+  t.ok(workflow.includes('Verify immutable image resolves for both StartOS architectures'))
+  t.ok(workflow.includes('expected_ref="$HIVERELAY_IMAGE_NAME:$' + '{HIVERELAY_RELEASE_TAG#v}@$HIVERELAY_IMAGE_DIGEST"'))
+  t.ok(workflow.includes('docker create "--platform=$platform" "$HIVERELAY_STARTOS_04_IMAGE_REF"'))
+  t.ok(workflow.includes('Docker returned a malformed container id for $platform.'))
   t.ok(workflow.includes('Install pinned StartOS filesystem tools'))
   t.ok(workflow.includes(`squashfs-tools-ng=${SQUASHFS_TOOLS_NG_VERSION}`))
   t.ok(workflow.includes(`squashfs-tools=${SQUASHFS_TOOLS_VERSION}`))
@@ -215,6 +227,8 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   t.ok(installer.includes(`cli_url='${START_CLI_URL}'`))
   t.ok(installer.includes(`expected_sha='${START_CLI_SHA256}'`))
   t.ok(installer.includes("expected 'start-cli 1.1.0'"))
+  const containerdStore = workflow.indexOf('Enable Docker containerd image store')
+  const architectureProbe = workflow.indexOf('Verify immutable image resolves for both StartOS architectures')
   const filesystemTools = workflow.indexOf('Install pinned StartOS filesystem tools')
   const install = workflow.indexOf('Install authenticated StartOS CLI')
   const installDependencies = workflow.indexOf('Install locked StartOS dependencies')
@@ -224,6 +238,10 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   const makeExecutable = installer.indexOf('chmod 700 "$cli_path"')
   const firstExecution = installer.indexOf('cli_version="$("$cli_path" --version)"')
   const exposePath = installer.indexOf('echo "$install_dir" >> "$github_path_file"')
+  t.ok(containerdStore >= 0 && containerdStore < install)
+  t.ok(architectureProbe > containerdStore && architectureProbe < installDependencies)
+  const architectureProbeScript = workflow.slice(architectureProbe, installDependencies)
+  t.ok(architectureProbeScript.indexOf('linux/arm64') < architectureProbeScript.indexOf('linux/amd64'))
   t.ok(filesystemTools >= 0 && filesystemTools < install)
   t.ok(install >= 0 && install < exposeKey)
   t.ok(installDependencies > install && installDependencies < exposeKey)
@@ -236,6 +254,61 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   t.ok(makefile.includes('REQUIRE_RELEASE_IMAGE_DIGEST ?= 0'))
   t.ok(makefile.includes('HIVERELAY_STARTOS_04_IMAGE_REF := $(IMAGE_TAG)'))
   t.ok(makefile.includes('universal: check-release-image'))
+})
+
+test('StartOS 0.4 release rehearses the exact arm64 then amd64 digest creates', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-startos-04-platforms-'))
+  t.teardown(async () => rm(root, { recursive: true, force: true }))
+  const bin = path.join(root, 'bin')
+  const log = path.join(root, 'docker.log')
+  await mkdir(bin)
+  await writeFile(path.join(bin, 'docker'), `#!/bin/sh
+set -eu
+printf '%s\\n' "$*" >> "$DOCKER_LOG"
+case "$1" in
+  create) printf '%064d\\n' 1 ;;
+  rm) ;;
+  *) exit 64 ;;
+esac
+`)
+  await chmod(path.join(bin, 'docker'), 0o755)
+
+  const digest = `sha256:${'a'.repeat(64)}`
+  const imageRef = `ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.7@${digest}`
+  const result = await runInlineWorkflowStep('Verify immutable image resolves for both StartOS architectures', root, {
+    PATH: `${bin}:${process.env.PATH || ''}`,
+    DOCKER_LOG: log,
+    HIVERELAY_IMAGE_NAME: 'ghcr.io/bigdestiny2/p2p-hiverelay',
+    HIVERELAY_RELEASE_TAG: 'v0.26.0-rc.7',
+    HIVERELAY_IMAGE_DIGEST: digest,
+    HIVERELAY_STARTOS_04_IMAGE_REF: imageRef
+  })
+
+  t.is(result.status, 0, result.stderr)
+  t.alike((await readFile(log, 'utf8')).trim().split('\n'), [
+    `create --platform=linux/arm64 ${imageRef}`,
+    `rm ${'1'.padStart(64, '0')}`,
+    `create --platform=linux/amd64 ${imageRef}`,
+    `rm ${'1'.padStart(64, '0')}`
+  ])
+})
+
+test('StartOS 0.4 pull smoke uses the exact production container-store steps', async (t) => {
+  const [releaseEnable, smokeEnable, releaseProbe, smokeProbe, smokeWorkflow] = await Promise.all([
+    workflowStepScript('Enable Docker containerd image store', WORKFLOW),
+    workflowStepScript('Enable Docker containerd image store', STORE_SMOKE_WORKFLOW),
+    workflowStepScript('Verify immutable image resolves for both StartOS architectures', WORKFLOW),
+    workflowStepScript('Verify immutable image resolves for both StartOS architectures', STORE_SMOKE_WORKFLOW),
+    readFile(STORE_SMOKE_WORKFLOW, 'utf8')
+  ])
+
+  t.is(smokeEnable, releaseEnable)
+  t.is(smokeProbe, releaseProbe)
+  t.ok(smokeWorkflow.includes('runs-on: ubuntu-24.04'))
+  t.ok(smokeWorkflow.includes('permissions:\n  contents: read'))
+  t.ok(smokeWorkflow.includes('0.26.0-rc.6@sha256:77acc64979219a56303b7a0d39faf26d2b11d9e74e77c850ae929802e63f6a82'))
+  t.is(smokeWorkflow.includes('STARTOS_DEV_KEY'), false)
+  t.is(smokeWorkflow.includes('gh release'), false)
 })
 
 test('StartOS 0.4 image authority uses the pinned cosign v3 verify interface', async (t) => {

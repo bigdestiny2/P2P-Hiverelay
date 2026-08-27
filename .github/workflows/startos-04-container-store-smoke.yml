@@ -1,0 +1,86 @@
+name: StartOS 0.4 container store smoke
+
+# Exercise the exact multi-platform image operation that blocked RC6 without
+# using release credentials or mutating a GitHub Release. Path filtering keeps
+# the image pull scoped to StartOS release-pipeline changes.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-startos-0.4.yml'
+      - '.github/workflows/startos-04-container-store-smoke.yml'
+      - 'scripts/audit-workspace-alignment.mjs'
+      - 'test/unit/release-startos-04-workflow.test.js'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: startos-04-container-store-smoke-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  multi-platform-digest:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      HIVERELAY_IMAGE_NAME: ghcr.io/bigdestiny2/p2p-hiverelay
+      HIVERELAY_RELEASE_TAG: v0.26.0-rc.6
+      HIVERELAY_IMAGE_DIGEST: sha256:77acc64979219a56303b7a0d39faf26d2b11d9e74e77c850ae929802e63f6a82
+      HIVERELAY_STARTOS_04_IMAGE_REF: ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.6@sha256:77acc64979219a56303b7a0d39faf26d2b11d9e74e77c850ae929802e63f6a82
+    steps:
+      - name: Enable Docker containerd image store
+        run: |
+          set -euo pipefail
+          current="$(mktemp "$RUNNER_TEMP/docker-daemon-current.XXXXXX")"
+          next="$(mktemp "$RUNNER_TEMP/docker-daemon-containerd.XXXXXX")"
+          trap 'rm -f "$current" "$next"' EXIT
+          if sudo test -f /etc/docker/daemon.json; then
+            sudo cat /etc/docker/daemon.json > "$current"
+          else
+            printf '{}\n' > "$current"
+          fi
+          jq -e 'type == "object"' "$current" >/dev/null
+          jq '.features = (.features // {}) | .features["containerd-snapshotter"] = true' \
+            "$current" > "$next"
+          sudo install -o root -g root -m 0644 "$next" /etc/docker/daemon.json
+          sudo systemctl restart docker.service
+          ready=0
+          for attempt in $(seq 1 30); do
+            if docker info >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            echo 'Docker did not become ready after enabling the containerd image store.' >&2
+            exit 1
+          fi
+          driver_status="$(docker info --format '{{json .DriverStatus}}')"
+          printf '%s\n' "$driver_status"
+          printf '%s\n' "$driver_status" | jq -e \
+            'any(.[]; .[0] == "driver-type" and .[1] == "io.containerd.snapshotter.v1")' >/dev/null
+
+      - name: Verify immutable image resolves for both StartOS architectures
+        run: |
+          set -euo pipefail
+          expected_ref="$HIVERELAY_IMAGE_NAME:${HIVERELAY_RELEASE_TAG#v}@$HIVERELAY_IMAGE_DIGEST"
+          if [ "$HIVERELAY_STARTOS_04_IMAGE_REF" != "$expected_ref" ]; then
+            echo 'StartOS image ref drifted from the authenticated release digest.' >&2
+            exit 1
+          fi
+          container=''
+          trap 'if [ -n "$container" ]; then docker rm -f "$container" >/dev/null 2>&1 || true; fi' EXIT
+          for platform in linux/arm64 linux/amd64; do
+            container="$(docker create "--platform=$platform" "$HIVERELAY_STARTOS_04_IMAGE_REF")"
+            if ! [[ "$container" =~ ^[a-f0-9]{64}$ ]]; then
+              echo "Docker returned a malformed container id for $platform." >&2
+              exit 1
+            fi
+            docker rm "$container" >/dev/null
+            container=''
+          done
+
+      - name: Confirm no release mutation
+        run: printf '%s\n' 'Container-store smoke completed without release credentials or publication.'
