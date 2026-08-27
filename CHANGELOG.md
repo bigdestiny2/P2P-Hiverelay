@@ -11,6 +11,39 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+## [0.26.0-rc.4] — 2026-08-27
+
+Promotable fleet-repair candidate for the 0.26 train. It supersedes rc.3,
+which passed its source test suite but could not complete a clean production
+install on the raw relay fleet because the lockfile pointed unpublished
+`@hiverelay/blind-*` workspaces at the product release version.
+
+### Release and fleet
+- Restore the private blind-workspace lock entries and cross-dependencies to
+  their independent `1.0.0-rc.1` line, and add the relay updater's exact
+  `npm ci --omit=dev` command as a clean CI gate.
+- Keep `patch-package` available during production-only installs so the
+  audited `hypercore-storage` migration patch is applied before startup.
+- Fail before fetch, checkout, install, or service mutation when a relay runs
+  Node.js older than 20; apply the same preflight to installer and VPS paths.
+- Require pinned SSH host-key trust for deployment and rollout checks. Remove
+  the previous `accept-new` fallback.
+- Align the tracked pilot inventory with the controlled rollout posture: one
+  reachable Node-20 canary, with retired, Node-18, and unreachable candidates
+  held out of the rc.4 observation cohort.
+
+### Poker proof hardening (DRI-387)
+- Bind card-share Chaum-Pedersen proofs to the complete signed game context and
+  authenticate respondent share and DKG-key provenance before arbitration.
+- Reject claimant-supplied noncanonical generators as inconclusive, closing a
+  substitution path that could turn a valid proof into a supported claim.
+- Load the scalar field through a Bare-compatible Noble primitive and add
+  Node/Bare regression coverage.
+- The v2 proof/verifier remains opt-in and dormant for rolling deployment.
+  Operators must upgrade every producer and arbitration voter and drain legacy
+  disputes before enabling automated verdicts; a 0.24/rc.3 verifier is not
+  wire-compatible with a v2 proof.
+
 ## [0.26.0-rc.3] — 2026-08-19
 
 First release candidate of the 0.26.0 train to reach the release surfaces, cut

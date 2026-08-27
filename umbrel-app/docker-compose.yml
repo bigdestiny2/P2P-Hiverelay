@@ -37,7 +37,7 @@ services:
     # replaces both tag and digest together, so until the next cut the pin
     # (currently the published v0.24.3 multi-arch index — v0.24.4 was
     # npm-only) deliberately lags the manifest version in umbrel-app.yml.
-    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.24.3@sha256:cb104aa65d7e8f57766ea7d60d64dbb6b081a0b9fc5b318c0fa75cb22c0d31c8
+    image: ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.4@sha256:0fb632fd2f479e3853d866cf840ae1b24922a2a8b4d1e9ed772b0a859bd15f41
     init: true
     restart: on-failure
     stop_grace_period: 1m
