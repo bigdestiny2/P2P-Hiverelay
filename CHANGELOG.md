@@ -11,6 +11,20 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+## [0.26.0-rc.5] — 2026-08-27
+
+Release-closure repair candidate. RC4 completed its source, npm, signed-image,
+manifest, and pushed-image smoke gates, but failed closed before producing the
+StartOS 0.4 package and final closure evidence.
+
+### Release closure
+- Accept GitHub CLI's exact attempt-qualified parent-run URL only when both the
+  run ID and attempt already match the independently supplied release inputs.
+- Continue to export and bind the canonical run URL in release evidence, and
+  reject mismatched attempts or every other URL shape.
+- Keep fleet channels unchanged; this candidate must complete release closure
+  and isolated canary observation before any channel promotion.
+
 ## [0.26.0-rc.4] — 2026-08-27
 
 Promotable fleet-repair candidate for the 0.26 train. It supersedes rc.3,
