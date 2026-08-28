@@ -583,17 +583,22 @@ test('StartOS 0.4 release evidence is deterministic across equivalent source wor
   t.is(await readFile(firstOut, 'utf8'), await readFile(secondOut, 'utf8'))
 
   const body = JSON.parse(await readFile(firstOut, 'utf8'))
+  t.is(body.schemaVersion, 2)
   t.alike(body.release, { version: TAG, tagSha: TAG_SHA })
   t.is(body.image.ref, IMAGE_REF)
   t.alike(body.image.platforms, [
     { os: 'linux', architecture: 'amd64', digest: AMD64_DIGEST, revision: TAG_SHA },
     { os: 'linux', architecture: 'arm64', digest: ARM64_DIGEST, revision: TAG_SHA }
   ])
-  t.is(body.toolchain.evidenceSemantics, 'declared-source-build-contract-and-current-inspection-runtime')
+  t.is(body.toolchain.evidenceSemantics, 'digest-bound-authoring-manifest-and-current-packed-inspection')
   t.alike(body.toolchain.artifactBuildProvenance, {
-    status: 'not-embedded-or-verifiable-from-s9pk',
-    claim: 'source-and-workflow-contract-only'
+    status: 'build-input-ref-verified-but-not-embedded-in-packed-manifest',
+    claim: 'the exact built javascript authoring manifest is checked under the release environment; start-cli intentionally replaces its registry source with packed after embedding image files'
   })
+  t.is(body.toolchain.buildContract.javascriptBundle.path, 'startos-0.4/javascript/index.js')
+  t.is(body.toolchain.buildContract.javascriptBundle.artifactName, 'startos-0.4-javascript-index.js')
+  t.is(body.toolchain.buildContract.javascriptBundle.sha256, sha256(Buffer.from('stable built javascript bundle')))
+  t.is(body.toolchain.buildContract.invariant, 'verified-identical-before-and-after-start-cli-pack')
   t.is(body.toolchain.sourceCheckoutAction.commit, CHECKOUT_ACTION_SHA)
   t.is(body.toolchain.sourceCheckoutAction.evidenceRole, 'workflow-source-checkout-contract')
   t.is(body.toolchain.startCli.version, '1.1.0')
@@ -602,13 +607,58 @@ test('StartOS 0.4 release evidence is deterministic across equivalent source wor
   t.is(body.toolchain.startCli.evidenceRole, 'fixed-url-hash-verified-workflow-build-and-current-inspection-contract')
   t.is(body.toolchain.startSdk.version, '2.0.1')
   t.is(body.toolchain.startSdk.evidenceRole, 'source-lockfile-build-contract')
-  t.alike(body.artifact.manifest, {
-    id: 'blindspark',
-    version: PACKAGE_VERSION,
-    runtimeImage: {
+  t.alike(body.artifact.manifests.transition.canonicalization, {
+    jsonObjectKeys: 'lexicographically-sorted',
+    setValuedArrays: [
+      'hardwareRequirements.arch',
+      'hardwareRequirements.device.*.capabilities',
+      'images.*.arch',
+      'plugins',
+      'satisfies',
+      'volumes'
+    ]
+  })
+  t.alike(body.artifact.manifests.transition.permittedMutations, [
+    'gitHash:null-to-release-tag-sha',
+    'images.*.source:digest-bound-dockerTag-to-packed'
+  ])
+  t.is(body.artifact.manifests.transition.architectureFilter, 'none-direct-pack')
+  t.ok(/^[a-f0-9]{64}$/.test(body.artifact.manifests.transition.authoringCanonicalSha256))
+  t.ok(/^[a-f0-9]{64}$/.test(body.artifact.manifests.transition.packedCanonicalSha256))
+  t.alike(body.artifact.manifests.authoring, {
+    artifactName: 'startos-0.4-authoring-manifest.json',
+    evidenceSemantics: 'same-built-javascript-module-under-digest-bound-release-environment',
+    identity: {
       id: 'blindspark',
-      ref: IMAGE_REF,
-      architectures: ['aarch64', 'x86_64']
+      version: PACKAGE_VERSION,
+      gitHash: null,
+      osVersion: '0.4.0-beta.10',
+      sdkVersion: '2.0.1',
+      runtimeImage: {
+        id: 'blindspark',
+        source: 'dockerTag',
+        ref: IMAGE_REF,
+        architectures: ['aarch64', 'x86_64'],
+        emulateMissingAs: 'x86_64',
+        nvidiaContainer: false
+      }
+    }
+  })
+  t.alike(body.artifact.manifests.packed, {
+    evidenceSemantics: 'post-pack-start-cli-1.1.0-inspection-with-embedded-image-source',
+    identity: {
+      id: 'blindspark',
+      version: PACKAGE_VERSION,
+      gitHash: TAG_SHA,
+      osVersion: '0.4.0-beta.10',
+      sdkVersion: '2.0.1',
+      runtimeImage: {
+        id: 'blindspark',
+        source: 'packed',
+        architectures: ['aarch64', 'x86_64'],
+        emulateMissingAs: 'x86_64',
+        nvidiaContainer: false
+      }
     }
   })
   t.is(body.artifact.signerIdentity.status, 'not-exposed-by-start-cli-1.1.0')
@@ -626,6 +676,71 @@ test('StartOS 0.4 release evidence verification fails closed on artifact drift',
   const verified = await writeEvidence(fixture, '333', ['--verify', out])
   t.is(verified.status, 1)
   t.ok(verified.stderr.includes('does not match the exact tag, image, toolchain, manifest identity, commitment, and package bytes'))
+})
+
+test('StartOS 0.4 release evidence cannot rebaseline a post-pack javascript bundle mutation', async (t) => {
+  const fixture = await evidenceFixture(t, { runId: '337' })
+  await writeFile(fixture.javascriptBundle, 'mutated after the verified pack boundary')
+  const result = await writeEvidence(fixture, '337', ['--out', path.join(fixture.dir, 'mutated.json')])
+  t.is(result.status, 1)
+  t.ok(result.stderr.includes('built javascript bundle SHA-256'))
+})
+
+test('StartOS 0.4 release evidence permits only schema-set ordering across the full manifest transition', async (t) => {
+  const ordered = await evidenceFixture(t, { runId: '338' })
+  const authoring = JSON.parse(await readFile(ordered.authoringManifest, 'utf8'))
+  const packed = JSON.parse(await readFile(ordered.packedManifest, 'utf8'))
+  authoring.volumes = ['z-data', 'a-data']
+  packed.volumes = ['a-data', 'z-data']
+  authoring.plugins = ['z-plugin', 'a-plugin']
+  packed.plugins = ['a-plugin', 'z-plugin']
+  authoring.satisfies = ['2.0.0:0', '1.0.0:0']
+  packed.satisfies = ['1.0.0:0', '2.0.0:0']
+  authoring.hardwareRequirements.arch = ['x86_64', 'aarch64']
+  packed.hardwareRequirements.arch = ['aarch64', 'x86_64']
+  authoring.hardwareRequirements.device = [{
+    description: 'CPU capabilities',
+    class: 'processor',
+    product: null,
+    vendor: null,
+    capabilities: ['sse4', 'aes']
+  }]
+  packed.hardwareRequirements.device = [{
+    description: 'CPU capabilities',
+    class: 'processor',
+    product: null,
+    vendor: null,
+    capabilities: ['aes', 'sse4']
+  }]
+  await Promise.all([
+    writeFile(ordered.authoringManifest, JSON.stringify(authoring, null, 2) + '\n'),
+    writeFile(ordered.packedManifest, JSON.stringify(packed, null, 2) + '\n')
+  ])
+  const accepted = await writeEvidence(ordered, '338', ['--out', path.join(ordered.dir, 'ordered.json')])
+  t.is(accepted.status, 0, accepted.stderr)
+
+  const drifted = await evidenceFixture(t, { runId: '339' })
+  const driftedPacked = JSON.parse(await readFile(drifted.packedManifest, 'utf8'))
+  driftedPacked.title = 'Substituted package title'
+  await writeFile(drifted.packedManifest, JSON.stringify(driftedPacked, null, 2) + '\n')
+  const rejected = await writeEvidence(drifted, '339', ['--out', path.join(drifted.dir, 'drifted.json')])
+  t.is(rejected.status, 1)
+  t.ok(rejected.stderr.includes('differs from the full canonical authoring manifest'))
+})
+
+test('StartOS 0.4 release evidence rejects empty or symlinked javascript bundles', async (t) => {
+  const empty = await evidenceFixture(t, { runId: '335' })
+  await writeFile(empty.javascriptBundle, '')
+  const emptyResult = await writeEvidence(empty, '335', ['--out', path.join(empty.dir, 'empty.json')])
+  t.is(emptyResult.status, 1)
+  t.ok(emptyResult.stderr.includes('javascript bundle size must be between 1'))
+
+  const linked = await evidenceFixture(t, { runId: '336' })
+  await unlink(linked.javascriptBundle)
+  await symlink(linked.package, linked.javascriptBundle)
+  const linkedResult = await writeEvidence(linked, '336', ['--out', path.join(linked.dir, 'linked.json')])
+  t.is(linkedResult.status, 1)
+  t.ok(linkedResult.stderr.includes('javascript bundle must be a regular non-symlink file'))
 })
 
 test('published StartOS 0.4 closure verifier binds source evidence and immutable assets', async (t) => {
@@ -647,7 +762,7 @@ test('published StartOS 0.4 closure verifier binds source evidence and immutable
   t.is(accepted.status, 0, accepted.stderr)
 
   const evidence = JSON.parse(await readFile(out, 'utf8'))
-  evidence.artifact.manifest.runtimeImage.ref = `${IMAGE_NAME}:${VERSION}`
+  evidence.artifact.manifests.authoring.identity.runtimeImage.ref = `${IMAGE_NAME}:${VERSION}`
   await writeFile(out, JSON.stringify(evidence, null, 2) + '\n')
   const rejected = await run('scripts/verify-published-startos-04-release.mjs', args)
   t.is(rejected.status, 1)
@@ -667,12 +782,16 @@ test('final release closure binds exact child artifact, independent inspection, 
   const copies = {
     artifactPackage: path.join(artifactDir, PACKAGE_NAME),
     artifactStartosEvidence: path.join(artifactDir, 'startos-0.4-release-evidence.json'),
+    artifactAuthoringManifest: path.join(artifactDir, 'startos-0.4-authoring-manifest.json'),
+    artifactJavascriptBundle: path.join(artifactDir, 'startos-0.4-javascript-index.js'),
     releasePackage: path.join(releaseDir, PACKAGE_NAME),
     releaseStartosEvidence: path.join(releaseDir, 'startos-0.4-release-evidence.json')
   }
   await Promise.all([
     copyFile(fixture.package, copies.artifactPackage),
     copyFile(startosEvidence, copies.artifactStartosEvidence),
+    copyFile(fixture.authoringManifest, copies.artifactAuthoringManifest),
+    copyFile(fixture.javascriptBundle, copies.artifactJavascriptBundle),
     copyFile(fixture.package, copies.releasePackage),
     copyFile(startosEvidence, copies.releaseStartosEvidence)
   ])
@@ -681,7 +800,15 @@ test('final release closure binds exact child artifact, independent inspection, 
   const artifactArchive = path.join(fixture.dir, 'child-artifact.zip')
   const imageAuthorityMetadata = path.join(fixture.dir, 'image-authority-artifact.json')
   const imageAuthorityArchive = path.join(fixture.dir, 'image-authority-artifact.zip')
-  const zipped = await exec('zip', ['-q', '-j', artifactArchive, copies.artifactPackage, copies.artifactStartosEvidence])
+  const zipped = await exec('zip', [
+    '-q',
+    '-j',
+    artifactArchive,
+    copies.artifactPackage,
+    copies.artifactStartosEvidence,
+    copies.artifactAuthoringManifest,
+    copies.artifactJavascriptBundle
+  ])
   t.is(zipped.status, 0, zipped.stderr)
   const archiveStat = await stat(artifactArchive)
   const liveArtifact = successfulChildArtifact({
@@ -710,6 +837,7 @@ test('final release closure binds exact child artifact, independent inspection, 
   t.is(verified.status, 0, verified.stderr)
 
   const body = JSON.parse(await readFile(closure, 'utf8'))
+  t.is(body.schemaVersion, 2)
   t.is(body.status, 'verified-startos-0.4-closure')
   t.is(body.sourceCheckpointEvidence.workflowStatus, 'checkpoint-passed-pending-sync-completion-and-startos-0.4-closure')
   t.is(body.sourceCheckpointEvidence.runAttempt, '3')
@@ -718,6 +846,18 @@ test('final release closure binds exact child artifact, independent inspection, 
   t.is(body.startos04.childWorkflow.runId, '900')
   t.is(body.startos04.immutableArtifact.sourceRunAttempt, '2')
   t.ok(/^[a-f0-9]{64}$/.test(body.startos04.inspectedPackage.commitmentSha256))
+  t.is(
+    body.startos04.inspectedPackage.javascriptBundleSha256,
+    sha256(Buffer.from('stable built javascript bundle'))
+  )
+  t.is(body.startos04.inspectedPackage.authoringManifest.gitHash, null)
+  t.is(body.startos04.inspectedPackage.authoringManifest.runtimeImage.ref, IMAGE_REF)
+  t.is(body.startos04.inspectedPackage.packedManifest.gitHash, TAG_SHA)
+  t.is(body.startos04.inspectedPackage.packedManifest.runtimeImage.source, 'packed')
+  t.alike(
+    body.startos04.inspectedPackage.manifestTransition,
+    JSON.parse(await readFile(startosEvidence, 'utf8')).artifact.manifests.transition
+  )
   t.is(body.startos04.inspectedPackage.signerIdentity.status, 'not-exposed-by-start-cli-1.1.0')
   t.is(body.publication.atomicity, 'non-atomic')
   t.ok(body.publication.surfacesThatMayPrecedeClosure.includes('startos-0.4-release-package-and-evidence-pair'))
@@ -777,6 +917,30 @@ test('final release closure binds exact child artifact, independent inspection, 
   t.is(wrongArtifact.status, 1)
   t.ok(wrongArtifact.stderr.includes('artifact source run id'))
   await writeFile(artifactMetadata, JSON.stringify(successfulChildArtifact(), null, 2) + '\n')
+
+  const artifactAuthoringRaw = await readFile(copies.artifactAuthoringManifest, 'utf8')
+  const driftedArtifactAuthoring = JSON.parse(artifactAuthoringRaw)
+  driftedArtifactAuthoring.title = 'Drifted immutable authoring title'
+  await writeFile(copies.artifactAuthoringManifest, JSON.stringify(driftedArtifactAuthoring, null, 2) + '\n')
+  const wrongAuthoringBody = await run(
+    'scripts/write-release-closure-evidence.mjs',
+    [...args, '--out', path.join(fixture.dir, 'wrong-authoring-body.json')]
+  )
+  t.is(wrongAuthoringBody.status, 1)
+  t.ok(wrongAuthoringBody.stderr.includes('canonical authoring manifest SHA-256'))
+  await writeFile(copies.artifactAuthoringManifest, artifactAuthoringRaw)
+
+  const packedRaw = await readFile(fixture.packedManifest, 'utf8')
+  const driftedPackedBody = JSON.parse(packedRaw)
+  driftedPackedBody.releaseNotes = { en_US: 'Substituted after pack' }
+  await writeFile(fixture.packedManifest, JSON.stringify(driftedPackedBody, null, 2) + '\n')
+  const wrongPackedBody = await run(
+    'scripts/write-release-closure-evidence.mjs',
+    [...args, '--out', path.join(fixture.dir, 'wrong-packed-body.json')]
+  )
+  t.is(wrongPackedBody.status, 1)
+  t.ok(wrongPackedBody.stderr.includes('differs from the full canonical authoring manifest'))
+  await writeFile(fixture.packedManifest, packedRaw)
 
   await writeFile(copies.releasePackage, 'substituted mutable release package')
   const substituted = await run('scripts/write-release-closure-evidence.mjs', [...args, '--verify', closure])
@@ -858,7 +1022,26 @@ test('StartOS 0.4 child image verifier requires the exact source revision label'
   t.ok(rejected.stderr.includes('org.opencontainers.image.revision label'))
 })
 
-test('StartOS 0.4 package manifest verifier rejects unrelated digest text and wrong identity', async (t) => {
+test('StartOS 0.4 manifest verifier separates digest-bound authoring input from packed output', async (t) => {
+  const authoring = packageManifest({ id: 'blindspark', version: PACKAGE_VERSION, imageRef: IMAGE_REF })
+  const acceptedAuthoring = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'authoring',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION,
+    '--image-ref', IMAGE_REF
+  ], JSON.stringify(authoring))
+  t.is(acceptedAuthoring.status, 0, acceptedAuthoring.stderr)
+
+  const packed = packedPackageManifest({ id: 'blindspark', version: PACKAGE_VERSION })
+  const acceptedPacked = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'packed',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION
+  ], JSON.stringify(packed))
+  t.is(acceptedPacked.status, 0, acceptedPacked.stderr)
+
   const wrongRuntime = packageManifest({
     id: 'blindspark',
     version: PACKAGE_VERSION,
@@ -866,7 +1049,9 @@ test('StartOS 0.4 package manifest verifier rejects unrelated digest text and wr
     description: `decoy ${IMAGE_REF}`
   })
   const wrongImage = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'authoring',
     '--tag', TAG,
+    '--release-sha', TAG_SHA,
     '--package-version', PACKAGE_VERSION,
     '--image-ref', IMAGE_REF
   ], JSON.stringify(wrongRuntime))
@@ -875,7 +1060,9 @@ test('StartOS 0.4 package manifest verifier rejects unrelated digest text and wr
 
   const staleVersion = packageManifest({ id: 'blindspark', version: `${VERSION}:999`, imageRef: IMAGE_REF })
   const wrongVersion = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'authoring',
     '--tag', TAG,
+    '--release-sha', TAG_SHA,
     '--package-version', PACKAGE_VERSION,
     '--image-ref', IMAGE_REF
   ], JSON.stringify(staleVersion))
@@ -885,12 +1072,93 @@ test('StartOS 0.4 package manifest verifier rejects unrelated digest text and wr
   const duplicateImage = packageManifest({ id: 'blindspark', version: PACKAGE_VERSION, imageRef: IMAGE_REF })
   duplicateImage.images.decoy = duplicateImage.images.blindspark
   const wrongShape = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'authoring',
     '--tag', TAG,
+    '--release-sha', TAG_SHA,
     '--package-version', PACKAGE_VERSION,
     '--image-ref', IMAGE_REF
   ], JSON.stringify(duplicateImage))
   t.is(wrongShape.status, 1)
   t.ok(wrongShape.stderr.includes('image ids'))
+
+  const mutablePackedManifest = packedPackageManifest({ id: 'blindspark', version: PACKAGE_VERSION })
+  mutablePackedManifest.images.blindspark.source = { dockerTag: IMAGE_REF }
+  const mutablePacked = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'packed',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION
+  ], JSON.stringify(mutablePackedManifest))
+  t.is(mutablePacked.status, 1)
+  t.ok(mutablePacked.stderr.includes('packed runtime image source'))
+
+  const refClaimOnPacked = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'packed',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION,
+    '--image-ref', IMAGE_REF
+  ], JSON.stringify(packed))
+  t.is(refClaimOnPacked.status, 1)
+  t.ok(refClaimOnPacked.stderr.includes('--image-ref is forbidden'))
+
+  const missingSource = packedPackageManifest({ id: 'blindspark', version: PACKAGE_VERSION })
+  delete missingSource.images.blindspark.source
+  const malformedPacked = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'packed',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION
+  ], JSON.stringify(missingSource))
+  t.is(malformedPacked.status, 1)
+  t.ok(malformedPacked.stderr.includes('runtime image config fields'))
+
+  const dirtyAuthoring = packageManifest({
+    id: 'blindspark',
+    version: PACKAGE_VERSION,
+    imageRef: IMAGE_REF,
+    gitHash: TAG_SHA
+  })
+  const rejectedAuthoringGit = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'authoring',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION,
+    '--image-ref', IMAGE_REF
+  ], JSON.stringify(dirtyAuthoring))
+  t.is(rejectedAuthoringGit.status, 1)
+  t.ok(rejectedAuthoringGit.stderr.includes('authoring manifest gitHash'))
+
+  const wrongPackedGit = packedPackageManifest({ id: 'blindspark', version: PACKAGE_VERSION, gitHash: 'f'.repeat(40) })
+  const rejectedPackedGit = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'packed',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION
+  ], JSON.stringify(wrongPackedGit))
+  t.is(rejectedPackedGit.status, 1)
+  t.ok(rejectedPackedGit.stderr.includes('packed manifest gitHash'))
+
+  const wrongSdk = packedPackageManifest({ id: 'blindspark', version: PACKAGE_VERSION, sdkVersion: '2.0.2' })
+  const rejectedSdk = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'packed',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION
+  ], JSON.stringify(wrongSdk))
+  t.is(rejectedSdk.status, 1)
+  t.ok(rejectedSdk.stderr.includes('SDK version'))
+
+  const extraImageField = packedPackageManifest({ id: 'blindspark', version: PACKAGE_VERSION })
+  extraImageField.images.blindspark.dockerTag = IMAGE_REF
+  const rejectedConfig = await runWithInput('scripts/verify-startos-04-package-manifest.mjs', [
+    '--manifest-kind', 'packed',
+    '--tag', TAG,
+    '--release-sha', TAG_SHA,
+    '--package-version', PACKAGE_VERSION
+  ], JSON.stringify(extraImageField))
+  t.is(rejectedConfig.status, 1)
+  t.ok(rejectedConfig.stderr.includes('runtime image config fields'))
 })
 
 async function evidenceFixture (t, { runId, generatedAt = '2026-08-21T00:00:00.000Z' }) {
@@ -900,7 +1168,9 @@ async function evidenceFixture (t, { runId, generatedAt = '2026-08-21T00:00:00.0
   const releaseEvidence = path.join(dir, 'release-evidence.json')
   const packageFile = path.join(dir, PACKAGE_NAME)
   const commitment = path.join(dir, 'commitment.txt')
-  const manifest = path.join(dir, 'manifest.json')
+  const javascriptBundle = path.join(dir, 'javascript-index.js')
+  const authoringManifest = path.join(dir, 'authoring-manifest.json')
+  const packedManifest = path.join(dir, 'packed-manifest.json')
   const imageManifest = {
     schemaVersion: 1,
     generatedAt,
@@ -954,13 +1224,28 @@ async function evidenceFixture (t, { runId, generatedAt = '2026-08-21T00:00:00.0
     writeFile(releaseEvidence, JSON.stringify(release, null, 2) + '\n'),
     writeFile(packageFile, 'stable package bytes'),
     writeFile(commitment, `Root Sighash: ${'1'.repeat(64)}\nMax Size: 1048576\n`),
-    writeFile(manifest, JSON.stringify(packageManifest({
+    writeFile(javascriptBundle, 'stable built javascript bundle'),
+    writeFile(authoringManifest, JSON.stringify(packageManifest({
       id: 'blindspark',
       version: PACKAGE_VERSION,
       imageRef: IMAGE_REF
+    }), null, 2) + '\n'),
+    writeFile(packedManifest, JSON.stringify(packedPackageManifest({
+      id: 'blindspark',
+      version: PACKAGE_VERSION
     }), null, 2) + '\n')
   ])
-  return { commitment, dir, imageManifestEvidence, manifest, package: packageFile, releaseEvidence }
+  return {
+    authoringManifest,
+    commitment,
+    dir,
+    imageManifestEvidence,
+    javascriptBundle,
+    javascriptBundleSha256: sha256(Buffer.from('stable built javascript bundle')),
+    packedManifest,
+    package: packageFile,
+    releaseEvidence
+  }
 }
 
 function writeEvidence (fixture, runId, tail) {
@@ -972,23 +1257,82 @@ function writeEvidence (fixture, runId, tail) {
     '--image-manifest-evidence', fixture.imageManifestEvidence,
     '--package', fixture.package,
     '--commitment', fixture.commitment,
-    '--manifest', fixture.manifest,
+    '--javascript-bundle', fixture.javascriptBundle,
+    '--javascript-bundle-sha256', fixture.javascriptBundleSha256,
+    '--authoring-manifest', fixture.authoringManifest,
+    '--packed-manifest', fixture.packedManifest,
     ...tail
   ])
 }
 
-function packageManifest ({ id, version, imageRef, description = '' }) {
+function packageManifest ({
+  id,
+  version,
+  imageRef,
+  description = { short: 'Blind relay', long: 'Blind relay package' },
+  gitHash = null,
+  osVersion = '0.4.0-beta.10',
+  sdkVersion = '2.0.1'
+}) {
   return {
     id,
     version,
+    canMigrateTo: '*',
+    canMigrateFrom: '*',
+    title: 'Blindspark',
     description,
+    releaseNotes: { en_US: 'Release notes' },
+    gitHash,
+    license: 'apache-2.0',
+    packageRepo: 'https://github.com/bigdestiny2/P2P-Hiverelay',
+    upstreamRepo: 'https://github.com/bigdestiny2/P2P-Hiverelay',
+    marketingUrl: 'https://hiverelay.com/',
+    donationUrl: null,
+    osVersion,
+    sdkVersion,
+    hardwareAcceleration: false,
+    userspaceFilesystems: false,
+    virtualNetworking: false,
+    plugins: [],
+    satisfies: [],
+    volumes: ['main'],
+    dependencies: {},
+    hardwareRequirements: {
+      device: [],
+      ram: null,
+      arch: null
+    },
     images: {
       blindspark: {
         source: { dockerTag: imageRef },
-        arch: ['aarch64', 'x86_64']
+        arch: ['x86_64', 'aarch64'],
+        emulateMissingAs: 'x86_64',
+        nvidiaContainer: false
       }
     }
   }
+}
+
+function packedPackageManifest ({
+  id,
+  version,
+  description = { short: 'Blind relay', long: 'Blind relay package' },
+  gitHash = TAG_SHA,
+  osVersion = '0.4.0-beta.10',
+  sdkVersion = '2.0.1'
+}) {
+  const manifest = packageManifest({
+    id,
+    version,
+    imageRef: IMAGE_REF,
+    description,
+    gitHash,
+    osVersion,
+    sdkVersion
+  })
+  manifest.images.blindspark.source = 'packed'
+  manifest.images.blindspark.arch = ['aarch64', 'x86_64']
+  return manifest
 }
 
 async function sdkContractRepoFixture (t) {
@@ -1189,7 +1533,9 @@ function closureArgs (fixture, copies, childRun, artifactMetadata, imageAuthorit
     '--release-package', copies.releasePackage,
     '--release-startos-evidence', copies.releaseStartosEvidence,
     '--commitment', fixture.commitment,
-    '--manifest', fixture.manifest,
+    '--artifact-javascript-bundle', copies.artifactJavascriptBundle,
+    '--artifact-authoring-manifest', copies.artifactAuthoringManifest,
+    '--packed-manifest', fixture.packedManifest,
     '--child-run', childRun,
     '--child-run-id', '900',
     '--artifact-metadata', artifactMetadata,

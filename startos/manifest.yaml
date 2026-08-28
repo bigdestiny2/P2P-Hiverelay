@@ -13,15 +13,14 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.26.0-rc.7
+version: 0.26.0-rc.8
 release-notes: |
-  StartOS 0.4 packaging-engine repair candidate. RC6 cleared the pinned
-  filesystem-tool gate, then failed closed because the classic Docker image
-  store cannot materialize both package architectures from one immutable
-  multi-arch manifest digest. Enable Docker's containerd image store and prove
-  arm64 then amd64 container creation from the authenticated digest before the
-  developer key is exposed. Keep the digest-qualified image binding, runtime
-  protocol, public-gateway posture, and fleet channels unchanged.
+  Blindspark v0.26.0-rc.8 adds phase-correct StartOS 0.4 package provenance: the
+  digest-bound authoring manifest is verified before signing, the exact
+  JavaScript bundle is hash-bound through Start CLI packing, and the packed
+  manifest is verified separately. Both observations are bound into
+  release-closure evidence. Fleet channels and the public gateway remain
+  unchanged pending complete closure and the isolated Utah soak.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"

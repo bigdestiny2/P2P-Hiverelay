@@ -23,11 +23,22 @@ try {
   })
   const packagePath = required(args, 'package')
   const commitmentPath = required(args, 'commitment')
-  const packageManifestPath = required(args, 'manifest')
+  const javascriptBundlePath = required(args, 'javascriptBundle')
+  const expectedJavascriptBundleSha256 = required(args, 'javascriptBundleSha256')
+  const authoringManifestPath = required(args, 'authoringManifest')
+  const packedManifestPath = required(args, 'packedManifest')
   if (args.out && args.verify) throw new Error('--out and --verify are mutually exclusive')
   if (!args.out && !args.verify) throw new Error('Exactly one of --out or --verify is required')
   if (args.out) {
-    const evidence = buildStartos04ReleaseEvidence({ binding, packagePath, commitmentPath, packageManifestPath })
+    const evidence = buildStartos04ReleaseEvidence({
+      binding,
+      packagePath,
+      commitmentPath,
+      javascriptBundlePath,
+      expectedJavascriptBundleSha256,
+      authoringManifestPath,
+      packedManifestPath
+    })
     writeJsonAtomic(args.out, evidence)
     console.log(`StartOS 0.4 release evidence written to ${path.resolve(args.out)}`)
   } else {
@@ -36,7 +47,10 @@ try {
       binding,
       packagePath,
       commitmentPath,
-      packageManifestPath
+      javascriptBundlePath,
+      expectedJavascriptBundleSha256,
+      authoringManifestPath,
+      packedManifestPath
     })
     console.log(`StartOS 0.4 release evidence verified for ${binding.tag}`)
   }
@@ -54,7 +68,10 @@ function parseArgs (argv) {
     ['--image-manifest-evidence', 'imageManifestEvidence'],
     ['--package', 'package'],
     ['--commitment', 'commitment'],
-    ['--manifest', 'manifest'],
+    ['--javascript-bundle', 'javascriptBundle'],
+    ['--javascript-bundle-sha256', 'javascriptBundleSha256'],
+    ['--authoring-manifest', 'authoringManifest'],
+    ['--packed-manifest', 'packedManifest'],
     ['--out', 'out'],
     ['--verify', 'verify']
   ])

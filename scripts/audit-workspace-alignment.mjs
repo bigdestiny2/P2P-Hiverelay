@@ -7949,7 +7949,11 @@ if (
   startos04ContainerStoreSmokeWorkflow.includes('runs-on: ubuntu-24.04') &&
   startos04ContainerStoreSmokeWorkflow.includes('Enable Docker containerd image store') &&
   startos04ContainerStoreSmokeWorkflow.includes('Verify immutable image resolves for both StartOS architectures') &&
-  startos04ContainerStoreSmokeWorkflow.includes('0.26.0-rc.6@sha256:77acc64979219a56303b7a0d39faf26d2b11d9e74e77c850ae929802e63f6a82') &&
+  startos04ContainerStoreSmokeWorkflow.includes('0.26.0-rc.7@sha256:1238939f290715aa1da20629d4f1c07e73f30f1b96a518f337a3c45e729177a8') &&
+  startos04ContainerStoreSmokeWorkflow.includes('make check-release-image ingredients') &&
+  startos04ContainerStoreSmokeWorkflow.includes('--manifest-kind authoring') &&
+  startos04ContainerStoreSmokeWorkflow.includes('start-cli s9pk pack -o blindspark.s9pk') &&
+  startos04ContainerStoreSmokeWorkflow.includes('--manifest-kind packed') &&
   !startos04ContainerStoreSmokeWorkflow.includes('STARTOS_DEV_KEY') &&
   !startos04ContainerStoreSmokeWorkflow.includes('gh release') &&
   releaseStartos04WorkflowTest.includes('pull smoke uses the exact production container-store steps') &&
@@ -7973,15 +7977,26 @@ if (
   releaseStartos04Workflow.includes('working-directory: startos-0.4') &&
   releaseStartos04Workflow.includes('npm ci') &&
   releaseStartos04Workflow.includes('cp "$key_path" ../.startos/build.key.pem') &&
-  releaseStartos04Workflow.includes('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1 IMAGE_DIGEST="$HIVERELAY_IMAGE_DIGEST"') &&
+  releaseStartos04Workflow.includes('make check-release-image ingredients') &&
+  releaseStartos04Workflow.includes('node -e "console.log(JSON.stringify(require(\'./javascript/index.js\').manifest))"') &&
+  releaseStartos04Workflow.includes('--manifest-kind authoring') &&
+  releaseStartos04Workflow.includes('--release-sha "$HIVERELAY_RELEASE_SHA"') &&
+  releaseStartos04Workflow.includes('HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256') &&
+  releaseStartos04Workflow.includes('--javascript-bundle-sha256 "$HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256"') &&
+  releaseStartos04Workflow.includes('start-cli s9pk pack -o blindspark.s9pk') &&
+  releaseStartos04Workflow.includes('--manifest-kind packed') &&
+  !releaseStartos04Workflow.includes('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1') &&
   releaseStartos04Workflow.includes('start-cli s9pk inspect "$STARTOS_04_RELEASE_ASSET" commitment') &&
   releaseStartos04Workflow.includes('manifest --format json') &&
   releaseStartos04Workflow.includes('node ../scripts/verify-startos-04-package-manifest.mjs') &&
   releaseStartos04Workflow.includes('--package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION"') &&
+  releaseStartos04Workflow.indexOf('Build and verify digest-bound authoring manifest') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
+  releaseStartos04Workflow.indexOf('--manifest-kind authoring') < releaseStartos04Workflow.indexOf('start-cli s9pk pack -o blindspark.s9pk') &&
+  releaseStartos04Workflow.indexOf('start-cli s9pk pack -o blindspark.s9pk') < releaseStartos04Workflow.indexOf('--manifest-kind packed') &&
   releaseStartos04Workflow.indexOf('Install pinned StartOS filesystem tools') < releaseStartos04Workflow.indexOf('Install authenticated StartOS CLI') &&
   releaseStartos04Workflow.indexOf('Enable Docker containerd image store') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
   releaseStartos04Workflow.indexOf('Verify immutable image resolves for both StartOS architectures') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
-  releaseStartos04Workflow.indexOf('Verify immutable image resolves for both StartOS architectures') < releaseStartos04Workflow.indexOf('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1') &&
+  releaseStartos04Workflow.indexOf('Verify immutable image resolves for both StartOS architectures') < releaseStartos04Workflow.indexOf('make check-release-image ingredients') &&
   releaseStartos04Workflow.indexOf('Install authenticated StartOS CLI') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
   releaseStartos04Workflow.indexOf('Install locked StartOS dependencies') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
   releaseStartos04Workflow.indexOf('Verify signed release image authority') < releaseStartos04Workflow.indexOf('Configure StartOS developer key') &&
@@ -8017,6 +8032,8 @@ if (
   releaseStartos04Workflow.includes('this child will still build from exact source') &&
   releaseStartos04Workflow.includes('cmp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$handoff_dir/$STARTOS_04_RELEASE_ASSET"') &&
   releaseStartos04Workflow.includes('cp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$artifact_dir/$STARTOS_04_RELEASE_ASSET"') &&
+  releaseStartos04Workflow.includes('startos-0.4-authoring-manifest.json') &&
+  releaseStartos04Workflow.includes('startos-0.4-javascript-index.js') &&
   releaseStartos04Workflow.includes('Package-only evidence recovery is forbidden') &&
   releaseStartos04Workflow.includes('repos/$GITHUB_REPOSITORY/releases/$release_id/assets?per_page=100') &&
   releaseStartos04Workflow.includes('unexpected release-assets page shape') &&
@@ -8031,14 +8048,26 @@ if (
   resolveStartos04Release.includes('resolveStartos04ReleaseBinding') &&
   resolveReusableReleaseImage.includes('resolveReusableStartos04ReleaseBinding') &&
   verifyStartos04ImageRevision.includes('verifyStartos04ImageRevision') &&
-  verifyStartos04PackageManifest.includes('verifyStartos04PackageManifest') &&
+  verifyStartos04PackageManifest.includes('verifyStartos04AuthoringManifest') &&
+  verifyStartos04PackageManifest.includes('verifyStartos04PackedManifest') &&
+  verifyStartos04PackageManifest.includes('--image-ref is forbidden for a packed manifest') &&
   verifyPublishedStartos04Release.includes('verifyPublishedStartos04ReleaseAssets') &&
   writeStartos04ReleaseEvidence.includes('verifyStartos04ReleaseEvidence') &&
   startos04ReleaseEvidenceLib.includes("kind: 'startos-0.4-release'") &&
+  startos04ReleaseEvidenceLib.includes('schemaVersion: 2') &&
   startos04ReleaseEvidenceLib.includes('tagSha: binding.tagSha') &&
   startos04ReleaseEvidenceLib.includes('version: manifest.version') &&
   startos04ReleaseEvidenceLib.includes('requireEqual(\'StartOS 0.4 package version\', manifest?.version, expectedPackageVersion)') &&
   startos04ReleaseEvidenceLib.includes('requireArrayEqual(\'StartOS 0.4 package runtime image architectures\'') &&
+  startos04ReleaseEvidenceLib.includes("requireEqual('StartOS 0.4 packed runtime image source', image?.source, 'packed')") &&
+  startos04ReleaseEvidenceLib.includes("requireEqual('StartOS 0.4 packed manifest gitHash', manifest.gitHash, expectedReleaseSha)") &&
+  startos04ReleaseEvidenceLib.includes('verifyStartos04ManifestTransition') &&
+  startos04ReleaseEvidenceLib.includes("evidenceSemantics: 'exact-full-canonical-authoring-to-packed-transition'") &&
+  startos04ReleaseEvidenceLib.includes("'hardwareRequirements.device.*.capabilities'") &&
+  startos04ReleaseEvidenceLib.includes("'images.*.source:digest-bound-dockerTag-to-packed'") &&
+  startos04ReleaseEvidenceLib.includes('authoringCanonicalSha256') &&
+  startos04ReleaseEvidenceLib.includes('packedCanonicalSha256') &&
+  startos04ReleaseEvidenceLib.includes("STARTOS_04_OS_VERSION = '0.4.0-beta.10'") &&
   startos04ReleaseEvidenceLib.includes('platforms: binding.platforms') &&
   startos04ReleaseEvidenceLib.includes('STARTOS_04_CHECKOUT_ACTION_SHA') &&
   startos04ReleaseEvidenceLib.includes('STARTOS_04_CHILD_ARTIFACT_ACTION_SHA') &&
@@ -8048,15 +8077,19 @@ if (
   startos04ReleaseEvidenceLib.includes('startosPackage.dependencies?.[\'@start9labs/start-sdk\']') &&
   startos04ReleaseEvidenceLib.includes('lockfile root SDK dependency') &&
   startos04ReleaseEvidenceLib.includes('lockedSdk?.integrity, STARTOS_04_START_SDK_INTEGRITY') &&
-  startos04ReleaseEvidenceLib.includes('evidenceSemantics: \'declared-source-build-contract-and-current-inspection-runtime\'') &&
-  startos04ReleaseEvidenceLib.includes('status: \'not-embedded-or-verifiable-from-s9pk\'') &&
+  startos04ReleaseEvidenceLib.includes('evidenceSemantics: \'digest-bound-authoring-manifest-and-current-packed-inspection\'') &&
+  startos04ReleaseEvidenceLib.includes('status: \'build-input-ref-verified-but-not-embedded-in-packed-manifest\'') &&
+  startos04ReleaseEvidenceLib.includes('verified-identical-before-and-after-start-cli-pack') &&
+  startos04ReleaseEvidenceLib.includes('verifyStartos04ArtifactBuildInputs') &&
   startos04ReleaseEvidenceLib.includes('status: \'not-exposed-by-start-cli-1.1.0\'') &&
   !startos04ReleaseEvidenceLib.includes('generatedAt') &&
   releaseStartos04WorkflowTest.includes('child always builds source and treats a complete public pair as compare-only') &&
   releaseStartos04WorkflowTest.includes('asset inventory rejects starter and package-only recovery states') &&
   startos04ReleaseEvidenceTest.includes('deterministic across equivalent source workflow reruns') &&
   startos04ReleaseEvidenceTest.includes('requires the exact source revision label') &&
-  startos04ReleaseEvidenceTest.includes('rejects unrelated digest text and wrong identity') &&
+  startos04ReleaseEvidenceTest.includes('separates digest-bound authoring input from packed output') &&
+  startos04ReleaseEvidenceTest.includes('permits only schema-set ordering across the full manifest transition') &&
+  releaseStartos04WorkflowTest.includes('packs only the preverified unchanged javascript bundle') &&
   releaseStartos04WorkflowTest.includes('reuses one source-bound image digest across equivalent reruns') &&
   releaseWorkflow.includes(legacyStartOsReleaseUpload) &&
   releaseWorkflow.includes("--pattern 'blindspark-startos-0.4.s9pk'") &&
@@ -8089,6 +8122,10 @@ if (
   releaseWorkflow.includes('.workflow_run.head_sha') &&
   releaseWorkflow.includes('start-cli s9pk inspect "$package" commitment') &&
   releaseWorkflow.includes('start-cli s9pk inspect "$package" manifest --format json') &&
+  releaseWorkflow.includes('startos-0.4-authoring-manifest.json') &&
+  releaseWorkflow.includes('startos-0.4-javascript-index.js') &&
+  releaseWorkflow.includes('--artifact-javascript-bundle "$ARTIFACT_DIR/startos-0.4-javascript-index.js"') &&
+  releaseWorkflow.includes('--artifact-authoring-manifest "$ARTIFACT_DIR/startos-0.4-authoring-manifest.json"') &&
   releaseWorkflow.includes('write-release-closure-evidence.mjs') &&
   releaseWorkflow.includes('verify-release-closure-evidence.mjs') &&
   releaseWorkflow.includes('--bundle-dir "$published_dir"') &&
@@ -8111,12 +8148,21 @@ if (
   verifyReleaseClosureEvidence.includes('verifyCurrentReleaseInventory') &&
   verifyReleaseClosureEvidence.includes('asset inventory changed during live closure verification') &&
   verifyReleaseClosureEvidence.includes('verifyCurrentArtifactRecord') &&
+  verifyReleaseClosureEvidence.includes('verifyStartos04ArtifactBuildInputs') &&
+  verifyReleaseClosureEvidence.includes('STARTOS_04_AUTHORING_MANIFEST_ARTIFACT') &&
+  verifyReleaseClosureEvidence.includes('STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT') &&
   verifyReleaseClosureEvidence.includes('REST artifact identity changed during closure verification') &&
   verifyReleaseClosureEvidence.includes('release.prerelease must be a boolean') &&
   verifyReleaseClosureEvidence.includes('does not match requested closure policy prerelease=') &&
   verifyReleaseClosureEvidence.includes('timeout: COMMAND_TIMEOUT_MS') &&
   verifyReleaseClosureEvidence.includes("killSignal: 'SIGTERM'") &&
   startos04ReleaseEvidenceLib.includes("kind: 'hiverelay-release-closure'") &&
+  startos04ReleaseEvidenceLib.includes('schemaVersion: 2') &&
+  startos04ReleaseEvidenceLib.includes('javascriptBundleSha256: inspection.javascriptBundleSha256') &&
+  startos04ReleaseEvidenceLib.includes('authoringManifest: inspection.authoringManifest') &&
+  startos04ReleaseEvidenceLib.includes('packedManifest: inspection.packedManifest') &&
+  startos04ReleaseEvidenceLib.includes('manifestTransition: inspection.manifestTransition') &&
+  verifyReleaseClosureEvidence.includes('authoringManifestCanonicalSha256') &&
   startos04ReleaseEvidenceLib.includes('sourceCheckpointEvidence:') &&
   startos04ReleaseEvidenceLib.includes('authority: imageAuthority') &&
   startos04ReleaseEvidenceLib.includes('selectStartos04ReleaseImageAuthorityArtifact') &&

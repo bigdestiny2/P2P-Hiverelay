@@ -1,7 +1,10 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
-import { verifyStartos04PackageManifest } from './lib/startos-04-release-evidence.mjs'
+import {
+  verifyStartos04AuthoringManifest,
+  verifyStartos04PackedManifest
+} from './lib/startos-04-release-evidence.mjs'
 
 const MAX_MANIFEST_BYTES = 2 * 1024 * 1024
 
@@ -17,13 +20,22 @@ try {
   } catch (err) {
     throw new Error(`StartOS 0.4 package manifest must be JSON: ${err.message}`)
   }
-  const identity = verifyStartos04PackageManifest({
+  const kind = required(args, 'manifestKind')
+  if (!['authoring', 'packed'].includes(kind)) throw new Error('--manifest-kind must be authoring or packed')
+  if (kind === 'packed' && args.imageRef) throw new Error('--image-ref is forbidden for a packed manifest')
+  const common = {
     manifest,
     expectedTag: required(args, 'tag'),
-    expectedPackageVersion: required(args, 'packageVersion'),
-    expectedImageRef: required(args, 'imageRef')
-  })
-  console.log(`Verified ${identity.id}@${identity.version} runtime image ${identity.runtimeImage.ref}`)
+    expectedReleaseSha: required(args, 'releaseSha'),
+    expectedPackageVersion: required(args, 'packageVersion')
+  }
+  const identity = kind === 'authoring'
+    ? verifyStartos04AuthoringManifest({ ...common, expectedImageRef: required(args, 'imageRef') })
+    : verifyStartos04PackedManifest(common)
+  const binding = kind === 'authoring'
+    ? `digest-bound authoring ref ${identity.runtimeImage.ref}`
+    : 'embedded packed runtime image'
+  console.log(`Verified ${identity.id}@${identity.version} ${binding}`)
 } catch (err) {
   console.error(err.message)
   process.exit(1)
@@ -31,7 +43,9 @@ try {
 
 function parseArgs (argv) {
   const names = new Map([
+    ['--manifest-kind', 'manifestKind'],
     ['--tag', 'tag'],
+    ['--release-sha', 'releaseSha'],
     ['--package-version', 'packageVersion'],
     ['--image-ref', 'imageRef']
   ])

@@ -1916,7 +1916,11 @@ jobs:
             exit 1
           fi
           archive_entries="$(unzip -Z1 "$artifact_zip" | LC_ALL=C sort)"
-          expected_entries="$(printf '%s\n' blindspark-startos-0.4.s9pk startos-0.4-release-evidence.json | LC_ALL=C sort)"
+          expected_entries="$(printf '%s\n' \
+            blindspark-startos-0.4.s9pk \
+            startos-0.4-release-evidence.json \
+            startos-0.4-authoring-manifest.json \
+            startos-0.4-javascript-index.js | LC_ALL=C sort)"
           if [ "$archive_entries" != "$expected_entries" ]; then
             echo "Child artifact archive has unexpected or missing entries: $archive_entries" >&2
             exit 1
@@ -1946,6 +1950,22 @@ jobs:
           package="$ARTIFACT_DIR/blindspark-startos-0.4.s9pk"
           commitment="$CLOSURE_DIR/parent-inspected-commitment.txt"
           manifest="$CLOSURE_DIR/parent-inspected-manifest.json"
+          authoring_manifest="$ARTIFACT_DIR/startos-0.4-authoring-manifest.json"
+          javascript_bundle="$ARTIFACT_DIR/startos-0.4-javascript-index.js"
+          javascript_sha="$(sha256sum "$javascript_bundle" | cut -d ' ' -f 1)"
+          expected_javascript_sha="$(jq -er '.toolchain.buildContract.javascriptBundle.sha256 | select(test("^[a-f0-9]{64}$"))' \
+            "$ARTIFACT_DIR/startos-0.4-release-evidence.json")"
+          if [ "$javascript_sha" != "$expected_javascript_sha" ]; then
+            echo 'Immutable child javascript bundle does not match the release sidecar.' >&2
+            exit 1
+          fi
+          node hiverelay/scripts/verify-startos-04-package-manifest.mjs \
+            --manifest-kind authoring \
+            --tag "$RELEASE_TAG" \
+            --release-sha "$RELEASE_SHA" \
+            --package-version "$(sed -n "s/.*version: '\([^']*\)'.*/\1/p" hiverelay/startos-0.4/startos/versions/current.ts | head -n 1)" \
+            --image-ref "$(jq -r '.image.ref' "$RELEASE_DIR/release-evidence.json")" \
+            < "$authoring_manifest"
           start-cli s9pk inspect "$package" commitment > "$commitment"
           start-cli s9pk inspect "$package" manifest --format json > "$manifest"
           if [ ! -s "$commitment" ] || [ ! -s "$manifest" ]; then
@@ -1953,9 +1973,10 @@ jobs:
             exit 1
           fi
           node hiverelay/scripts/verify-startos-04-package-manifest.mjs \
+            --manifest-kind packed \
             --tag "$RELEASE_TAG" \
+            --release-sha "$RELEASE_SHA" \
             --package-version "$(sed -n "s/.*version: '\([^']*\)'.*/\1/p" hiverelay/startos-0.4/startos/versions/current.ts | head -n 1)" \
-            --image-ref "$(jq -r '.image.ref' "$RELEASE_DIR/release-evidence.json")" \
             < "$manifest"
 
       - name: Write and locally verify final release closure
@@ -1976,7 +1997,9 @@ jobs:
             --release-package "$RELEASE_DIR/blindspark-startos-0.4.s9pk"
             --release-startos-evidence "$RELEASE_DIR/startos-0.4-release-evidence.json"
             --commitment "$CLOSURE_DIR/parent-inspected-commitment.txt"
-            --manifest "$CLOSURE_DIR/parent-inspected-manifest.json"
+            --artifact-javascript-bundle "$ARTIFACT_DIR/startos-0.4-javascript-index.js"
+            --artifact-authoring-manifest "$ARTIFACT_DIR/startos-0.4-authoring-manifest.json"
+            --packed-manifest "$CLOSURE_DIR/parent-inspected-manifest.json"
             --child-run "$CLOSURE_DIR/child-run.json"
             --child-run-id "$CHILD_RUN_ID"
             --artifact-metadata "$CLOSURE_DIR/child-artifact.json"
