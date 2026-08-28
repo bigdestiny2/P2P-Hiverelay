@@ -181,7 +181,18 @@ asset over HTTPS. The script requires SHA-256
 before chmod, PATH exposure, version execution, or developer-key exposure. The
 lockfile-verified dependency install also completes before key exposure. The
 SDK version, resolved tarball, and npm integrity are independently bound to the
-source manifest and lockfile.
+source manifest and lockfile. Before the signing key is exposed, the child
+builds the SDK ingredients, evaluates the exact `javascript/index.js` authoring
+manifest under the digest-bound release environment, and verifies its null
+pre-pack `gitHash`, pinned OS/SDK identity, exact image configuration, and
+registry ref. It hashes that bundle, packs it directly without another Make
+build, and requires the hash to remain unchanged. Start CLI then intentionally
+rewrites the embedded package manifest image source to `"packed"`; post-pack
+inspection requires that value and the exact release commit rather than
+claiming the original ref remains in the `.s9pk`. The sidecar writer parses the
+complete pre/post manifests, canonicalizes only Rust set-backed arrays (including
+device capability sets), applies only the documented `gitHash` and image-source
+changes, and fails on every other field change.
 
 The GitHub Release package and deterministic sidecar form one immutable pair.
 Every child builds from the exact tag with the authenticated CLI and locked
@@ -191,6 +202,9 @@ GitHub digest, and requires the newly built bytes to match. It rejects partial
 pairs, duplicate names, zero-byte/`starter` records, and rebuild drift without
 deleting or clobbering them. A successful child uploads only its fresh local
 build and sidecar to the run/attempt-named, digest-bearing Actions artifact.
+That artifact has an exact four-file inventory: package, schema-v2 sidecar, raw
+authoring manifest, and the verified JavaScript bundle. The latter two are not
+additional public Release assets.
 
 `release-evidence.json` certifies a `release-surfaces/pre-handoff-checkpoint`,
 not a completed `sync` job, and remains
@@ -211,8 +225,12 @@ proves its own completed upload; it can recover
 from a later terminal `sync` failure without weakening that authority. The final parent job uses the exact image-authority
 and child Actions artifacts as image/package authority, installs the
 hash-authenticated CLI, independently inspects the package commitment and
-structured manifest, and compares those artifact bytes with the current
-Release pair. Only then does it publish `release-closure-evidence.json`,
+packed manifest, validates the authoring manifest, and hashes the JavaScript
+bundle as inert data against the sidecar before comparing package/sidecar bytes
+with the current Release pair. It also independently replays the full canonical
+manifest transition and binds both complete-manifest hashes. Only then does it
+publish the schema-v2
+`release-closure-evidence.json`,
 re-download the entire published bundle, and run the live GitHub closure
 verifier. The closure certificate records normalized image-authority REST
 metadata. The live verifier re-fetches each Release asset by exact REST id and

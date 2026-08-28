@@ -11,6 +11,8 @@ import {
 
 export const STARTOS_04_RELEASE_ASSET = 'blindspark-startos-0.4.s9pk'
 export const STARTOS_04_RELEASE_EVIDENCE = 'startos-0.4-release-evidence.json'
+export const STARTOS_04_AUTHORING_MANIFEST_ARTIFACT = 'startos-0.4-authoring-manifest.json'
+export const STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT = 'startos-0.4-javascript-index.js'
 export const STARTOS_04_PACKAGE_ID = 'blindspark'
 export const STARTOS_04_CHECKOUT_ACTION_SHA = '3d3c42e5aac5ba805825da76410c181273ba90b1'
 export const STARTOS_04_START_CLI_VERSION = '1.1.0'
@@ -18,6 +20,7 @@ export const STARTOS_04_START_CLI_URL = 'https://github.com/Start9Labs/start-tec
 export const STARTOS_04_START_CLI_SHA256 = '70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a'
 export const STARTOS_04_START_SDK_VERSION = '2.0.1'
 export const STARTOS_04_START_SDK_INTEGRITY = 'sha512-h0CBfS501KpQ0FX3GoYhxyt1mZYRYgvIYBygWek1kZ7Yl1LHi2uUMzp00Jln38HhB9cJWya3AM9zlGqR91uRdw=='
+export const STARTOS_04_OS_VERSION = '0.4.0-beta.10'
 export const STARTOS_04_CHILD_ARTIFACT_ACTION_SHA = '043fb46d1a93c77aae656e7c1c64a875d1fc6a0a'
 
 const EXPECTED_REPOSITORY = 'bigdestiny2/P2P-Hiverelay'
@@ -52,9 +55,18 @@ const STARTOS_04_PARENT_CHECKPOINT_STEPS = Object.freeze([
 const MAX_JSON_BYTES = 2 * 1024 * 1024
 const MAX_REUSABLE_IMAGE_ARTIFACT_BYTES = 16 * 1024 * 1024
 const MAX_PACKAGE_BYTES = 4 * 1024 * 1024 * 1024
+const MAX_JAVASCRIPT_BUNDLE_BYTES = 64 * 1024 * 1024
 const MAX_COMMITMENT_BYTES = 4096
 const MAX_PACKAGE_MANIFEST_BYTES = 2 * 1024 * 1024
 const MAX_ACTIONS_ARTIFACT_BYTES = 5 * 1024 * 1024 * 1024
+const STARTOS_04_MANIFEST_SET_PATHS = Object.freeze([
+  'hardwareRequirements.arch',
+  'hardwareRequirements.device.*.capabilities',
+  'images.*.arch',
+  'plugins',
+  'satisfies',
+  'volumes'
+])
 
 export function resolveStartos04ReleaseBinding ({
   repoRoot,
@@ -592,37 +604,259 @@ export function verifyStartos04ImageRevision ({ image, expectedOs, expectedArchi
   )
 }
 
-export function verifyStartos04PackageManifest ({ manifest, expectedTag, expectedPackageVersion, expectedImageRef }) {
+export function verifyStartos04AuthoringManifest ({
+  manifest,
+  expectedTag,
+  expectedReleaseSha,
+  expectedPackageVersion,
+  expectedImageRef
+}) {
+  const { image, architectures } = verifyStartos04ManifestIdentity({
+    manifest,
+    expectedTag,
+    expectedReleaseSha,
+    expectedPackageVersion
+  })
+  requireEqual('StartOS 0.4 authoring manifest gitHash', manifest.gitHash, null)
+  const source = image?.source
+  if (!isPlainObject(source)) fail('StartOS 0.4 authoring runtime image source must be an object')
+  requireArrayEqual('StartOS 0.4 authoring runtime image source fields', Object.keys(source).sort(), ['dockerTag'])
+  requireEqual('StartOS 0.4 authoring runtime image ref', source.dockerTag, expectedImageRef)
+  return {
+    id: manifest.id,
+    version: manifest.version,
+    gitHash: null,
+    osVersion: STARTOS_04_OS_VERSION,
+    sdkVersion: STARTOS_04_START_SDK_VERSION,
+    runtimeImage: {
+      id: STARTOS_04_PACKAGE_ID,
+      source: 'dockerTag',
+      ref: expectedImageRef,
+      architectures,
+      emulateMissingAs: 'x86_64',
+      nvidiaContainer: false
+    }
+  }
+}
+
+export function verifyStartos04PackedManifest ({ manifest, expectedTag, expectedReleaseSha, expectedPackageVersion }) {
+  const { image, architectures } = verifyStartos04ManifestIdentity({
+    manifest,
+    expectedTag,
+    expectedReleaseSha,
+    expectedPackageVersion
+  })
+  requireEqual('StartOS 0.4 packed manifest gitHash', manifest.gitHash, expectedReleaseSha)
+  requireEqual('StartOS 0.4 packed runtime image source', image?.source, 'packed')
+  return {
+    id: manifest.id,
+    version: manifest.version,
+    gitHash: expectedReleaseSha,
+    osVersion: STARTOS_04_OS_VERSION,
+    sdkVersion: STARTOS_04_START_SDK_VERSION,
+    runtimeImage: {
+      id: STARTOS_04_PACKAGE_ID,
+      source: 'packed',
+      architectures,
+      emulateMissingAs: 'x86_64',
+      nvidiaContainer: false
+    }
+  }
+}
+
+export function verifyStartos04ManifestTransition ({
+  authoringManifest,
+  packedManifest,
+  expectedTag,
+  expectedReleaseSha,
+  expectedPackageVersion,
+  expectedImageRef
+}) {
+  const authoringIdentity = verifyStartos04AuthoringManifest({
+    manifest: authoringManifest,
+    expectedTag,
+    expectedReleaseSha,
+    expectedPackageVersion,
+    expectedImageRef
+  })
+  const packedIdentity = verifyStartos04PackedManifest({
+    manifest: packedManifest,
+    expectedTag,
+    expectedReleaseSha,
+    expectedPackageVersion
+  })
+  const canonicalAuthoring = canonicalizeStartos04Manifest(
+    authoringManifest,
+    'StartOS 0.4 authoring manifest'
+  )
+  const canonicalPacked = canonicalizeStartos04Manifest(
+    packedManifest,
+    'StartOS 0.4 packed manifest'
+  )
+  const expectedPacked = canonicalizeJsonValue(
+    canonicalAuthoring,
+    'StartOS 0.4 expected packed manifest'
+  )
+  expectedPacked.gitHash = expectedReleaseSha
+  for (const image of Object.values(expectedPacked.images)) image.source = 'packed'
+  if (!isDeepStrictEqual(canonicalPacked, expectedPacked)) {
+    fail(
+      'StartOS 0.4 packed manifest differs from the full canonical authoring manifest outside the permitted gitHash and images.*.source transition'
+    )
+  }
+  return {
+    authoringIdentity,
+    packedIdentity,
+    manifestTransition: buildStartos04ManifestTransitionEvidence({
+      authoringCanonicalSha256: sha256(Buffer.from(JSON.stringify(canonicalAuthoring))),
+      packedCanonicalSha256: sha256(Buffer.from(JSON.stringify(canonicalPacked)))
+    })
+  }
+}
+
+function canonicalizeStartos04Manifest (manifest, label) {
+  const canonical = canonicalizeJsonValue(manifest, label)
+  if (!isPlainObject(canonical)) fail(`${label} must be an object`)
+  canonical.volumes = canonicalizeStringSet(canonical.volumes, `${label} volumes`)
+  canonical.plugins = canonicalizeStringSet(canonical.plugins, `${label} plugins`)
+  canonical.satisfies = canonicalizeStringSet(canonical.satisfies, `${label} satisfies`)
+  if (!isPlainObject(canonical.images)) fail(`${label} images must be an object`)
+  for (const [imageId, image] of Object.entries(canonical.images)) {
+    if (!isPlainObject(image)) fail(`${label} image ${JSON.stringify(imageId)} must be an object`)
+    image.arch = canonicalizeStringSet(image.arch, `${label} image ${JSON.stringify(imageId)} arch`)
+  }
+  if (!isPlainObject(canonical.hardwareRequirements)) {
+    fail(`${label} hardwareRequirements must be an object`)
+  }
+  const hardware = canonical.hardwareRequirements
+  if (hardware.arch !== null) {
+    hardware.arch = canonicalizeStringSet(hardware.arch, `${label} hardwareRequirements arch`)
+  }
+  if (!Array.isArray(hardware.device)) fail(`${label} hardwareRequirements device must be an array`)
+  for (const [index, device] of hardware.device.entries()) {
+    if (!isPlainObject(device)) {
+      fail(`${label} hardwareRequirements device ${index} must be an object`)
+    }
+    if (device.capabilities !== undefined && device.capabilities !== null) {
+      device.capabilities = canonicalizeStringSet(
+        device.capabilities,
+        `${label} hardwareRequirements device ${index} capabilities`
+      )
+    }
+  }
+  return canonical
+}
+
+function canonicalizeStringSet (value, label) {
+  if (!Array.isArray(value) || value.some(item => typeof item !== 'string')) {
+    fail(`${label} must be an array of strings`)
+  }
+  return [...new Set(value)].sort()
+}
+
+function canonicalizeJsonValue (value, label) {
+  if (value === null || typeof value === 'string' || typeof value === 'boolean') return value
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value)) fail(`${label} contains a non-finite number`)
+    return value
+  }
+  if (Array.isArray(value)) {
+    return value.map((item, index) => canonicalizeJsonValue(item, `${label}[${index}]`))
+  }
+  if (!isPlainObject(value)) fail(`${label} contains a non-JSON value`)
+  return Object.fromEntries(
+    Object.keys(value).sort().map(key => [key, canonicalizeJsonValue(value[key], `${label}.${key}`)])
+  )
+}
+
+function buildStartos04ManifestTransitionEvidence ({
+  authoringCanonicalSha256,
+  packedCanonicalSha256
+}) {
+  requirePattern(
+    'StartOS 0.4 canonical authoring manifest SHA-256',
+    authoringCanonicalSha256,
+    SHA256_PATTERN
+  )
+  requirePattern(
+    'StartOS 0.4 canonical packed manifest SHA-256',
+    packedCanonicalSha256,
+    SHA256_PATTERN
+  )
+  return {
+    evidenceSemantics: 'exact-full-canonical-authoring-to-packed-transition',
+    canonicalization: {
+      jsonObjectKeys: 'lexicographically-sorted',
+      setValuedArrays: STARTOS_04_MANIFEST_SET_PATHS
+    },
+    permittedMutations: [
+      'gitHash:null-to-release-tag-sha',
+      'images.*.source:digest-bound-dockerTag-to-packed'
+    ],
+    architectureFilter: 'none-direct-pack',
+    authoringCanonicalSha256,
+    packedCanonicalSha256
+  }
+}
+
+function verifyStartos04ManifestIdentity ({ manifest, expectedTag, expectedReleaseSha, expectedPackageVersion }) {
   requirePattern('expected StartOS 0.4 release tag', expectedTag, TAG_PATTERN)
+  requirePattern('expected StartOS 0.4 release SHA', expectedReleaseSha, SHA_PATTERN)
   requireEqual('StartOS 0.4 package id', manifest?.id, STARTOS_04_PACKAGE_ID)
   const semver = expectedTag.slice(1)
   const escapedSemver = semver.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
   requirePattern('expected StartOS 0.4 package version', expectedPackageVersion, new RegExp(`^${escapedSemver}:[0-9]+$`))
   requireEqual('StartOS 0.4 package version', manifest?.version, expectedPackageVersion)
+  requireEqual('StartOS 0.4 package OS version', manifest?.osVersion, STARTOS_04_OS_VERSION)
+  requireEqual('StartOS 0.4 package SDK version', manifest?.sdkVersion, STARTOS_04_START_SDK_VERSION)
   const images = manifest?.images
   if (!isPlainObject(images)) fail('StartOS 0.4 package images must be an object')
   requireArrayEqual('StartOS 0.4 package image ids', Object.keys(images).sort(), [STARTOS_04_PACKAGE_ID])
   const image = images[STARTOS_04_PACKAGE_ID]
-  requireEqual('StartOS 0.4 package runtime image ref', image?.source?.dockerTag, expectedImageRef)
+  if (!isPlainObject(image)) fail('StartOS 0.4 package runtime image config must be an object')
+  requireArrayEqual(
+    'StartOS 0.4 package runtime image config fields',
+    Object.keys(image).sort(),
+    ['arch', 'emulateMissingAs', 'nvidiaContainer', 'source']
+  )
   const architectures = Array.isArray(image?.arch) ? [...image.arch].sort() : image?.arch
   requireArrayEqual('StartOS 0.4 package runtime image architectures', architectures, ['aarch64', 'x86_64'])
-  return {
-    id: manifest.id,
-    version: manifest.version,
-    runtimeImage: {
-      id: STARTOS_04_PACKAGE_ID,
-      ref: expectedImageRef,
-      architectures
-    }
-  }
+  requireEqual('StartOS 0.4 package runtime image emulation architecture', image?.emulateMissingAs, 'x86_64')
+  requireEqual('StartOS 0.4 package runtime image NVIDIA container flag', image?.nvidiaContainer, false)
+  return { image, architectures }
 }
 
-export function readStartos04PackageManifest ({ manifestPath, expectedTag, expectedPackageVersion, expectedImageRef }) {
-  const manifest = readJson(manifestPath, 'StartOS 0.4 inspected package manifest', MAX_PACKAGE_MANIFEST_BYTES)
-  return verifyStartos04PackageManifest({ manifest, expectedTag, expectedPackageVersion, expectedImageRef })
+export function readStartos04AuthoringManifest ({
+  manifestPath,
+  expectedTag,
+  expectedReleaseSha,
+  expectedPackageVersion,
+  expectedImageRef
+}) {
+  const manifest = readJson(manifestPath, 'StartOS 0.4 built authoring manifest', MAX_PACKAGE_MANIFEST_BYTES)
+  return verifyStartos04AuthoringManifest({
+    manifest,
+    expectedTag,
+    expectedReleaseSha,
+    expectedPackageVersion,
+    expectedImageRef
+  })
 }
 
-export function buildStartos04ReleaseEvidence ({ binding, packagePath, commitmentPath, packageManifestPath }) {
+export function readStartos04PackedManifest ({ manifestPath, expectedTag, expectedReleaseSha, expectedPackageVersion }) {
+  const manifest = readJson(manifestPath, 'StartOS 0.4 inspected packed manifest', MAX_PACKAGE_MANIFEST_BYTES)
+  return verifyStartos04PackedManifest({ manifest, expectedTag, expectedReleaseSha, expectedPackageVersion })
+}
+
+export function buildStartos04ReleaseEvidence ({
+  binding,
+  packagePath,
+  commitmentPath,
+  javascriptBundlePath,
+  expectedJavascriptBundleSha256,
+  authoringManifestPath,
+  packedManifestPath
+}) {
   const packageStat = regularFileStat(packagePath, 'StartOS 0.4 package')
   if (packageStat.size === 0 || packageStat.size > MAX_PACKAGE_BYTES) {
     fail(`StartOS 0.4 package size must be between 1 and ${MAX_PACKAGE_BYTES} bytes`)
@@ -631,19 +865,66 @@ export function buildStartos04ReleaseEvidence ({ binding, packagePath, commitmen
     fail(`StartOS 0.4 package filename must be ${STARTOS_04_RELEASE_ASSET}`)
   }
   const commitment = readPackageCommitment(commitmentPath)
-  const packageManifest = readStartos04PackageManifest({
-    manifestPath: packageManifestPath,
+  const javascriptBundleStat = regularFileStat(javascriptBundlePath, 'StartOS 0.4 built javascript bundle')
+  if (javascriptBundleStat.size === 0 || javascriptBundleStat.size > MAX_JAVASCRIPT_BUNDLE_BYTES) {
+    fail(`StartOS 0.4 built javascript bundle size must be between 1 and ${MAX_JAVASCRIPT_BUNDLE_BYTES} bytes`)
+  }
+  requirePattern(
+    'expected verified StartOS 0.4 javascript bundle SHA-256',
+    expectedJavascriptBundleSha256,
+    SHA256_PATTERN
+  )
+  const javascriptBundleSha256 = sha256File(
+    javascriptBundlePath,
+    'StartOS 0.4 built javascript bundle',
+    MAX_JAVASCRIPT_BUNDLE_BYTES
+  )
+  requireEqual(
+    'StartOS 0.4 built javascript bundle SHA-256',
+    javascriptBundleSha256,
+    expectedJavascriptBundleSha256
+  )
+  const authoringManifestDocument = readJson(
+    authoringManifestPath,
+    'StartOS 0.4 built authoring manifest',
+    MAX_PACKAGE_MANIFEST_BYTES
+  )
+  const packedManifestDocument = readJson(
+    packedManifestPath,
+    'StartOS 0.4 inspected packed manifest',
+    MAX_PACKAGE_MANIFEST_BYTES
+  )
+  const transition = verifyStartos04ManifestTransition({
+    authoringManifest: authoringManifestDocument,
+    packedManifest: packedManifestDocument,
     expectedTag: binding.tag,
+    expectedReleaseSha: binding.tagSha,
     expectedPackageVersion: binding.packageVersion,
     expectedImageRef: binding.imageRef
   })
-  return buildStartos04ReleaseEvidenceBody({ binding, packagePath, commitment, packageManifest })
+  return buildStartos04ReleaseEvidenceBody({
+    binding,
+    packagePath,
+    commitment,
+    javascriptBundleSha256,
+    authoringManifest: transition.authoringIdentity,
+    packedManifest: transition.packedIdentity,
+    manifestTransition: transition.manifestTransition
+  })
 }
 
-function buildStartos04ReleaseEvidenceBody ({ binding, packagePath, commitment, packageManifest }) {
+function buildStartos04ReleaseEvidenceBody ({
+  binding,
+  packagePath,
+  commitment,
+  javascriptBundleSha256,
+  authoringManifest,
+  packedManifest,
+  manifestTransition
+}) {
   const releaseBase = `https://github.com/${binding.repository}/releases/download/${binding.tag}`
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'startos-0.4-release',
     status: 'verified',
     release: {
@@ -658,10 +939,18 @@ function buildStartos04ReleaseEvidenceBody ({ binding, packagePath, commitment, 
       platforms: binding.platforms
     },
     toolchain: {
-      evidenceSemantics: 'declared-source-build-contract-and-current-inspection-runtime',
+      evidenceSemantics: 'digest-bound-authoring-manifest-and-current-packed-inspection',
       artifactBuildProvenance: {
-        status: 'not-embedded-or-verifiable-from-s9pk',
-        claim: 'source-and-workflow-contract-only'
+        status: 'build-input-ref-verified-but-not-embedded-in-packed-manifest',
+        claim: 'the exact built javascript authoring manifest is checked under the release environment; start-cli intentionally replaces its registry source with packed after embedding image files'
+      },
+      buildContract: {
+        javascriptBundle: {
+          path: 'startos-0.4/javascript/index.js',
+          artifactName: STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT,
+          sha256: javascriptBundleSha256
+        },
+        invariant: 'verified-identical-before-and-after-start-cli-pack'
       },
       sourceCheckoutAction: {
         ref: `actions/checkout@${STARTOS_04_CHECKOUT_ACTION_SHA}`,
@@ -685,7 +974,18 @@ function buildStartos04ReleaseEvidenceBody ({ binding, packagePath, commitment, 
       format: 'startos-0.4',
       sha256: sha256File(packagePath, 'StartOS 0.4 package', MAX_PACKAGE_BYTES),
       commitment,
-      manifest: packageManifest,
+      manifests: {
+        transition: manifestTransition,
+        authoring: {
+          artifactName: STARTOS_04_AUTHORING_MANIFEST_ARTIFACT,
+          evidenceSemantics: 'same-built-javascript-module-under-digest-bound-release-environment',
+          identity: authoringManifest
+        },
+        packed: {
+          evidenceSemantics: 'post-pack-start-cli-1.1.0-inspection-with-embedded-image-source',
+          identity: packedManifest
+        }
+      },
       signerIdentity: {
         status: 'not-exposed-by-start-cli-1.1.0',
         value: ''
@@ -710,32 +1010,142 @@ export function verifyPublishedStartos04ReleaseAssets ({ evidencePath, binding, 
   const actual = readJson(evidencePath, 'published StartOS 0.4 release evidence')
   const commitment = normalizePackageCommitment(actual?.artifact?.commitment?.output)
   requireEqual('published StartOS 0.4 commitment SHA-256', actual?.artifact?.commitment?.sha256, commitment.sha256)
-  const manifest = actual?.artifact?.manifest
-  requireEqual('published StartOS 0.4 package id', manifest?.id, STARTOS_04_PACKAGE_ID)
-  requireEqual('published StartOS 0.4 package version', manifest?.version, binding.packageVersion)
-  const packageManifest = {
+  const javascriptBundleSha256 = actual?.toolchain?.buildContract?.javascriptBundle?.sha256
+  requirePattern('published StartOS 0.4 javascript bundle SHA-256', javascriptBundleSha256, SHA256_PATTERN)
+  const manifestTransition = buildStartos04ManifestTransitionEvidence({
+    authoringCanonicalSha256: actual?.artifact?.manifests?.transition?.authoringCanonicalSha256,
+    packedCanonicalSha256: actual?.artifact?.manifests?.transition?.packedCanonicalSha256
+  })
+  const authoringManifest = {
     id: STARTOS_04_PACKAGE_ID,
-    version: manifest.version,
+    version: binding.packageVersion,
+    gitHash: null,
+    osVersion: STARTOS_04_OS_VERSION,
+    sdkVersion: STARTOS_04_START_SDK_VERSION,
     runtimeImage: {
       id: STARTOS_04_PACKAGE_ID,
+      source: 'dockerTag',
       ref: binding.imageRef,
-      architectures: ['aarch64', 'x86_64']
+      architectures: ['aarch64', 'x86_64'],
+      emulateMissingAs: 'x86_64',
+      nvidiaContainer: false
     }
   }
-  const expected = buildStartos04ReleaseEvidenceBody({ binding, packagePath, commitment, packageManifest })
+  const packedManifest = {
+    id: STARTOS_04_PACKAGE_ID,
+    version: binding.packageVersion,
+    gitHash: binding.tagSha,
+    osVersion: STARTOS_04_OS_VERSION,
+    sdkVersion: STARTOS_04_START_SDK_VERSION,
+    runtimeImage: {
+      id: STARTOS_04_PACKAGE_ID,
+      source: 'packed',
+      architectures: ['aarch64', 'x86_64'],
+      emulateMissingAs: 'x86_64',
+      nvidiaContainer: false
+    }
+  }
+  const expected = buildStartos04ReleaseEvidenceBody({
+    binding,
+    packagePath,
+    commitment,
+    javascriptBundleSha256,
+    authoringManifest,
+    packedManifest,
+    manifestTransition
+  })
   if (!isDeepStrictEqual(actual, expected)) {
     fail('Published StartOS 0.4 assets do not match the exact source run, image, toolchain, manifest identity, commitment, and package bytes')
   }
   return actual
 }
 
-export function verifyStartos04ReleaseEvidence ({ evidencePath, binding, packagePath, commitmentPath, packageManifestPath }) {
+export function verifyStartos04ReleaseEvidence ({
+  evidencePath,
+  binding,
+  packagePath,
+  commitmentPath,
+  javascriptBundlePath,
+  expectedJavascriptBundleSha256,
+  authoringManifestPath,
+  packedManifestPath
+}) {
   const actual = readJson(evidencePath, 'StartOS 0.4 release evidence')
-  const expected = buildStartos04ReleaseEvidence({ binding, packagePath, commitmentPath, packageManifestPath })
+  const expected = buildStartos04ReleaseEvidence({
+    binding,
+    packagePath,
+    commitmentPath,
+    javascriptBundlePath,
+    expectedJavascriptBundleSha256,
+    authoringManifestPath,
+    packedManifestPath
+  })
   if (!isDeepStrictEqual(actual, expected)) {
     fail('StartOS 0.4 release evidence does not match the exact tag, image, toolchain, manifest identity, commitment, and package bytes')
   }
   return actual
+}
+
+export function verifyStartos04ArtifactBuildInputs ({
+  evidencePath,
+  binding,
+  packagePath,
+  javascriptBundlePath,
+  authoringManifestPath
+}) {
+  const evidence = verifyPublishedStartos04ReleaseAssets({ evidencePath, binding, packagePath })
+  const javascriptBundleStat = regularFileStat(
+    javascriptBundlePath,
+    'immutable child StartOS 0.4 javascript bundle'
+  )
+  if (javascriptBundleStat.size === 0 || javascriptBundleStat.size > MAX_JAVASCRIPT_BUNDLE_BYTES) {
+    fail(
+      `Immutable child StartOS 0.4 javascript bundle size must be between 1 and ${MAX_JAVASCRIPT_BUNDLE_BYTES} bytes`
+    )
+  }
+  const javascriptBundleSha256 = sha256File(
+    javascriptBundlePath,
+    'immutable child StartOS 0.4 javascript bundle',
+    MAX_JAVASCRIPT_BUNDLE_BYTES
+  )
+  requireEqual(
+    'immutable child StartOS 0.4 javascript bundle SHA-256',
+    javascriptBundleSha256,
+    evidence.toolchain.buildContract.javascriptBundle.sha256
+  )
+  const authoringManifestDocument = readJson(
+    authoringManifestPath,
+    'immutable child StartOS 0.4 authoring manifest',
+    MAX_PACKAGE_MANIFEST_BYTES
+  )
+  const authoringManifest = verifyStartos04AuthoringManifest({
+    manifest: authoringManifestDocument,
+    expectedTag: binding.tag,
+    expectedReleaseSha: binding.tagSha,
+    expectedPackageVersion: binding.packageVersion,
+    expectedImageRef: binding.imageRef
+  })
+  if (!isDeepStrictEqual(evidence.artifact.manifests?.authoring?.identity, authoringManifest)) {
+    fail('Immutable child StartOS 0.4 authoring manifest does not match the published sidecar')
+  }
+  const authoringManifestCanonicalSha256 = sha256(Buffer.from(JSON.stringify(
+    canonicalizeStartos04Manifest(
+      authoringManifestDocument,
+      'immutable child StartOS 0.4 authoring manifest'
+    )
+  )))
+  requireEqual(
+    'immutable child StartOS 0.4 canonical authoring manifest SHA-256',
+    authoringManifestCanonicalSha256,
+    evidence.artifact.manifests.transition.authoringCanonicalSha256
+  )
+  return {
+    evidence,
+    javascriptBundleSha256,
+    authoringManifest,
+    authoringManifestCanonicalSha256,
+    authoringManifestDocument
+  }
 }
 
 export function verifyInspectedStartos04ReleaseAssets ({
@@ -743,23 +1153,49 @@ export function verifyInspectedStartos04ReleaseAssets ({
   binding,
   packagePath,
   commitmentPath,
-  packageManifestPath
+  javascriptBundlePath,
+  authoringManifestPath,
+  packedManifestPath
 }) {
-  const evidence = verifyPublishedStartos04ReleaseAssets({ evidencePath, binding, packagePath })
+  const buildInputs = verifyStartos04ArtifactBuildInputs({
+    evidencePath,
+    binding,
+    packagePath,
+    javascriptBundlePath,
+    authoringManifestPath
+  })
+  const { evidence } = buildInputs
   const commitment = readPackageCommitment(commitmentPath)
   if (!isDeepStrictEqual(evidence.artifact.commitment, commitment)) {
     fail('Inspected StartOS 0.4 package commitment does not match the published sidecar')
   }
-  const manifest = readStartos04PackageManifest({
-    manifestPath: packageManifestPath,
+  const packedManifestDocument = readJson(
+    packedManifestPath,
+    'independently inspected StartOS 0.4 packed manifest',
+    MAX_PACKAGE_MANIFEST_BYTES
+  )
+  const transition = verifyStartos04ManifestTransition({
+    authoringManifest: buildInputs.authoringManifestDocument,
+    packedManifest: packedManifestDocument,
     expectedTag: binding.tag,
+    expectedReleaseSha: binding.tagSha,
     expectedPackageVersion: binding.packageVersion,
     expectedImageRef: binding.imageRef
   })
-  if (!isDeepStrictEqual(evidence.artifact.manifest, manifest)) {
-    fail('Inspected StartOS 0.4 package manifest does not match the published sidecar')
+  if (!isDeepStrictEqual(evidence.artifact.manifests?.packed?.identity, transition.packedIdentity)) {
+    fail('Inspected StartOS 0.4 packed manifest does not match the published sidecar')
   }
-  return { evidence, commitment, manifest }
+  if (!isDeepStrictEqual(evidence.artifact.manifests?.transition, transition.manifestTransition)) {
+    fail('Inspected StartOS 0.4 full manifest transition does not match the published sidecar')
+  }
+  return {
+    evidence,
+    javascriptBundleSha256: buildInputs.javascriptBundleSha256,
+    authoringManifest: buildInputs.authoringManifest,
+    commitment,
+    packedManifest: transition.packedIdentity,
+    manifestTransition: transition.manifestTransition
+  }
 }
 
 export function verifyStartos04ClosureChildRun ({ run, expectedChildRunId, binding }) {
@@ -861,7 +1297,9 @@ export function buildReleaseClosureEvidence ({
   releasePackagePath,
   releaseStartosEvidencePath,
   commitmentPath,
-  packageManifestPath,
+  artifactJavascriptBundlePath,
+  artifactAuthoringManifestPath,
+  packedManifestPath,
   childRun,
   childRunId,
   artifact,
@@ -873,7 +1311,9 @@ export function buildReleaseClosureEvidence ({
     binding,
     packagePath: artifactPackagePath,
     commitmentPath,
-    packageManifestPath
+    javascriptBundlePath: artifactJavascriptBundlePath,
+    authoringManifestPath: artifactAuthoringManifestPath,
+    packedManifestPath
   })
   const imageAuthority = selectStartos04ReleaseImageAuthorityArtifact({
     response: { total_count: 1, artifacts: [imageAuthorityArtifact] },
@@ -938,7 +1378,7 @@ function buildReleaseClosureEvidenceBody ({
   )
   const releaseBase = `https://github.com/${binding.repository}/releases/download/${binding.tag}`
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     kind: 'hiverelay-release-closure',
     status: 'verified-startos-0.4-closure',
     release: {
@@ -981,7 +1421,10 @@ function buildReleaseClosureEvidenceBody ({
       },
       inspectedPackage: {
         commitmentSha256: inspection.commitment.sha256,
-        manifest: inspection.manifest,
+        javascriptBundleSha256: inspection.javascriptBundleSha256,
+        authoringManifest: inspection.authoringManifest,
+        packedManifest: inspection.packedManifest,
+        manifestTransition: inspection.manifestTransition,
         signerIdentity: {
           status: 'not-exposed-by-start-cli-1.1.0',
           policy: 'closure-binds-inspected-package-bytes-and-commitment-for-github-sideload-only; registry-signer-identity-remains-unverified'
@@ -1038,7 +1481,10 @@ export function verifyPublishedReleaseClosureEvidence ({
     inspection: {
       evidence: startosEvidence,
       commitment: startosEvidence.artifact.commitment,
-      manifest: startosEvidence.artifact.manifest
+      javascriptBundleSha256: startosEvidence.toolchain.buildContract.javascriptBundle.sha256,
+      authoringManifest: startosEvidence.artifact.manifests.authoring.identity,
+      packedManifest: startosEvidence.artifact.manifests.packed.identity,
+      manifestTransition: startosEvidence.artifact.manifests.transition
     },
     childRun: verifyStartos04ClosureChildRun({
       run: actual?.startos04?.childWorkflow,

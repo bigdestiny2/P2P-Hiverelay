@@ -818,10 +818,21 @@ requires mutable public checkpoint files to be byte-identical before exporting
 image environment. It verifies the exact-tag cosign identity, raw multi-arch
 index hash and exact amd64/arm64 membership, and both child config
 `org.opencontainers.image.revision` labels. Release builds set
-`REQUIRE_RELEASE_IMAGE_DIGEST=1`, and the packed manifest must contain the
-same tag-plus-digest ref. Structured manifest inspection also requires the
-exact authored StartOS id/version, its sole runtime-image key, and the expected
-architecture set; unrelated text cannot satisfy the image-ref check.
+`REQUIRE_RELEASE_IMAGE_DIGEST=1`. Before key exposure, it builds all SDK
+ingredients, evaluates the exact built `javascript/index.js`, and requires its
+authoring manifest to contain the same tag-plus-digest ref, null pre-pack
+`gitHash`, pinned OS/SDK versions, and the exact image configuration. The
+workflow hashes that bundle, invokes `start-cli s9pk pack` directly so Make
+cannot rebuild it, then requires the hash to remain unchanged. Start CLI 1.1.0
+intentionally embeds the image files and rewrites the packed manifest source to
+`"packed"`; it does not retain the registry ref there. Post-pack inspection
+therefore requires `source: "packed"`, the exact tag commit in `gitHash`, and
+the same pinned identity/configuration instead of fabricating a packed-ref
+claim. Evidence creation then parses both complete manifests, canonicalizes
+only the schema's set-valued arrays (`volumes`, `plugins`, `satisfies`, image
+architectures, nullable hardware architectures, and per-device capabilities),
+applies only Start CLI's `gitHash` and image-source transitions, and rejects any
+other top-level or nested drift.
 
 An equivalent source-workflow rerun reuses the existing evidence-bound image
 index from an earlier completed pre-handoff checkpoint and recreates only the
@@ -856,20 +867,28 @@ fixed release URL into a private temporary directory and verifies SHA-256
 `70eff67b6e9a936acd8aaaf787b783819252ecedaa5c74d462e3b15ed4dd843a`
 before `chmod`, PATH exposure, first execution, or developer-key exposure. The
 lockfile-verified `npm ci` also completes before developer-key exposure. The
-deterministic `startos-0.4-release-evidence.json` sidecar binds the tag SHA,
-image ref/digest, per-platform child digests/revisions, pinned action/CLI/SDK
-identities, package SHA-256, exact inspected manifest identity, and package
-commitment. It excludes timestamps and mutable parent-run material, so an
-equivalent retry remains verifiable. `start-cli 1.1.0` does not expose a signer
-fingerprint through `s9pk inspect`; the sidecar records that limitation instead
-of making an unproved signer claim.
+deterministic schema-v2 `startos-0.4-release-evidence.json` sidecar binds the
+tag SHA, image ref/digest, per-platform child digests/revisions, pinned
+action/CLI/SDK identities, verified JavaScript-bundle SHA-256, distinct
+authoring and packed manifest identities, canonical hashes of both complete
+manifests and their exact permitted transition, package SHA-256, and package
+commitment. The run/attempt-named immutable child artifact contains the
+package, sidecar, raw authoring manifest, and exact JavaScript bundle. The
+parent independently inspects the packed manifest and replays the complete
+transition; the live closure verifier hashes the bundle and validates the raw
+authoring manifest as data. Neither executes downloaded JavaScript. The sidecar
+excludes timestamps and mutable parent-run material, so an equivalent retry
+remains verifiable.
+`start-cli 1.1.0` does not expose a signer fingerprint through `s9pk inspect`;
+the sidecar records that limitation instead of making an unproved signer claim.
 
-The toolchain section is explicitly a declared source/workflow build contract
-plus the current inspection runtime, not an assertion that a package embeds
-verifiable original-build provenance. The `.s9pk` format/CLI exposes no such
-provenance. The artifact proof is therefore its bytes, commitment, structured
-manifest, and the exact successful child's immutable Actions artifact, while
-the SDK/action/CLI pins describe the tag's required build contract.
+The toolchain section explicitly distinguishes the digest-bound authoring
+manifest from the current packed inspection. The original registry ref is not
+embedded in the `.s9pk` manifest. The artifact proof is therefore its bytes,
+commitment, packed manifest, the authoring manifest plus unchanged bundle in the
+exact successful child's immutable Actions artifact, and the authenticated
+workflow that performed the pack; SDK/action/CLI pins describe that build
+contract.
 
 Both `blindspark-startos-0.4.s9pk` and its sidecar are an immutable release
 pair. Every child run installs the locked source dependencies and builds the

@@ -15,6 +15,10 @@ REQUIRE_RELEASE_IMAGE_DIGEST ?= 0
 # The TypeScript manifest reads this at build/pack time. Local mechanics builds
 # retain the aligned semver tag; release CI supplies the release-surfaces digest
 # and turns REQUIRE_RELEASE_IMAGE_DIGEST on so a mutable image cannot be packed.
+# Release CI intentionally runs `ingredients`, verifies the manifest emitted by
+# that exact javascript/index.js bundle, then invokes the same `start-cli s9pk
+# pack -o blindspark.s9pk` command as the SDK universal target without giving
+# Make a second opportunity to rebuild the verified bundle.
 HIVERELAY_STARTOS_04_IMAGE_REF := $(IMAGE_TAG)$(if $(strip $(IMAGE_DIGEST)),@$(strip $(IMAGE_DIGEST)))
 export HIVERELAY_STARTOS_04_IMAGE_REF
 # The release contract is the SDK's universal target, which emits the

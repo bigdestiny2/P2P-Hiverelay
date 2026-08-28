@@ -1,4 +1,5 @@
 import test from 'brittle'
+import crypto from 'node:crypto'
 import { execFile } from 'node:child_process'
 import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -68,14 +69,23 @@ test('StartOS 0.4 release build has the required inputs and deterministic univer
   t.ok(assetsReadme.includes('requires this directory as an `s9pk` build ingredient'))
   t.ok(workflow.includes('cp "$key_path" ../.startos/build.key.pem'))
   t.is(workflow.includes('.startos/build-key'), false)
-  t.ok(workflow.includes('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1 IMAGE_DIGEST="$HIVERELAY_IMAGE_DIGEST"'))
+  t.ok(workflow.includes('make check-release-image ingredients'))
+  t.ok(workflow.includes('node -e "console.log(JSON.stringify(require(\'./javascript/index.js\').manifest))"'))
+  t.ok(workflow.includes('--manifest-kind authoring'))
+  t.ok(workflow.includes('--javascript-bundle-sha256 "$HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256"'))
+  t.ok(workflow.includes('--release-sha "$HIVERELAY_RELEASE_SHA"'))
+  t.ok(workflow.includes('HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256'))
+  t.ok(workflow.includes('start-cli s9pk pack -o blindspark.s9pk'))
+  t.ok(workflow.includes('--manifest-kind packed'))
+  t.is(workflow.includes('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1'), false)
   t.ok(workflow.includes('start-cli s9pk inspect "$STARTOS_04_RELEASE_ASSET" commitment'))
   t.ok(workflow.includes('manifest --format json'))
   t.ok(workflow.includes('verify-startos-04-package-manifest.mjs'))
   t.ok(workflow.includes('--package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION"'))
   t.is(workflow.includes('start-cli s9pk verify'), false)
   t.ok(workflow.includes('mv blindspark.s9pk "$STARTOS_04_RELEASE_ASSET"'))
-  t.ok(workflow.indexOf('make universal') < workflow.indexOf('start-cli s9pk inspect'))
+  t.ok(workflow.indexOf('--manifest-kind authoring') < workflow.indexOf('start-cli s9pk pack -o blindspark.s9pk'))
+  t.ok(workflow.indexOf('start-cli s9pk pack -o blindspark.s9pk') < workflow.indexOf('start-cli s9pk inspect'))
   t.ok(workflow.indexOf('mv blindspark.s9pk') < workflow.indexOf('start-cli s9pk inspect'))
 })
 
@@ -179,6 +189,11 @@ test('StartOS 0.4 dispatch is source ordered and exact-tag checked before keys',
   t.ok(legacyWorkflow.includes('live_closure_artifact'))
   t.ok(legacyWorkflow.includes('start-cli s9pk inspect "$package" commitment'))
   t.ok(legacyWorkflow.includes('start-cli s9pk inspect "$package" manifest --format json'))
+  t.ok(legacyWorkflow.includes('startos-0.4-authoring-manifest.json'))
+  t.ok(legacyWorkflow.includes('startos-0.4-javascript-index.js'))
+  t.ok(legacyWorkflow.includes('--artifact-javascript-bundle "$ARTIFACT_DIR/startos-0.4-javascript-index.js"'))
+  t.ok(legacyWorkflow.includes('--artifact-authoring-manifest "$ARTIFACT_DIR/startos-0.4-authoring-manifest.json"'))
+  t.ok(legacyWorkflow.includes('--packed-manifest "$CLOSURE_DIR/parent-inspected-manifest.json"'))
   t.ok(legacyWorkflow.includes('write-release-closure-evidence.mjs'))
   t.ok(legacyWorkflow.includes('verify-release-closure-evidence.mjs'))
   t.ok(legacyWorkflow.includes('--bundle-dir "$published_dir"'))
@@ -232,6 +247,7 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   const filesystemTools = workflow.indexOf('Install pinned StartOS filesystem tools')
   const install = workflow.indexOf('Install authenticated StartOS CLI')
   const installDependencies = workflow.indexOf('Install locked StartOS dependencies')
+  const verifyAuthoringManifest = workflow.indexOf('Build and verify digest-bound authoring manifest')
   const exposeKey = workflow.indexOf('STARTOS_DEV_KEY:', install)
   const download = installer.indexOf('curl --fail --location')
   const checksum = installer.indexOf('actual_sha="$(sha256sum')
@@ -245,6 +261,8 @@ test('StartOS 0.4 toolchain and release image are pinned before signing', async 
   t.ok(filesystemTools >= 0 && filesystemTools < install)
   t.ok(install >= 0 && install < exposeKey)
   t.ok(installDependencies > install && installDependencies < exposeKey)
+  t.ok(verifyAuthoringManifest > installDependencies && verifyAuthoringManifest < exposeKey)
+  t.ok(workflow.indexOf('start-cli s9pk pack -o blindspark.s9pk') > exposeKey)
   t.ok(download >= 0)
   t.ok(download < checksum)
   t.ok(checksum < makeExecutable)
@@ -293,6 +311,49 @@ esac
   ])
 })
 
+test('StartOS 0.4 release packs only the preverified unchanged javascript bundle', async (t) => {
+  const root = await mkdtemp(path.join(tmpdir(), 'hiverelay-startos-04-verified-bundle-'))
+  t.teardown(async () => rm(root, { recursive: true, force: true }))
+  const bin = path.join(root, 'bin')
+  const javascriptDir = path.join(root, 'javascript')
+  const log = path.join(root, 'start-cli.log')
+  await Promise.all([mkdir(bin), mkdir(javascriptDir)])
+  const bundle = path.join(javascriptDir, 'index.js')
+  const bundleBytes = 'verified javascript bundle\n'
+  await writeFile(bundle, bundleBytes)
+  await writeFile(path.join(bin, 'start-cli'), `#!/bin/sh
+set -eu
+printf '%s\n' "$*" >> "$START_CLI_LOG"
+[ "$*" = 's9pk pack -o blindspark.s9pk' ] || exit 64
+if [ "\${MUTATE_BUNDLE:-0}" = 1 ]; then
+  printf tampered >> javascript/index.js
+fi
+printf package > blindspark.s9pk
+`)
+  await chmod(path.join(bin, 'start-cli'), 0o755)
+  const bundleSha = crypto.createHash('sha256').update(bundleBytes).digest('hex')
+  const script = await workflowStepScript('Build the StartOS 0.4 package from verified bundle')
+  const baseEnv = {
+    PATH: `${bin}:${process.env.PATH || ''}`,
+    START_CLI_LOG: log,
+    STARTOS_04_RELEASE_ASSET: RELEASE_ASSET,
+    HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256: bundleSha
+  }
+
+  const accepted = await runInlineScript(script, root, baseEnv)
+  t.is(accepted.status, 0, accepted.stderr)
+  t.is((await readFile(log, 'utf8')).trim(), 's9pk pack -o blindspark.s9pk')
+  t.is(await readFile(path.join(root, RELEASE_ASSET), 'utf8'), 'package')
+
+  await Promise.all([
+    writeFile(bundle, bundleBytes),
+    rm(path.join(root, RELEASE_ASSET), { force: true })
+  ])
+  const rejected = await runInlineScript(script, root, { ...baseEnv, MUTATE_BUNDLE: '1' })
+  t.is(rejected.status, 1)
+  t.ok(rejected.stderr.includes('javascript bundle changed while assembling the package'))
+})
+
 test('StartOS 0.4 pull smoke uses the exact production container-store steps', async (t) => {
   const [releaseEnable, smokeEnable, releaseProbe, smokeProbe, smokeWorkflow] = await Promise.all([
     workflowStepScript('Enable Docker containerd image store', WORKFLOW),
@@ -306,7 +367,11 @@ test('StartOS 0.4 pull smoke uses the exact production container-store steps', a
   t.is(smokeProbe, releaseProbe)
   t.ok(smokeWorkflow.includes('runs-on: ubuntu-24.04'))
   t.ok(smokeWorkflow.includes('permissions:\n  contents: read'))
-  t.ok(smokeWorkflow.includes('0.26.0-rc.6@sha256:77acc64979219a56303b7a0d39faf26d2b11d9e74e77c850ae929802e63f6a82'))
+  t.ok(smokeWorkflow.includes('0.26.0-rc.7@sha256:1238939f290715aa1da20629d4f1c07e73f30f1b96a518f337a3c45e729177a8'))
+  t.ok(smokeWorkflow.includes('make check-release-image ingredients'))
+  t.ok(smokeWorkflow.includes('--manifest-kind authoring'))
+  t.ok(smokeWorkflow.includes('start-cli s9pk pack -o blindspark.s9pk'))
+  t.ok(smokeWorkflow.includes('--manifest-kind packed'))
   t.is(smokeWorkflow.includes('STARTOS_DEV_KEY'), false)
   t.is(smokeWorkflow.includes('gh release'), false)
 })
@@ -554,10 +619,13 @@ test('StartOS 0.4 child always builds source and treats a complete public pair a
   t.is(workflow.includes('cp "$existing_dir/$STARTOS_04_RELEASE_EVIDENCE"'), false)
   t.ok(workflow.includes('Package-only evidence recovery is forbidden'))
   t.ok(workflow.includes('this child will still build from exact source'))
-  t.ok(workflow.includes('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1'))
+  t.ok(workflow.includes('make check-release-image ingredients'))
+  t.ok(workflow.includes('start-cli s9pk pack -o blindspark.s9pk'))
+  t.ok(workflow.includes('cp "$HIVERELAY_STARTOS_04_AUTHORING_MANIFEST_PATH" "$artifact_dir/$STARTOS_04_AUTHORING_MANIFEST_ARTIFACT"'))
+  t.ok(workflow.includes('cp startos-0.4/javascript/index.js "$artifact_dir/$STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT"'))
   t.ok(workflow.includes('cmp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$handoff_dir/$STARTOS_04_RELEASE_ASSET"'))
   t.ok(workflow.includes('cp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$artifact_dir/$STARTOS_04_RELEASE_ASSET"'))
-  t.ok(workflow.indexOf('make universal REQUIRE_RELEASE_IMAGE_DIGEST=1') < workflow.indexOf('Upload immutable child closure artifact'))
+  t.ok(workflow.indexOf('start-cli s9pk pack -o blindspark.s9pk') < workflow.indexOf('Upload immutable child closure artifact'))
   t.ok(workflow.includes('audited manual recovery is required'))
 })
 

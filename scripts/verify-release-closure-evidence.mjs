@@ -8,10 +8,13 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import {
+  STARTOS_04_AUTHORING_MANIFEST_ARTIFACT,
+  STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT,
   resolveStartos04ReleaseBinding,
   selectStartos04ReleaseImageAuthorityArtifact,
   verifyPublishedReleaseClosureEvidence,
   verifyStartos04ParentRunAuthority,
+  verifyStartos04ArtifactBuildInputs,
   verifyStartos04ClosureArtifact,
   verifyStartos04ClosureChildRun
 } from './lib/startos-04-release-evidence.mjs'
@@ -155,6 +158,28 @@ try {
     live.files[STARTOS_EVIDENCE_NAME],
     'exact immutable child artifact evidence matches the current GitHub Release sidecar'
   )
+  const artifactBuildInputs = verifyStartos04ArtifactBuildInputs({
+    evidencePath: path.join(artifactDir, STARTOS_EVIDENCE_NAME),
+    binding: liveVerified.binding,
+    packagePath: path.join(artifactDir, PACKAGE_NAME),
+    javascriptBundlePath: path.join(artifactDir, STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT),
+    authoringManifestPath: path.join(artifactDir, STARTOS_04_AUTHORING_MANIFEST_ARTIFACT)
+  })
+  if (
+    artifactBuildInputs.javascriptBundleSha256 !== closure.startos04.inspectedPackage.javascriptBundleSha256 ||
+    artifactBuildInputs.authoringManifestCanonicalSha256 !==
+      closure.startos04.inspectedPackage.manifestTransition.authoringCanonicalSha256 ||
+    !isDeepStrictEqual(
+      artifactBuildInputs.evidence.artifact.manifests.transition,
+      closure.startos04.inspectedPackage.manifestTransition
+    ) ||
+    !isDeepStrictEqual(
+      artifactBuildInputs.authoringManifest,
+      closure.startos04.inspectedPackage.authoringManifest
+    )
+  ) {
+    throw new Error('Exact immutable child build inputs differ from the published closure certificate')
+  }
   verifyCurrentReleaseInventory({
     tag: liveVerified.binding.tag,
     expectedPrerelease: liveVerified.release.prerelease,
@@ -375,7 +400,12 @@ function verifyCurrentTagCommit (tag, expectedSha) {
 function extractExactChildArtifact (archive, outDir) {
   const listed = runCommand('unzip', ['-Z1', archive]).stdout
   const entries = listed.split(/\r?\n/).filter(Boolean).sort()
-  const expected = [PACKAGE_NAME, STARTOS_EVIDENCE_NAME].sort()
+  const expected = [
+    PACKAGE_NAME,
+    STARTOS_EVIDENCE_NAME,
+    STARTOS_04_AUTHORING_MANIFEST_ARTIFACT,
+    STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT
+  ].sort()
   if (!isDeepStrictEqual(entries, expected)) {
     throw new Error(`StartOS 0.4 child artifact ZIP entries must be exactly ${expected.join(', ')}`)
   }

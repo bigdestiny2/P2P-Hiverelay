@@ -53,6 +53,8 @@ jobs:
     env:
       STARTOS_04_RELEASE_ASSET: blindspark-startos-0.4.s9pk
       STARTOS_04_RELEASE_EVIDENCE: startos-0.4-release-evidence.json
+      STARTOS_04_AUTHORING_MANIFEST_ARTIFACT: startos-0.4-authoring-manifest.json
+      STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT: startos-0.4-javascript-index.js
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1 (Node 24)
@@ -392,6 +394,37 @@ jobs:
         working-directory: startos-0.4
         run: npm ci
 
+      - name: Build and verify digest-bound authoring manifest
+        working-directory: startos-0.4
+        run: |
+          set -euo pipefail
+          if [ -e blindspark.s9pk ]; then
+            echo 'Unexpected pre-existing StartOS package output before the release build.' >&2
+            exit 1
+          fi
+          make check-release-image ingredients \
+            REQUIRE_RELEASE_IMAGE_DIGEST=1 \
+            IMAGE_DIGEST="$HIVERELAY_IMAGE_DIGEST"
+          if [ ! -f javascript/index.js ] || [ -L javascript/index.js ] || [ ! -s javascript/index.js ]; then
+            echo 'StartOS built javascript bundle is missing, empty, or not a regular file.' >&2
+            exit 1
+          fi
+          javascript_sha="$(sha256sum javascript/index.js | cut -d ' ' -f 1)"
+          if ! [[ "$javascript_sha" =~ ^[a-f0-9]{64}$ ]]; then
+            echo 'StartOS built javascript bundle SHA-256 is malformed.' >&2
+            exit 1
+          fi
+          authoring_manifest_file="$RUNNER_TEMP/startos-0.4-authoring-manifest.json"
+          node -e "console.log(JSON.stringify(require('./javascript/index.js').manifest))" > "$authoring_manifest_file"
+          node ../scripts/verify-startos-04-package-manifest.mjs \
+            --manifest-kind authoring \
+            --tag "$HIVERELAY_RELEASE_TAG" \
+            --release-sha "$HIVERELAY_RELEASE_SHA" \
+            --package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION" \
+            --image-ref "$HIVERELAY_STARTOS_04_IMAGE_REF" < "$authoring_manifest_file"
+          echo "HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256=$javascript_sha" >> "$GITHUB_ENV"
+          echo "HIVERELAY_STARTOS_04_AUTHORING_MANIFEST_PATH=$authoring_manifest_file" >> "$GITHUB_ENV"
+
       - name: Configure StartOS developer key
         working-directory: startos-0.4
         env:
@@ -419,11 +452,25 @@ jobs:
           cp "$key_path" ../.startos/build.key.pem
           chmod 600 ../.startos/build.key.pem
 
-      - name: Build the StartOS 0.4 package
+      - name: Build the StartOS 0.4 package from verified bundle
         working-directory: startos-0.4
         run: |
           set -euo pipefail
-          make universal REQUIRE_RELEASE_IMAGE_DIGEST=1 IMAGE_DIGEST="$HIVERELAY_IMAGE_DIGEST"
+          if ! [[ "$HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256" =~ ^[a-f0-9]{64}$ ]]; then
+            echo 'Verified StartOS javascript bundle SHA-256 is missing or malformed.' >&2
+            exit 1
+          fi
+          before_sha="$(sha256sum javascript/index.js | cut -d ' ' -f 1)"
+          if [ "$before_sha" != "$HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256" ]; then
+            echo 'StartOS javascript bundle changed after authoring-manifest verification.' >&2
+            exit 1
+          fi
+          start-cli s9pk pack -o blindspark.s9pk
+          after_sha="$(sha256sum javascript/index.js | cut -d ' ' -f 1)"
+          if [ "$after_sha" != "$HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256" ]; then
+            echo 'StartOS javascript bundle changed while assembling the package.' >&2
+            exit 1
+          fi
           if [ ! -s blindspark.s9pk ]; then
             echo "StartOS 0.4 universal package is missing or empty." >&2
             exit 1
@@ -444,12 +491,13 @@ jobs:
             echo "StartOS 0.4 package commitment is missing or empty." >&2
             exit 1
           fi
-          manifest_file="$RUNNER_TEMP/startos-0.4-packed-manifest.json"
-          start-cli s9pk inspect "$STARTOS_04_RELEASE_ASSET" manifest --format json > "$manifest_file"
+          packed_manifest_file="$RUNNER_TEMP/startos-0.4-packed-manifest.json"
+          start-cli s9pk inspect "$STARTOS_04_RELEASE_ASSET" manifest --format json > "$packed_manifest_file"
           node ../scripts/verify-startos-04-package-manifest.mjs \
+            --manifest-kind packed \
             --tag "$HIVERELAY_RELEASE_TAG" \
-            --package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION" \
-            --image-ref "$HIVERELAY_STARTOS_04_IMAGE_REF" < "$manifest_file"
+            --release-sha "$HIVERELAY_RELEASE_SHA" \
+            --package-version "$HIVERELAY_STARTOS_04_PACKAGE_VERSION" < "$packed_manifest_file"
           s9pk_sha="$(sha256sum "$STARTOS_04_RELEASE_ASSET" | cut -d ' ' -f 1)"
           if ! [[ "$s9pk_sha" =~ ^[a-f0-9]{64}$ ]]; then
             echo "StartOS 0.4 package SHA-256 is malformed." >&2
@@ -457,7 +505,7 @@ jobs:
           fi
           echo "HIVERELAY_STARTOS_04_PACKAGE_SHA256=$s9pk_sha" >> "$GITHUB_ENV"
           echo "HIVERELAY_STARTOS_04_COMMITMENT_PATH=$commitment_file" >> "$GITHUB_ENV"
-          echo "HIVERELAY_STARTOS_04_MANIFEST_PATH=$manifest_file" >> "$GITHUB_ENV"
+          echo "HIVERELAY_STARTOS_04_PACKED_MANIFEST_PATH=$packed_manifest_file" >> "$GITHUB_ENV"
           echo "Built $STARTOS_04_RELEASE_ASSET ($s9pk_sha)"
 
       - name: Write StartOS 0.4 release evidence
@@ -471,7 +519,10 @@ jobs:
             --image-manifest-evidence "$HIVERELAY_IMAGE_MANIFEST_EVIDENCE_PATH" \
             --package "startos-0.4/$STARTOS_04_RELEASE_ASSET" \
             --commitment "$HIVERELAY_STARTOS_04_COMMITMENT_PATH" \
-            --manifest "$HIVERELAY_STARTOS_04_MANIFEST_PATH" \
+            --javascript-bundle startos-0.4/javascript/index.js \
+            --javascript-bundle-sha256 "$HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256" \
+            --authoring-manifest "$HIVERELAY_STARTOS_04_AUTHORING_MANIFEST_PATH" \
+            --packed-manifest "$HIVERELAY_STARTOS_04_PACKED_MANIFEST_PATH" \
             --out "$STARTOS_04_RELEASE_EVIDENCE"
 
       - name: Upload immutable StartOS 0.4 package and evidence pair
@@ -562,11 +613,16 @@ jobs:
             --image-manifest-evidence "$HIVERELAY_IMAGE_MANIFEST_EVIDENCE_PATH" \
             --package "$handoff_dir/$STARTOS_04_RELEASE_ASSET" \
             --commitment "$HIVERELAY_STARTOS_04_COMMITMENT_PATH" \
-            --manifest "$HIVERELAY_STARTOS_04_MANIFEST_PATH" \
+            --javascript-bundle startos-0.4/javascript/index.js \
+            --javascript-bundle-sha256 "$HIVERELAY_STARTOS_04_JAVASCRIPT_SHA256" \
+            --authoring-manifest "$HIVERELAY_STARTOS_04_AUTHORING_MANIFEST_PATH" \
+            --packed-manifest "$HIVERELAY_STARTOS_04_PACKED_MANIFEST_PATH" \
             --verify "$handoff_dir/$STARTOS_04_RELEASE_EVIDENCE"
           artifact_dir="$(mktemp -d)"
           cp "startos-0.4/$STARTOS_04_RELEASE_ASSET" "$artifact_dir/$STARTOS_04_RELEASE_ASSET"
           cp "$STARTOS_04_RELEASE_EVIDENCE" "$artifact_dir/$STARTOS_04_RELEASE_EVIDENCE"
+          cp "$HIVERELAY_STARTOS_04_AUTHORING_MANIFEST_PATH" "$artifact_dir/$STARTOS_04_AUTHORING_MANIFEST_ARTIFACT"
+          cp startos-0.4/javascript/index.js "$artifact_dir/$STARTOS_04_JAVASCRIPT_BUNDLE_ARTIFACT"
           echo "dir=$artifact_dir" >> "$GITHUB_OUTPUT"
 
       - name: Upload immutable child closure artifact
@@ -576,6 +632,8 @@ jobs:
           path: |
             ${{ steps.handoff.outputs.dir }}/blindspark-startos-0.4.s9pk
             ${{ steps.handoff.outputs.dir }}/startos-0.4-release-evidence.json
+            ${{ steps.handoff.outputs.dir }}/startos-0.4-authoring-manifest.json
+            ${{ steps.handoff.outputs.dir }}/startos-0.4-javascript-index.js
           if-no-files-found: error
           compression-level: 0
           retention-days: 90

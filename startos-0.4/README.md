@@ -60,18 +60,31 @@ start-cli s9pk inspect blindspark.s9pk manifest
 Sideload for testing: upload the `.s9pk` from your StartOS UI
 (**System → Sideload Service**), or `start-cli` against your server.
 
-Release packaging is deliberately stricter. It succeeds only with the digest
-from the successful `release-surfaces` run:
+Release packaging is deliberately stricter. CI builds all SDK ingredients with
+the digest from the successful `release-surfaces` run, evaluates and verifies
+the exact built JavaScript manifest, then packs that unchanged bundle directly:
 
 ```sh
-make universal \
+make check-release-image ingredients \
   REQUIRE_RELEASE_IMAGE_DIGEST=1 \
   IMAGE_DIGEST=sha256:<multi-arch-digest>
+start-cli s9pk pack -o blindspark.s9pk
 ```
 
 The Makefile exports the resulting tag-plus-digest ref to the TypeScript
-manifest. CI then inspects the packed manifest and rejects a package that does
-not contain that exact ref.
+manifest. Before any signing key is exposed, CI requires that authoring
+manifest to contain the exact ref and records the SHA-256 of
+`javascript/index.js`. It checks the bundle hash again after packing. Start CLI
+1.1.0 intentionally embeds the image files and rewrites the packed manifest's
+image source to `"packed"`; the original registry ref is therefore not retained
+in the `.s9pk` manifest. CI separately requires the packed manifest to report
+`source: "packed"`, the exact tag commit in `gitHash`, SDK 2.0.1, OS
+0.4.0-beta.10, and the expected image configuration. The immutable child
+Actions artifact carries the authoring manifest and JavaScript bundle so the
+parent/live closure verifier can bind both inputs without executing downloaded
+code. Sidecar creation additionally compares the complete canonical authoring
+and packed manifests: it permits only schema set ordering plus Start CLI's
+`gitHash` and image-source changes, and rejects drift in every other field.
 
 ## Releasing a new version
 

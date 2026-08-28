@@ -11,6 +11,27 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+## [0.26.0-rc.8] — 2026-08-28
+
+StartOS 0.4 package-provenance repair candidate. RC7 built and signed the
+universal package successfully, then failed closed because Start CLI 1.1.0
+replaces the authoring image reference with `source: "packed"` inside the
+finished package.
+
+### Release closure
+- Verify the digest-qualified authoring manifest before exposing the developer
+  key, hash-bind that exact JavaScript bundle through packing, and separately
+  verify the package's packed manifest, exact release commit, and architectures.
+- Bind the complete authoring-to-packed manifest transition, bundle hash,
+  package commitment, and both manifest observations into schema-v2 child and
+  terminal closure evidence.
+- Rehearse the real universal pack on pull requests with the public immutable
+  RC7 image fixture, pinned toolchain, an ephemeral key, and no release
+  credentials or publication rights.
+- Keep the public gateway and fleet channels unchanged; this candidate still
+  requires all eight release assets, terminal live closure, and the isolated
+  Utah canary soak before promotion.
+
 ## [0.26.0-rc.7] — 2026-08-27
 
 StartOS 0.4 multi-platform image-store repair candidate. RC6 cleared the
