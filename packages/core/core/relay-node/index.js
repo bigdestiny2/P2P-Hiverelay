@@ -1,5 +1,9 @@
 import Hyperswarm from 'hyperswarm'
-import { openCorestore } from '../persistence/storage-root-restore.js'
+import {
+  corestoreGenerationHealth,
+  corestoreGenerationParticipantOptions,
+  openCorestore
+} from '../persistence/storage-root-restore.js'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
@@ -107,6 +111,7 @@ const DEFAULT_CONFIG = {
   capacityProfile: null,
   capacityProfileConfigured: false,
   storage: './storage',
+  hiverelayGeneration: null,
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   maxConnections: 256,
   maxRelayBandwidthMbps: 100,
@@ -1324,7 +1329,10 @@ export class RelayNode extends EventEmitter {
 
       // Re-create store if it was closed (e.g. after self-heal restart)
       if (!this.store || this.store.closed) {
-        this.store = openCorestore(this.config.storage)
+        this.store = openCorestore(
+          this.config.storage,
+          corestoreGenerationParticipantOptions(this.config.hiverelayGeneration, 'relay-node')
+        )
         // The registry's Hyperbee is backed by the OLD (now-closed) store.
         // Drop it so setStore()/load() below reopen the bee on the fresh
         // store; otherwise reseedFromRegistry reads a closed core, gets
@@ -3096,6 +3104,10 @@ export class RelayNode extends EventEmitter {
 
   getHealthStatus () {
     return this.healthMonitor ? this.healthMonitor.getStatus() : null
+  }
+
+  getStorageGenerationStatus () {
+    return corestoreGenerationHealth(this.config.hiverelayGeneration, this.store)
   }
 
   /**

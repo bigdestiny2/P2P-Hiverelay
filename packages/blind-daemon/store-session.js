@@ -10,9 +10,10 @@ const CONTROL_DIRECTORY = 'control'
 const WRITER_LOCK_FILE = 'writer.lock.v1'
 const RUNTIME_BINDING_FILE = 'runtime-binding.v1'
 const GENESIS_INTENT_FILE = 'genesis-intent.v1'
-const STORE_GENERATION_HEAD_FILE = 'blind-store-generation-head-v1.json'
-const STORE_GENERATION_RECORD = /^blind-store-generation-record-[0-9]{16}-v1\.json$/
-const STORE_GENERATION_TEMP = /^\.blind-store-generation-.*\.tmp-[0-9]+$/
+const STORE_GENERATION_HEAD_FILE = 'blind-store-generation-head-v2.json'
+const STORE_GENERATION_RECORD = /^blind-store-generation-record-[0-9]{16}-v2\.json$/
+const STORE_GENERATION_TEMP = /^\.blind-store-generation-(?:record|head)\.tmp-[0-9a-f]{32}$/
+const STORE_GENERATION_RECORD_TEMP = /^\.blind-store-generation-record\.tmp-[0-9a-f]{32}$/
 const MANIFEST_SLOT_FILES = Object.freeze(['manifest-a.v1', 'manifest-b.v1'])
 const ROOT_NAMES = new Set([CONTROL_DIRECTORY, RUNTIME_BINDING_FILE, 'blobs', 'staging'])
 const CONTROL_NAMES = new Set([
@@ -168,6 +169,44 @@ async function inspectEntry (target, expectedKind, label, options = {}) {
     : { ok: false, state: afterState, reason: `${label} is not a private single-link ${expectedKind}` }
 }
 
+async function generationRecordPublicationLinks (controlDirectory, names) {
+  const candidates = names.filter(name =>
+    STORE_GENERATION_RECORD.test(name) || STORE_GENERATION_TEMP.test(name)
+  )
+  const linked = new Map()
+  for (const name of candidates) {
+    const inspected = await inspectEntry(
+      path.join(controlDirectory, name),
+      'file',
+      `store control entry ${name}`,
+      { expectedLinks: null }
+    )
+    if (!inspected.ok) return { ok: false, reason: inspected.reason }
+    if (inspected.state.nlink === 1) continue
+    if (inspected.state.nlink !== 2 ||
+        (!STORE_GENERATION_RECORD.test(name) && !STORE_GENERATION_RECORD_TEMP.test(name))) {
+      return { ok: false, reason: `store control entry ${name} has an unsupported hard-link topology` }
+    }
+    const inode = `${inspected.state.dev}:${inspected.state.ino}`
+    const group = linked.get(inode) || []
+    group.push({ name, state: inspected.state })
+    linked.set(inode, group)
+  }
+
+  const accepted = new Set()
+  for (const group of linked.values()) {
+    const finals = group.filter(entry => STORE_GENERATION_RECORD.test(entry.name))
+    const temporaries = group.filter(entry => STORE_GENERATION_RECORD_TEMP.test(entry.name))
+    if (group.length !== 2 || finals.length !== 1 || temporaries.length !== 1 ||
+        !sameState(finals[0].state, temporaries[0].state)) {
+      return { ok: false, reason: 'store generation record publication has an incomplete or ambiguous hard-link pair' }
+    }
+    accepted.add(finals[0].name)
+    accepted.add(temporaries[0].name)
+  }
+  return { ok: true, accepted }
+}
+
 function checkpointArtifact (name) {
   let match = CHECKPOINT_FINAL.exec(name)
   if (match) return Object.freeze({ kind: match[1], hash: match[2], role: 'final' })
@@ -277,11 +316,22 @@ export async function classifyBlindStoreRoot (configuredRoot) {
         entryStates
       })
   }
+  const generationPublicationLinks = await generationRecordPublicationLinks(controlDirectory, control.names)
+  if (!generationPublicationLinks.ok) {
+    return classification(BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS,
+      root, inspectedRoot.state, inspectedRoot.names, {
+        reason: generationPublicationLinks.reason,
+        controlState: control.state,
+        controlNames: control.names,
+        entryStates
+      })
+  }
   for (const name of control.names) {
     const inspected = await inspectEntry(
       path.join(controlDirectory, name),
       'file',
-      `store control entry ${name}`
+      `store control entry ${name}`,
+      generationPublicationLinks.accepted.has(name) ? { expectedLinks: 2 } : {}
     )
     if (!inspected.ok) {
       return classification(BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS,

@@ -22,7 +22,7 @@ import { createServer } from 'http'
 import { timingSafeEqual } from 'crypto'
 import { isIP } from 'net'
 import Hyperswarm from 'hyperswarm'
-import { openCorestore } from '../core/persistence/storage-root-restore.js'
+import { corestoreGenerationParticipantOptions, openCorestore } from '../core/persistence/storage-root-restore.js'
 import Hyperdrive from 'hyperdrive'
 import { HyperGateway } from './hyper-gateway.js'
 import { RELAY_DISCOVERY_TOPIC } from '../core/constants.js'
@@ -139,6 +139,7 @@ export function validateStandaloneGatewayOptions (opts = {}) {
     port,
     host,
     storagePath: opts.storage || './gateway-storage',
+    hiverelayGeneration: opts.hiverelayGeneration ?? null,
     corsOrigin: opts.corsOrigin || '*',
     allowDynamicSeed,
     enableDiscovery,
@@ -212,6 +213,7 @@ export async function startGateway (opts = {}) {
     port,
     host,
     storagePath,
+    hiverelayGeneration,
     seedKeys,
     corsOrigin,
     allowDynamicSeed,
@@ -222,7 +224,8 @@ export async function startGateway (opts = {}) {
     seedOperationTimeoutMs
   } = config
 
-  const store = openCorestore(storagePath)
+  const store = openCorestore(storagePath,
+    corestoreGenerationParticipantOptions(hiverelayGeneration, 'standalone-gateway'))
   let swarm = null
   let gateway = null
   let server = null

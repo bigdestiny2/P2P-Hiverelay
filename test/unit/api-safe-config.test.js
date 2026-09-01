@@ -11,6 +11,16 @@ test('api safe config: emits only operator-safe persisted config fields', (t) =>
     config: {
       name: 'relay',
       storage: '/data',
+      hiverelayGeneration: {
+        mode: 'hc11-envelope-v1',
+        expectedInstallationId: '11'.repeat(32),
+        expectedAuthorityKeySha256: `sha256:${'22'.repeat(32)}`,
+        expectedManifestSha256: `sha256:${'33'.repeat(32)}`,
+        participant: 'relay-node',
+        authorityKey: 'generation-secret',
+        secret: 'nested-secret',
+        unknown: { token: 'nested-token' }
+      },
       capacityProfile: 'edge-community',
       acceptMode: 'review',
       acceptAllowlist: ['a'.repeat(64)],
@@ -63,6 +73,13 @@ test('api safe config: emits only operator-safe persisted config fields', (t) =>
   t.alike(payload.plugins, ['poker'])
   t.alike(payload.transports, { udp: true, websocket: true })
   t.alike(payload.subsidy, { enabled: true, payoutDestination: 'operator@example.com' })
+  t.alike(payload.hiverelayGeneration, {
+    mode: 'hc11-envelope-v1',
+    expectedInstallationId: '11'.repeat(32),
+    expectedAuthorityKeySha256: `sha256:${'22'.repeat(32)}`,
+    expectedManifestSha256: `sha256:${'33'.repeat(32)}`,
+    participant: 'relay-node'
+  })
   t.absent(Object.prototype.hasOwnProperty.call(payload, 'apiKey'))
   t.absent(Object.prototype.hasOwnProperty.call(payload, 'ui'))
   t.absent(Object.prototype.hasOwnProperty.call(payload, 'holesail'))
@@ -73,6 +90,9 @@ test('api safe config: emits only operator-safe persisted config fields', (t) =>
   t.absent(JSON.stringify(payload).includes('hole-secret'))
   t.absent(JSON.stringify(payload).includes('secret.onion'))
   t.absent(JSON.stringify(payload).includes('pair-secret'))
+  t.absent(JSON.stringify(payload).includes('generation-secret'))
+  t.absent(JSON.stringify(payload).includes('nested-secret'))
+  t.absent(JSON.stringify(payload).includes('nested-token'))
 })
 
 test('api safe config: normalizes missing arrays and nested defaults', (t) => {

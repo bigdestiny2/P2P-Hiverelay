@@ -17,7 +17,7 @@
  *   // if (path.startsWith('/v1/hyper/')) return gateway.handle(req, res, path)
  */
 
-import { openCorestore } from '../core/persistence/storage-root-restore.js'
+import { corestoreGenerationParticipantOptions, openCorestore } from '../core/persistence/storage-root-restore.js'
 import Hyperswarm from 'hyperswarm'
 import Hyperdrive from 'hyperdrive'
 import Hyperblobs from 'hyperblobs'
@@ -437,6 +437,10 @@ export class HyperGateway extends EventEmitter {
     // A separate namespace would isolate the data and make anchored drives
     // appear unavailable to the HTTP gateway.
     this._externalStore = opts.store || null
+    this._hiverelayGeneration = opts.hiverelayGeneration ?? null
+    if (this._externalStore && this._hiverelayGeneration != null) {
+      throw new TypeError('hiverelayGeneration cannot be supplied with an externally owned Corestore')
+    }
     this._store = null
     this._swarm = null
     this._ownsSwarm = false
@@ -552,7 +556,8 @@ export class HyperGateway extends EventEmitter {
             ? join(this.node.config.storage || './storage', 'gateway-store')
             : './gateway-store'
 
-          this._store = openCorestore(storagePath)
+          this._store = openCorestore(storagePath,
+            corestoreGenerationParticipantOptions(this._hiverelayGeneration, 'hyper-gateway'))
           await this._withTimeout(
             this._store.ready(),
             this._driveOperationTimeout,

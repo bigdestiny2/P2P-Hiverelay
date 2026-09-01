@@ -24,22 +24,66 @@
 import Corestore from 'corestore'
 import { existsSync, readdirSync, renameSync } from 'fs'
 import { join } from 'path'
+import {
+  guardCorestoreGenerationReady,
+  prepareCorestoreGenerationOpen
+} from './corestore-generation-envelope.js'
+
+export {
+  CORESTORE_GENERATION_CAPABILITIES,
+  CORESTORE_GENERATION_ENVELOPE,
+  CORESTORE_GENERATION_MIGRATION_BINDING,
+  CorestoreGenerationError,
+  assertPatchedHypercoreStorageMigration,
+  corestoreGenerationOpenOptions,
+  corestoreGenerationHealth,
+  corestoreGenerationParticipantOptions,
+  corestoreGenerationPublicConfig,
+  corestoreGenerationStatus,
+  createContentAddressedCorestoreBackup,
+  importLegacyCorestoreCopyIntoEnvelope,
+  initializeCorestoreGenerationEnvelope,
+  inventoryCorestoreGenerationTree,
+  rebindRestoredCorestoreDevice,
+  restoreContentAddressedCorestoreBackup
+} from './corestore-generation-envelope.js'
 
 // Entries hypercore-storage manages itself at the storage root — never ours.
 const CORESTORE_OWNED = new Set(['CORESTORE', 'primary-key', 'cores', 'db'])
 
 export function openCorestore (storage, opts) {
+  let prepared = null
+  let corestoreOptions = opts
+  if (opts && typeof opts === 'object' && Object.prototype.hasOwnProperty.call(opts, 'hiverelayGeneration')) {
+    corestoreOptions = { ...opts }
+    const generationOptions = corestoreOptions.hiverelayGeneration
+    delete corestoreOptions.hiverelayGeneration
+    if (generationOptions != null) {
+      if (corestoreOptions.allowBackup === true) {
+        throw new TypeError('allowBackup is forbidden for a generation-envelope writer')
+      }
+      if (corestoreOptions.readOnly === true) {
+        throw new TypeError('readOnly generation-envelope verification requires the offline verification API')
+      }
+      prepared = prepareCorestoreGenerationOpen(storage, generationOptions)
+      storage = prepared.storage
+    }
+  }
+
   let before = null
   try {
     // Only a pre-7 root (no CORESTORE marker yet) can be migrated on open.
-    if (typeof storage === 'string' && !existsSync(join(storage, 'CORESTORE'))) {
+    // The explicit generation importer has already separated Corestore-owned
+    // bytes from relay sidecars, so its nested root never uses this legacy
+    // relocation compatibility shim.
+    if (!prepared && typeof storage === 'string' && !existsSync(join(storage, 'CORESTORE'))) {
       before = readdirSync(storage)
     }
   } catch {
     before = null // brand-new or unreadable root — nothing to protect
   }
 
-  const store = new Corestore(storage, opts)
+  const store = new Corestore(storage, corestoreOptions)
 
   if (before) {
     for (const name of before) {
@@ -54,5 +98,5 @@ export function openCorestore (storage, opts) {
     }
   }
 
-  return store
+  return prepared ? guardCorestoreGenerationReady(store, prepared) : store
 }

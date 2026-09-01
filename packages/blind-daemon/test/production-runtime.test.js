@@ -527,7 +527,7 @@ test('production assembler derives signed readiness and exposes only its real su
   await runtime.close()
 })
 
-test('production startup permits only fresh blind-only 1.2 stores and rejects evidence loss', async t => {
+test('production startup permits only blind-only 1.2 stores, rebuilds a missing head, and rejects record loss', async t => {
   const fixture = await runtimeFixture()
   t.teardown(async () => removeBlindBoundaryScratch(fixture.directory))
   const environment = { ...fixture.environment }
@@ -550,12 +550,23 @@ test('production startup permits only fresh blind-only 1.2 stores and rejects ev
   }, bootstrap.endpointIds), /STORE_READER_MODE is invalid/)
 
   await fs.unlink(path.join(environment.HIVERELAY_BLIND_STORE_ROOT, 'control',
-    'blind-store-generation-head-v1.json'))
+    'blind-store-generation-head-v2.json'))
+  const recovered = await assembleProductionBlindDaemon({
+    bootstrap,
+    runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
+    releaseGate: async () => {}
+  })
+  await recovered.close()
+  t.ok((await fs.stat(path.join(environment.HIVERELAY_BLIND_STORE_ROOT, 'control',
+    'blind-store-generation-head-v2.json'))).isFile(), 'a valid contiguous record chain rebuilds its missing head')
+
+  await fs.unlink(path.join(environment.HIVERELAY_BLIND_STORE_ROOT, 'control',
+    'blind-store-generation-record-0000000000000000-v2.json'))
   await t.exception.all(() => assembleProductionBlindDaemon({
     bootstrap,
     runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
     releaseGate: async () => {}
-  }), /generation head is missing/)
+  }), /record filenames must be contiguous/)
 })
 
 test('legacy-only admission adapter cannot advertise or dispatch production V2 CELL.PUT', async t => {
