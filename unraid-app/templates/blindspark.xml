@@ -26,6 +26,7 @@
 
   <Config Name="Dashboard Port" Target="9100" Default="30452" Mode="tcp" Description="Host port for the Blindspark dashboard and management API." Type="Port" Display="always" Required="true" Mask="false"/>
   <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/blindspark" Mode="rw" Description="Persistent identity, configuration, Hypercores, and seeded content." Type="Path" Display="always" Required="true" Mask="false"/>
+  <Config Name="Storage Generation Receipt" Target="/config" Default="/mnt/user/appdata/blindspark/storage-generation" Mode="ro" Description="Read-only directory containing storage-generation-receipt.v1.json and its separately generated storage-generation-receipt.v1.sha256 pin." Type="Path" Display="always" Required="true" Mask="false"/>
   <Config Name="Management API Key" Target="HIVERELAY_API_KEY" Default="" Description="Unique secret of at least 32 characters used by the dashboard and management API." Type="Variable" Display="always" Required="true" Mask="true"/>
   <Config Name="Timezone" Target="TZ" Default="Etc/UTC" Description="Container timezone." Type="Variable" Display="advanced" Required="true" Mask="false"/>
   <Config Name="Home" Target="HOME" Default="/data" Description="Keep HiveRelay configuration with its persistent data." Type="Variable" Display="advanced" Required="true" Mask="false"/>

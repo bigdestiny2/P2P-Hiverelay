@@ -67,6 +67,7 @@ main:
   args: []
   mounts:
     main: /data
+    generation: /config
   gpu-acceleration: false
 
 hardware-requirements:
@@ -90,6 +91,10 @@ properties: ~
 
 volumes:
   main:
+    type: data
+  # Populated only by the reviewed offline storage-generation ceremony.
+  # The runtime never creates or repairs these receipt/pin bytes.
+  generation:
     type: data
 
 interfaces:

@@ -68,10 +68,11 @@ export const CORESTORE_GENERATION_CAPABILITIES = Object.freeze({
   blindMustRemainDisabledForThisProfile: true,
   pearMigrateRecordByteCompatible: false,
   pearMigrateAdapterRequired: true,
+  pearMigrateAdapterImplemented: true,
   arbitraryPathByteCopyBootableWithoutRebind: false,
   signedAuthenticatedDeviceRebindImplemented: true,
   inventoryRequiresOwnerReadableTraversableDirectories: true,
-  packedNpmPatchApplicationGuaranteed: false,
+  packedNpmPatchApplicationGuaranteed: true,
   liveFleetBackupProofIncluded: false
 })
 

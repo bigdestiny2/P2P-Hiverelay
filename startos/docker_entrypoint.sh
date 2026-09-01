@@ -34,5 +34,8 @@ export HIVERELAY_ACCEPT_MODE=review
 # a saved operator config exists, so dashboard/config changes win later.
 export HIVERELAY_MAX_STORAGE=10GB
 export HIVERELAY_LOG_LEVEL=info
+export HIVERELAY_REQUIRE_GENERATION_RECEIPT=1
+export HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+export HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
 
 exec node /app/packages/core/cli/index.js start

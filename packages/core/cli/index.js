@@ -39,7 +39,7 @@ import {
 } from '../config/public-hive-gateway-env.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
-import { join, dirname } from 'path'
+import { join, dirname, resolve } from 'path'
 import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import {
@@ -50,6 +50,14 @@ import {
   CAPACITY_PROFILE_IDS,
   normalizeCapacityProfile
 } from '../config/capacity-plan.js'
+import {
+  MAX_SEED_DISCOVERY_HINTS,
+  validateSeedDiscoveryHints
+} from '../core/protocol/seed-discovery-hints.js'
+import {
+  parseGenerationReceiptRequiredEnvironment,
+  resolveCorestoreGenerationReceiptLaunch
+} from '../core/persistence/storage-generation-receipt.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
@@ -58,7 +66,7 @@ const SKILL_SRC = join(__dirname, '..', 'skills', 'SKILL.md')
 const VALID_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 
 const args = minimist(process.argv.slice(2), {
-  boolean: ['version', 'auto-heal', 'autoheal'],
+  boolean: ['version', 'auto-heal', 'autoheal', 'require-generation-receipt'],
   // Keep identity-like values as exact strings. In particular, an app key
   // containing only decimal digits must never be coerced through Number.
   string: [
@@ -70,7 +78,10 @@ const args = minimist(process.argv.slice(2), {
     'gateway-max-in-flight-per-app',
     'hive-app-host-suffix',
     'hive-app-public-key',
-    'hive-app-public-version'
+    'hive-app-public-version',
+    'generation-receipt',
+    'generation-receipt-sha256',
+    'generation-receipt-sha256-file'
   ]
 })
 const command = args._[0]
@@ -528,6 +539,30 @@ async function start () {
   }
 
   const config = loadConfig(cliOverrides)
+  let generationLaunch = null
+  try {
+    const requiredByEnvironment = parseGenerationReceiptRequiredEnvironment(
+      process.env.HIVERELAY_REQUIRE_GENERATION_RECEIPT
+    )
+    const storageRoot = resolve(config.storage)
+    generationLaunch = resolveCorestoreGenerationReceiptLaunch({
+      required: args['require-generation-receipt'] === true || requiredByEnvironment,
+      receiptPath: args['generation-receipt'] || process.env.HIVERELAY_GENERATION_RECEIPT,
+      expectedSha256: args['generation-receipt-sha256'] || process.env.HIVERELAY_GENERATION_RECEIPT_SHA256,
+      expectedSha256File: args['generation-receipt-sha256-file'] || process.env.HIVERELAY_GENERATION_RECEIPT_SHA256_FILE,
+      participant: 'relay-node',
+      storageRoot
+    })
+    if (generationLaunch) {
+      // The accepted envelope API itself requires a canonical absolute root.
+      // Resolve only after the external receipt and pin have both closed.
+      config.storage = storageRoot
+      config.hiverelayGeneration = generationLaunch.hiverelayGeneration
+    }
+  } catch (err) {
+    console.error(`Storage generation startup blocked: ${err && err.message ? err.message : String(err)}`)
+    process.exit(1)
+  }
   try {
     assertPublicHiveGatewayConcurrency(config)
     assertPublicHiveGatewayFiniteLimits(config)
@@ -570,6 +605,7 @@ async function start () {
     log.info({ publicKey: pubHex, port: config.apiPort }, 'relay node started')
     console.log(`  Public Key: ${pubHex}`)
     console.log(`  Storage:    ${config.storage}`)
+    if (generationLaunch) console.log(`  Generation: HC11 (${generationLaunch.receiptSha256})`)
     console.log(`  Max Store:  ${formatBytes(config.maxStorageBytes)}`)
     console.log(`  Relay:      ${config.enableRelay ? 'enabled' : 'disabled'}`)
     console.log(`  Seeding:    ${config.enableSeeding ? 'enabled' : 'disabled'}`)
@@ -1615,6 +1651,12 @@ Start Options:
   --storage <path>              Storage directory
   --max-storage <size>          Max storage (e.g., 50GB, 100GB)
   --capacity-profile <id>       Hardware plan: ${CAPACITY_PROFILE_IDS.join(' | ')}
+  --require-generation-receipt  Refuse legacy/null storage startup
+  --generation-receipt <path>   Canonical external HC11 ceremony receipt
+  --generation-receipt-sha256 <sha256:...>
+                                Separately transported exact receipt pin
+  --generation-receipt-sha256-file <path>
+                                External file containing the exact receipt pin
   --seed-max-storage <size>     Required finite bound for each --seed app
   --max-connections <n>         Max peer connections (default: 256)
   --max-bandwidth <mbps>        Max relay bandwidth in Mbps (default: 100)
@@ -1713,6 +1755,13 @@ Environment:
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
   HIVERELAY_STORAGE             Storage path used when --storage is absent
   HIVERELAY_MAX_STORAGE         Storage cap until maxStorageBytes is persisted
+  HIVERELAY_REQUIRE_GENERATION_RECEIPT
+                                Production fail-closed gate (1/true or 0/false)
+  HIVERELAY_GENERATION_RECEIPT  Canonical absolute external receipt path
+  HIVERELAY_GENERATION_RECEIPT_SHA256
+                                Separately injected exact receipt pin
+  HIVERELAY_GENERATION_RECEIPT_SHA256_FILE
+                                Canonical absolute external receipt pin-file path
   HIVERELAY_API_HOST            API bind host used when --api-host is absent
   HIVERELAY_API_PORT            API port used when --port is absent
   HIVERELAY_HOLESAIL            Set 1/true to enable the Holesail API tunnel

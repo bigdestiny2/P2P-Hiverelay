@@ -61,6 +61,9 @@
     "p2p-hiverelay": "./cli/index.js",
     "hiverelay": "./cli/index.js"
   },
+  "scripts": {
+    "postinstall": "node platform/apply-hypercore-storage-migration-patch.js"
+  },
   "files": [
     "cli/",
     "core/",
@@ -69,6 +72,7 @@
     "incentive/",
     "transports/",
     "platform/",
+    "patches/",
     "pear-entry.js",
     "README.md",
     "LICENSE"
@@ -97,6 +101,7 @@
     "holesail": "^2.4.1",
     "hyperbee": "^2.27.3",
     "hypercore": "^11.33.5",
+    "hypercore-storage": "3.2.0",
     "hyperdht": "^6.15.0",
     "hyperdrive": "^13.3.2",
     "hyperswarm": "^4.17.0",
