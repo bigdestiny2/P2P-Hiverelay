@@ -3,6 +3,7 @@ import { createHash } from 'crypto'
 import {
   mkdtempSync,
   mkdirSync,
+  chmodSync,
   symlinkSync,
   writeFileSync
 } from 'fs'
@@ -114,6 +115,8 @@ test('generation receipt file and external pin file close launcher input', (t) =
   const pinPath = join(config, 'storage-generation-receipt.v1.sha256')
   writeFileSync(receiptPath, bytes, { mode: 0o600 })
   writeFileSync(pinPath, `${digest}\n`, { mode: 0o600 })
+  chmodSync(receiptPath, 0o400)
+  chmodSync(pinPath, 0o400)
 
   const fromFile = readCorestoreGenerationReceipt(receiptPath, {
     expectedSha256File: pinPath,
@@ -155,6 +158,15 @@ test('generation receipt rejects mutable-root placement, symlinks, and conflicti
     participant: 'relay-node',
     storageRoot: storage
   }), /external to the mutable Corestore generation root/)
+
+  t.exception(() => readCorestoreGenerationReceipt(receiptPath, {
+    expectedSha256: digest,
+    participant: 'relay-node',
+    storageRoot: storage
+  }), /must be read-only to the runtime/)
+
+  chmodSync(receiptPath, 0o400)
+  chmodSync(pinPath, 0o400)
 
   const linked = join(config, 'linked.json')
   symlinkSync(receiptPath, linked)

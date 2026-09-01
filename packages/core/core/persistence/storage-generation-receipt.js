@@ -246,6 +246,7 @@ function readRegularFile (file, label, maximum) {
   try {
     const lstat = lstatSync(file)
     if (lstat.isSymbolicLink()) fail(`${label} must not be a symbolic link`)
+    assertRuntimeReadOnly(file, label)
     const flags = FS_CONSTANTS.O_RDONLY | (FS_CONSTANTS.O_NOFOLLOW || 0)
     descriptor = openSync(file, flags)
     const stat = fstatSync(descriptor)
@@ -261,6 +262,24 @@ function readRegularFile (file, label, maximum) {
   } finally {
     if (descriptor != null) closeSync(descriptor)
   }
+}
+
+// The pin is an external trust anchor only while this process cannot replace
+// it. Check the effective runtime permission, rather than trusting a package
+// manifest's mount declaration: an appliance may accidentally mount /config
+// read-write even when its metadata says otherwise.
+function assertRuntimeReadOnly (file, label) {
+  let writable
+  try {
+    writable = openSync(file, FS_CONSTANTS.O_WRONLY | (FS_CONSTANTS.O_NOFOLLOW || 0))
+  } catch (error) {
+    if (error && ['EACCES', 'EPERM', 'EROFS'].includes(error.code)) return
+    fail(`${label} cannot prove runtime read-only access: ${error?.code || error?.message || String(error)}`,
+      'CORESTORE_GENERATION_RECEIPT_NOT_READ_ONLY')
+  } finally {
+    if (writable != null) closeSync(writable)
+  }
+  fail(`${label} must be read-only to the runtime`, 'CORESTORE_GENERATION_RECEIPT_NOT_READ_ONLY')
 }
 
 function assertOutsideStorage (file, storageRoot, label) {
