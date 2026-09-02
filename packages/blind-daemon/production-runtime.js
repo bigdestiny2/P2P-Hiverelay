@@ -68,6 +68,7 @@ import { BlindInboxStorageEngine } from './inbox-storage-engine.js'
 import { BlindCoreStorageEngine } from './core-storage-engine.js'
 import { loadBundledBlindStoreFormatAuthority } from './store-format-binding.js'
 import {
+  BLIND_STORE_GENERATION_CAPABILITIES,
   BLIND_STORE_READER_MODE,
   openBlindStoreGenerationFloor
 } from './storage-generation-v12.js'
@@ -148,6 +149,10 @@ export async function assertProductionRuntimeReleaseReady (environment = process
   if (isVnextPublicTestProfile(profile)) {
     const { runtimeExclusions, storageBlockers } = await vnextPublicTestCompleteness(environment)
     assertProductionRuntimeCompleteness({ runtimeExclusions, storageBlockers })
+    if (BLIND_STORE_GENERATION_CAPABILITIES.rc9BlindProductionMustRemainDisabled) {
+      runtimeFailure('BLIND_STORAGE_GENERATION_UNSAFE',
+        `RC9 blind production is disabled: ${BLIND_STORE_GENERATION_CAPABILITIES.rc9BlindProductionBlocker}`)
+    }
     return
   }
   assertProductionRuntimeCompleteness()
@@ -947,27 +952,25 @@ export async function bootstrapVnextStoreGenerationFloor ({
     storeFormatAuthority
   })
   await storage.open()
-  let storeEvidence
+  let generationEvidence
   try {
-    storeEvidence = {
-      walSequence: storage.transactionStore.walSequence,
-      walHash: b4a.from(storage.transactionStore.walHash)
-    }
+    generationEvidence = storage.storageGenerationEvidence()
   } finally {
     await storage.close()
   }
   const floor = await openBlindStoreGenerationFloor(controlDirectory, {
     manifestKey,
-    storeIdentity: binding,
+    installationIdentity: binding,
     allowCreate: true,
-    storeEvidence
+    creationProof: { sealedGenesisValidated: true },
+    currentStores: [{ role: 'cell', storeIdentity: binding, ...generationEvidence }]
   })
   floor.assertReaderMode(storeReaderMode)
   return Object.freeze({
     bindingCreated,
     storeEvidence: Object.freeze({
-      walSequence: storeEvidence.walSequence,
-      walHash: b4a.from(storeEvidence.walHash)
+      walSequence: generationEvidence.storeEvidence.walSequence,
+      walHash: b4a.from(generationEvidence.storeEvidence.walHash)
     }),
     firstBlindOnlyWriteAcknowledged: floor.firstBlindOnlyWriteAcknowledged
   })
@@ -1744,16 +1747,11 @@ export async function assembleProductionBlindDaemon (options = {}) {
         ownerFenceTokenHash,
         durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
         storeFormatAuthority,
-        onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeBlindOnlyWrite(evidence)
+        onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeWrite({
+          role: 'cell', kind: 'blind-only-write', storeEvidence: evidence
+        })
       })
       await storage.open()
-      storeFloor = await openBlindStoreGenerationFloor(path.join(config.storeRoot, 'control'), {
-        manifestKey,
-        storeIdentity: binding,
-        allowCreate: storeBindingCreated,
-        storeEvidence: { walSequence: storage.transactionStore.walSequence, walHash: storage.transactionStore.walHash }
-      })
-      storeFloor.assertReaderMode(config.storeReaderMode)
       if (requireManifestFloor) {
         // #2 TWO_SLOT_MANIFEST runtime integration + #3 persisted descriptor
         // floor: load the sealed two-slot manifest from the cell store control
@@ -1771,8 +1769,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
       }
       if (inboxRuntimeEnabled) {
         await verifyPrivateStoreRoot(config.inboxStoreRoot)
-        const inboxBindingCreated = await bindStoreIdentity(config.inboxStoreRoot, binding)
-        let inboxFloor = null
+        await bindStoreIdentity(config.inboxStoreRoot, binding)
         inboxCursorKey = await readBoundFile(config.inboxCursorKeyFile, {
           field: 'inbox cursor key',
           exactBytes: 32,
@@ -1790,24 +1787,15 @@ export async function assembleProductionBlindDaemon (options = {}) {
           ownerFenceTokenHash,
           durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
           storeFormatAuthority,
-          onBlindWriteAcknowledged: evidence => inboxFloor.acknowledgeBlindOnlyWrite(evidence)
+          onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeWrite({
+            role: 'inbox', kind: 'blind-only-write', storeEvidence: evidence
+          })
         })
         await inboxStorage.open()
-        inboxFloor = await openBlindStoreGenerationFloor(path.join(config.inboxStoreRoot, 'control'), {
-          manifestKey,
-          storeIdentity: binding,
-          allowCreate: inboxBindingCreated,
-          storeEvidence: {
-            walSequence: inboxStorage.transactionStore.walSequence,
-            walHash: inboxStorage.transactionStore.walHash
-          }
-        })
-        inboxFloor.assertReaderMode(config.storeReaderMode)
       }
       if (coreRuntimeEnabled) {
         await verifyPrivateStoreRoot(config.coreStoreRoot)
-        const coreBindingCreated = await bindStoreIdentity(config.coreStoreRoot, binding)
-        let coreFloor = null
+        await bindStoreIdentity(config.coreStoreRoot, binding)
         coreStorage = new BlindCoreStorageEngine({
           root: config.coreStoreRoot,
           relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
@@ -1816,20 +1804,42 @@ export async function assembleProductionBlindDaemon (options = {}) {
           maximumSponsoredCoreLength: descriptorSnapshot.descriptor.maxSponsoredCoreLength,
           nowEpoch: currentLeaseEpoch,
           nowUnixMillis: currentUnixMillis,
-          onBlindWriteAcknowledged: evidence => coreFloor.acknowledgeBlindOnlyWrite(evidence)
+          onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeWrite({
+            role: 'core', kind: 'blind-only-write', storeEvidence: evidence
+          })
         })
         await coreStorage.open()
-        coreFloor = await openBlindStoreGenerationFloor(path.join(config.coreStoreRoot, 'control'), {
-          manifestKey,
-          storeIdentity: binding,
-          allowCreate: coreBindingCreated,
-          storeEvidence: {
-            walSequence: coreStorage.transactionStore.walSequence,
-            walHash: coreStorage.transactionStore.walHash
-          }
-        })
-        coreFloor.assertReaderMode(config.storeReaderMode)
       }
+      const currentStores = [{
+        role: 'cell',
+        storeIdentity: binding,
+        ...storage.storageGenerationEvidence()
+      }]
+      if (inboxStorage) {
+        currentStores.push({
+          role: 'inbox',
+          storeIdentity: binding,
+          ...inboxStorage.storageGenerationEvidence()
+        })
+      }
+      if (coreStorage) {
+        currentStores.push({
+          role: 'core',
+          storeIdentity: binding,
+          ...coreStorage.storageGenerationEvidence()
+        })
+      }
+      // D7-B is installation-scoped, not one boolean per physical root. All
+      // enabled store families register against one append-only authority in
+      // the CELL control root and consult it before any acknowledgement.
+      storeFloor = await openBlindStoreGenerationFloor(path.join(config.storeRoot, 'control'), {
+        manifestKey,
+        installationIdentity: binding,
+        allowCreate: storeBindingCreated,
+        creationProof: storeBindingCreated ? { freshStoreBindingCreated: true } : undefined,
+        currentStores
+      })
+      storeFloor.assertReaderMode(config.storeReaderMode)
       if (cellRuntimeEnabled) {
         try {
           if (config.privateIpcReplayRoot == null) {

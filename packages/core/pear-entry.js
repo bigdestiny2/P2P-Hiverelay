@@ -15,6 +15,9 @@
  *   --port|-p <port>         HTTP API port           (default 9100)
  *   --max-storage <size>     cap, e.g. 50GB          (default 50GB)
  *   --no-updates             disable P2P OTA updates (default: enabled)
+ *   --generation-receipt <path> external canonical HC11 receipt (required)
+ *   --generation-receipt-sha256 <digest> separately transported exact pin
+ *   --generation-receipt-sha256-file <path> external exact-pin file
  *
  * Parsing is sloppy() so an unexpected Pear-injected arg can never stop the
  * relay from booting. Full pear-runtime OTA is gated on the storage-stack
@@ -26,6 +29,7 @@
 
 import { command, flag, sloppy } from 'paparam'
 import { BareRelay } from './core/relay-node/bare-relay.js'
+import { resolveCorestoreGenerationReceiptLaunch } from './core/persistence/storage-generation-receipt.js'
 import b4a from 'b4a'
 
 const DEFAULT_MAX_STORAGE = 50 * 1024 * 1024 * 1024
@@ -37,6 +41,9 @@ const cmd = command(
   flag('--region|-r [region]', 'relay region (default NA)'),
   flag('--port|-p [port]', 'HTTP API port (default 9100)'),
   flag('--max-storage [size]', 'max storage, e.g. 50GB (default 50GB)'),
+  flag('--generation-receipt [path]', 'canonical external HC11 ceremony receipt (required)'),
+  flag('--generation-receipt-sha256 [digest]', 'separately transported exact receipt pin'),
+  flag('--generation-receipt-sha256-file [path]', 'external file containing the exact receipt pin'),
   flag('--no-updates', 'disable P2P over-the-air updates')
 )
 const program = cmd.parse(argv)
@@ -44,6 +51,14 @@ const flags = (program && program.flags) || {}
 // paparam collapses "not passed" and "--no-updates" to the same falsy value,
 // so detect the explicit opt-out from argv to keep updates enabled by default.
 const updatesEnabled = !argv.includes('--no-updates')
+const generationLaunch = resolveCorestoreGenerationReceiptLaunch({
+  required: true,
+  receiptPath: flags.generationReceipt,
+  expectedSha256: flags.generationReceiptSha256,
+  expectedSha256File: flags.generationReceiptSha256File,
+  participant: 'bare-relay',
+  storageRoot: Pear.config.storage
+})
 
 console.log()
 console.log('  ╱═══════════════════════════════════════════════════════════════════╲')
@@ -51,10 +66,12 @@ console.log('      p2p-hiverelay  ·  pear/bare runtime  ·  always-on p2p relay
 console.log('  ╲═══════════════════════════════════════════════════════════════════╱')
 console.log()
 console.log('  [storage]', Pear.config.storage)
+console.log('  [generation]', generationLaunch.receiptSha256)
 console.log()
 
 const relay = new BareRelay({
   storage: Pear.config.storage,
+  hiverelayGeneration: generationLaunch.hiverelayGeneration,
   regions: [flags.region || 'NA'],
   maxStorageBytes: flags.maxStorage ? parseBytes(flags.maxStorage) : DEFAULT_MAX_STORAGE,
   httpPort: flags.port ? parseInt(flags.port, 10) : 9100

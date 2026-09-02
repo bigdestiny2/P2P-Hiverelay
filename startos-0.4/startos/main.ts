@@ -14,7 +14,7 @@ import { uiPort } from './utils'
 // shutdown. Byte-for-byte the same seed derivation as the 0.3.x package.
 const SEED_AND_START =
   'if [ ! -f /data/.app-seed ]; then ' +
-  'head -c 32 /dev/urandom | od -An -tx1 | tr -d \' \\n\' > /data/.app-seed; ' +
+  "head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \\n' > /data/.app-seed; " +
   'chmod 600 /data/.app-seed; ' +
   'fi; ' +
   'export APP_SEED="$(cat /data/.app-seed)"; ' +
@@ -25,12 +25,19 @@ export const main = sdk.setupMain(async ({ effects }) => {
     subcontainer: sdk.SubContainer.of(
       effects,
       { imageId: 'blindspark' },
-      sdk.Mounts.of().mountVolume({
-        volumeId: 'main',
-        subpath: null,
-        mountpoint: '/data',
-        readonly: false,
-      }),
+      sdk.Mounts.of()
+        .mountVolume({
+          volumeId: 'main',
+          subpath: null,
+          mountpoint: '/data',
+          readonly: false,
+        })
+        .mountVolume({
+          volumeId: 'generation',
+          subpath: null,
+          mountpoint: '/config',
+          readonly: true,
+        }),
       'blindspark-sub',
     ),
     exec: {
@@ -55,6 +62,11 @@ export const main = sdk.setupMain(async ({ effects }) => {
         // saved operator config exists, so dashboard changes win later.
         HIVERELAY_MAX_STORAGE: '10GB',
         HIVERELAY_LOG_LEVEL: 'info',
+        HIVERELAY_REQUIRE_GENERATION_RECEIPT: '1',
+        HIVERELAY_GENERATION_RECEIPT:
+          '/config/storage-generation-receipt.v1.json',
+        HIVERELAY_GENERATION_RECEIPT_SHA256_FILE:
+          '/config/storage-generation-receipt.v1.sha256',
       },
     },
     ready: {

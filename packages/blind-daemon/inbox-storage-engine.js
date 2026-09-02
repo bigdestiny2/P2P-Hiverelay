@@ -762,13 +762,24 @@ export class BlindInboxStorageEngine {
       virtualBucket,
       payload: encodeCanonical(codec, value)
     }, frame => this.#applyFrame(frame))
-    if (this.onBlindWriteAcknowledged && [
+    if ([
       BLIND_INBOX_WAL_TYPE.CREATE_COMMITTED,
       BLIND_INBOX_WAL_TYPE.RENEW_COMMITTED,
       BLIND_INBOX_WAL_TYPE.CLOSE_COMMITTED,
       BLIND_INBOX_WAL_TYPE.APPEND_COMMITTED
-    ].includes(type)) await this.onBlindWriteAcknowledged({ walSequence: frame.sequence, walHash: frame.walHash })
+    ].includes(type)) await this.#acknowledgeBlindWrite({ walSequence: frame.sequence, walHash: frame.walHash })
     return frame
+  }
+
+  async #acknowledgeBlindWrite (storeEvidence = null) {
+    if (!this.onBlindWriteAcknowledged) return false
+    if (storeEvidence == null) {
+      storeEvidence = {
+        walSequence: this.transactionStore.walSequence,
+        walHash: this.transactionStore.walHash
+      }
+    }
+    return this.onBlindWriteAcknowledged(storeEvidence)
   }
 
   #applyFrame (frame) {
@@ -1390,6 +1401,19 @@ export class BlindInboxStorageEngine {
     })
   }
 
+  storageGenerationEvidence () {
+    this.#assertOpen()
+    return Object.freeze({
+      storeEvidence: Object.freeze({
+        walSequence: this.transactionStore.walSequence,
+        walHash: b4a.from(this.transactionStore.walHash)
+      }),
+      hasIrreversibleState: this.inboxes.size > 0 || this.frames.size > 0 ||
+        [...this.spends.values()].some(entry => entry.status === 'committed' ||
+          entry.status === 'append-provisional' || entry.status === 'expired-append')
+    })
+  }
+
   inspectInboxState (physicalTopic) {
     this.#assertOpen()
     physicalTopic = fixed(physicalTopic, 32, 'physicalTopic', true)
@@ -1486,6 +1510,7 @@ export class BlindInboxStorageEngine {
       if (disposition.kind === 'terminal') fail('RETRY_TERMINAL', 'CREATE spend is terminal')
       if (disposition.kind === 'replay') {
         if (!this.#publiclyVisible(existing)) fail('NOT_FOUND', 'inbox is absent')
+        await this.#acknowledgeBlindWrite()
         return this.#mutationResult(disposition.spend, existing)
       }
       if (existing) fail('CONFLICT', 'physical topic already exists')
@@ -1538,6 +1563,7 @@ export class BlindInboxStorageEngine {
       if (disposition.kind === 'terminal') fail('RETRY_TERMINAL', 'RENEW spend is terminal')
       if (disposition.kind === 'replay') {
         if (!this.#publiclyVisible(record)) fail('NOT_FOUND', 'inbox is absent')
+        await this.#acknowledgeBlindWrite()
         return this.#mutationResult(disposition.spend, record)
       }
       this.#assertManagementCas(record, request)
@@ -1579,7 +1605,10 @@ export class BlindInboxStorageEngine {
     return this.transactionStore.withLocks(this.#topicLocks(topic, null, requestCommitment), async () => {
       const prior = this.requestResults.get(hex(requestCommitment))
       const record = this.inboxes.get(hex(topic))
-      if (prior) return this.#closeResult(prior, record)
+      if (prior) {
+        await this.#acknowledgeBlindWrite()
+        return this.#closeResult(prior, record)
+      }
       this.#assertManagementCas(record, request)
       const newRevision = record.stateRevision + 1n
       const identity = resultIdentity(OPERATION.INBOX.CLOSE, topic, requestCommitment,
@@ -1629,6 +1658,7 @@ export class BlindInboxStorageEngine {
       if (disposition.kind === 'conflict') fail('SPEND_REPLAY', 'APPEND spend conflicts with another request')
       if (disposition.kind === 'terminal') fail('RETRY_TERMINAL', 'APPEND spend is terminal')
       if (disposition.kind === 'replay') {
+        await this.#acknowledgeBlindWrite()
         if (disposition.spend.status === 'expired-append') {
           if (!equal(disposition.spend.frameHash, request.frameHash)) {
             fail('CONFLICT', 'expired APPEND retry changed frame identity')

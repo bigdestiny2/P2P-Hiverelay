@@ -507,6 +507,18 @@ export class BlindCoreStorageEngine {
     })
   }
 
+  storageGenerationEvidence () {
+    if (!this.opened) throw new Error('Core storage engine is not open')
+    return Object.freeze({
+      storeEvidence: Object.freeze({
+        walSequence: this.transactionStore.walSequence,
+        walHash: b4a.from(this.transactionStore.walHash)
+      }),
+      hasIrreversibleState: this.mirrorAttempts.size > 0 || this.activeCores.size > 0 ||
+        this.proofPins.size > 0 || this.spends.size > 0
+    })
+  }
+
   inspectCore (corePublicKey) {
     corePublicKey = bytes(corePublicKey, 32, 'corePublicKey', { nonzero: true })
     return generationView(this.activeCores.get(hex(corePublicKey)))
@@ -641,6 +653,7 @@ export class BlindCoreStorageEngine {
         if (priorSpend.operation !== 'MIRROR' || !same(priorSpend.requestCommitment, commitment)) {
           fail('SPEND_REPLAY', 'Core admission spend is already bound to another request')
         }
+        await this.#acknowledgeBlindWrite()
         return mirrorAttemptView(this.mirrorAttempts.get(spendKey), true)
       }
       if (admission.value.resourceClass !== coreLengthClass(this.mirrorBillableBytes(request))) {
@@ -1020,6 +1033,7 @@ export class BlindCoreStorageEngine {
       if (proofBytes.byteLength !== pin.proofByteLength || !same(blake2b256(proofBytes), pin.proofHash)) {
         throw new BlindWalIntegrityError('Core proof retry source no longer reproduces exact bytes')
       }
+      await this.#acknowledgeBlindWrite()
       return Object.freeze({ body: proofResult(pin.acknowledgementBytes, proofBytes), replay: true })
     }
     return lockHeld ? operation() : this.transactionStore.withLocks([`proof:${spendKey}`], operation)
@@ -1285,12 +1299,23 @@ export class BlindCoreStorageEngine {
     const payload = encodeCanonical(codec, value)
     const frame = await this.transactionStore.appendAndApply({ type, transactionId, virtualBucket, payload },
       frame => this.#applyFrame(frame, false))
-    if (this.onBlindWriteAcknowledged && [
+    if ([
       BLIND_CORE_WAL_TYPE.MIRROR_ACCEPTED,
       BLIND_CORE_WAL_TYPE.MIRROR_ACTIVATED,
       BLIND_CORE_WAL_TYPE.PROVE_PINNED
-    ].includes(type)) await this.onBlindWriteAcknowledged({ walSequence: frame.sequence, walHash: frame.walHash })
+    ].includes(type)) await this.#acknowledgeBlindWrite({ walSequence: frame.sequence, walHash: frame.walHash })
     return frame
+  }
+
+  async #acknowledgeBlindWrite (storeEvidence = null) {
+    if (!this.onBlindWriteAcknowledged) return false
+    if (storeEvidence == null) {
+      storeEvidence = {
+        walSequence: this.transactionStore.walSequence,
+        walHash: this.transactionStore.walHash
+      }
+    }
+    return this.onBlindWriteAcknowledged(storeEvidence)
   }
 
   #applyFrame (frame, recovering) {

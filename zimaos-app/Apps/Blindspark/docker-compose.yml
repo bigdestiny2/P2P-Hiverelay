@@ -23,6 +23,9 @@ services:
       HIVERELAY_ACCEPT_MODE: review
       HIVERELAY_MAX_STORAGE: 10GB
       HIVERELAY_LOG_LEVEL: info
+      HIVERELAY_REQUIRE_GENERATION_RECEIPT: "1"
+      HIVERELAY_GENERATION_RECEIPT: /config/storage-generation-receipt.v1.json
+      HIVERELAY_GENERATION_RECEIPT_SHA256_FILE: /config/storage-generation-receipt.v1.sha256
       HIVERELAY_UI_SIMPLE: "true"
       HIVERELAY_UI_EXPOSE_TOKEN: "true"
     ports:
@@ -33,6 +36,10 @@ services:
       - type: bind
         source: /DATA/AppData/$AppID/data
         target: /data
+      - type: bind
+        source: /DATA/AppData/$AppID/storage-generation
+        target: /config
+        read_only: true
     x-casaos:
       envs:
         - container: TZ
@@ -79,10 +86,10 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "0.26.0-rc.8"
-  update_at: "2026-08-28"
+  version: "0.26.0-rc.9"
+  update_at: "2026-09-02"
   release_notes:
-    en_US: HiveRelay 0.26.0-rc.8 package
+    en_US: HiveRelay 0.26.0-rc.9 package
   website: https://hiverelay.com
   repo: https://github.com/bigdestiny2/P2P-Hiverelay
   support: https://github.com/bigdestiny2/P2P-Hiverelay/issues

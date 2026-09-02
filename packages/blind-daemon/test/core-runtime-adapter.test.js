@@ -317,6 +317,46 @@ test('CORE.MIRROR commits before activation and exact signed retry survives desc
   await storage.close()
 })
 
+test('CORE.MIRROR replay re-establishes the generation floor after callback failure and restart', async t => {
+  const root = await temporaryRoot(t, 'blind-core-generation-retry')
+  const time = clock()
+  const keys = signingAuthority()
+  const descriptor = descriptorAuthority(keys.publicKey)
+  const upstream = upstreamAuthority()
+  const mirror = mirrorRequest(keys.publicKey, { clientNonce: b4a.alloc(32, 0xd8) })
+  const prepared = admission(mirror.requestCommitment, 0xd8, mirror.request.leaseClass)
+  const input = executionInput(OPERATION.CORE.MIRROR, mirror.request, mirror.requestCommitment, prepared)
+  let failedCallbacks = 0
+  let storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey, {
+    async onBlindWriteAcknowledged () {
+      failedCallbacks++
+      throw new Error('generation floor append failed before durability')
+    }
+  }))
+  await storage.open()
+  await t.exception(adapterHarness(storage, keys, descriptor, upstream).execute(input),
+    /generation floor append failed/)
+  t.is(failedCallbacks, 1)
+  t.is(upstream.activations(), 0, 'no upstream activation followed the refused accepted-WAL response')
+  await storage.close()
+
+  const replayEvidence = []
+  storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey, {
+    onBlindWriteAcknowledged (evidence) {
+      replayEvidence.push({ walSequence: evidence.walSequence, walHash: b4a.from(evidence.walHash) })
+    }
+  }))
+  await storage.open()
+  const replay = await adapterHarness(storage, keys, descriptor, upstream).execute(input)
+  t.ok(isCommittedCoreResult(replay))
+  t.ok(replayEvidence.length >= 2,
+    'the accepted replay and its activation each prove the floor before the external result')
+  t.is(upstream.activations(), 1)
+  t.is(replayEvidence.at(-1).walSequence, storage.transactionStore.walSequence)
+  t.alike(replayEvidence.at(-1).walHash, storage.transactionStore.walHash)
+  await storage.close()
+})
+
 test('CORE.PROVE pins its immutable source across extension, detects substitution, and expires durably', async t => {
   const root = await temporaryRoot(t, 'blind-core-prove')
   const time = clock()

@@ -18,6 +18,10 @@ export default {
 
   // Node identity
   storage: './hiverelay-storage',
+  // Public, externally pinned HC11 envelope authority. Null preserves the
+  // legacy direct-Corestore API for development and isolated tests; release
+  // entrypoints must supply the full binding before promotion.
+  hiverelayGeneration: null,
 
   // Network
   // When null, uses HyperDHT defaults (node1-3.hyperdht.org:49737).

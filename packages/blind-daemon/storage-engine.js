@@ -928,11 +928,21 @@ export class BlindCellStorageEngine {
       virtualBucket,
       payload: encodeCanonical(codec, value)
     }, frame => this.#applyFrame(frame, false), { prewriteFence })
-    if (this.onBlindWriteAcknowledged &&
-        (type === BLIND_CELL_WAL_TYPE.PUT_COMMITTED || type === BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED)) {
-      await this.onBlindWriteAcknowledged({ walSequence: frame.sequence, walHash: frame.walHash })
+    if (type === BLIND_CELL_WAL_TYPE.PUT_COMMITTED || type === BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED) {
+      await this.#acknowledgeBlindWrite({ walSequence: frame.sequence, walHash: frame.walHash })
     }
     return frame
+  }
+
+  async #acknowledgeBlindWrite (storeEvidence = null) {
+    if (!this.onBlindWriteAcknowledged) return false
+    if (storeEvidence == null) {
+      storeEvidence = {
+        walSequence: this.transactionStore.walSequence,
+        walHash: this.transactionStore.walHash
+      }
+    }
+    return this.onBlindWriteAcknowledged(storeEvidence)
   }
 
   #applyFrame (frame, recovering) {
@@ -1717,7 +1727,10 @@ export class BlindCellStorageEngine {
       const existingSpend = this.spends.get(hex(input.spendTag))
       if (existingSpend) {
         const replay = this.#spendReplay(existingSpend, input)
-        if (replay) return replay
+        if (replay) {
+          await this.#acknowledgeBlindWrite()
+          return replay
+        }
         const now = u64(this.nowUnixMillis(), 'nowUnixMillis')
         if (now > existingSpend.deadlineUnixMillis || existingSpend.remainingAttempts === 0) {
           const reason = now > existingSpend.deadlineUnixMillis
@@ -1774,7 +1787,10 @@ export class BlindCellStorageEngine {
     ], async () => {
       const entry = this.spends.get(hex(input.spendTag))
       const replay = this.#spendReplay(entry, input)
-      if (replay) return replay
+      if (replay) {
+        await this.#acknowledgeBlindWrite()
+        return replay
+      }
       if (entry.inFlight) fail('BUSY', 'an exact body attempt is already in flight', true)
       const now = u64(this.nowUnixMillis(), 'nowUnixMillis')
       if (now > entry.deadlineUnixMillis || entry.remainingAttempts === 0) {
@@ -2124,6 +2140,7 @@ export class BlindCellStorageEngine {
             ATOMIC_STAGED_PUTS.delete(input.authority)
             this.atomicStagedLeases.delete(input.authority)
             await this.#releaseAtomicStaging(retained, true)
+            await this.#acknowledgeBlindWrite()
             return replay
           }
         }
@@ -2279,6 +2296,7 @@ export class BlindCellStorageEngine {
       const replay = this.#spendReplay(current, input)
       if (replay) {
         await this.transactionStore.discardStaged(staged)
+        await this.#acknowledgeBlindWrite()
         return replay
       }
       if (current !== entry || this.cells.has(hex(entry.storageSlot))) {
@@ -3357,6 +3375,18 @@ export class BlindCellStorageEngine {
   compactionWalHighWaterSequence () {
     this.#assertOpen()
     return this.compactionWalHighWater
+  }
+
+  storageGenerationEvidence () {
+    this.#assertOpen()
+    return Object.freeze({
+      storeEvidence: Object.freeze({
+        walSequence: this.transactionStore.walSequence,
+        walHash: b4a.from(this.transactionStore.walHash)
+      }),
+      hasIrreversibleState: this.cells.size > 0 ||
+        [...this.spends.values()].some(entry => entry.status === 'committed')
+    })
   }
 
   status () {

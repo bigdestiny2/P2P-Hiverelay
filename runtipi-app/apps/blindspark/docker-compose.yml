@@ -9,12 +9,16 @@ services:
       - "9100"
     volumes:
       - ${APP_DATA_DIR}/data:/data
+      - ${APP_DATA_DIR}/storage-generation:/config:ro
     environment:
       - HOME=/data
       - HIVERELAY_API_KEY=${HIVERELAY_API_KEY}
       - HIVERELAY_ACCEPT_MODE=review
       - HIVERELAY_MAX_STORAGE=10GB
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_REQUIRE_GENERATION_RECEIPT=1
+      - HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+      - HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
       - HIVERELAY_UI_SIMPLE=true
       - HIVERELAY_UI_EXPOSE_TOKEN=true
     x-runtipi:

@@ -1,7 +1,15 @@
 # Storage Migration Scope — new-Hypercore / RocksDB
 
+> **Status (2026-09-01): HISTORICAL JUNE SPIKE — NOT CURRENT RELEASE AUTHORITY.**
+> The accepted RC dependency lock is Hypercore **11.34.1**, Corestore **7.11.1**,
+> Hyperdrive **13.3.3**, Hyperbee **2.27.3**, and hypercore-storage **3.2.0**
+> with the tracked migration patch. The R5/R9 labels and target versions below
+> record the June investigation only; they must not be cited as present RC gate
+> status. Current closure comes from the accepted dependency lock, the RC
+> storage-generation envelope/import/restore implementation, and its tests.
+
 **Date:** 2026-06-16
-**Target stack:** hypercore 10.38.2→**11.33.1** · corestore 6.18.4→**7.10.1** · hyperdrive 11.13.4→**13.3.2** · +**hypercore-storage ^3.1.1** (new, transitive `rocksdb-native ^3.11`)
+**Historical spike target:** hypercore 10.38.2→**11.33.1** · corestore 6.18.4→**7.10.1** · hyperdrive 11.13.4→**13.3.2** · +**hypercore-storage ^3.1.1** (new, transitive `rocksdb-native ^3.11`)
 **Why:** inode/dir pressure, the O(apps) `core.info({storage:true})` accounting sweep, eviction wedges, restart-reseed hangs — **not** throughput.
 
 All version + API-existence facts verified against the live install at `~/hiverelay/node_modules` and against the new stack installed in a scratch dir on 2026-06-16. Every "behaviour-under-RocksDB" claim was empirically probed (see §5). Labels: **GROUNDED** = verified; **GATE** = unresolved, can block.

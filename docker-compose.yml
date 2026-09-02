@@ -26,7 +26,9 @@ services:
     restart: unless-stopped
     volumes:
       - hiverelay-data:/data       # Hypercore storage, seeded content
-      - hiverelay-config:/config   # ~/.hiverelay → persistent config + identity
+      # Offline ceremony output: exact receipt + separate sha256 pin file.
+      # Runtime receives it read-only and refuses startup when either is absent.
+      - ./storage-generation:/config:ro
     ports:
       - "${HIVERELAY_PORT:-9100}:9100"   # management API + dashboard
     environment:
@@ -38,6 +40,9 @@ services:
       # host's hardware role. Example: seeder-standard.
       - HIVERELAY_CAPACITY_PROFILE=${HIVERELAY_CAPACITY_PROFILE:-}
       - HIVERELAY_API_KEY=${HIVERELAY_API_KEY:-}
+      - HIVERELAY_REQUIRE_GENERATION_RECEIPT=1
+      - HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+      - HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
       # Uncomment to enable Holesail transport for home relays behind NAT
       # - HIVERELAY_HOLESAIL=1
       #
@@ -74,12 +79,15 @@ services:
     restart: unless-stopped
     volumes:
       - hiverelay-na-data:/data
-      - hiverelay-na-config:/config
+      - ./storage-generation/na:/config:ro
     ports:
       - "9100:9100"
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_REQUIRE_GENERATION_RECEIPT=1
+      - HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+      - HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
       - HIVERELAY_ENABLE_SERVICES=0
       - HIVERELAY_OUTBOXLOG=0
       - HIVERELAY_NOTIFY=0
@@ -97,12 +105,15 @@ services:
     restart: unless-stopped
     volumes:
       - hiverelay-eu-data:/data
-      - hiverelay-eu-config:/config
+      - ./storage-generation/eu:/config:ro
     ports:
       - "9101:9100"
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_REQUIRE_GENERATION_RECEIPT=1
+      - HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+      - HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
       - HIVERELAY_ENABLE_SERVICES=0
       - HIVERELAY_OUTBOXLOG=0
       - HIVERELAY_NOTIFY=0
@@ -120,12 +131,15 @@ services:
     restart: unless-stopped
     volumes:
       - hiverelay-as-data:/data
-      - hiverelay-as-config:/config
+      - ./storage-generation/as:/config:ro
     ports:
       - "9102:9100"
     environment:
       - NODE_ENV=production
       - HIVERELAY_LOG_LEVEL=info
+      - HIVERELAY_REQUIRE_GENERATION_RECEIPT=1
+      - HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+      - HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
       - HIVERELAY_ENABLE_SERVICES=0
       - HIVERELAY_OUTBOXLOG=0
       - HIVERELAY_NOTIFY=0
@@ -137,10 +151,6 @@ services:
 
 volumes:
   hiverelay-data:
-  hiverelay-config:
   hiverelay-na-data:
-  hiverelay-na-config:
   hiverelay-eu-data:
-  hiverelay-eu-config:
   hiverelay-as-data:
-  hiverelay-as-config:
