@@ -258,6 +258,9 @@ test('content-addressed backup restores exact isolated envelope state', async t 
   const movedCopy = openCorestore(restoredRoot, generationOptions(ceremony))
   await t.exception.all(() => movedCopy.ready(), /device file|moved unsafely/i)
   await movedCopy.close().catch(() => {})
+  // A failed ready() schedules Corestore's internal close. Let that teardown
+  // release its descriptors before the rebind exercise opens its own marker.
+  await new Promise(resolve => setTimeout(resolve, 25))
 
   await t.exception.all(() => rebindRestoredCorestoreDevice({
     restoreRoot: restoredRoot,

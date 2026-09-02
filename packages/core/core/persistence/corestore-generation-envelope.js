@@ -1436,32 +1436,8 @@ function writeExclusiveSynced (file, value) {
 }
 
 function syncDirectory (directory) {
-  // A Corestore close can finish asynchronously while a restore begins. On
-  // Node 22.23 that stale close may race a newly reused descriptor and surface
-  // as EBADF. Reopen once so the durability barrier is still performed on a
-  // live directory descriptor; any persistent failure remains fail-closed.
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const descriptor = openSync(directory, FS_CONSTANTS.O_RDONLY)
-    let syncError = null
-    let closeError = null
-    try {
-      fsyncSync(descriptor)
-    } catch (error) {
-      syncError = error
-    } finally {
-      try {
-        closeSync(descriptor)
-      } catch (error) {
-        closeError = error
-      }
-    }
-    const error = syncError || closeError
-    if (error) {
-      if (error?.code !== 'EBADF' || attempt === 1) throw error
-      continue
-    }
-    return
-  }
+  const descriptor = openSync(directory, FS_CONSTANTS.O_RDONLY)
+  try { fsyncSync(descriptor) } finally { closeSync(descriptor) }
 }
 
 function currentUid () {
