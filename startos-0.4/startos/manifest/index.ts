@@ -14,7 +14,7 @@ import { long, short } from './i18n'
 // tag so contributors can still run the SDK toolchain before an image exists.
 const releaseImageRef =
   process.env.HIVERELAY_STARTOS_04_IMAGE_REF ||
-  'ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.8'
+  'ghcr.io/bigdestiny2/p2p-hiverelay:0.26.0-rc.9'
 
 export const manifest = setupManifest({
   id: 'blindspark',

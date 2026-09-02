@@ -309,6 +309,7 @@ export class BareRelay extends EventEmitter {
   getStorageGenerationStatus () {
     return corestoreGenerationHealth(this.config.hiverelayGeneration, this.store)
   }
+
   seedApp (appKey, opts) { return this.appLifecycle.seedApp(appKey, opts) }
   unseedApp (appKey, opts) { return this.appLifecycle.unseedApp(appKey, opts) }
 

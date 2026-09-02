@@ -51,10 +51,6 @@ import {
   normalizeCapacityProfile
 } from '../config/capacity-plan.js'
 import {
-  MAX_SEED_DISCOVERY_HINTS,
-  validateSeedDiscoveryHints
-} from '../core/protocol/seed-discovery-hints.js'
-import {
   parseGenerationReceiptRequiredEnvironment,
   resolveCorestoreGenerationReceiptLaunch
 } from '../core/persistence/storage-generation-receipt.js'

@@ -86,10 +86,10 @@ x-casaos:
   architectures:
     - amd64
     - arm64
-  version: "0.26.0-rc.8"
-  update_at: "2026-08-28"
+  version: "0.26.0-rc.9"
+  update_at: "2026-09-02"
   release_notes:
-    en_US: HiveRelay 0.26.0-rc.8 package
+    en_US: HiveRelay 0.26.0-rc.9 package
   website: https://hiverelay.com
   repo: https://github.com/bigdestiny2/P2P-Hiverelay
   support: https://github.com/bigdestiny2/P2P-Hiverelay/issues
