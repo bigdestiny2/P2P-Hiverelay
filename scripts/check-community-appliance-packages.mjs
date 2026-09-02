@@ -13,6 +13,7 @@ export function validateCommunityAppliancePackages (opts = {}) {
   const root = path.resolve(opts.root || defaultRoot)
   const errors = []
   const tagOnlyImages = []
+  const stagingImagePins = []
   const rootPackage = readJson(path.join(root, 'package.json'), errors)
   const version = rootPackage && rootPackage.version
 
@@ -34,9 +35,9 @@ export function validateCommunityAppliancePackages (opts = {}) {
   ], errors)
 
   if (errors.length === 0) {
-    validateUnraid(root, version, errors, tagOnlyImages)
-    validateZimaOs(root, version, errors, tagOnlyImages)
-    validateRuntipi(root, version, errors, tagOnlyImages)
+    validateUnraid(root, version, errors, tagOnlyImages, stagingImagePins)
+    validateZimaOs(root, version, errors, tagOnlyImages, stagingImagePins)
+    validateRuntipi(root, version, errors, tagOnlyImages, stagingImagePins)
     validateHexOs(root, version, errors)
   }
 
@@ -44,6 +45,7 @@ export function validateCommunityAppliancePackages (opts = {}) {
     ok: errors.length === 0,
     packages: ['unraid', 'zimaos-casaos', 'runtipi', 'hexos'],
     tagOnlyImages,
+    stagingImagePins,
     errors
   }
 }
@@ -60,9 +62,12 @@ function main () {
   if (result.tagOnlyImages.length) {
     console.log(`Release preparation will replace ${result.tagOnlyImages.length} authoring tag(s) with the released image digest.`)
   }
+  if (result.stagingImagePins.length) {
+    console.log(`Pre-release metadata retains ${result.stagingImagePins.length} prior immutable image pin(s) until the release workflow binds the new digest.`)
+  }
 }
 
-function validateUnraid (root, version, errors, tagOnlyImages) {
+function validateUnraid (root, version, errors, tagOnlyImages, stagingImagePins) {
   const profile = read(path.join(root, 'unraid-app', 'ca_profile.xml'))
   const template = read(path.join(root, 'unraid-app', 'templates', 'blindspark.xml'))
 
@@ -88,10 +93,10 @@ function validateUnraid (root, version, errors, tagOnlyImages) {
   matches(template, /<Date>\d{4}-\d{2}-\d{2}<\/Date>/, 'Unraid release date', errors)
   includesAll(template, [`<Changes>HiveRelay ${version}</Changes>`], 'Unraid release metadata', errors)
   const repository = xmlValue(template, 'Repository', errors, 'Unraid image repository')
-  validateImage(repository, version, 'Unraid', errors, tagOnlyImages)
+  validateImage(repository, version, 'Unraid', errors, tagOnlyImages, stagingImagePins)
 }
 
-function validateZimaOs (root, version, errors, tagOnlyImages) {
+function validateZimaOs (root, version, errors, tagOnlyImages, stagingImagePins) {
   const compose = read(path.join(root, 'zimaos-app', 'Apps', 'Blindspark', 'docker-compose.yml'))
   const metadataVersion = scalar(compose, /^ {2}version:\s*["']?([^"'\n]+)["']?\s*$/m, errors, 'ZimaOS metadata version')
 
@@ -114,10 +119,10 @@ function validateZimaOs (root, version, errors, tagOnlyImages) {
   excludesAll(compose, ['privileged: true', 'network_mode: host'], 'ZimaOS/CasaOS package', errors)
   equal(metadataVersion, version, 'ZimaOS metadata version', errors)
   const image = scalar(compose, /^\s+image:\s*(\S+)\s*$/m, errors, 'ZimaOS image')
-  validateImage(image, version, 'ZimaOS', errors, tagOnlyImages)
+  validateImage(image, version, 'ZimaOS', errors, tagOnlyImages, stagingImagePins)
 }
 
-function validateRuntipi (root, version, errors, tagOnlyImages) {
+function validateRuntipi (root, version, errors, tagOnlyImages, stagingImagePins) {
   const appRoot = path.join(root, 'runtipi-app', 'apps', 'blindspark')
   const config = readJson(path.join(appRoot, 'config.json'), errors)
   const compose = read(path.join(appRoot, 'docker-compose.yml'))
@@ -147,7 +152,7 @@ function validateRuntipi (root, version, errors, tagOnlyImages) {
   ], 'Runtipi Compose package', errors)
   excludesAll(compose, ['privileged: true', 'network_mode: host'], 'Runtipi Compose package', errors)
   const image = scalar(compose, /^\s+image:\s*['"]?([^'"\s]+)['"]?\s*$/m, errors, 'Runtipi image')
-  validateImage(image, version, 'Runtipi', errors, tagOnlyImages)
+  validateImage(image, version, 'Runtipi', errors, tagOnlyImages, stagingImagePins)
 }
 
 function validateHexOs (root, version, errors) {
@@ -167,13 +172,21 @@ function validateHexOs (root, version, errors) {
   ], 'HexOS curation', errors)
 }
 
-function validateImage (value, version, label, errors, tagOnlyImages) {
+function validateImage (value, version, label, errors, tagOnlyImages, stagingImagePins) {
   const match = String(value || '').match(/^ghcr\.io\/bigdestiny2\/p2p-hiverelay:(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)(?:@(sha256:[a-f0-9]{64}))?$/i)
   if (!match) {
     errors.push(`${label} image reference is invalid: ${value || '<missing>'}`)
     return
   }
-  equal(match[1], version, `${label} image version`, errors)
+  if (match[1] !== version) {
+    // A prerelease source candidate is cut before its release workflow has
+    // built the source-bound multi-arch image. Keep the last verified digest
+    // in place during that short interval rather than relabelling old bytes
+    // as the new candidate. The release workflow replaces this staging pin
+    // with the exact new version and digest before publication.
+    if (version.includes('-') && match[2]) stagingImagePins.push(label)
+    else errors.push(`${label} image version must be ${version}; found ${match[1]}`)
+  }
   if (!match[2]) tagOnlyImages.push(label)
 }
 
