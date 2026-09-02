@@ -83,7 +83,8 @@ test('api health: healthy response includes version uptime running and disk fact
     version: '9.9.9',
     uptime: 1234,
     running: true,
-    disk: { usedPct: 42, status: 'ok' }
+    disk: { usedPct: 42, status: 'ok' },
+    storageGeneration: null
   })
 })
 
@@ -126,7 +127,8 @@ test('api health: diskHealthGate drains critical relays with stable fleet payloa
     version: '2.0.0',
     uptime: 1234,
     running: false,
-    disk: { usedPct: 98.2, status: 'critical' }
+    disk: { usedPct: 98.2, status: 'critical' },
+    storageGeneration: null
   })
 })
 
@@ -154,7 +156,8 @@ test('api health: fail-closed storage authority reports 503 before the disk gate
     version: '3.0.0',
     uptime: 1234,
     running: true,
-    disk: { usedPct: 99, status: 'critical' }
+    disk: { usedPct: 99, status: 'critical' },
+    storageGeneration: null
   })
 })
 
@@ -183,6 +186,7 @@ test('api health: missing metrics and disk monitor remain stable', (t) => {
     version: null,
     uptime: null,
     running: true,
-    disk: null
+    disk: null,
+    storageGeneration: null
   })
 })
