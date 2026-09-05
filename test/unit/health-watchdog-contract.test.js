@@ -34,7 +34,7 @@ test('watchdog CLI accepts curl timeout status 000 without relaxing other argume
   const body = join(root, 'health-body')
   await writeFile(body, '')
   const classify = (status, exit) => execFileAsync(process.execPath, [
-    'fleet/health-watchdog-policy.mjs', 'classify', body, status, exit
+    '--jitless', 'fleet/health-watchdog-policy.mjs', 'classify', body, status, exit
   ], { timeout: 5000 })
   t.is((await classify('000', '28')).stdout, 'eligible-timeout\n')
   t.is((await classify('000', '7')).stdout, 'eligible-timeout\n')

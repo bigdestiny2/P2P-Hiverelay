@@ -15,6 +15,8 @@ readonly RUNTIME_DIR=/run/hiverelay-watchdog
 readonly LOCK_FILE=${RUNTIME_DIR}/watchdog.lock
 readonly POLICY_HELPER=/usr/local/libexec/hiverelay-health-watchdog-policy.mjs
 readonly SIGNAL_HELPER=/usr/local/libexec/hiverelay-health-watchdog-pidfd
+# The systemd unit denies executable-memory transitions. Keep each short-lived
+# policy process compatible with that protection by disabling V8 JIT compilation.
 readonly NODE=/usr/bin/node
 readonly SYSTEMCTL=/usr/bin/systemctl
 readonly CURL=/usr/bin/curl
@@ -28,7 +30,7 @@ log () {
 }
 
 clear_streak () {
-  "$NODE" "$POLICY_HELPER" clear >/dev/null
+  "$NODE" --jitless "$POLICY_HELPER" clear >/dev/null
 }
 
 if [ "$(id -u)" != 0 ]; then
@@ -68,7 +70,7 @@ if ! [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
   exit 0
 fi
 
-if ! snapshot=$("$NODE" "$POLICY_HELPER" snapshot "$main_pid" 2>/dev/null); then
+if ! snapshot=$("$NODE" --jitless "$POLICY_HELPER" snapshot "$main_pid" 2>/dev/null); then
   clear_streak
   log 'could not bind the active unit to a complete process tuple; failure streak reset'
   exit 0
@@ -103,7 +105,7 @@ curl_exit=$?
 set -e
 if ! [[ "$health_status" =~ ^[0-9]{3}$ ]]; then health_status=000; fi
 
-if ! outcome=$("$NODE" "$POLICY_HELPER" classify "$health_body" "$health_status" "$curl_exit" 2>/dev/null); then
+if ! outcome=$("$NODE" --jitless "$POLICY_HELPER" classify "$health_body" "$health_status" "$curl_exit" 2>/dev/null); then
   log 'health result could not be classified inside fixed bounds; no signal'
   exit 1
 fi
@@ -115,7 +117,7 @@ case "$outcome" in
     ;;
 esac
 
-if ! record=$("$NODE" "$POLICY_HELPER" record "$outcome" "$UNIT" "$main_pid" \
+if ! record=$("$NODE" --jitless "$POLICY_HELPER" record "$outcome" "$UNIT" "$main_pid" \
   "$proc_starttime" "$executable_sha256" 2>/dev/null); then
   log 'failure-state authority or persistence failed; no signal'
   exit 1
@@ -126,7 +128,7 @@ if [ "$outcome" = healthy ]; then
   exit 0
 fi
 if [ "$outcome" = responsive-not-restartable ]; then
-  if ! responsive_diagnostic=$("$NODE" "$POLICY_HELPER" diagnose "$UNIT" "$main_pid" \
+  if ! responsive_diagnostic=$("$NODE" --jitless "$POLICY_HELPER" diagnose "$UNIT" "$main_pid" \
     "$proc_starttime" "$executable_sha256" "$cgroup_sha256" "$health_status" "$health_body" 2>/dev/null); then
     log "nonempty response observed (status=$health_status); restart forbidden; bounded diagnostic capture failed"
     exit 1
@@ -147,7 +149,7 @@ if [ "$record" != eligible ]; then
 fi
 
 set +e
-authorization=$("$NODE" "$POLICY_HELPER" authorize "$UNIT" "$main_pid" "$proc_starttime" \
+authorization=$("$NODE" --jitless "$POLICY_HELPER" authorize "$UNIT" "$main_pid" "$proc_starttime" \
   "$executable_sha256" "$cgroup_sha256" "$health_status" "$health_body" 2>/dev/null)
 authorization_exit=$?
 set -e
