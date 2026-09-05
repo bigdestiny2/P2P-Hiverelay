@@ -16,6 +16,7 @@ import { join } from 'path'
 import { StorageAccounting } from 'p2p-hiverelay/core/relay-node/storage-accounting.js'
 import { EvictionManager, xorDistance } from 'p2p-hiverelay/core/relay-node/eviction.js'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
+import { sharedOperationFlights } from 'p2p-hiverelay/core/shared-flight-registry.js'
 
 // ─── fixtures ──────────────────────────────────────────────────────
 
@@ -340,14 +341,22 @@ test('assertPurgable: sacred entries refuse even operator-initiated purges', asy
 
 test('timeouts: a wedged core cannot freeze accounting or the sweep (v0.15.6)', async (t) => {
   const never = new Promise(() => {}) // a corrupt core's hung await
-  // Accounting: info() never resolves -> measure returns 0 within the timeout.
-  const reg = fakeRegistry([['k1', { drive: { core: { info: () => never }, blobs: null } }]])
+  let resolveInfo
+  const pendingInfo = new Promise(resolve => { resolveInfo = resolve })
+  const core = { info: () => pendingInfo }
+  // Accounting: info() stays pending until cleanup -> measure times out to 0.
+  const reg = fakeRegistry([['k1', { drive: { core, blobs: null } }]])
   const acc = new StorageAccounting({ appRegistry: reg, tickMs: 60_000, batchSize: 5, infoTimeoutMs: 60 })
+  t.teardown(async () => {
+    resolveInfo({ storage: { oplog: 0, tree: 0, blocks: 0, bitfield: 0 } })
+    await sharedOperationFlights.drainOwner(core, { timeoutMs: 1000 })
+    await acc.stop()
+  })
   const t0 = Date.now()
   await acc._tick()
   t.ok(Date.now() - t0 < 2_000, 'tick completed despite hung info()')
   t.is(acc.getBytes('k1'), 0, 'wedged core measured as 0, not frozen')
-  acc.stop()
+  await acc.stop()
 
   // Sweep: unseed hangs -> evict-failed, sweep completes.
   const { ev, registry } = makeEviction({

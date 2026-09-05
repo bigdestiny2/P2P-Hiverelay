@@ -37,7 +37,7 @@ test('fleet updater installation executes only an exact signed-checkout updater'
 
 test('fleet health watchdog can signal only through signed pidfd authority', (t) => {
   t.ok(healthWatchdog.includes('responsive-not-restartable'))
-  t.ok(healthWatchdog.includes('"$NODE" "$POLICY_HELPER" authorize'))
+  t.ok(healthWatchdog.includes('"$NODE" --jitless "$POLICY_HELPER" authorize'))
   t.ok(healthWatchdog.includes('"$SIGNAL_HELPER"'))
   t.ok(healthWatchdog.includes('--max-time 5 --max-filesize 65536'))
   t.absent(healthWatchdog.includes('systemctl kill'))
