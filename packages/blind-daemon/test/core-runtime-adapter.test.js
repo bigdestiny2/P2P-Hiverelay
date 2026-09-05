@@ -3,6 +3,7 @@ import path from 'node:path'
 import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
+import { inspectEngineHistory } from './generation-history-fixture.js'
 import {
   FAMILY,
   OPERATION,
@@ -597,6 +598,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   upstream.setUnavailableAttempts(1)
   const storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey))
   await storage.open()
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, false, 'fresh CORE has no committed history')
   const adapter = adapterHarness(storage, keys, descriptor, upstream)
   const mirror = mirrorRequest(keys.publicKey)
   const input = executionInput(OPERATION.CORE.MIRROR, mirror.request, mirror.requestCommitment,
@@ -605,6 +607,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   const accepted = await adapter.execute(input)
   const pending = storage.inspectMirrorSpend(input.preparedAdmission.spendTag)
   t.is(pending.state, 'RETRY_PENDING')
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, true, 'accepted sponsorship is historical even before activation succeeds')
   t.is(pending.retryCount, 1)
   t.is(storage.inspectCore(mirror.request.corePublicKey), null)
   const resumed = await adapter.execute(input)
@@ -619,6 +622,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   t.is(storage.status().accounting.activeCores, 0)
   t.is(storage.status().accounting.corpusBytes, 0)
   t.is(await blobCount(root), 0)
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, true, 'sponsorship expiry leaves history and retained floors')
 
   const stale = mirrorRequest(keys.publicKey, {
     corePublicKey: mirror.request.corePublicKey,
@@ -641,6 +645,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   t.is(storage.inspectCore(mirror.request.corePublicKey).stateRevision, 1n)
   t.is(storage.inspectCore(mirror.request.corePublicKey).leaseEpoch, 1008)
   await storage.close()
+  t.is(await inspectEngineHistory(BlindCoreStorageEngine, storageOptions(root, time, keys.publicKey)), true, 'read-only full replay retains CORE history')
 })
 
 test('CORE storage rejects invalid signed result builders before a WAL spend is committed', async t => {
@@ -672,7 +677,9 @@ test('CORE storage rejects invalid signed result builders before a WAL spend is 
   }), 'INTERNAL')
   t.is(storage.status().accounting.mirrorAttempts, 0)
   t.is(storage.status().accounting.walSequence, 0n)
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, false, 'rejected invalid result creates no history')
   await storage.close()
+  t.is(await inspectEngineHistory(BlindCoreStorageEngine, storageOptions(root, time, keys.publicKey)), false)
 })
 
 test('CORE.PROVE refuses a charged source race before committing the spend or a dangling pin', async t => {

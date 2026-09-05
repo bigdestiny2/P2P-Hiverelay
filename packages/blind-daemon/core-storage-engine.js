@@ -398,6 +398,9 @@ function sourceOf (value) {
 }
 
 export class BlindCoreStorageEngine {
+  // Validated transitions remain historical facts after sponsorship/pin expiry.
+  #hasIrreversibleHistory = false
+
   static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
     const shadow = new BlindCoreStorageEngine({ ...options, autoClock: false })
     const { scanBlindWalV2FromGenesis } = await import('./wal-recovery-scan.js')
@@ -415,7 +418,7 @@ export class BlindCoreStorageEngine {
         maximumWalPayloadBytes: shadow.transactionStore.maximumWalPayloadBytes,
         applyShadowFrame: frame => shadow.#applyFrame(frame, true)
       })
-      return { wal, hasIrreversibleState: Boolean(shadow.mirrorAttempts.size > 0 || shadow.activeCores.size > 0 || shadow.proofPins.size > 0 || shadow.spends.size > 0) }
+      return { wal, hasIrreversibleState: shadow.#hasIrreversibleHistory }
     } finally {
       await shadow.transactionStore.close()
     }
@@ -542,8 +545,7 @@ export class BlindCoreStorageEngine {
         walSequence: this.transactionStore.walSequence,
         walHash: b4a.from(this.transactionStore.walHash)
       }),
-      hasIrreversibleState: this.mirrorAttempts.size > 0 || this.activeCores.size > 0 ||
-        this.proofPins.size > 0 || this.spends.size > 0
+      hasIrreversibleState: this.#hasIrreversibleHistory
     })
   }
 
@@ -1409,6 +1411,11 @@ export class BlindCoreStorageEngine {
     if (recovering && this.accounting.controlBytes > Number.MAX_SAFE_INTEGER) {
       throw new BlindWalIntegrityError('Core control accounting exceeds the runtime bound')
     }
+    if ([
+      BLIND_CORE_WAL_TYPE.MIRROR_ACCEPTED,
+      BLIND_CORE_WAL_TYPE.MIRROR_ACTIVATED,
+      BLIND_CORE_WAL_TYPE.PROVE_PINNED
+    ].includes(frame.type)) this.#hasIrreversibleHistory = true
   }
 
   #applyMirrorAccepted (frame, value) {

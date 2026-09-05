@@ -566,6 +566,9 @@ function operationSpendBase (operation, prepared, request, nowMillis, committedE
 }
 
 export class BlindInboxStorageEngine {
+  // The full semantic WAL, rather than the surviving rows, establishes history.
+  #hasIrreversibleHistory = false
+
   static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
     const shadow = new BlindInboxStorageEngine({ ...options, autoClock: false })
     const { scanBlindWalV2FromGenesis } = await import('./wal-recovery-scan.js')
@@ -583,7 +586,7 @@ export class BlindInboxStorageEngine {
         maximumWalPayloadBytes: shadow.transactionStore.maximumWalPayloadBytes,
         applyShadowFrame: frame => shadow.#applyFrame(frame)
       })
-      return { wal, hasIrreversibleState: Boolean(shadow.inboxes.size > 0 || shadow.frames.size > 0 || [...shadow.spends.values()].some(entry => ['committed', 'append-provisional', 'expired-append'].includes(entry.status))) }
+      return { wal, hasIrreversibleState: shadow.#hasIrreversibleHistory }
     } finally {
       await shadow.transactionStore.close()
     }
@@ -863,6 +866,12 @@ export class BlindInboxStorageEngine {
       default: throw new BlindWalIntegrityError(`unhandled Inbox WAL type ${frame.type}`)
     }
     this.#assertAccounting()
+    if ([
+      BLIND_INBOX_WAL_TYPE.CREATE_COMMITTED,
+      BLIND_INBOX_WAL_TYPE.RENEW_COMMITTED,
+      BLIND_INBOX_WAL_TYPE.CLOSE_COMMITTED,
+      BLIND_INBOX_WAL_TYPE.APPEND_COMMITTED
+    ].includes(frame.type)) this.#hasIrreversibleHistory = true
   }
 
   #verifyBucket (frame, physicalTopic) {
@@ -1463,9 +1472,7 @@ export class BlindInboxStorageEngine {
         walSequence: this.transactionStore.walSequence,
         walHash: b4a.from(this.transactionStore.walHash)
       }),
-      hasIrreversibleState: this.inboxes.size > 0 || this.frames.size > 0 ||
-        [...this.spends.values()].some(entry => entry.status === 'committed' ||
-          entry.status === 'append-provisional' || entry.status === 'expired-append')
+      hasIrreversibleState: this.#hasIrreversibleHistory
     })
   }
 

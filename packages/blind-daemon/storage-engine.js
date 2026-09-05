@@ -629,6 +629,9 @@ function resultView (entry, status, replay) {
 }
 
 export class BlindCellStorageEngine {
+  // Rebuilt only by validated full-WAL replay; retirement never clears history.
+  #hasIrreversibleHistory = false
+
   static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
     const shadow = new BlindCellStorageEngine({ ...options, autoClock: false })
     const { scanBlindWalV2FromGenesis } = await import('./wal-recovery-scan.js')
@@ -646,7 +649,7 @@ export class BlindCellStorageEngine {
         maximumWalPayloadBytes: shadow.transactionStore.maximumWalPayloadBytes,
         applyShadowFrame: frame => shadow.#applyFrame(frame, true)
       })
-      return { wal, hasIrreversibleState: Boolean(shadow.cells.size > 0 || [...shadow.spends.values()].some(entry => entry.status === 'committed')) }
+      return { wal, hasIrreversibleState: shadow.#hasIrreversibleHistory }
     } finally {
       await shadow.transactionStore.close()
     }
@@ -1034,6 +1037,9 @@ export class BlindCellStorageEngine {
       default: throw new BlindWalIntegrityError(`unhandled cell WAL type ${frame.type}`)
     }
     this.#assertAccounting()
+    if (frame.type === BLIND_CELL_WAL_TYPE.PUT_COMMITTED || frame.type === BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED) {
+      this.#hasIrreversibleHistory = true
+    }
   }
 
   #verifyBucket (frame, storageSlot) {
@@ -3461,8 +3467,7 @@ export class BlindCellStorageEngine {
         walSequence: this.transactionStore.walSequence,
         walHash: b4a.from(this.transactionStore.walHash)
       }),
-      hasIrreversibleState: this.cells.size > 0 ||
-        [...this.spends.values()].some(entry => entry.status === 'committed')
+      hasIrreversibleState: this.#hasIrreversibleHistory
     })
   }
 
