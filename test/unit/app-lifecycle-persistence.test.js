@@ -113,8 +113,7 @@ test('RelayNode: seedApp rolls back registry when explicit registry persist fail
     physicalEnforcer: testPhysicalEnforcer(storage)
   })
   t.teardown(async () => {
-    try { await node.stop() } catch (_) {}
-    try { await node.store.close() } catch (_) {}
+    await node.stop()
     await rm(storage, { recursive: true, force: true })
   })
   await node.start()
@@ -124,17 +123,24 @@ test('RelayNode: seedApp rolls back registry when explicit registry persist fail
   node.appRegistry.set(appKey, placeholder, { persist: false })
   const previous = node.appRegistry.get(appKey)
   node.storageAdmission.adoptRecovery(`drive:${appKey}`, 1024 * 1024, { kind: 'drive' })
+  const persistEntry = node.appRegistry.persistEntry
   node.appRegistry.persistEntry = async () => {
     throw new Error('disk full')
   }
 
-  await t.exception(
-    node.seedApp(appKey, { maxStorage: 1024 * 1024 }),
-    /disk full/,
-    'seedApp rejects when the durable registry write fails'
-  )
+  try {
+    await t.exception(
+      node.seedApp(appKey, { maxStorage: 1024 * 1024 }),
+      /disk full/,
+      'seedApp rejects when the durable registry write fails'
+    )
+  } finally {
+    node.appRegistry.persistEntry = persistEntry
+  }
 
   t.alike(node.appRegistry.get(appKey), previous, 'failed seed restores only the pre-existing key placeholder')
+  await node.stop()
+  t.is(node.running, false, 'relay shuts down after the scoped persistence failure')
 })
 
 test('AppLifecycle: stale live entry cannot fast-path ACK and mixed-case calls share one mutation key', async (t) => {
