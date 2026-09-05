@@ -4,6 +4,7 @@ import { PassThrough, Readable } from 'stream'
 import { HyperGateway } from 'p2p-hiverelay/gateway'
 import { issueExactAppContext } from '../../packages/core/gateway/exact-app-context.js'
 import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
+import { APP_RETIREMENT_STATE } from '../../packages/core/core/app-registry.js'
 
 const KEY = 'a'.repeat(64)
 
@@ -360,6 +361,7 @@ test('HyperGateway - same-version higher-fork proof replaces the complete-tuple 
 
 test('HyperGateway - stalled HTTP lease drains before unseed tears down ranges or releases debt', async (t) => {
   const events = []
+  const durableRetirements = []
   const tails = new Map()
   let committed = true
   const storageAdmission = {
@@ -430,7 +432,14 @@ test('HyperGateway - stalled HTTP lease drains before unseed tears down ranges o
     has: key => apps.has(key),
     delete (key) { events.push('registry-retire'); return apps.delete(key) },
     set: (key, value) => apps.set(key, value),
-    async persistDelete () { events.push('registry-delete-durable') }
+    async persistDelete (key, retirement) {
+      durableRetirements.push({ key, ...retirement })
+      events.push('registry-delete-durable')
+    },
+    async persistRetirementState (key, retirement) {
+      durableRetirements.push({ key, ...retirement })
+      events.push('registry-forgotten-durable')
+    }
   }
   const node = {
     config: { gatewayPublicOnlyPrivacyTier: true },
@@ -468,6 +477,16 @@ test('HyperGateway - stalled HTTP lease drains before unseed tears down ranges o
   t.ok(events.indexOf('range-destroy') < events.indexOf('authority-release'))
   t.ok(events.indexOf('blob-snapshot-close') < events.indexOf('authority-release'))
   t.ok(events.indexOf('drive-close') < events.indexOf('authority-release'))
+  t.alike(durableRetirements.map(({ key, retirementState }) => ({ key, retirementState })), [
+    { key: KEY, retirementState: APP_RETIREMENT_STATE.RELEASE_PENDING },
+    { key: KEY, retirementState: APP_RETIREMENT_STATE.FORGOTTEN }
+  ], 'unseed persists both retirement phases for the leased drive')
+  t.ok(durableRetirements[0].retirementId, 'retirement has a stable identity')
+  t.is(durableRetirements[1].retirementId, durableRetirements[0].retirementId)
+  t.ok(events.indexOf('registry-delete-durable') < events.indexOf('authority-release'),
+    'durable retirement precedes debt release')
+  t.ok(events.indexOf('authority-release') < events.indexOf('registry-forgotten-durable'),
+    'unseed resolves after released debt is durably marked forgotten')
 })
 
 test('HyperGateway - successful drive timeouts clear their timer handles', async (t) => {
