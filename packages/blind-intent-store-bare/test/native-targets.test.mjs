@@ -20,8 +20,13 @@ test('retains the accepted macOS artifact and selects only qualified runtime tar
   assert.equal(selected.platform, 'darwin')
   assert.equal(selected.arch, 'arm64')
   assert.equal(selected.sourceSha256, hash(readFileSync(join(native, 'flags.c'))))
+  const linux = selectNativeFlags('linux', 'x64', 'v1.31.0')
+  assert.equal(linux.platform, 'linux')
+  assert.equal(linux.arch, 'x64')
+  assert.equal(linux.sourceSha256, selected.sourceSha256)
+  assert.equal(hash(readFileSync(join(native, 'flags-linux-x64.cjs'))), 'b0fbc8f5dcb2191f0454771c80dbbac21f9458dc781af7df7f22d09c5db38b70')
   for (const [platform, arch, version] of [
-    ['linux', 'x64', 'v1.31.0'], ['linux', 'arm64', 'v1.31.0'],
+    ['linux', 'arm64', 'v1.31.0'], ['linux', 'x64', 'v1.30.0'],
     ['darwin', 'x64', 'v1.31.0'], ['win32', 'arm64', 'v1.31.0'],
     ['darwin', 'arm64', 'v1.29.4'], ['darwin', 'arm64', 'v1.24.3'],
     ['darwin', 'arm64', 'v1.32.0'], ['darwin', 'arm64', undefined]

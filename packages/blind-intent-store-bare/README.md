@@ -6,10 +6,10 @@ accepted I01 commit `45616fdfceea43feedf251e4f3572e565d6353fd`. It supplies opaq
 `close` for the existing `EncryptedIntentStore`. It does not implement encryption,
 transport, retry policy, total-store quota, deletion, or retention.
 
-The retained qualification target is **Bare v1.31.0, macOS arm64**. The runtime
+The retained qualification targets are **Bare v1.31.0 on macOS arm64 and Linux x64**. The runtime
 adapter selects only an explicitly qualified target and verifies its platform,
 architecture and exact Bare version. This is not full I02, a Pear SDK release, or production
-enablement. Linux, other architectures, packaged/embedded Pear, mobile devices,
+enablement. Other architectures, packaged/embedded Pear, mobile devices,
 network filesystems and physical power-loss behavior remain unqualified.
 
 ## Installation and native flags
@@ -33,10 +33,11 @@ preserved; a rebuild with different compiler/probe identity fails and retains it
 candidate in the supplied evidence directory. Evidence filenames also include the
 target, so collecting Linux proof does not overwrite macOS proof.
 
-The checked-in artifact remains macOS arm64 only, byte-identical to its accepted
-predecessor. `native/targets.cjs` uses explicit static imports; generating a new
+The macOS arm64 artifact is byte-identical to its accepted predecessor. The
+Linux x64 artifact was compiled with Ubuntu GCC 13.3.0 from the same flags.c. `native/targets.cjs` uses explicit static imports; generating a new
 artifact does not enable it. Replay all tests and obtain independent review before
-adding another target to that selector. Linux qualification remains pending.
+adding another target to that selector. Neither Linux arm64 nor any additional
+Bare/Pear version is selected.
 
 There is no new runtime native addon. Existing pinned libraries own native I/O:
 `bare-fs` 4.8.1, `bare-buffer` 3.6.1, `bare-crypto` 1.15.3,
@@ -126,5 +127,15 @@ actual application, select its canonical storage directory through the app's ver
 Pear storage API, wire application teardown to awaited backend close, and rerun these
 contracts on that embedded runtime and supported devices. A global Bare binary,
 compiler success, or local process restart does not prove packaged Pear behavior,
-Linux behavior, controller-cache durability, physical power loss, or fleet production
+untested Linux distributions, controller-cache durability, physical power loss, or fleet production
 readiness. Production flags and frozen public artifacts remain unchanged.
+
+Linux x64 qualification uses Ubuntu 24.04.4, glibc 2.39, Node 22.23.2 and Bare
+1.31.0 (libuv 1.52.1 / V8 14.8.178.31) in a pinned Docker image on this macOS
+arm64 host with x64 translation. Native Linux tmpfs and a dedicated persistent
+ext4 volume exercise the shared integration suite, including five process-kill
+boundaries and cross-runtime recovery. Separate container lifetimes preserve and
+reopen encrypted SENT intents and opaque CAS records. Loaded native libraries,
+runtime payload integrity, system libraries and exact image identity are retained
+in lane evidence. This is functional qualification on that environment; it is not
+native x64-hardware performance evidence or physical-power-loss qualification.
