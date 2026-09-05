@@ -32,9 +32,11 @@ second process/session fails with `INTENT_STORE_LOCKED` until the first closes
 or exits. The stable `.writer-lock` inode is never replaced or removed. There
 is no PID file, stale-lock timeout or lock stealing. Call `close()` to drain all
 admitted operations and release the lease. New operations are rejected as soon
-as close starts. A close failure remains visible to the caller. The backend
-attempts to release the writer lease even if closing the directory handle fails;
-only a fulfilled `close()` proves that all admitted work and handles drained.
+as close starts. Directory and scan close failures remain visible to the caller.
+The backend attempts to release the writer lease even if closing the directory
+handle fails. The pinned FDLock dependency closes its descriptor without
+reporting native close errors; a fulfilled `close()` is not another durability
+proof. If shutdown fails, process exit is the final descriptor cleanup boundary.
 
 The root is a canonical absolute path with no symlink ancestors. Its existing
 parent must be trusted; the backend creates only the final directory. Root mode
