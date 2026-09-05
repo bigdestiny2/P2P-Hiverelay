@@ -34,6 +34,19 @@ const HEX_64 = /^[0-9a-f]{64}$/
 export const APP_CATALOG_STAGE_FIXED_OVERHEAD_BYTES = 2_048
 const APP_CATALOG_STAGE_ROW_INDEX_BYTES = 72
 
+// Reserve the largest legal frame, including the raw frame remembered by the
+// decoder, before retaining any decoded input. Counts also bound object and
+// promise overhead; these are payload reservations, not measured heap bytes.
+// The shared budget covers this runtime's channels, including closing channels
+// whose active storage callback has not settled yet.
+const CATALOG_RECEIVE_FRAME_BYTES = APP_CATALOG_LIMITS.maxPayloadBytes + 4
+const CATALOG_RECEIVE_PEER_MESSAGES = 8
+const CATALOG_RECEIVE_RUNTIME_MESSAGES = 64
+const CATALOG_RECEIVE_PEER_BYTES = CATALOG_RECEIVE_PEER_MESSAGES * CATALOG_RECEIVE_FRAME_BYTES
+const CATALOG_RECEIVE_RUNTIME_BYTES = CATALOG_RECEIVE_RUNTIME_MESSAGES * CATALOG_RECEIVE_FRAME_BYTES
+let catalogReceiveMessages = 0
+let catalogReceiveBytes = 0
+
 function fail (code, message) {
   throw new AppCatalogProtocolError(code, message)
 }
@@ -1912,18 +1925,39 @@ export function attachAppCatalogPagedChannel (connection, opts) {
   let negotiationTimer = null
   let readyNotified = false
   let messageTail = Promise.resolve()
+  let draining = false
+  let pendingMessages = 0
+  let pendingBytes = 0
+  const pending = []
   let resolveClosed = null
   const closedPromise = new Promise(resolve => { resolveClosed = resolve })
 
+  const releaseMessage = entry => {
+    if (entry.released) return
+    entry.released = true
+    entry.input = null
+    pendingMessages--
+    pendingBytes -= CATALOG_RECEIVE_FRAME_BYTES
+    catalogReceiveMessages--
+    catalogReceiveBytes -= CATALOG_RECEIVE_FRAME_BYTES
+    entry.resolve()
+  }
+
+  const discardPending = () => {
+    for (const entry of pending) releaseMessage(entry)
+    pending.length = 0
+  }
+
   const protocolError = (error) => {
     if (closed) return closedPromise
+    closed = true
+    discardPending()
     if (typeof opts.onProtocolError === 'function') {
       try { opts.onProtocolError(error) } catch {}
     }
     capability.close()
     if (negotiationTimer !== null) clearTimeout(negotiationTimer)
     negotiationTimer = null
-    closed = true
     if (channel && !channel.closed) channel.close()
     else resolveClosed()
     return closedPromise
@@ -1964,9 +1998,54 @@ export function attachAppCatalogPagedChannel (connection, opts) {
     }
   }
 
+  const startDrain = () => {
+    if (draining || closed || pending.length === 0) return
+    draining = true
+    // Publish the exact cleanup owner before invoking a callback, which may
+    // synchronously close this channel itself.
+    messageTail = Promise.resolve().then(async () => {
+      try {
+        while (pending.length) {
+          if (closed) break
+          const entry = pending.shift()
+          try {
+            await onMessage(entry.id, entry.input)
+          } catch (err) {
+            entry.reject(err)
+          } finally {
+            releaseMessage(entry)
+          }
+        }
+      } finally {
+        draining = false
+        if (!closed && pending.length) startDrain()
+      }
+    }).catch(() => {})
+  }
+
   const enqueueMessage = (id, input) => {
-    const operation = messageTail.then(() => onMessage(id, input))
-    messageTail = operation.catch(() => {})
+    // Do not return a shared pending close promise on rejection: Protomux
+    // would retain a new reaction to it for every further received message.
+    if (closed) return
+    if (pendingMessages >= CATALOG_RECEIVE_PEER_MESSAGES ||
+        pendingBytes + CATALOG_RECEIVE_FRAME_BYTES > CATALOG_RECEIVE_PEER_BYTES ||
+        catalogReceiveMessages >= CATALOG_RECEIVE_RUNTIME_MESSAGES ||
+        catalogReceiveBytes + CATALOG_RECEIVE_FRAME_BYTES > CATALOG_RECEIVE_RUNTIME_BYTES) {
+      protocolError(new AppCatalogProtocolError('RESOURCE_LIMIT', 'catalog receive admission exhausted'))
+      return
+    }
+    pendingMessages++
+    pendingBytes += CATALOG_RECEIVE_FRAME_BYTES
+    catalogReceiveMessages++
+    catalogReceiveBytes += CATALOG_RECEIVE_FRAME_BYTES
+    let resolveOperation
+    let rejectOperation
+    const operation = new Promise((resolve, reject) => {
+      resolveOperation = resolve
+      rejectOperation = reject
+    })
+    pending.push({ id, input, resolve: resolveOperation, reject: rejectOperation, released: false })
+    startDrain()
     return operation
   }
 
@@ -1986,6 +2065,7 @@ export function attachAppCatalogPagedChannel (connection, opts) {
     },
     onclose: async () => {
       closed = true
+      discardPending()
       capability.close()
       if (negotiationTimer !== null) clearTimeout(negotiationTimer)
       negotiationTimer = null

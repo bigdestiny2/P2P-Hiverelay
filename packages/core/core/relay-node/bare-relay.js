@@ -670,6 +670,18 @@ export class BareRelay extends EventEmitter {
       // explicit follow-anchored policy. An authenticated peer is not by
       // itself trusted to induce repair I/O for an existing local app.
       if (existing) continue
+      // Both paged and legacy catalogs authenticate a relay's testimony, not
+      // a publisher's authorization for this drive. Publisher allowlists must
+      // be satisfied through the signed seed-request path instead.
+      if (mode === 'allowlist') {
+        this._emitSafely('catalog-sync-rejected', {
+          appKey,
+          source: 'remote-catalog',
+          mode,
+          reason: 'publisher-authorization-required'
+        })
+        continue
+      }
       const maxStorageBytes = positiveStorageBound(app.maxStorageBytes)
       if (maxStorageBytes === null) {
         this._emitSafely('catalog-sync-rejected', {
@@ -683,7 +695,7 @@ export class BareRelay extends EventEmitter {
           (Date.now() - app.seededAt) > this.config.catalogMaxAppAgeMs) continue
       const request = {
         appKey,
-        publisherPubkey: app.publisherPubkey,
+        publisherPubkey: null,
         contentType: app.type,
         privacyTier: app.privacyTier,
         blind: app.blind,
@@ -707,7 +719,9 @@ export class BareRelay extends EventEmitter {
           blind: app.blind,
           storageClass: app.storageClass,
           availabilityClass: app.availabilityClass,
-          publisherPubkey: app.publisherPubkey,
+          // Open acceptance permits discovery-based storage, but the catalog
+          // claim must not become a locally attributed publisher identity.
+          publisherPubkey: null,
           maxStorage: maxStorageBytes
         })
         this._emitSafely('catalog-sync', { appKey, source: 'remote-catalog', mode })
