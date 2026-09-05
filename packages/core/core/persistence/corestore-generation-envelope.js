@@ -491,9 +491,20 @@ export async function rebindRestoredCorestoreDevice ({
   if (faultInjector != null && typeof faultInjector !== 'function') throw new TypeError('faultInjector must be a function')
   const options = normalizeOpenOptions(corestoreGenerationOpenOptions(ceremony, { participant }))
   const binding = readEnvelopeBinding(canonicalAbsolute(restoreRoot, 'restored envelope root'), options)
-  const outerDescriptor = openSync(binding.paths.authority, FS_CONSTANTS.O_RDONLY)
+  // Linux FDLock uses an exclusive fcntl lock, which needs a writable regular
+  // file descriptor. An O_RDONLY directory works with macOS flock but fails
+  // with EBADF on Linux. The installation-id inode is created once by the
+  // ceremony and never replaced by rebind; opening it does not change its bytes
+  // or introduce a new entry into the content-addressed backup inventory.
+  const lockPath = binding.paths.installationId
+  const beforeLock = lstatSync(lockPath)
+  const outerDescriptor = openSync(lockPath, FS_CONSTANTS.O_RDWR | (FS_CONSTANTS.O_NOFOLLOW || 0))
   let outerLock
   try {
+    const openedLock = fstatSync(outerDescriptor)
+    if (openedLock.dev !== beforeLock.dev || openedLock.ino !== beforeLock.ino) {
+      fail('generation installation id changed while opening the restore lock')
+    }
     outerLock = new FDLock(outerDescriptor, { wait: true })
     await outerLock.ready()
   } catch (error) {

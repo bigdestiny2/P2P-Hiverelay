@@ -1,5 +1,6 @@
 import test from 'brittle'
 import Corestore from 'corestore'
+import FDLock from 'fd-lock'
 import {
   chmodSync,
   closeSync,
@@ -251,6 +252,9 @@ test('content-addressed backup restores exact isolated envelope state', async t 
   })
   t.is(restored.contentSha256, backup.contentSha256)
   t.is(inventoryCorestoreGenerationTree(restoredRoot).contentSha256, backup.contentSha256)
+  const installationId = join(restoredRoot, '.hiverelay-generation', 'installation-id.v1')
+  const installationBytes = readFileSync(installationId)
+  const installationInode = statSync(installationId).ino
 
   // The rebind operation validates the copied Corestore marker before it can
   // replace it. Keep this mutation test scoped to that protocol: Corestore's
@@ -266,6 +270,8 @@ test('content-addressed backup restores exact isolated envelope state', async t 
       if (phase === 'corestore-generation:after-old-device-marker-remove') throw new Error('simulated rebind crash')
     }
   }), /simulated rebind crash/)
+  t.alike(readFileSync(installationId), installationBytes, 'failed rebind preserves the lock anchor bytes')
+  t.is(statSync(installationId).ino, installationInode, 'failed rebind keeps the same lock inode')
   await t.exception.all(() => openCorestore(restoredRoot, generationOptions(ceremony)), /restore is incomplete/)
 
   const rebind = await rebindRestoredCorestoreDevice({
@@ -276,6 +282,8 @@ test('content-addressed backup restores exact isolated envelope state', async t 
   })
   t.is(rebind.operationalWriterRestoreImplemented, true)
   t.not(rebind.originalCorestoreMarkerSha256, rebind.restoredCorestoreMarkerSha256)
+  t.alike(readFileSync(installationId), installationBytes, 'successful rebind preserves the lock anchor bytes')
+  t.is(statSync(installationId).ino, installationInode, 'successful rebind keeps the same lock inode')
 
   const restoredStore = openCorestore(restoredRoot, generationOptions(ceremony))
   await restoredStore.ready()
@@ -424,6 +432,12 @@ test('concurrent rebinders serialize one sequence and idempotent reruns recheck 
     }
   })
   await entered
+  const competingLock = new FDLock(openSync(join(target, '.hiverelay-generation', 'installation-id.v1'), 'r+'))
+  try {
+    await t.exception.all(() => competingLock.ready(), /File descriptor could not be locked/)
+  } finally {
+    await competingLock.close()
+  }
   let secondSettled = false
   const second = rebindRestoredCorestoreDevice({
     restoreRoot: target,
@@ -432,7 +446,7 @@ test('concurrent rebinders serialize one sequence and idempotent reruns recheck 
     expectedContentSha256: backup.contentSha256
   }).finally(() => { secondSettled = true })
   await new Promise(resolve => setTimeout(resolve, 25))
-  t.absent(secondSettled, 'second rebind waits on the stable authority-directory lock')
+  t.absent(secondSettled, 'second rebind waits on the stable installation-id lock')
   releaseReceipt()
   const [firstReceipt, secondReceipt] = await Promise.all([first, second])
   t.is(firstReceipt.sequence, 1)
