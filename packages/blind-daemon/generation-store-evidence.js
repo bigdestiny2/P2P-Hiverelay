@@ -17,6 +17,21 @@ import { verifyBlindWalRecoveryScanResult } from './wal-recovery-scan.js'
 const EVIDENCE = new WeakMap()
 const ENGINES = Object.freeze({ cell: BlindCellStorageEngine, inbox: BlindInboxStorageEngine, core: BlindCoreStorageEngine })
 
+function assertDescriptorFloor (snapshot, activated) {
+  if (activated == null) return
+  const persisted = snapshot.manifest
+  let code
+  if (activated.sequence < persisted.descriptorSequenceFloor) code = 'BLIND_RUNTIME_DESCRIPTOR_FLOOR_ROLLBACK'
+  else if (activated.sequence === persisted.descriptorSequenceFloor && !b4a.equals(activated.hash, persisted.descriptorHashFloor)) code = 'BLIND_RUNTIME_DESCRIPTOR_FLOOR_FORK'
+  if (code) {
+    const error = new Error(code === 'BLIND_RUNTIME_DESCRIPTOR_FLOOR_ROLLBACK'
+      ? 'activated descriptor is below the persisted two-slot manifest floor'
+      : 'activated descriptor forks the persisted two-slot manifest floor')
+    error.code = code
+    throw error
+  }
+}
+
 // Full semantic replay is deliberately tied to the assembled engines. No
 // caller callback can turn a mechanical scan into semantic startup authority.
 // Pruned histories need snapshot restoration, which these engines do not yet
@@ -29,6 +44,11 @@ export async function inspectBlindGenerationStore ({ role, engineOptions, lease,
   const controlNames = session.rootClassification.controlNames
   const fresh = !controlNames.includes('wal.v2') && !controlNames.some(name => name.startsWith('wal-')) &&
     ['pristine', 'genesis-incomplete'].includes(session.rootClassification.kind)
+  const descriptorFloor = manifestOptions?.descriptorFloor == null
+    ? null
+    : Object.freeze({
+      sequence: manifestOptions.descriptorFloor.sequence, hash: b4a.from(manifestOptions.descriptorFloor.hash)
+    })
   let checkpointStore
   let manifestStore
   let checkpoint
@@ -41,6 +61,7 @@ export async function inspectBlindGenerationStore ({ role, engineOptions, lease,
       manifestStore = new TwoSlotManifestStore({ ...manifestOptions, controlDirectory: path.join(root, 'control') })
       await manifestStore.open({ validationOnly: true })
       manifestSnapshot = await manifestStore.load()
+      assertDescriptorFloor(manifestSnapshot, descriptorFloor)
       const cellVerifier = createBlindCellControlSnapshotSemanticVerifier(createBlindCellControlSnapshotSemanticAuthority())
       const inboxVerifier = createBlindInboxControlSnapshotSemanticVerifier(createBlindInboxControlSnapshotSemanticAuthority())
       const coreVerifier = createBlindCoreControlSnapshotSemanticVerifier(createBlindCoreControlSnapshotSemanticAuthority())
@@ -71,7 +92,7 @@ export async function inspectBlindGenerationStore ({ role, engineOptions, lease,
       hasIrreversibleState: scan ? scan.hasIrreversibleState : false,
       usage: scan ? Object.freeze({ bytes: scan.wal.observedWalBytes, frames: scan.wal.completeFrameCount, segments: scan.wal.sealedSegmentCount }) : Object.freeze({ bytes: 0, frames: 0, segments: 0 })
     })
-    EVIDENCE.set(result, { root, lease, scan, checkpoint, manifestSnapshot, manifestStore, close })
+    EVIDENCE.set(result, { root, lease, scan, checkpoint, manifestSnapshot, manifestStore, descriptorFloor, close })
     return result
   } catch (error) {
     await close().catch(() => {})
@@ -104,6 +125,7 @@ export async function verifyBlindGenerationStoreEvidence (result, root, lease) {
   if (state.checkpoint) {
     await verifyBlindLocalCheckpointRecoveryValidation(state.checkpoint, root, lease, state.manifestSnapshot)
     const observed = await state.manifestStore.load()
+    assertDescriptorFloor(observed, state.descriptorFloor)
     if (!b4a.equals(observed.bytes, state.manifestSnapshot.bytes) || observed.slot !== state.manifestSnapshot.slot) {
       throw new Error('manifest changed during generation startup')
     }

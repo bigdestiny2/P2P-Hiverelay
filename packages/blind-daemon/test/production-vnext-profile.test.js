@@ -1,3 +1,4 @@
+import { TwoSlotManifestStore } from '../manifest-store.js'
 import test from 'brittle'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -57,6 +58,7 @@ import {
   loadProductionRuntimeConfig
 } from '../production-runtime.js'
 import {
+  vnextStoreGenesisExpectedBindings,
   deriveVnextBucketMapHash,
   loadVnextForwardConfig,
   runVnextStoreGenesisCeremony
@@ -798,3 +800,71 @@ for (const invalid of ['malformed-floor', 'rolled-back-wal', 'invalid-snapshot']
     t.comment(JSON.stringify({ invalid, before, after: await startupTree(storeRoot) }))
   })
 }
+
+for (const kind of ['rollback', 'fork']) {
+  test(`still-valid descriptor ${kind} rejects every startup mutation under ownership`, async t => {
+    const fixture = await vnextSealedFixture({ functionalAdmission: true })
+    t.teardown(() => cleanup(fixture.directory))
+    const { descriptor } = await orchestrateVnextServingStore(fixture)
+    const runtime = await assembleVnextRuntime(fixture)
+    await runtime.close()
+    const roots = [fixture.environment.HIVERELAY_BLIND_STORE_ROOT,
+      fixture.environment.HIVERELAY_BLIND_INBOX_STORE_ROOT, fixture.environment.HIVERELAY_BLIND_CORE_STORE_ROOT]
+    const manifestKey = await fs.readFile(fixture.environment.HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE)
+    const ownerFenceTokenHash = await fs.readFile(fixture.environment.HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE)
+    const manifest = new TwoSlotManifestStore({
+      controlDirectory: path.join(roots[0], 'control'),
+      manifestKey,
+      expectedBindings: vnextStoreGenesisExpectedBindings(descriptor, fixture.successorHash, 1n, ownerFenceTokenHash)
+    })
+    await manifest.open()
+    const snapshot = await manifest.load()
+    await manifest.advance(snapshot.hash, {
+      descriptorSequenceFloor: kind === 'rollback' ? 2n : 1n,
+      descriptorHashFloor: kind === 'rollback' ? fixture.successorHash : b4a.alloc(32, 0x9a)
+    })
+    await manifest.close()
+    for (const root of roots) {
+      await fs.appendFile(path.join(root, 'control', 'wal.v2'), b4a.alloc(13, 0xff))
+      await fs.writeFile(path.join(root, 'staging', 'descriptor-startup.tmp'), 'retained', { mode: 0o600 })
+    }
+    const before = await Promise.all(roots.map(root => startupTree(root)))
+    const error = await failure(() => assembleVnextRuntime(fixture))
+    t.is(error?.code, kind === 'rollback' ? 'BLIND_RUNTIME_DESCRIPTOR_FLOOR_ROLLBACK' : 'BLIND_RUNTIME_DESCRIPTOR_FLOOR_FORK')
+    const after = await Promise.all(roots.map(root => startupTree(root)))
+    t.alike(after, before, 'all roots remain byte-exact on still-valid rejected descriptor')
+    t.comment(JSON.stringify({ invalid: 'descriptor-' + kind, before, after }))
+    const bootstrapError = await failure(() => bootstrapVnextStoreGenerationFloor({
+      storeRoot: roots[0], descriptor, manifestKey, ownerFenceTokenHash, mapGeneration: 1n
+    }))
+    t.is(bootstrapError?.code, error.code, 'explicit bootstrap applies the same owned descriptor-floor comparison')
+    t.alike(await Promise.all(roots.map(root => startupTree(root))), before)
+  })
+}
+
+test('a forward descriptor refresh passes read-only startup comparison and persists the new floor', async t => {
+  const fixture = await vnextSealedFixture({ functionalAdmission: true })
+  t.teardown(() => cleanup(fixture.directory))
+  const { descriptor } = await orchestrateVnextServingStore(fixture)
+  const root = fixture.environment.HIVERELAY_BLIND_STORE_ROOT
+  const manifestKey = await fs.readFile(fixture.environment.HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE)
+  const fence = await fs.readFile(fixture.environment.HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE)
+  const manifest = new TwoSlotManifestStore({
+    controlDirectory: path.join(root, 'control'),
+    manifestKey,
+    expectedBindings: vnextStoreGenesisExpectedBindings(descriptor, fixture.successorHash, 1n, fence)
+  })
+  await manifest.open()
+  const snapshot = await manifest.load()
+  // Model a persisted predecessor descriptor floor beneath the still-valid
+  // configured successor. This is a test fixture, never a rollback procedure.
+  await manifest.advance(snapshot.hash, { descriptorSequenceFloor: 0n, descriptorHashFloor: fixture.genesisHash })
+  await manifest.close()
+  const runtime = await assembleVnextRuntime(fixture)
+  t.is(runtime.status().manifestFloor.descriptorSequenceFloor, 1n)
+  t.alike(runtime.status().manifestFloor.descriptorHashFloor, fixture.successorHash)
+  await runtime.close()
+  const restarted = await assembleVnextRuntime(fixture)
+  t.is(restarted.status().manifestFloor.descriptorSequenceFloor, 1n)
+  await restarted.close()
+})

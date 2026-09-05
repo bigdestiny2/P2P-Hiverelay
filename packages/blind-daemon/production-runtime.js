@@ -972,6 +972,7 @@ export async function bootstrapVnextStoreGenerationFloor ({
       engineOptions: cellOptions,
       manifestOptions: {
         manifestKey,
+        descriptorFloor: { sequence: descriptor.descriptorSequence, hash: serviceDescriptorHash(encodeCanonical(blindServiceDescriptorV1, descriptor)) },
         expectedBindings: vnextStoreGenesisExpectedBindings(descriptor, serviceDescriptorHash(encodeCanonical(blindServiceDescriptorV1, descriptor)), mapGeneration, ownerFenceTokenHash)
       }
     }],
@@ -1835,6 +1836,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
         manifestOptions: requireManifestFloor
           ? {
               manifestKey,
+              descriptorFloor: { sequence: descriptorSnapshot.descriptorSequence, hash: descriptorSnapshot.hash },
               expectedBindings: vnextStoreGenesisExpectedBindings(
                 descriptorSnapshot.descriptor, descriptorSnapshot.hash, config.mapGeneration, ownerFenceTokenHash)
             }
