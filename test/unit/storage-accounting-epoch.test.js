@@ -1,4 +1,5 @@
 import test from 'brittle'
+import { spawnSync } from 'child_process'
 import { lstat, mkdtemp, opendir, rm } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
@@ -253,6 +254,51 @@ test('operation buckets preserve the exact 700001 + 99870 + 129 arithmetic', asy
   t.is(snapshot.cleanup, 129)
   t.is(snapshot.total, 800_000)
   await t.exception(() => budget.chargeCleanup(), /cleanup operation limit/)
+})
+
+test('completed accounting operations release fence subscriptions before the epoch ends', (t) => {
+  const moduleUrl = new URL('../../packages/core/core/relay-node/storage-accounting-epoch.js', import.meta.url)
+  const script = `
+    import { StorageAccountingEpoch } from ${JSON.stringify(moduleUrl.href)}
+    let now = 0
+    const clock = {
+      now: () => now,
+      sleep: async ms => { now += ms },
+      setTimeout: () => ({ unref () {} }),
+      clearTimeout: () => {}
+    }
+    const epoch = new StorageAccountingEpoch('/constant-operation-probe', { clock })
+    epoch.observedAt = 0
+    epoch._jsSliceStartedAt = 0
+    epoch._normalDeadlineAt = epoch.limits.normalDeadlineMs
+    const constantOperation = async () => 1
+    global.gc()
+    const before = process.memoryUsage().heapUsed
+    for (let i = 0; i < 100_000; i++) {
+      await epoch._ordinaryOperation('constant result', constantOperation)
+    }
+    global.gc()
+    const retainedBytes = process.memoryUsage().heapUsed - before
+    console.log(JSON.stringify({ retainedBytes, operations: epoch.budget.ordinary,
+      bookkeepingBytes: epoch.getProgress().bookkeepingBytes,
+      operationsInFlight: epoch.getProgress().operationsInFlight,
+      fence: epoch.getProgress().fence }))
+    epoch._installFence('success', null, now)
+  `
+  const child = spawnSync(process.execPath, [
+    '--expose-gc', '--max-old-space-size=128', '--input-type=module', '-e', script
+  ], { encoding: 'utf8', timeout: 30_000 })
+  t.absent(child.error)
+  t.is(child.signal, null)
+  t.is(child.status, 0, child.stderr)
+  if (child.status !== 0) return
+  const result = JSON.parse(child.stdout)
+  t.is(result.operations, 100_000)
+  t.is(result.bookkeepingBytes, 0)
+  t.is(result.operationsInFlight, 0)
+  t.is(result.fence, null, 'measure completed work while the shared fence is still pending')
+  t.ok(result.retainedBytes < 8 * 1024 * 1024,
+    `100000 constant operations retain ${result.retainedBytes} bytes, below the 8 MiB guard`)
 })
 
 test('maximum E/T tree charges exactly 700001 ordinary and one terminal operation', async (t) => {

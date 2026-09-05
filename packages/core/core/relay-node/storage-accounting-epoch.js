@@ -265,7 +265,8 @@ export class StorageAccountingEpoch {
     this._jsUsedMs = 0
     this._normalTimer = null
     this._cleanupTimer = null
-    this._normalFencePromise = new Promise(resolve => { this._resolveNormalFence = resolve })
+    this._normalFenceWaiters = new Set()
+    this._cleanupFenceWaiters = new Set()
     this._cleanupFencePromise = new Promise(resolve => { this._resolveCleanupFence = resolve })
     this._inFlightSettlements = new Set()
     this._lateResourceDisposals = new Set()
@@ -677,11 +678,7 @@ export class StorageAccountingEpoch {
       this._inFlightSettlements.delete(rawSettled)
     })
     this._inFlightSettlements.add(rawSettled)
-    const fence = phase === 'ordinary' ? this._normalFencePromise : this._cleanupFencePromise
-    const result = await Promise.race([
-      outcome,
-      fence.then(() => ({ settled: false }))
-    ])
+    const result = await this._waitForOperation(outcome, phase)
     if (!result.settled) {
       if (typeof options.disposeLateResult === 'function') {
         this._ownLateResult(outcome, label, options.disposeLateResult)
@@ -703,6 +700,23 @@ export class StorageAccountingEpoch {
     }
     if (result.error) throw result.error
     return result.value
+  }
+
+  _waitForOperation (outcome, phase) {
+    const waiters = phase === 'ordinary' ? this._normalFenceWaiters : this._cleanupFenceWaiters
+    // A shared pending promise keeps every losing Promise.race reaction until
+    // the epoch ends. Subscribe only while this operation is being awaited.
+    return new Promise(resolve => {
+      const onFence = () => {
+        waiters.delete(onFence)
+        resolve({ settled: false })
+      }
+      waiters.add(onFence)
+      outcome.then(result => {
+        waiters.delete(onFence)
+        resolve(result)
+      })
+    })
   }
 
   _ownLateResult (outcome, label, disposeLateResult) {
@@ -808,7 +822,7 @@ export class StorageAccountingEpoch {
   _installFence (kind, err, at) {
     if (this._fence) return false
     this._fence = { kind, at }
-    this._resolveNormalFence(this._fence)
+    for (const onFence of this._normalFenceWaiters) onFence()
     if (err && !this._primaryError) this._primaryError = err
     if (this._normalTimer !== null) {
       this.clock.clearTimeout(this._normalTimer)
@@ -819,6 +833,7 @@ export class StorageAccountingEpoch {
     this._cleanupTimer = this.clock.setTimeout(() => {
       this._cleanupExpired = true
       this._resolveCleanupFence({ kind: 'cleanup-deadline', at: this._cleanupDeadlineAt })
+      for (const onFence of this._cleanupFenceWaiters) onFence()
     }, delay)
     if (this._cleanupTimer && typeof this._cleanupTimer.unref === 'function') this._cleanupTimer.unref()
     return true
