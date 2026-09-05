@@ -9,8 +9,8 @@ function failure (message) {
 }
 
 // Verify the selected artifact too; never borrow another target's flags.
-if (Bare.platform !== native.platform || Bare.arch !== native.arch || Bare.version !== 'v1.31.0') {
-  throw failure('intent backend requires its qualified Bare v1.31.0 native flag target')
+if (Bare.platform !== native.platform || Bare.arch !== native.arch || Bare.version !== native.runtime) {
+  throw failure('intent backend requires its exact qualified Bare runtime and native flag target')
 }
 for (const name of ['O_RDONLY', 'O_WRONLY', 'O_RDWR', 'O_CREAT', 'O_EXCL', 'O_NOFOLLOW', 'O_DIRECTORY', 'O_NONBLOCK']) {
   const value = native.constants[name]

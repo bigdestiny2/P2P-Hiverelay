@@ -6,11 +6,14 @@ accepted I01 commit `45616fdfceea43feedf251e4f3572e565d6353fd`. It supplies opaq
 `close` for the existing `EncryptedIntentStore`. It does not implement encryption,
 transport, retry policy, total-store quota, deletion, or retention.
 
-The retained qualification targets are **Bare v1.31.0 on macOS arm64 and Linux x64**. The runtime
-adapter selects only an explicitly qualified target and verifies its platform,
-architecture and exact Bare version. This is not full I02, a Pear SDK release, or production
-enablement. Other architectures, packaged/embedded Pear, mobile devices,
-network filesystems and physical power-loss behavior remain unqualified.
+The runtime adapter selects **Bare v1.31.0 and v1.29.4 on macOS arm64 and Linux x64**
+through four explicit platform, architecture and exact-version bindings. The
+v1.31.0 targets retain their accepted artifacts. The v1.29.4 targets support the
+local worker embedded by the exact `pear-runtime` 1.3.1 / `bare-sidecar` 0.5.2
+closure; their component evidence requires independent review. This is not full
+I02, a Pear SDK release, or production enablement. Other architectures, embedded
+runtime versions, mobile devices, network filesystems and physical power-loss
+behavior remain unqualified.
 
 ## Installation and native flags
 
@@ -33,11 +36,15 @@ preserved; a rebuild with different compiler/probe identity fails and retains it
 candidate in the supplied evidence directory. Evidence filenames also include the
 target, so collecting Linux proof does not overwrite macOS proof.
 
-The macOS arm64 artifact is byte-identical to its accepted predecessor. The
-Linux x64 artifact was compiled with Ubuntu GCC 13.3.0 from the same flags.c. `native/targets.cjs` uses explicit static imports; generating a new
-artifact does not enable it. Replay all tests and obtain independent review before
-adding another target to that selector. Neither Linux arm64 nor any additional
-Bare/Pear version is selected.
+Both platform artifacts remain byte-identical to their accepted Bare v1.31.0
+predecessors. Linux x64 uses Ubuntu GCC 13.3.0 and macOS arm64 uses Apple clang
+21.0.0, compiling the same flags.c. Each runtime binding reuses its own platform's
+artifact, and the adapter also verifies that binding against the running Bare
+version. Actual local Pear worker probes observe v1.29.4 on both platforms;
+target-side compiler probes and real native I/O tests check the unchanged flags.
+`native/targets.cjs` uses explicit static imports; generating a new artifact does
+not enable it. Replay all tests and obtain independent review before adding a
+target. Linux arm64, macOS x64 and unlisted Bare/Pear versions remain rejected.
 
 There is no new runtime native addon. Existing pinned libraries own native I/O:
 `bare-fs` 4.8.1, `bare-buffer` 3.6.1, `bare-crypto` 1.15.3,
@@ -122,10 +129,13 @@ records and the caller key; do not delete uncertain intents, synthesize new logi
 IDs, downgrade the framing, or silently drop unresolved operations. Earlier clients
 must leave this private directory untouched unless they implement the same contract.
 
-Before claiming Pear support, package the exact native dependency closure with the
-actual application, select its canonical storage directory through the app's verified
-Pear storage API, wire application teardown to awaited backend close, and rerun these
-contracts on that embedded runtime and supported devices. A global Bare binary,
+The private `blind-intent-pear-consumer` component packages a local worker for the
+locked Pear 3 cohort and owns its dependency lock and lifecycle evidence. This
+backend's runtime target selection alone does not qualify that consumer. Actual
+applications must package the exact native closure, supply a verified canonical
+private storage directory and separate caller keys, await backend drain and close,
+then await worker exit and pipe closure. Repeat the contracts on each supported
+application/device. A global Bare binary,
 compiler success, or local process restart does not prove packaged Pear behavior,
 untested Linux distributions, controller-cache durability, physical power loss, or fleet production
 readiness. Production flags and frozen public artifacts remain unchanged.

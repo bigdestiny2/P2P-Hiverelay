@@ -1,0 +1,9 @@
+{
+  "pear": { "version": "3.0.0", "commit": "5113c8569d9b01881eae2b17de14a0a2935aa515" },
+  "pear-runtime": { "version": "1.3.1", "commit": "70898fd9d9bb2dc7eb4cb4acb1cf349c89d1a1fc" },
+  "pear-build": { "version": "1.2.0", "commit": "1d8b9b63c0b465b42ce78609b1ddc630a076cff5" },
+  "pear-install": { "version": "1.2.2", "commit": "e04422c1f7cf7f9b005080fe987eaa38dac90102" },
+  "worker": "./worker.mjs",
+  "execution": "pear-runtime static local worker, Node host and Bare sidecar",
+  "qualification": "Private component only; no OS install, public native release or application capacity claim."
+}

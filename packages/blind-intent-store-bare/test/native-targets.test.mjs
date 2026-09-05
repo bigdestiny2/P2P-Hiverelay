@@ -13,22 +13,33 @@ const require = createRequire(import.meta.url)
 const selectNativeFlags = require('../native/targets.cjs')
 const hash = bytes => createHash('sha256').update(bytes).digest('hex')
 
-test('retains the accepted macOS artifact and selects only qualified runtime targets', () => {
+test('retains both accepted artifacts and selects only exact qualified runtime targets', () => {
   const bytes = readFileSync(join(native, 'flags-darwin-arm64.cjs'))
   assert.equal(hash(bytes), '70f171c86b5443165f0df4f41f0ae916e5bc7a085131d0c8797f3d12a48c1749')
   const selected = selectNativeFlags('darwin', 'arm64', 'v1.31.0')
   assert.equal(selected.platform, 'darwin')
   assert.equal(selected.arch, 'arm64')
+  assert.equal(selected.runtime, 'v1.31.0')
   assert.equal(selected.sourceSha256, hash(readFileSync(join(native, 'flags.c'))))
   const linux = selectNativeFlags('linux', 'x64', 'v1.31.0')
   assert.equal(linux.platform, 'linux')
   assert.equal(linux.arch, 'x64')
+  assert.equal(linux.runtime, 'v1.31.0')
   assert.equal(linux.sourceSha256, selected.sourceSha256)
   assert.equal(hash(readFileSync(join(native, 'flags-linux-x64.cjs'))), 'b0fbc8f5dcb2191f0454771c80dbbac21f9458dc781af7df7f22d09c5db38b70')
+  for (const prior of [selected, linux]) {
+    const worker = selectNativeFlags(prior.platform, prior.arch, 'v1.29.4')
+    assert.equal(worker.runtime, 'v1.29.4')
+    assert.deepEqual(worker, { ...prior, runtime: 'v1.29.4' })
+    assert.ok(Object.isFrozen(worker))
+  }
   for (const [platform, arch, version] of [
     ['linux', 'arm64', 'v1.31.0'], ['linux', 'x64', 'v1.30.0'],
     ['darwin', 'x64', 'v1.31.0'], ['win32', 'arm64', 'v1.31.0'],
-    ['darwin', 'arm64', 'v1.29.4'], ['darwin', 'arm64', 'v1.24.3'],
+    ['linux', 'arm64', 'v1.29.4'], ['darwin', 'x64', 'v1.29.4'],
+    ['win32', 'x64', 'v1.29.4'], ['darwin', 'arm64', 'v1.24.3'],
+    ['darwin', 'arm64', 'v1.29.3'], ['linux', 'x64', 'v1.29.5'],
+    ['darwin', 'arm64', '1.29.4'], ['linux', 'x64', 'v1.29.4-custom'],
     ['darwin', 'arm64', 'v1.32.0'], ['darwin', 'arm64', undefined]
   ]) {
     assert.throws(() => selectNativeFlags(platform, arch, version), { code: 'INTENT_STORE_PLATFORM' })

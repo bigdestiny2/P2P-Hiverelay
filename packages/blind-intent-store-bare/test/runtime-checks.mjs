@@ -20,6 +20,8 @@ const key = n => 'intent:' + BigInt(n).toString(16).padStart(64, '0')
 const eio = () => Object.assign(new Error('injected IO failure'), { code: 'EIO' })
 
 try {
+  check(BARE_INTENT_BACKEND_RUNTIME.runtime === Bare.version, 'selected runtime matches actual Bare worker')
+  check(BARE_INTENT_BACKEND_RUNTIME.platform === Bare.platform && BARE_INTENT_BACKEND_RUNTIME.arch === Bare.arch, 'selected flags match actual worker target')
   const path = join(base, 'native-file')
   let handle = await open(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600)
   let writes = 0
@@ -210,9 +212,13 @@ try {
   await rejects(() => inputs.compareAndSwap(key(1), 0n, Buffer.alloc(BARE_INTENT_BACKEND_LIMITS.maxCiphertextBytes + 1)), 'INTENT_STORE_INPUT')
   await rejects(() => inputs.keysPage({ limit: 257 }), 'INTENT_STORE_INPUT')
   await inputs.close()
-  console.log(JSON.stringify({ ok: true, runtime: BARE_INTENT_BACKEND_RUNTIME, constants, checks, measurements: { admitted: 8, keys: found.length, pageLimit: 7, pages, scans: 4 } }))
+  const loadedAddons = Object.values(Bare.Addon.cache).map(addon => addon.url.href).sort()
+  console.log(JSON.stringify({ ok: true, runtime: BARE_INTENT_BACKEND_RUNTIME, versions: Bare.versions, loadedAddons, constants, checks, measurements: { admitted: 8, keys: found.length, pageLimit: 7, pages, scans: 4 } }))
 } catch (error) {
   console.error(error.stack)
   console.log(JSON.stringify({ ok: false, error: error.code || 'ERROR', message: error.message, checks }))
   Bare.exitCode = 1
 }
+
+// A local Pear worker also owns its IPC pipe; close it after all awaited checks.
+if (Bare.IPC) Bare.IPC.end()

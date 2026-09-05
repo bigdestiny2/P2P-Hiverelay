@@ -1,0 +1,47 @@
+[
+  {
+    "source": "packages/blind-intent-store-node/package.json",
+    "path": "test/baseline/packages/blind-intent-store-node/package.json",
+    "sha256": "70a131ca897a481f455ad1db169c2f8b181efb7ba4f44552c07cc55935a46558"
+  },
+  {
+    "source": "packages/blind-intent-store-node/index.js",
+    "path": "test/baseline/packages/blind-intent-store-node/index.js",
+    "sha256": "123b6f5820f6b963c3fe8954381b1c83a09a7d37e677292d09fd6833ddeaa18d"
+  },
+  {
+    "source": "packages/blind-client/package.json",
+    "path": "test/baseline/packages/blind-client/package.json",
+    "sha256": "bda10754b89b255d178ddb4f0190f877a209ad143bebcce10876be80aefbfb29"
+  },
+  {
+    "source": "packages/blind-client/intent.js",
+    "path": "test/baseline/packages/blind-client/intent.js",
+    "sha256": "0f1442521e60d7e4b0d0c519dde3b035264463aba3f3e08c884415ddbed30af1"
+  },
+  {
+    "source": "packages/blind-client/bytes.js",
+    "path": "test/baseline/packages/blind-client/bytes.js",
+    "sha256": "7b1d886a4a8c97a156b96e65969f2a21481b35955b18c9f7d41ce9e15f93056a"
+  },
+  {
+    "source": "packages/blind-client/errors.js",
+    "path": "test/baseline/packages/blind-client/errors.js",
+    "sha256": "5a7e9f0573ff64c3f2bf11853a9cb4142e632bbb9e78de905e793fea180652ef"
+  },
+  {
+    "source": "packages/blind-client/runtime/node.js",
+    "path": "test/baseline/packages/blind-client/runtime/node.js",
+    "sha256": "d69c4cc4b3132ea95e6acc3418d10ee183f6922b902290416dcf186c9f5bc8c8"
+  },
+  {
+    "source": "packages/blind-protocol/package.json",
+    "path": "test/baseline/packages/blind-protocol/package.json",
+    "sha256": "6294132c7c1778775f5b088dfbbc52ed4200e51cca867b830cae7c1a75e84493"
+  },
+  {
+    "source": "packages/blind-protocol/wire-runtime-authority.js",
+    "path": "test/baseline/packages/blind-protocol/wire-runtime-authority.js",
+    "sha256": "3c861d390f8f6b60a390334e3320cd22cdce6071dfe3a5f42231460e73f52cea"
+  }
+]
