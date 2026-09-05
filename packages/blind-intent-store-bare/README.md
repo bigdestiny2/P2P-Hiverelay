@@ -7,8 +7,8 @@ accepted I01 commit `45616fdfceea43feedf251e4f3572e565d6353fd`. It supplies opaq
 transport, retry policy, total-store quota, deletion, or retention.
 
 The retained qualification target is **Bare v1.31.0, macOS arm64**. The runtime
-adapter rejects another Bare version or a platform/architecture that differs from
-the generated native flags. This is not full I02, a Pear SDK release, or production
+adapter selects only an explicitly qualified target and verifies its platform,
+architecture and exact Bare version. This is not full I02, a Pear SDK release, or production
 enablement. Linux, other architectures, packaged/embedded Pear, mobile devices,
 network filesystems and physical power-loss behavior remain unqualified.
 
@@ -26,11 +26,17 @@ npm test --prefix packages/blind-intent-store-bare --workspaces=false
 `O_NONBLOCK`; its `wx` spelling cannot supply the missing exclusive bit. The tiny
 `native/flags.c` program obtains those values from the target compiler's
 `<fcntl.h>`. `node native/build.mjs [evidence-directory]` compiles and executes the
-probe on that target and writes `native/flags.cjs`, with source/binary hashes and
-compiler provenance. It never guesses numeric values, substitutes zero, or trusts
-another target's artifact. The checked-in artifact is macOS arm64 only. Building
-another artifact is a preparation step, not target qualification; replay all tests
-and obtain independent review before including it in any supported artifact.
+probe on that target and writes `native/flags-<platform>-<arch>.cjs`, with
+source/binary hashes and compiler provenance. It never guesses numeric values,
+substitutes zero, or trusts another target's artifact. Existing artifact bytes are
+preserved; a rebuild with different compiler/probe identity fails and retains its
+candidate in the supplied evidence directory. Evidence filenames also include the
+target, so collecting Linux proof does not overwrite macOS proof.
+
+The checked-in artifact remains macOS arm64 only, byte-identical to its accepted
+predecessor. `native/targets.cjs` uses explicit static imports; generating a new
+artifact does not enable it. Replay all tests and obtain independent review before
+adding another target to that selector. Linux qualification remains pending.
 
 There is no new runtime native addon. Existing pinned libraries own native I/O:
 `bare-fs` 4.8.1, `bare-buffer` 3.6.1, `bare-crypto` 1.15.3,

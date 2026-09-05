@@ -1,12 +1,14 @@
 import fs from 'bare-fs'
 import posix from 'bare-posix'
-import native from './native/flags.cjs'
+import selectNativeFlags from './native/targets.cjs'
+
+const native = selectNativeFlags(Bare.platform, Bare.arch, Bare.version)
 
 function failure (message) {
   return Object.assign(new Error(message), { code: 'INTENT_STORE_PLATFORM' })
 }
 
-// This artifact was compiled on one target; never borrow another target's flags.
+// Verify the selected artifact too; never borrow another target's flags.
 if (Bare.platform !== native.platform || Bare.arch !== native.arch || Bare.version !== 'v1.31.0') {
   throw failure('intent backend requires its qualified Bare v1.31.0 native flag target')
 }
