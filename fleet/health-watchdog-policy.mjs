@@ -881,6 +881,13 @@ function parseDecimal (text, label, min, max = Number.MAX_SAFE_INTEGER) {
   return safeInteger(Number(text), label, min, max)
 }
 
+function parseHealthStatus (text) {
+  // curl's http_code is exactly three digits, including 000 when no HTTP
+  // response arrived. Other numeric arguments retain strict decimal syntax.
+  if (!/^[0-9]{3}$/.test(text)) fail('WATCHDOG_ARGUMENT_INVALID', 'health status is invalid')
+  return Number(text)
+}
+
 async function main (argv) {
   const command = argv[0]
   if (command === 'snapshot' && argv.length === 2) {
@@ -892,7 +899,7 @@ async function main (argv) {
     const body = await readFile(argv[1])
     const outcome = classifyHealth({
       body,
-      status: parseDecimal(argv[2], 'health status', 0, 999),
+      status: parseHealthStatus(argv[2]),
       curlExit: parseDecimal(argv[3], 'curl exit', 0, 255)
     })
     process.stdout.write(`${outcome}\n`)
@@ -927,7 +934,7 @@ async function main (argv) {
         cgroupSha256: argv[5]
       },
       policySha256: '0'.repeat(64),
-      healthStatus: parseDecimal(argv[6], 'health status', 0, 999),
+      healthStatus: parseHealthStatus(argv[6]),
       healthBody
     })
     process.stdout.write(['diagnostic', diagnostic.sha256, diagnostic.path].join('\t') + '\n')
@@ -943,7 +950,7 @@ async function main (argv) {
         executableSha256: argv[4],
         cgroupSha256: argv[5]
       },
-      healthStatus: parseDecimal(argv[6], 'health status', 0, 999),
+      healthStatus: parseHealthStatus(argv[6]),
       healthBody
     })
     const policy = result.policy

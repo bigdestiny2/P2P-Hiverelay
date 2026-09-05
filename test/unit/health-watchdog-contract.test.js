@@ -4,6 +4,8 @@ import { chmod, link, mkdir, mkdtemp, readFile, readdir, rename, rm, symlink, un
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import {
   HEALTH_BODY_MAX,
   SOURCE_MAX,
@@ -25,6 +27,27 @@ const service = readFileSync('fleet/hiverelay-health-watchdog.service', 'utf8')
 const timer = readFileSync('fleet/hiverelay-health-watchdog.timer', 'utf8')
 const pidfd = readFileSync('fleet/health-watchdog-helper.c', 'utf8')
 const policySource = readFileSync('fleet/health-watchdog-policy.mjs', 'utf8')
+const execFileAsync = promisify(execFile)
+
+test('watchdog CLI accepts curl timeout status 000 without relaxing other arguments', async (t) => {
+  const { root } = await fixture(t)
+  const body = join(root, 'health-body')
+  await writeFile(body, '')
+  const classify = (status, exit) => execFileAsync(process.execPath, [
+    'fleet/health-watchdog-policy.mjs', 'classify', body, status, exit
+  ], { timeout: 5000 })
+  t.is((await classify('000', '28')).stdout, 'eligible-timeout\n')
+  t.is((await classify('000', '7')).stdout, 'eligible-timeout\n')
+  t.is((await classify('204', '0')).stdout, 'eligible-empty\n')
+  for (const status of ['0', '00', '0000', '-00', '+00', ' 000', '0e0', 'NaN']) {
+    await t.exception(classify(status, '28'), { code: 1 }, `rejects noncanonical status ${status}`)
+  }
+  await t.exception(classify('000', '028'), { code: 1 }, 'curl exit retains strict decimal syntax')
+  await writeFile(body, 'partial')
+  t.is((await classify('000', '28')).stdout, 'responsive-not-restartable\n')
+  await writeFile(body, '{"ok":false,"reason":"storage-fail-closed"}')
+  t.is((await classify('503', '0')).stdout, 'responsive-not-restartable\n')
+})
 
 async function fixture (t) {
   const root = await mkdtemp(join(tmpdir(), 'hiverelay-watchdog-contract-'))
