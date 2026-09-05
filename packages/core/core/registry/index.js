@@ -168,6 +168,8 @@ export class SeedingRegistry extends EventEmitter {
     this._onLocalAppend = null
     this._discoveryHandle = null
     this._stopping = false
+    this._stopPromise = null
+    this._quiescePromise = null
     this._maxPeerLogs = Number.isFinite(opts.maxPeerLogs) && opts.maxPeerLogs > 0
       ? Math.min(MAX_PEER_LOGS, Math.floor(opts.maxPeerLogs))
       : MAX_PEER_LOGS
@@ -206,6 +208,7 @@ export class SeedingRegistry extends EventEmitter {
       throw err
     }
     this._stopping = false
+    this._quiescePromise = null
     // The local identities are provenance inputs for seed-request hydration.
     // Open and capture both before Bee hydration; otherwise an unsigned local
     // management record could populate live state with no origin binding.
@@ -1662,7 +1665,26 @@ export class SeedingRegistry extends EventEmitter {
     return this.localLog ? this.localLog.key : null
   }
 
-  async stop () {
+  stop () {
+    if (this._stopPromise) return this._stopPromise
+    const stopping = this._stop().finally(() => {
+      if (this._stopPromise === stopping) this._stopPromise = null
+    })
+    this._stopPromise = stopping
+    return stopping
+  }
+
+  quiesce () {
+    if (this._quiescePromise) return this._quiescePromise
+    const quiescing = this._quiesce()
+    this._quiescePromise = quiescing
+    quiescing.catch(() => {
+      if (this._quiescePromise === quiescing) this._quiescePromise = null
+    })
+    return quiescing
+  }
+
+  async _quiesce () {
     this.running = false
     this._stopping = true
     for (const name of ['relay-registry-scan', 'registry-status', 'replication-monitor', 'acceptance-reconcile']) {
@@ -1707,6 +1729,12 @@ export class SeedingRegistry extends EventEmitter {
     // closing the underlying core. Otherwise the next startup's
     // hydration may miss the last few mutations.
     await this._flushIndexBee()
+  }
+
+  async _stop () {
+    // Quiescence owns data settlement; terminal stop owns network and log
+    // closure. A shared swarm owner can cancel discovery between these phases.
+    await this.quiesce()
 
     // The registry owns the exact session returned by join(). Await it before
     // closing logs or allowing the relay to destroy the swarm/Corestore. A

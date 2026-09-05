@@ -711,8 +711,8 @@ function isRelayKernelProfile (node) {
 // sequential teardown steps. Late steps would otherwise inherit only the
 // crumbs left by earlier ones (observed in CI: "swarm.destroy timed out
 // after 21ms", "relayDiscovery.destroy timed out after 3818ms" with zero
-// real work attempted). Every owner-serialized operation gets at least
-// this much of its own budget once it actually starts.
+// real work attempted). Each wait gets at least this budget; a timeout keeps
+// the underlying owner operation retained until it actually settles.
 const MIN_OWNER_OPERATION_BUDGET_MS = 10_000
 const NODE_SHUTDOWN_POPULATION_CONSUMER = 'node-shutdown'
 const NODE_SHUTDOWN_PAGE_BUDGET = 64
@@ -1438,6 +1438,7 @@ export class RelayNode extends EventEmitter {
     }
     this._stopRequested = false
     this._storageIngressReady = false
+    this._storageWritersQuiesced = false
 
     assertHiveAppGatewayIsolation({
       hiveAppHostSuffix: this.config.hiveAppHostSuffix,
@@ -2705,7 +2706,11 @@ export class RelayNode extends EventEmitter {
           if (!writerQuiesceError) writerQuiesceError = stopErr
         }
       }
-      await stopRollbackOwner('seedingRegistry', 'stop')
+      if (this.seedingRegistry) {
+        try { await this._quiesceSeedingRegistry(this.config.shutdownTimeoutMs || 30_000) } catch (stopErr) {
+          if (!writerQuiesceError) writerQuiesceError = stopErr
+        }
+      }
       if (this.appLifecycle && typeof this.appLifecycle.drainRetiringDrives === 'function') {
         try {
           await this._awaitOwnerOperation(
@@ -2761,7 +2766,11 @@ export class RelayNode extends EventEmitter {
         }
       }
       try {
-        await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
+        if (!writerQuiesceError) {
+          this._storageWritersQuiesced = true
+          await this._stopSeedingRegistry(this.config.shutdownTimeoutMs || 30_000)
+          await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
+        }
       } catch (discoveryErr) {
         if (!writerQuiesceError) writerQuiesceError = discoveryErr
       }
@@ -5775,7 +5784,39 @@ export class RelayNode extends EventEmitter {
     )
   }
 
+  _cancelDiscoveryTransport () {
+    const dht = this.swarm?.dht
+    if (!dht || typeof dht.destroy !== 'function') return Promise.resolve()
+    if (this._discoveryTransportStop?.dht === dht) return this._discoveryTransportStop.promise
+    // HyperDHT force-destroy cancels network I/O without waiting for a server
+    // announce. Otherwise discovery.destroy -> swarm.listen can wait forever
+    // on unreachable bootstrap nodes. Keep storage and exact cleanup owners.
+    const entry = { dht, promise: Promise.resolve().then(() => dht.destroy({ force: true })) }
+    this._discoveryTransportStop = entry
+    entry.promise.catch(() => {
+      if (this._discoveryTransportStop === entry) this._discoveryTransportStop = null
+    })
+    return entry.promise
+  }
+
+  async _quiesceSeedingRegistry (timeout) {
+    const registry = this.seedingRegistry
+    if (!registry) return
+    const method = typeof registry.quiesce === 'function' ? 'quiesce' : 'stop'
+    await this._awaitOwnerOperation(registry, `seedingRegistry.${method}`, () => registry[method](), timeout)
+    if (method === 'stop' && this.seedingRegistry === registry) this.seedingRegistry = null
+  }
+
+  async _stopSeedingRegistry (timeout) {
+    await withTimeout(this._cancelDiscoveryTransport(), Math.max(MIN_OWNER_OPERATION_BUDGET_MS, this._remainingOwnerBudget(timeout)), 'discovery transport cancellation')
+    const registry = this.seedingRegistry
+    if (!registry) return
+    await this._awaitOwnerOperation(registry, 'seedingRegistry.stop', () => registry.stop(), timeout)
+    if (this.seedingRegistry === registry) this.seedingRegistry = null
+  }
+
   async _destroyDiscoveryHandles (timeout) {
+    await withTimeout(this._cancelDiscoveryTransport(), Math.max(MIN_OWNER_OPERATION_BUDGET_MS, this._remainingOwnerBudget(timeout)), 'discovery transport cancellation')
     const destroy = async (handle, label) => {
       if (!handle || typeof handle.destroy !== 'function') return
       await this._awaitOwnerOperation(handle, label, () => handle.destroy(), timeout)
@@ -5825,16 +5866,14 @@ export class RelayNode extends EventEmitter {
   }
 
   _awaitOwnerOperation (owner, label, run, timeout) {
-    // Arm the timeout when the owner-serialized operation actually STARTS,
-    // not when it is queued behind an in-flight operation on the same owner,
-    // and floor the budget so event-loop stalls between queueing and
-    // execution cannot consume it before run() begins (one-process unit
-    // suite on a loaded CI runner).
-    return this._ownerOperation(owner, label, () => withTimeout(
-      Promise.resolve().then(run),
+    // A timeout stops this caller waiting, not the owner's underlying work.
+    // Retain the exact promise until settlement so a retry cannot reenter a
+    // partially destroyed discovery session and release its storage early.
+    return withTimeout(
+      this._ownerOperation(owner, label, run),
       Math.max(MIN_OWNER_OPERATION_BUDGET_MS, this._remainingOwnerBudget(timeout)),
       label
-    ))
+    )
   }
 
   _remainingOwnerBudget (timeout) {
@@ -5993,11 +6032,7 @@ export class RelayNode extends EventEmitter {
     }
     this._serviceContext = null
     if (this.seedingRegistry) {
-      const registry = this.seedingRegistry
-      await settle(async () => {
-        await this._awaitOwnerOperation(registry, 'seedingRegistry.stop', () => registry.stop(), timeout)
-        if (this.seedingRegistry === registry) this.seedingRegistry = null
-      })
+      await settle(() => this._quiesceSeedingRegistry(timeout))
     }
     if (this.networkDiscovery) {
       const discovery = this.networkDiscovery
@@ -6168,7 +6203,10 @@ export class RelayNode extends EventEmitter {
     }
 
     try {
-      await this._quiesceStorageWriters(timeout)
+      if (!this._storageWritersQuiesced) {
+        await this._quiesceStorageWriters(timeout)
+        this._storageWritersQuiesced = true
+      }
     } catch (err) {
       if (this.storageAdmission) {
         this.storageAdmission.closeMutations('storage-writer-quiesce-failed')
@@ -6192,6 +6230,9 @@ export class RelayNode extends EventEmitter {
     if (this.storageAdmission) {
       await this.storageAdmission.drainMutations({ timeoutMs: this._remainingOwnerBudget(timeout) })
     }
+    // Data producers are settled and admission stays sealed on retries. Network
+    // cancellation cannot turn a pending append into success or release storage.
+    await this._stopSeedingRegistry(timeout)
 
     // Stop the relay-record republish timer.
     if (this._relayRecordTimer) {
