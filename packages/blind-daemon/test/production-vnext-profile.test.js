@@ -28,6 +28,8 @@ import {
   blindErrorV1,
   blindHealthChallengeV1,
   blindHealthResultV1,
+  blindLocalCheckpointV1,
+  localCheckpointHash,
   blindServiceDescriptorV1,
   blake2b256,
   coreMirrorRequestV1,
@@ -858,7 +860,16 @@ test('a forward descriptor refresh passes read-only startup comparison and persi
   const snapshot = await manifest.load()
   // Model a persisted predecessor descriptor floor beneath the still-valid
   // configured successor. This is a test fixture, never a rollback procedure.
-  await manifest.advance(snapshot.hash, { descriptorSequenceFloor: 0n, descriptorHashFloor: fixture.genesisHash })
+  const checkpointPath = path.join(root, 'control', `checkpoint-${b4a.toString(snapshot.manifest.checkpointHash, 'hex')}.v1`)
+  const checkpoint = decodeCanonical(blindLocalCheckpointV1, await fs.readFile(checkpointPath), { copyBytes: true })
+  const predecessor = encodeCanonical(blindLocalCheckpointV1, {
+    ...checkpoint,
+    descriptorSequenceFloor: 0n,
+    descriptorHashFloor: fixture.genesisHash
+  })
+  const checkpointHash = localCheckpointHash(predecessor)
+  await fs.writeFile(path.join(root, 'control', `checkpoint-${b4a.toString(checkpointHash, 'hex')}.v1`), predecessor, { mode: 0o600 })
+  await manifest.advance(snapshot.hash, { checkpointHash, descriptorSequenceFloor: 0n, descriptorHashFloor: fixture.genesisHash })
   await manifest.close()
   const runtime = await assembleVnextRuntime(fixture)
   t.is(runtime.status().manifestFloor.descriptorSequenceFloor, 1n)

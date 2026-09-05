@@ -77,7 +77,7 @@ export async function inspectBlindGenerationStore ({ role, engineOptions, lease,
         maximumSnapshotBytes: 256 * 1024 * 1024
       })
       await checkpointStore.open({ validationOnly: true })
-      checkpoint = await checkpointStore.validateManifestCheckpointForRecovery({ lease, manifestSnapshot })
+      checkpoint = await checkpointStore.validateManifestCheckpointForRecovery({ lease, manifestSnapshot, allowDescriptorFloorAdvance: descriptorFloor != null })
     }
     const requiredAnchor = checkpoint ? { sequence: checkpoint.checkpointSequence, hash: checkpoint.checkpointWalHash } : null
     const scan = fresh ? null : await Engine.inspectGeneration(engineOptions, { lease, limits, requiredAnchor })
