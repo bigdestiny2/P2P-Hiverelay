@@ -209,3 +209,61 @@ test('registry reserves opening peer logs against concurrent announcement quota 
   t.is(registry.peerLogs.size, 0)
   t.is(registry._peerLogMeta.size, 0)
 })
+
+for (const phase of ['ready', 'replicate']) {
+  test(`registry failed peer ${phase} retires the session before retry reclaims its slot`, async t => {
+    const closeGate = gate()
+    const failed = new Log(2)
+    failed[phase] = () => { throw new Error(`injected ${phase} failure`) }
+    failed.close = async () => { await closeGate.promise; failed.closed = true }
+    const retried = new Log(2)
+    await retried.append(b4a.from(JSON.stringify(acceptance(2))))
+    const sessions = [failed, retried]
+    let opens = 0
+    const registry = new SeedingRegistry({ get: () => sessions[opens++] }, null, { maxPeerLogs: 1 })
+    registry.localLog = new Log()
+    const opening = registry._registerPeerLog(hex(2), hex(7), {}).catch(err => err.message)
+    await turn()
+    t.is(registry.peerLogs.get(hex(2)), failed, 'failed session owns quota until close settles')
+    t.is(registry._peerLogRegistrations.size, 1, 'retirement remains owned by opening promise')
+    await registry._registerPeerLog(hex(3), hex(8), {})
+    t.is(opens, 1, 'another admission cannot reuse the unclosed slot')
+    closeGate.resolve()
+    t.is(await opening, `injected ${phase} failure`)
+    t.ok(failed.closed)
+    t.is(registry._peerLogMeta.size, 0, 'successful retirement reclaims metadata and quota')
+    t.is(registry.peerLogs.size, 0)
+    await registry._registerPeerLog(hex(2), hex(7), {})
+    t.is(opens, 2, 'same log key opens a new session on retry')
+    t.is(registry._acceptances.size, 1, 'retry replays the durable accepted block')
+    t.is(retried.listenerCount('append'), 1)
+    await registry.stop()
+    t.ok(retried.closed)
+    t.is(registry._peerLogRegistrations.size, 0)
+    t.is(registry.peerLogs.size, 0)
+  })
+}
+
+test('registry failed opening close retains exact owner until shutdown retries retirement', async t => {
+  const failed = new Log(2)
+  failed.ready = async () => { throw new Error('injected ready failure') }
+  let closes = 0
+  failed.close = async () => {
+    if (++closes === 1) throw new Error('injected close failure')
+    failed.closed = true
+  }
+  const registry = new SeedingRegistry({ get: () => failed }, null)
+  registry.localLog = new Log()
+  const errors = []
+  registry.on('stop-error', error => errors.push(error))
+  t.is(await registry._registerPeerLog(hex(2), hex(7), {}).catch(err => err.message), 'injected ready failure')
+  t.is(errors[0].operation, 'failedPeerLog.close')
+  t.is(registry.peerLogs.get(hex(2)), failed, 'failed close retains exact handle')
+  t.is(registry._peerLogMeta.get(hex(2)).failed, true)
+  t.is(await registry._registerPeerLog(hex(2), hex(7), {}).catch(err => err.code), 'REGISTRY_PEER_LOG_RETIREMENT_PENDING', 'same-key ingress reports pending retirement rather than false success')
+  await registry.stop()
+  t.is(closes, 2, 'shutdown retries the retained close')
+  t.ok(failed.closed)
+  t.is(registry.peerLogs.size, 0)
+  t.is(registry._peerLogMeta.size, 0)
+})

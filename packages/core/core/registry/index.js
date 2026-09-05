@@ -361,6 +361,11 @@ export class SeedingRegistry extends EventEmitter {
     // Already known: just ensure replication on this connection
     const existing = this._peerLogMeta.get(logKeyHex)
     if (existing) {
+      if (existing.failed) {
+        const err = new Error('failed peer log close is pending; registry shutdown must retry retirement')
+        err.code = 'REGISTRY_PEER_LOG_RETIREMENT_PENDING'
+        throw err
+      }
       existing.log.replicate(conn)
       return
     }
@@ -392,7 +397,25 @@ export class SeedingRegistry extends EventEmitter {
     // must count opening logs as owners too, including repeated keys.
     this.peerLogs.set(logKeyHex, log)
     this._peerLogMeta.set(logKeyHex, { log, onAppend: null, peerPubkey })
-    const registration = this._openPeerLog(log, logKeyHex, peerPubkey, conn)
+    const registration = this._openPeerLog(log, logKeyHex, peerPubkey, conn).catch(async err => {
+      const meta = this._peerLogMeta.get(logKeyHex)
+      if (meta?.onAppend) log.removeListener('append', meta.onAppend)
+      if (meta) meta.failed = true
+      try {
+        // A failed opening session must retire before its admission slot can
+        // be reused. Closing the session preserves any replicated log blocks
+        // and accepted in-memory entries; a retry replays idempotently.
+        await log.close()
+        this.peerLogs.delete(logKeyHex)
+        this._peerLogMeta.delete(logKeyHex)
+        this._indexedOffsets.delete(logKeyHex)
+      } catch (closeError) {
+        // Keep the exact failed handle in both ownership maps so stop() can
+        // retry close. Never release quota while an unclosed owner remains.
+        this.emit('stop-error', { operation: 'failedPeerLog.close', error: closeError.message })
+      }
+      throw err
+    })
     this._peerLogRegistrations.add(registration)
     const cleanup = () => this._peerLogRegistrations.delete(registration)
     registration.then(cleanup, cleanup)
