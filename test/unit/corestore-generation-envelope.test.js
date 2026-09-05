@@ -353,7 +353,16 @@ test('content-addressed backup restores exact isolated envelope state', async t 
   const thirdRead = thirdStore.get({ name: 'preserved' })
   await thirdRead.ready()
   t.is((await thirdRead.get(0)).toString(), 'alpha')
+  t.ok(thirdRead.writable, 'the rebound history keeps its writer identity')
+  await thirdRead.append(Buffer.from('after-restore'))
   await thirdStore.close()
+  const reopenedStore = openCorestore(thirdRoot, generationOptions(ceremony))
+  await reopenedStore.ready()
+  const reopened = reopenedStore.get({ name: 'preserved' })
+  await reopened.ready()
+  t.is(reopened.length, 3, 'a normal restart retains the post-restore append')
+  t.is((await reopened.get(2)).toString(), 'after-restore')
+  await reopenedStore.close()
 })
 
 test('restore intent refuses an allowBackup payload mutation before receipt', async t => {
