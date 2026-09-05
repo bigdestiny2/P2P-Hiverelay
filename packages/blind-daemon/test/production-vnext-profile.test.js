@@ -754,3 +754,47 @@ test('F-01: a serve against a pristine un-sealed root fails coded pre-mutation a
     BASELINE_COMPLETENESS_EXCLUSIONS.includes(name))
   t.alike(baselineExcluded, [], 'the correct ceremony then assembles with zero baseline exclusions')
 })
+
+async function startupTree (root, relative = '') {
+  const records = []
+  for (const name of (await fs.readdir(path.join(root, relative))).sort()) {
+    const child = path.join(relative, name)
+    const stat = await fs.lstat(path.join(root, child))
+    records.push({
+      path: child,
+      directory: stat.isDirectory(),
+      mode: stat.mode & 0o777,
+      nlink: stat.nlink,
+      bytes: stat.isFile() ? b4a.toString(await fs.readFile(path.join(root, child)), 'hex') : null
+    })
+    if (stat.isDirectory()) records.push(...await startupTree(root, child))
+  }
+  return records
+}
+
+for (const invalid of ['malformed-floor', 'rolled-back-wal', 'invalid-snapshot']) {
+  test(`explicit generation bootstrap rejects ${invalid} before recovery cleanup`, async t => {
+    const fixture = await vnextSealedFixture()
+    t.teardown(() => cleanup(fixture.directory))
+    const { descriptor } = await orchestrateVnextServingStore(fixture)
+    const storeRoot = fixture.environment.HIVERELAY_BLIND_STORE_ROOT
+    const control = path.join(storeRoot, 'control')
+    if (invalid === 'malformed-floor') {
+      const name = (await fs.readdir(control)).find(name => name.includes('generation-record-'))
+      await fs.writeFile(path.join(control, name), '{malformed')
+    } else if (invalid === 'rolled-back-wal') {
+      await fs.writeFile(path.join(control, 'wal.v2'), b4a.alloc(0))
+    } else {
+      const name = (await fs.readdir(control)).find(name => name.startsWith('snapshot-'))
+      await fs.writeFile(path.join(control, name), b4a.from('invalid snapshot'))
+    }
+    await fs.appendFile(path.join(control, 'wal.v2'), b4a.alloc(13, 0xff))
+    await fs.writeFile(path.join(storeRoot, 'staging', 'interrupted.tmp'), 'retained', { mode: 0o600 })
+    const before = await startupTree(storeRoot)
+    const manifestKey = await fs.readFile(fixture.environment.HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE)
+    const ownerFenceTokenHash = await fs.readFile(fixture.environment.HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE)
+    await t.exception(bootstrapVnextStoreGenerationFloor({ storeRoot, descriptor, manifestKey, ownerFenceTokenHash, mapGeneration: 1n }))
+    t.alike(await startupTree(storeRoot), before, 'bootstrap rejects with every byte and directory entry unchanged')
+    t.comment(JSON.stringify({ invalid, before, after: await startupTree(storeRoot) }))
+  })
+}

@@ -566,6 +566,29 @@ function operationSpendBase (operation, prepared, request, nowMillis, committedE
 }
 
 export class BlindInboxStorageEngine {
+  static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
+    const shadow = new BlindInboxStorageEngine({ ...options, autoClock: false })
+    const { scanBlindWalV2FromGenesis } = await import('./wal-recovery-scan.js')
+    try {
+      const wal = await scanBlindWalV2FromGenesis({
+        ...limits,
+        requiredAnchor,
+        root: shadow.transactionStore.root,
+        lease,
+        mapGeneration: shadow.transactionStore.mapGeneration,
+        writerFenceTokenHash: shadow.transactionStore.ownerFenceTokenHash,
+        durabilityContinuityHash: shadow.transactionStore.durabilityContinuityHash,
+        maximumWalBytes: limits.maximumWalBytes ?? 256 * 1024 * 1024,
+        maximumWalFrames: limits.maximumWalFrames ?? 262144,
+        maximumWalPayloadBytes: shadow.transactionStore.maximumWalPayloadBytes,
+        applyShadowFrame: frame => shadow.#applyFrame(frame)
+      })
+      return { wal, hasIrreversibleState: Boolean(shadow.inboxes.size > 0 || shadow.frames.size > 0 || [...shadow.spends.values()].some(entry => ['committed', 'append-provisional', 'expired-append'].includes(entry.status))) }
+    } finally {
+      await shadow.transactionStore.close()
+    }
+  }
+
   constructor (options = {}) {
     if (options.durabilityProfileId != null && options.durabilityProfileId !== 1) {
       throw new BlindInboxStorageError(
@@ -617,6 +640,7 @@ export class BlindInboxStorageEngine {
       maximumWalPayloadBytes: options.maximumWalPayloadBytes == null ? 1024 * 1024 : options.maximumWalPayloadBytes,
       maximumOpaqueBodyBytes: INBOX_FRAME_CLASS[3],
       maximumChunkBytes: options.maximumChunkBytes == null ? INBOX_FRAME_CLASS[3] : options.maximumChunkBytes,
+      generationStartupHandoff: options.generationStartupHandoff,
       storeSessionContext: options.storeSessionContext,
       beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector

@@ -314,6 +314,22 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
   const installationIdentityHash = hashHex(asBytes(
     installationIdentity, 'installationIdentity'))
   const currentStores = normalizeCurrentStores(options)
+  if (Object.prototype.hasOwnProperty.call(options, 'expectedInspection')) {
+    let observed = null
+    try {
+      observed = await inspectBlindStoreGenerationFloor(controlDirectory, {
+        manifestKey, installationIdentity, currentStores: options.currentStores
+      })
+    } catch (error) {
+      if (error.code !== 'BLIND_STORE_GENERATION_MISSING' || options.expectedInspection !== null || options.allowCreate !== true) throw error
+    }
+    if (JSON.stringify(observed) !== JSON.stringify(options.expectedInspection)) {
+      const error = new Error('generation snapshot changed before mutable floor open')
+      error.code = 'BLIND_STORE_GENERATION_CHANGED'
+      throw error
+    }
+  }
+
   await assertPrivateControlDirectory(controlDirectory)
   const initialNames = await readdir(controlDirectory)
   await validateGenerationNames(initialNames)

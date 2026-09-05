@@ -629,6 +629,29 @@ function resultView (entry, status, replay) {
 }
 
 export class BlindCellStorageEngine {
+  static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
+    const shadow = new BlindCellStorageEngine({ ...options, autoClock: false })
+    const { scanBlindWalV2FromGenesis } = await import('./wal-recovery-scan.js')
+    try {
+      const wal = await scanBlindWalV2FromGenesis({
+        ...limits,
+        requiredAnchor,
+        root: shadow.transactionStore.root,
+        lease,
+        mapGeneration: shadow.transactionStore.mapGeneration,
+        writerFenceTokenHash: shadow.transactionStore.ownerFenceTokenHash,
+        durabilityContinuityHash: shadow.transactionStore.durabilityContinuityHash,
+        maximumWalBytes: limits.maximumWalBytes ?? 256 * 1024 * 1024,
+        maximumWalFrames: limits.maximumWalFrames ?? 262144,
+        maximumWalPayloadBytes: shadow.transactionStore.maximumWalPayloadBytes,
+        applyShadowFrame: frame => shadow.#applyFrame(frame, true)
+      })
+      return { wal, hasIrreversibleState: Boolean(shadow.cells.size > 0 || [...shadow.spends.values()].some(entry => entry.status === 'committed')) }
+    } finally {
+      await shadow.transactionStore.close()
+    }
+  }
+
   constructor (options = {}) {
     if (options.durabilityProfileId != null && options.durabilityProfileId !== 1) {
       throw new BlindCellStorageError(
@@ -691,6 +714,7 @@ export class BlindCellStorageEngine {
       maximumOpaqueBodyBytes: CELL_SIZE_CLASS[5],
       maximumChunkBytes: options.maximumChunkBytes,
       walSegmentMaxBytes: options.walSegmentMaxBytes,
+      generationStartupHandoff: options.generationStartupHandoff,
       storeSessionContext: options.storeSessionContext,
       beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector
