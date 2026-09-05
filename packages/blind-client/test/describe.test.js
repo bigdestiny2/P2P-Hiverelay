@@ -36,6 +36,7 @@ import {
   serviceDescriptorHash
 } from '@hiverelay/blind-protocol'
 import { admissionParametersV1 } from '@hiverelay/blind-protocol/schemas'
+import { ADVERTISED_OPERATION_BITS } from '@hiverelay/blind-protocol/wire-runtime-authority'
 import {
   BlindDescriptorBootstrapHttpClient,
   BlindDirectHttpClient,
@@ -159,6 +160,7 @@ function profile2Durability (witnessPublicKey) {
 function signedDescriptor (keys, admission, changes = {}) {
   const value = decodeCanonical(blindServiceDescriptorV1, descriptorVector, { copyBytes: true })
   value.relayPublicKey = b4a.from(keys.publicKey)
+  value.enabledOperationBits &= ADVERTISED_OPERATION_BITS
   value.protocols.push({
     protocolId: FAMILY.CELL,
     major: 1,
@@ -621,7 +623,7 @@ test('fresh signed health and admission parameters qualify one opaque generic en
     transportSupportBit: TRANSPORT_SUPPORT.DIRECT_HTTP,
     requestedRoleBits: 1,
     requestedOperationBits: operationBit(FAMILY.CORE, OPERATION.CORE.OPEN_REPLICATION)
-  }), /unsupported by the bound endpoint transport/)
+  }), /endpoint role or descriptor operation set/)
   t.exception(() => createHealthChallenge({
     runtime,
     trustedDescriptor: fixture.trusted,

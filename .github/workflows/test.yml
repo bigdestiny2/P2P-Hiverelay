@@ -61,6 +61,13 @@ jobs:
           packages/blind-client/test/policy.test.js
           packages/blind-client/test/cells.test.js
       - run: ./node_modules/.bin/brittle-node --timeout 120000 test/simulation/blind-capacity-lab.test.js
+      # Preserve the frozen predecessor and exercise current descriptor masks.
+      # Its old generator is an exact negative baseline, not the RC9 artifact
+      # builder; see docs/BLIND-BROWSER-GATE-SCOPE.md.
+      - run: >-
+          ./node_modules/.bin/brittle-node --timeout 120000
+          packages/blind-client/test/browser-artifact.test.js
+          packages/blind-client/test/describe.test.js
       - run: ./node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-client-public-browser-artifact.test.js
       - run: ./node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-protocol-v1-compatibility-floor.test.js
       - run: node packages/blind-client-public-browser/scripts/generate-blind-client-public-browser-artifacts.mjs --check --ci-structural-only --require-release-evidence

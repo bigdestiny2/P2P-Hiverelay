@@ -258,15 +258,21 @@ test('browser artifact manifest and verification inputs are exact and canonical'
   }), 'BAD_BLIND_CLIENT_BROWSER_ARTIFACT')
 })
 
-test('browser artifact stays package-addressable and regeneration check is current', t => {
+test('frozen browser predecessor stays package-addressable and rejects current-source regeneration', t => {
   const generated = spawnSync(process.execPath, [fileURLToPath(generatorUrl), '--check'], {
     cwd: os.tmpdir(),
     encoding: 'utf8'
   })
-  t.is(generated.status, 0)
-  const generationReport = JSON.parse(generated.stdout)
-  t.is(generationReport.schema, 'HiveRelayBlindClientBrowserArtifactGenerationV1')
-  t.is(generationReport.releaseReady, true)
+  // The public-browser workspace is the executable successor. Its canonical
+  // generator preserves this predecessor and requires this exact negative
+  // baseline; rebuilding current sources under the frozen v1 name is forbidden.
+  t.absent(generated.error)
+  t.is(generated.status, 1)
+  t.is(generated.signal, null)
+  t.is(generated.stdout, '')
+  t.alike(generated.stderr.split(/\r?\n/).filter(line => line.startsWith('Error: ')), [
+    'Error: generated browser artifact drift: packages/blind-client/browser-artifacts/blind-client-control-v1.mjs'
+  ])
   const resolvedArtifact = fileURLToPath(import.meta.resolve(
     '@hiverelay/blind-client/browser-artifacts/blind-client-control-v1.mjs'))
   const resolvedManifest = fileURLToPath(import.meta.resolve(
@@ -292,9 +298,13 @@ test('browser artifact stays package-addressable and regeneration check is curre
   t.is(path.basename(resolvedArtifact), 'blind-client-control-v1.mjs')
 })
 
-test('ordinary style lint excludes only the generated bundle and retains dedicated byte verification', t => {
+test('ordinary style lint excludes only generated bundles and retains dedicated byte verification', t => {
   const ignored = fs.readFileSync(eslintIgnoreUrl, 'utf8').split(/\r?\n/).filter(Boolean)
-  t.alike(ignored, ['packages/blind-client/browser-artifacts/blind-client-control-v1.mjs'])
+  t.alike(ignored, [
+    'packages/blind-client/browser-artifacts/blind-client-control-v1.mjs',
+    'packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs',
+    'packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs'
+  ])
   const rootPackage = JSON.parse(fs.readFileSync(rootPackageUrl, 'utf8'))
   t.is(rootPackage.scripts['generate:blind-client:browser-artifact'],
     'node scripts/generate-blind-client-browser-artifacts.mjs')
