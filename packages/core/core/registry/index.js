@@ -58,6 +58,9 @@ export const MAX_REGISTRY_META_MESSAGE_BYTES = 64 * 1024
 const MAX_ENTRY_FUTURE_SKEW_MS = 10 * 60 * 1000
 const MAX_ENTRY_AGE_MS = 180 * 24 * 60 * 60 * 1000
 const MAX_REQUEST_STATUS_DETAILS = 64
+const MAX_PEER_LOGS = 256
+const MAX_PENDING_INDEX_WRITES = 64
+const MAX_PENDING_MUTATIONS = 256
 
 export const registryMetaMessageEncoding = createLengthPrefixedJsonEncoding({
   maxBytes: MAX_REGISTRY_META_MESSAGE_BYTES,
@@ -127,6 +130,7 @@ export class SeedingRegistry extends EventEmitter {
     // parallel. See docs/REGISTRY-DESIGN-COMPARISON-2026-05-28.md for
     // motivation.
     this._keyLocks = new Map() // key string -> tail Promise
+    this._pendingMutations = 0
 
     // In-memory indexes rebuilt from logs
     this._requests = new Map() // appKey -> latest seed-request entry
@@ -156,6 +160,8 @@ export class SeedingRegistry extends EventEmitter {
     this._custodySnapshotBuild = emptyCustodySnapshot()
 
     this._indexedOffsets = new Map() // logId -> indexed block count
+    this._indexFlights = new Map() // logId -> one owned replay promise
+    this._peerLogRegistrations = new Set()
     this._peerLogMeta = new Map() // logKeyHex -> { log, onAppend }
     this._metaChannels = new WeakMap() // conn -> { channel, msgHandler }
     this._onSwarmConnection = null
@@ -163,8 +169,8 @@ export class SeedingRegistry extends EventEmitter {
     this._discoveryHandle = null
     this._stopping = false
     this._maxPeerLogs = Number.isFinite(opts.maxPeerLogs) && opts.maxPeerLogs > 0
-      ? Math.floor(opts.maxPeerLogs)
-      : 256
+      ? Math.min(MAX_PEER_LOGS, Math.floor(opts.maxPeerLogs))
+      : MAX_PEER_LOGS
     this._maxLogsPerPeer = Number.isFinite(opts.maxLogsPerPeer) && opts.maxLogsPerPeer > 0
       ? Math.floor(opts.maxLogsPerPeer)
       : 4
@@ -190,6 +196,7 @@ export class SeedingRegistry extends EventEmitter {
     this._indexBee = null
     this._indexBeeReady = false
     this._pendingIndexOps = new Set()
+    this._indexCapacity = null
   }
 
   async start () {
@@ -245,11 +252,7 @@ export class SeedingRegistry extends EventEmitter {
       // Track in the LifecycleScope so RelayNode.stop()'s drain awaits
       // any in-flight indexing before closing the localLog. AbortError
       // is the normal exit path during stop() — swallow it silently.
-      const promise = this._indexLog(this.localLog, localLogKeyHex, null, true).catch((err) => {
-        if (isAbortError(err)) return
-        this.emit('index-error', { context: 'local-append', error: err.message || String(err) })
-      })
-      if (this._scope) this._scope.tracked(promise)
+      this._scheduleIndexLog(this.localLog, localLogKeyHex, null, true)
     }
     this.localLog.on('append', this._onLocalAppend)
 
@@ -385,27 +388,27 @@ export class SeedingRegistry extends EventEmitter {
     }
 
     const log = this.store.get(b4a.from(logKeyHex, 'hex'))
+    // Reserve quota before ready()/replay can yield. Concurrent announcements
+    // must count opening logs as owners too, including repeated keys.
+    this.peerLogs.set(logKeyHex, log)
+    this._peerLogMeta.set(logKeyHex, { log, onAppend: null, peerPubkey })
+    const registration = this._openPeerLog(log, logKeyHex, peerPubkey, conn)
+    this._peerLogRegistrations.add(registration)
+    const cleanup = () => this._peerLogRegistrations.delete(registration)
+    registration.then(cleanup, cleanup)
+    return registration
+  }
+
+  async _openPeerLog (log, logKeyHex, peerPubkey, conn) {
     await log.ready()
+    if (this._stopping) return
     log.replicate(conn)
-
-    await this._indexLog(log, logKeyHex, peerPubkey)
-
     const onAppend = () => {
-      const promise = this._indexLog(log, logKeyHex, peerPubkey).catch((err) => {
-        if (isAbortError(err)) return
-        this.emit('index-error', {
-          context: 'peer-append',
-          logKey: logKeyHex,
-          peerPubkey,
-          error: err.message || String(err)
-        })
-      })
-      if (this._scope) this._scope.tracked(promise)
+      this._scheduleIndexLog(log, logKeyHex, peerPubkey)
     }
     log.on('append', onAppend)
-
-    this.peerLogs.set(logKeyHex, log)
     this._peerLogMeta.set(logKeyHex, { log, onAppend, peerPubkey })
+    await this._indexLog(log, logKeyHex, peerPubkey)
 
     this.emit('peer-log-discovered', {
       logKey: logKeyHex,
@@ -414,8 +417,37 @@ export class SeedingRegistry extends EventEmitter {
     })
   }
 
-  async _indexLog (log, logId = null, sourcePeerPubkey = null, local = false) {
+  _scheduleIndexLog (log, logId, sourcePeerPubkey = null, local = false) {
+    if (this._stopping || this._indexFlights.has(logId)) return
+    // Attach one observer per flight, not one promise/listener per append.
+    this._indexLog(log, logId, sourcePeerPubkey, local).catch((err) => {
+      if (isAbortError(err)) return
+      this.emit('index-error', { context: local ? 'local-append' : 'peer-append', logKey: logId, error: err.message || String(err) })
+    })
+  }
+
+  _indexLog (log, logId = null, sourcePeerPubkey = null, local = false) {
     const id = logId || b4a.toString(log.key, 'hex')
+    const existing = this._indexFlights.get(id)
+    if (existing) return existing
+    if (this._stopping) return Promise.resolve()
+    const promise = this._readIndexLog(log, id, sourcePeerPubkey, local)
+    this._indexFlights.set(id, promise)
+    const cleanup = () => {
+      this._indexFlights.delete(id)
+      // An append can arrive after the reader's final length check but before
+      // this cleanup microtask. Keep that tail owned as well.
+      if (!this._stopping && !this._scope?.aborted && !log.closed && !log.closing &&
+          (this._indexedOffsets.get(id) || 0) < log.length) {
+        this._scheduleIndexLog(log, id, sourcePeerPubkey, local)
+      }
+    }
+    promise.then(cleanup, () => this._indexFlights.delete(id))
+    if (this._scope) this._scope.tracked(promise)
+    return promise
+  }
+
+  async _readIndexLog (log, id, sourcePeerPubkey, local) {
     const scope = this._scope
     let offset = this._indexedOffsets.get(id) || 0
     const source = sourcePeerPubkey
@@ -423,6 +455,9 @@ export class SeedingRegistry extends EventEmitter {
       : (this._peerLogMeta.get(id) || null)
 
     for (let i = offset; i < log.length; i++) {
+      // The current read/apply remains owned by stop(); further blocks stay
+      // durable in the log and are replayed on the next start.
+      if (this._stopping) return
       // Bail before each `log.get(i)` if stop() has begun — otherwise
       // the next get() runs against a closed core and throws (vector A3
       // in STALE-REF-INVENTORY.md). We also bail if the log itself
@@ -456,12 +491,12 @@ export class SeedingRegistry extends EventEmitter {
           continue
         }
         const entry = JSON.parse(b4a.toString(block))
-        this._ingestEntry(entry, {
+        await this._withIndexCapacity(() => this._ingestEntry(entry, {
           logId: id,
           peerPubkey: source?.peerPubkey || null,
           local,
           raw: block
-        })
+        }))
         offset = i + 1
         this._indexedOffsets.set(id, offset)
       } catch (err) {
@@ -910,11 +945,11 @@ export class SeedingRegistry extends EventEmitter {
         throw err
       }
       await this.localLog.append(encoded)
-      if (!this._ingestEntry(stored, {
+      if (!await this._withIndexCapacity(() => this._ingestEntry(stored, {
         logId: this._localLogKeyHex,
         local: true,
         raw: encoded
-      })) {
+      }))) {
         const err = new Error('seed request failed verified replay')
         err.code = 'INVALID_SEED_REQUEST_PROVENANCE'
         throw err
@@ -941,7 +976,7 @@ export class SeedingRegistry extends EventEmitter {
     // pass index updates and emit duplicate events.
     return this._withKeyLock(`seed:${appKeyHex}`, async () => {
       await this.localLog.append(b4a.from(JSON.stringify(entry)))
-      this._applyEntry(entry)
+      await this._withIndexCapacity(() => this._applyEntry(entry))
       this.emit('acceptance-recorded', entry)
       return entry
     })
@@ -1118,14 +1153,19 @@ export class SeedingRegistry extends EventEmitter {
   }
 
   /**
-   * v0.8.26 — fire-and-forget bee write for an indexed entry.
-   * Caller MUST NOT block on this; the bee is a cache. The
-   * authoritative state remains the multi-writer logs.
+   * Bounded derived-cache writes. Async log/mutation owners wait for capacity;
+   * synchronous push ingress declines before applying when the cache is busy.
+   * No accepted record is evicted from the write set to make room.
    */
   _persistToIndexBee (entry) {
     if (!this._indexBeeReady || !this._indexBee) return
     const key = this._entryKey(entry)
     if (!key) return
+    if (this._pendingIndexOps.size >= MAX_PENDING_INDEX_WRITES) {
+      const err = new Error('seeding registry index is busy; retry ingress')
+      err.code = 'REGISTRY_INDEX_BUSY'
+      throw err
+    }
     const op = (async () => {
       try {
         await this._indexBee.put(key, entry)
@@ -1134,7 +1174,27 @@ export class SeedingRegistry extends EventEmitter {
       }
     })()
     this._pendingIndexOps.add(op)
-    op.finally(() => this._pendingIndexOps.delete(op))
+    const cleanup = () => {
+      this._pendingIndexOps.delete(op)
+      const capacity = this._indexCapacity
+      this._indexCapacity = null
+      if (capacity) capacity.resolve()
+    }
+    op.then(cleanup, cleanup)
+  }
+
+  async _withIndexCapacity (apply) {
+    while (this._indexBeeReady && this._indexBee && this._pendingIndexOps.size >= MAX_PENDING_INDEX_WRITES) {
+      if (!this._indexCapacity) {
+        let resolve
+        const promise = new Promise(_resolve => { resolve = _resolve })
+        this._indexCapacity = { promise, resolve }
+      }
+      await this._indexCapacity.promise
+    }
+    // There is no await between capacity admission and synchronous application.
+    // The caller retains its authoritative block until this succeeds.
+    return apply()
   }
 
   /**
@@ -1142,8 +1202,9 @@ export class SeedingRegistry extends EventEmitter {
    * startup's hydration sees a complete view of recent mutations.
    */
   async _flushIndexBee () {
-    if (!this._pendingIndexOps || this._pendingIndexOps.size === 0) return
-    await Promise.allSettled([...this._pendingIndexOps])
+    while (this._pendingIndexOps.size > 0) {
+      await Promise.allSettled([...this._pendingIndexOps])
+    }
   }
 
   _verifiedCustodyEntry (entry) {
@@ -1173,6 +1234,12 @@ export class SeedingRegistry extends EventEmitter {
       err.code = 'REGISTRY_STOPPING'
       throw err
     }
+    if (this._pendingMutations >= MAX_PENDING_MUTATIONS) {
+      const err = new Error('seeding registry mutation capacity reached; retry')
+      err.code = 'REGISTRY_BUSY'
+      throw err
+    }
+    this._pendingMutations++
     const previous = this._keyLocks.get(key) || Promise.resolve()
     let release
     const next = new Promise((resolve) => { release = resolve })
@@ -1181,6 +1248,7 @@ export class SeedingRegistry extends EventEmitter {
       await previous
       return await fn()
     } finally {
+      this._pendingMutations--
       release()
       // Only delete if no one queued behind us. If another op grabbed
       // the slot, leave their `next` Promise as the new tail.
@@ -1199,7 +1267,7 @@ export class SeedingRegistry extends EventEmitter {
       const transition = validateCustodyTransition(entry, status)
       if (!transition.valid) throw new Error(`INVALID_CUSTODY_TRANSITION: ${transition.reason}`)
       await this.localLog.append(b4a.from(JSON.stringify(entry)))
-      this._applyEntry(entry)
+      await this._withIndexCapacity(() => this._applyEntry(entry))
       this.emit(eventName, entry)
       // Local-append also fires `custody-entry-appended` so the relay-node
       // (or any other consumer) can broadcast the entry over Protomux for
@@ -1237,6 +1305,10 @@ export class SeedingRegistry extends EventEmitter {
     // type + relayPubkey + timestamp), skip the apply.
     if (this._isDuplicateCustodyEntry(normalized)) return false
 
+    if (this._stopping || (this._indexBeeReady && this._indexBee && this._pendingIndexOps.size >= MAX_PENDING_INDEX_WRITES)) {
+      this.emit('custody-entry-rejected', { reason: this._stopping ? 'registry-stopping' : 'registry-index-busy', fromPeer })
+      return false
+    }
     this._applyEntry(normalized, { source: 'push', fromPeer })
 
     // Map type → bubbled event name so consumers see the same events
@@ -1314,7 +1386,7 @@ export class SeedingRegistry extends EventEmitter {
     // canceling entries with earlier timestamps).
     return this._withKeyLock(`seed:${appKeyHex}`, async () => {
       await this.localLog.append(b4a.from(JSON.stringify(entry)))
-      this._applyEntry(entry)
+      await this._withIndexCapacity(() => this._applyEntry(entry))
       this.emit('request-cancelled', entry)
       return entry
     })
@@ -1599,6 +1671,13 @@ export class SeedingRegistry extends EventEmitter {
     // stopping gate above prevents new tails from appearing during the drain.
     while (this._keyLocks.size > 0) {
       await Promise.all([...this._keyLocks.values()])
+    }
+
+    // Opening peer logs and append readers also own live core operations.
+    // Drain them even when no RelayNode LifecycleScope was supplied.
+    await Promise.allSettled([...this._peerLogRegistrations])
+    while (this._indexFlights.size > 0) {
+      await Promise.allSettled([...this._indexFlights.values()])
     }
 
     // v0.8.26 — drain any fire-and-forget index-bee writes BEFORE
