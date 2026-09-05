@@ -20,6 +20,17 @@ import {
 } from '../constants.js'
 import { createLengthPrefixedJsonEncoding } from '../protocol/json-message-encoding.js'
 import { isAbortError } from '../relay-node/lifecycle-scope.js'
+import { GenerationPopulation } from '../generation-population.js'
+import {
+  MAX_SEED_DISCOVERY_HINTS,
+  validateSeedDiscoveryHints
+} from '../protocol/seed-discovery-hints.js'
+import {
+  isStoredSeedRequest,
+  quarantineSeedRequest,
+  storeLegacySeedRequest,
+  verifyStoredSeedRequest
+} from './seed-request-storage.js'
 import {
   computeReceiptRoot,
   createCustodyCommit,
@@ -41,16 +52,60 @@ sodium.crypto_generichash(REGISTRY_TOPIC, b4a.from('hiverelay-seeding-registry-v
 const MSG_ANNOUNCE_LOG = 0
 const REGISTRY_META_PROTOCOL = 'hiverelay-registry-meta'
 const REGISTRY_META_ID = b4a.from('registry-meta-v1')
-const MAX_DISCOVERY_KEYS = 128
+const MAX_DISCOVERY_KEYS = MAX_SEED_DISCOVERY_HINTS
 const MAX_REGISTRY_ENTRY_BYTES = 64 * 1024
 export const MAX_REGISTRY_META_MESSAGE_BYTES = 64 * 1024
 const MAX_ENTRY_FUTURE_SKEW_MS = 10 * 60 * 1000
 const MAX_ENTRY_AGE_MS = 180 * 24 * 60 * 60 * 1000
+const MAX_REQUEST_STATUS_DETAILS = 64
 
 export const registryMetaMessageEncoding = createLengthPrefixedJsonEncoding({
   maxBytes: MAX_REGISTRY_META_MESSAGE_BYTES,
   malformedError: 'malformed JSON'
 })
+
+function emptyCustodySnapshot () {
+  return {
+    intents: 0,
+    withQuorum: 0,
+    committed: 0,
+    retired: 0,
+    withProof: 0,
+    withNonServingProof: 0,
+    withWitnessTombstone: 0,
+    totalReceipts: 0,
+    totalProofs: 0,
+    totalNonServingProofs: 0,
+    totalWitnessTombstones: 0,
+    commitRate: null,
+    completedHighWater: 0,
+    completedAt: null
+  }
+}
+
+function addCustodyStatus (aggregate, status) {
+  if (!status) return
+  aggregate.intents++
+  if (status.quorumReached) aggregate.withQuorum++
+  if (status.committed) aggregate.committed++
+  if (status.sourceRetired) aggregate.retired++
+  if (status.proofCount > 0) aggregate.withProof++
+  if (status.nonServingProofCount > 0) aggregate.withNonServingProof++
+  if (status.validExpiryWitnessCount > 0) aggregate.withWitnessTombstone++
+  aggregate.totalReceipts += status.receiptCount
+  aggregate.totalProofs += status.proofCount
+  aggregate.totalNonServingProofs += status.nonServingProofCount
+  aggregate.totalWitnessTombstones += status.validExpiryWitnessCount
+}
+
+function emptyRequestStatusSnapshot () {
+  return {
+    activeRequests: 0,
+    requests: Object.freeze([]),
+    completedHighWater: 0,
+    completedAt: null
+  }
+}
 
 export class SeedingRegistry extends EventEmitter {
   constructor (store, swarm, opts = {}) {
@@ -58,6 +113,8 @@ export class SeedingRegistry extends EventEmitter {
     this.store = store
     this.swarm = swarm
     this.localLog = null
+    this._localLogKeyHex = null
+    this._localSwarmPubkeyHex = null
     this.peerLogs = new Map() // logKey hex -> Hypercore
     this.running = false
 
@@ -82,7 +139,21 @@ export class SeedingRegistry extends EventEmitter {
     this._custodyProofs = new Map() // intentId -> custody-proof[]
     this._custodyNonServingProofs = new Map() // intentId -> custody-non-serving-proof[]
     this._custodyExpiryWitnesses = new Map() // intentId -> custody-expiry-witness[]
+    this._custodyExpiryWitnessPairs = new Set() // intentId:witnessPubkey:relayPubkey
     this._custodyStatusCache = new Map()
+    this._requestPopulation = new GenerationPopulation({
+      name: 'seeding-registry-requests',
+      allowedConsumers: ['relay-registry-scan', 'registry-status', 'replication-monitor', 'acceptance-reconcile']
+    })
+    this._requestStatusComplete = Object.freeze(emptyRequestStatusSnapshot())
+    this._requestStatusBuild = { activeRequests: 0, requests: [] }
+    this._custodyIntentPopulation = new GenerationPopulation({
+      name: 'seeding-registry-custody-intents',
+      allowedConsumers: ['custody-snapshot', 'custody-expiry', 'custody-witness']
+    })
+    this._custodyIntentByAddressKey = new Map()
+    this._custodySnapshotComplete = emptyCustodySnapshot()
+    this._custodySnapshotBuild = emptyCustodySnapshot()
 
     this._indexedOffsets = new Map() // logId -> indexed block count
     this._peerLogMeta = new Map() // logKeyHex -> { log, onAppend }
@@ -128,8 +199,19 @@ export class SeedingRegistry extends EventEmitter {
       throw err
     }
     this._stopping = false
-    // v0.8.26 — open the indexed-views sidecar BEFORE the log replay so
-    // hydration happens first. Defensive against bee-open failures
+    // The local identities are provenance inputs for seed-request hydration.
+    // Open and capture both before Bee hydration; otherwise an unsigned local
+    // management record could populate live state with no origin binding.
+    this.localLog = this.store.get({ name: 'seeding-registry-local' })
+    await this.localLog.ready()
+    this._localLogKeyHex = b4a.toString(this.localLog.key, 'hex')
+    this._localSwarmPubkeyHex = this.swarm?.keyPair?.publicKey
+      ? b4a.toString(this.swarm.keyPair.publicKey, 'hex')
+      : null
+
+    // v0.8.26 — hydrate the indexed-views sidecar before log replay, but only
+    // after the exact local identities needed by the stored provenance union
+    // are ready. Defensive against bee-open failures
     // (test stubs, missing corestore caps): falls back silently and
     // the existing log-replay path is unchanged.
     try {
@@ -152,22 +234,18 @@ export class SeedingRegistry extends EventEmitter {
       this._indexBeeReady = false
     }
 
-    // Create local log for this node's registry entries
-    this.localLog = this.store.get({ name: 'seeding-registry-local' })
-    await this.localLog.ready()
-
-    const localLogKeyHex = b4a.toString(this.localLog.key, 'hex')
+    const localLogKeyHex = this._localLogKeyHex
 
     // Rebuild index from local log (idempotent thanks to _applyEntry
     // timestamp deduping; the bee hydration above already populated
     // most/all entries — this catches up anything appended since the
     // last bee write).
-    await this._indexLog(this.localLog, localLogKeyHex)
+    await this._indexLog(this.localLog, localLogKeyHex, null, true)
     this._onLocalAppend = () => {
       // Track in the LifecycleScope so RelayNode.stop()'s drain awaits
       // any in-flight indexing before closing the localLog. AbortError
       // is the normal exit path during stop() — swallow it silently.
-      const promise = this._indexLog(this.localLog, localLogKeyHex).catch((err) => {
+      const promise = this._indexLog(this.localLog, localLogKeyHex, null, true).catch((err) => {
         if (isAbortError(err)) return
         this.emit('index-error', { context: 'local-append', error: err.message || String(err) })
       })
@@ -336,7 +414,7 @@ export class SeedingRegistry extends EventEmitter {
     })
   }
 
-  async _indexLog (log, logId = null, sourcePeerPubkey = null) {
+  async _indexLog (log, logId = null, sourcePeerPubkey = null, local = false) {
     const id = logId || b4a.toString(log.key, 'hex')
     const scope = this._scope
     let offset = this._indexedOffsets.get(id) || 0
@@ -378,7 +456,12 @@ export class SeedingRegistry extends EventEmitter {
           continue
         }
         const entry = JSON.parse(b4a.toString(block))
-        this._applyEntry(entry, { logId: id, peerPubkey: source?.peerPubkey || null })
+        this._ingestEntry(entry, {
+          logId: id,
+          peerPubkey: source?.peerPubkey || null,
+          local,
+          raw: block
+        })
         offset = i + 1
         this._indexedOffsets.set(id, offset)
       } catch (err) {
@@ -402,6 +485,60 @@ export class SeedingRegistry extends EventEmitter {
     const now = Date.now()
     if (timestamp > (now + MAX_ENTRY_FUTURE_SKEW_MS)) return false
     if (timestamp < (now - MAX_ENTRY_AGE_MS)) return false
+    return true
+  }
+
+  _seedProvenanceContext (source = {}) {
+    return {
+      authenticatedPeerPubkey: source.peerPubkey || null,
+      originLogKey: source.logId || null,
+      local: source.local === true,
+      localSwarmPubkey: this._localSwarmPubkeyHex,
+      localLogKey: this._localLogKeyHex
+    }
+  }
+
+  _ingestEntry (value, source = {}) {
+    if (!value || typeof value !== 'object') {
+      this.emit('entry-rejected', { reason: 'invalid-registry-entry', logId: source.logId || null })
+      return false
+    }
+    if (value.type !== 'seed-request' && !isStoredSeedRequest(value)) {
+      this._applyEntry(value, source)
+      return true
+    }
+
+    const context = this._seedProvenanceContext(source)
+    let stored = value
+    if (!isStoredSeedRequest(value)) {
+      const built = storeLegacySeedRequest(value, context)
+      if (!built.ok) {
+        const quarantine = quarantineSeedRequest(source.raw || value, built.reason, context)
+        if (source.source !== 'hydrate') this._persistToIndexBee(quarantine)
+        this.emit('entry-quarantined', {
+          reason: quarantine.reason,
+          logId: source.logId || null,
+          recordSha256: quarantine.recordSha256
+        })
+        return false
+      }
+      stored = built.stored
+    }
+
+    const verified = verifyStoredSeedRequest(stored, context)
+    if (!verified.ok) {
+      const quarantine = quarantineSeedRequest(source.raw || stored, verified.reason, context)
+      if (source.source !== 'hydrate') this._persistToIndexBee(quarantine)
+      this.emit('entry-quarantined', {
+        reason: quarantine.reason,
+        logId: source.logId || null,
+        recordSha256: quarantine.recordSha256
+      })
+      return false
+    }
+    if (verified.quarantine) return false
+
+    this._applyEntry(verified.entry, { ...source, storedEnvelope: verified.stored })
     return true
   }
 
@@ -465,12 +602,11 @@ export class SeedingRegistry extends EventEmitter {
         : null
       if (!publisherPubkey || !isValidHexKey(publisherPubkey, 64)) return null
 
-      const discoveryKeys = Array.isArray(entry.discoveryKeys)
-        ? entry.discoveryKeys
-          .filter(dk => typeof dk === 'string' && isValidHexKey(dk, 64))
-          .slice(0, MAX_DISCOVERY_KEYS)
-          .map(dk => dk.toLowerCase())
-        : []
+      if (!Array.isArray(entry.discoveryKeys) || entry.discoveryKeys.length > MAX_DISCOVERY_KEYS) return null
+      if (entry.discoveryKeys.some(dk => typeof dk !== 'string' || !isValidHexKey(dk, 64))) return null
+      const discoveryKeys = entry.discoveryKeys.map(dk => dk.toLowerCase())
+      const hintCheck = validateSeedDiscoveryHints(appKey, discoveryKeys)
+      if (!hintCheck.ok) return null
 
       return {
         ...entry,
@@ -530,7 +666,7 @@ export class SeedingRegistry extends EventEmitter {
     // during startup hydration. New entries (from log replay or local
     // append) get persisted so the next restart's hydration sees them.
     if (source.source !== 'hydrate') {
-      this._persistToIndexBee(entry)
+      this._persistToIndexBee(source.storedEnvelope || entry)
     }
     if (entry.type === 'seed-request') {
       const cancelKey = entry.appKey + ':' + entry.publisherPubkey
@@ -539,6 +675,7 @@ export class SeedingRegistry extends EventEmitter {
 
       const current = this._requests.get(entry.appKey)
       if (!current || current.timestamp <= entry.timestamp) {
+        if (!current) this._requestPopulation.insert(entry.appKey)
         this._requests.set(entry.appKey, entry)
       }
       return
@@ -571,6 +708,7 @@ export class SeedingRegistry extends EventEmitter {
         current.publisherPubkey === entry.publisherPubkey &&
         current.timestamp <= entry.timestamp
       ) {
+        this._requestPopulation.delete(entry.appKey)
         this._requests.delete(entry.appKey)
       }
       return
@@ -579,7 +717,19 @@ export class SeedingRegistry extends EventEmitter {
     if (entry.type === 'custody-intent') {
       const current = this._custodyIntents.get(entry.intentId)
       if (!current || current.timestamp <= entry.timestamp) {
+        if (!current) this._custodyIntentPopulation.insert(entry.intentId)
+        if (current?.addressKey) {
+          const previous = this._custodyIntentByAddressKey.get(current.addressKey.toLowerCase())
+          if (previous?.intentId === entry.intentId) this._custodyIntentByAddressKey.delete(current.addressKey.toLowerCase())
+        }
         this._custodyIntents.set(entry.intentId, entry)
+        if (typeof entry.addressKey === 'string') {
+          const addressKey = entry.addressKey.toLowerCase()
+          const latest = this._custodyIntentByAddressKey.get(addressKey)
+          if (!latest || latest.timestamp <= entry.timestamp) {
+            this._custodyIntentByAddressKey.set(addressKey, { intentId: entry.intentId, timestamp: entry.timestamp })
+          }
+        }
         this._invalidateCustodyStatus(entry.intentId)
       }
       return
@@ -659,9 +809,11 @@ export class SeedingRegistry extends EventEmitter {
       const idx = list.findIndex(w => `${w.witnessPubkey}:${w.relayPubkey}:${w.challengeNonce}` === key)
       if (idx === -1) {
         list.push(entry)
+        this._custodyExpiryWitnessPairs.add(`${entry.intentId}:${entry.witnessPubkey}:${entry.relayPubkey}`)
         this._invalidateCustodyStatus(entry.intentId)
       } else if (list[idx].timestamp <= entry.timestamp) {
         list[idx] = entry
+        this._custodyExpiryWitnessPairs.add(`${entry.intentId}:${entry.witnessPubkey}:${entry.relayPubkey}`)
         this._invalidateCustodyStatus(entry.intentId)
       }
     }
@@ -683,6 +835,12 @@ export class SeedingRegistry extends EventEmitter {
       ? request.mountPath.trim()
       : null
     const appKeyHex = b4a.toString(request.appKey, 'hex')
+    const hintCheck = validateSeedDiscoveryHints(request.appKey, request.discoveryKeys)
+    if (!hintCheck.ok) {
+      const err = new Error(hintCheck.reason)
+      err.code = 'UNSUPPORTED_DISCOVERY_KEY_SET'
+      throw err
+    }
     const entry = {
       type: 'seed-request',
       timestamp: Date.now(),
@@ -700,14 +858,67 @@ export class SeedingRegistry extends EventEmitter {
       blind,
       storageClass,
       availabilityClass,
-      publisherPubkey: b4a.toString(request.publisherPubkey, 'hex')
+      publisherPubkey: b4a.toString(request.publisherPubkey, 'hex'),
+      publisherSignature: request.publisherSignature
+        ? (typeof request.publisherSignature === 'string'
+            ? request.publisherSignature.toLowerCase()
+            : b4a.toString(request.publisherSignature, 'hex'))
+        : null,
+      issuedAt: request.issuedAt ?? null,
+      requestNonce: request.requestNonce
+        ? (typeof request.requestNonce === 'string'
+            ? request.requestNonce.toLowerCase()
+            : b4a.toString(request.requestNonce, 'hex'))
+        : null,
+      signatureProfile: request.signatureProfile || request.seedSignatureProfile || null,
+      revocable: request.revocable !== false,
+      unseedFreezeMs: request.unseedFreezeMs || 0,
+      durability: request.durability || 0,
+      custodyIntentId: request.custodyIntentId || null,
+      blindContentId: request.blindContentId || null,
+      ciphertextRoot: request.ciphertextRoot || null,
+      commitmentRoot: request.commitmentRoot || null,
+      contentVersion: request.contentVersion ?? null,
+      retainUntil: request.retainUntil ?? null,
+      shardIds: request.shardIds || [],
+      shareScheme: request.shareScheme || null,
+      shareThreshold: request.shareThreshold ?? null,
+      leaseDays: request.leaseDays ?? null
     }
+
+    const built = storeLegacySeedRequest(entry, {
+      originLogKey: this._localLogKeyHex,
+      local: true,
+      localSwarmPubkey: this._localSwarmPubkeyHex
+    })
+    if (!built.ok) {
+      const err = new Error(built.reason)
+      err.code = built.reason === 'unsupported-discovery-key-set'
+        ? 'UNSUPPORTED_DISCOVERY_KEY_SET'
+        : 'INVALID_SEED_REQUEST_PROVENANCE'
+      throw err
+    }
+    const stored = built.stored
 
     // v0.8.24: serialize on appKey so two concurrent publishRequest calls
     // for the same drive can't race the _applyEntry index update.
     return this._withKeyLock(`seed:${appKeyHex}`, async () => {
-      await this.localLog.append(b4a.from(JSON.stringify(entry)))
-      this._applyEntry(entry)
+      const encoded = b4a.from(JSON.stringify(stored))
+      if (encoded.byteLength > MAX_REGISTRY_ENTRY_BYTES) {
+        const err = new Error('registry-entry-too-large')
+        err.code = 'REGISTRY_ENTRY_TOO_LARGE'
+        throw err
+      }
+      await this.localLog.append(encoded)
+      if (!this._ingestEntry(stored, {
+        logId: this._localLogKeyHex,
+        local: true,
+        raw: encoded
+      })) {
+        const err = new Error('seed request failed verified replay')
+        err.code = 'INVALID_SEED_REQUEST_PROVENANCE'
+        throw err
+      }
       this.emit('request-published', entry)
       return entry
     })
@@ -833,6 +1044,12 @@ export class SeedingRegistry extends EventEmitter {
    */
   _entryKey (entry) {
     if (!entry || typeof entry !== 'object') return null
+    if (isStoredSeedRequest(entry)) {
+      if (entry.kind === 'quarantine') {
+        return entry.recordSha256 ? `quarantine:seed-request:${entry.recordSha256}` : null
+      }
+      return entry.request?.appKey ? `entry:seed-request:${entry.request.appKey}` : null
+    }
     switch (entry.type) {
       case 'seed-request':
         return entry.appKey ? `entry:seed-request:${entry.appKey}` : null
@@ -888,10 +1105,10 @@ export class SeedingRegistry extends EventEmitter {
       })) {
         const entry = node.value
         if (!entry || typeof entry !== 'object') continue
-        // Apply through the normal entry path so timestamp deduping
-        // + custody-status invalidation fire correctly.
-        this._applyEntry(entry, { source: 'hydrate', logId: null })
-        hydrated++
+        // Apply through the same provenance verifier as log replay. Local
+        // management rows additionally bind to the currently opened identities.
+        const accepted = this._ingestEntry(entry, { source: 'hydrate', logId: null })
+        if (accepted) hydrated++
       }
       this.emit('hydrated', { count: hydrated, source: 'index-bee' })
     } catch (err) {
@@ -1132,6 +1349,96 @@ export class SeedingRegistry extends EventEmitter {
     return results
   }
 
+  getActiveRequestsPage ({ consumer = 'relay-registry-scan', budget = 64, filter = {} } = {}) {
+    if (!this._requestPopulation.isRegistered(consumer)) this._requestPopulation.register(consumer)
+    const now = Date.now()
+    const page = this._requestPopulation.page(consumer, budget, key => this._requests.get(key))
+    const entries = []
+    for (const item of page.entries) {
+      const entry = item.value
+      if (!entry) continue
+      const cancelKey = item.key + ':' + entry.publisherPubkey
+      const canceledAt = this._cancellations.get(cancelKey)
+      if (canceledAt && canceledAt >= entry.timestamp) continue
+      if (entry.timestamp + (entry.ttlSeconds * 1000) < now) continue
+      if (filter.region && entry.geoPreference.length > 0 && !entry.geoPreference.includes(filter.region)) continue
+      if (filter.maxStorageBytes && entry.maxStorageBytes > filter.maxStorageBytes) continue
+      entries.push(entry)
+    }
+    return { ...page, entries }
+  }
+
+  advanceRequestStatusSnapshot (budget = 64) {
+    const page = this.getActiveRequestsPage({ consumer: 'registry-status', budget })
+    for (const entry of page.entries) {
+      this._requestStatusBuild.activeRequests++
+      if (this._requestStatusBuild.requests.length < MAX_REQUEST_STATUS_DETAILS) {
+        this._requestStatusBuild.requests.push(entry)
+      }
+    }
+    if (page.complete) {
+      this._requestStatusComplete = Object.freeze({
+        activeRequests: this._requestStatusBuild.activeRequests,
+        requests: Object.freeze(this._requestStatusBuild.requests),
+        completedHighWater: page.completedHighWater,
+        completedAt: Date.now()
+      })
+      this._requestStatusBuild = { activeRequests: 0, requests: [] }
+    }
+    return page
+  }
+
+  requestStatusSnapshot () {
+    return this._requestStatusComplete
+  }
+
+  getCustodyIntentPage ({ consumer, budget = 32 } = {}) {
+    if (consumer !== 'custody-expiry' && consumer !== 'custody-witness') {
+      const err = new Error('unknown custody intent consumer')
+      err.code = 'POPULATION_CONSUMER_INVALID'
+      throw err
+    }
+    if (!this._custodyIntentPopulation.isRegistered(consumer)) this._custodyIntentPopulation.register(consumer)
+    return this._custodyIntentPopulation.page(consumer, budget, key => this._custodyIntents.get(key))
+  }
+
+  getCustodyWitnessWork (intentId, { witnessPubkey, cursor = 0, budget = 1 } = {}) {
+    if (!Number.isSafeInteger(cursor) || cursor < 0) throw new RangeError('custody witness cursor is invalid')
+    if (!Number.isSafeInteger(budget) || budget < 1 || budget > 32) throw new RangeError('custody witness budget is invalid')
+    const intent = this._custodyIntents.get(intentId) || null
+    const sourceRetirement = this._sourceRetirements.get(intentId) || null
+    const proofs = this._custodyNonServingProofs.get(intentId) || []
+    const candidates = []
+    const selectedPairs = new Set()
+    let position = Math.min(cursor, proofs.length)
+    let examined = 0
+    while (position < proofs.length && examined < budget) {
+      const proof = proofs[position++]
+      examined++
+      const pair = `${intentId}:${witnessPubkey}:${proof?.relayPubkey}`
+      if (proof && proof.relayPubkey !== witnessPubkey &&
+          !this._custodyExpiryWitnessPairs.has(pair) && !selectedPairs.has(pair)) {
+        selectedPairs.add(pair)
+        candidates.push(proof)
+      }
+    }
+    const complete = position >= proofs.length
+    return {
+      intent,
+      sourceRetirement,
+      candidates,
+      examined,
+      complete,
+      nextCursor: complete ? 0 : position
+    }
+  }
+
+  releasePopulationConsumer (population, consumer) {
+    if (population === 'requests') return this._requestPopulation.unregister(consumer)
+    if (population === 'custody-intents') return this._custodyIntentPopulation.unregister(consumer)
+    return false
+  }
+
   /**
    * Get relays currently seeding an app
    */
@@ -1159,16 +1466,7 @@ export class SeedingRegistry extends EventEmitter {
    */
   getCustodyIntentIdByAddressKey (addressKey) {
     if (typeof addressKey !== 'string' || !addressKey) return null
-    const target = addressKey.toLowerCase()
-    let best = null
-    let bestTs = -1
-    for (const intent of this._custodyIntents.values()) {
-      const ak = typeof intent.addressKey === 'string' ? intent.addressKey.toLowerCase() : null
-      if (ak !== target) continue
-      const ts = Number.isFinite(intent.timestamp) ? intent.timestamp : 0
-      if (ts >= bestTs) { bestTs = ts; best = intent.intentId }
-    }
-    return best
+    return this._custodyIntentByAddressKey.get(addressKey.toLowerCase())?.intentId || null
   }
 
   getCustodyReceipts (intentId) {
@@ -1223,6 +1521,9 @@ export class SeedingRegistry extends EventEmitter {
 
   _invalidateCustodyStatus (intentId) {
     if (intentId) this._custodyStatusCache.delete(intentId)
+    // Advance at most one finite page. Until a full cycle completes,
+    // custodySnapshot() keeps publishing the prior complete aggregate.
+    try { this.advanceCustodySnapshot(32) } catch (_) {}
   }
 
   /**
@@ -1240,49 +1541,26 @@ export class SeedingRegistry extends EventEmitter {
    * already bounded by the registry's append-only log size.
    */
   custodySnapshot () {
-    let intents = 0
-    let withQuorum = 0
-    let committed = 0
-    let withProof = 0
-    let withNonServingProof = 0
-    let withWitnessTombstone = 0
-    let totalReceipts = 0
-    let totalProofs = 0
-    let totalNonServingProofs = 0
-    let totalWitnessTombstones = 0
-    let retired = 0
-    for (const intentId of this._custodyIntents.keys()) {
-      intents++
-      const status = this.getCustodyStatus(intentId)
-      if (status.quorumReached) withQuorum++
-      if (status.committed) committed++
-      if (status.proofCount > 0) withProof++
-      if (status.nonServingProofCount > 0) withNonServingProof++
-      if (status.sourceRetired) retired++
-      totalReceipts += status.receiptCount
-      totalProofs += status.proofCount
-      totalNonServingProofs += status.nonServingProofCount
+    return { ...this._custodySnapshotComplete }
+  }
 
-      if (status.validExpiryWitnessCount > 0) withWitnessTombstone++
-      totalWitnessTombstones += status.validExpiryWitnessCount
+  advanceCustodySnapshot (budget = 32) {
+    const consumer = 'custody-snapshot'
+    if (!this._custodyIntentPopulation.isRegistered(consumer)) this._custodyIntentPopulation.register(consumer)
+    const page = this._custodyIntentPopulation.page(consumer, budget, key => this._custodyIntents.get(key))
+    for (const item of page.entries) addCustodyStatus(this._custodySnapshotBuild, this.getCustodyStatus(item.key))
+    if (page.complete) {
+      this._custodySnapshotBuild.commitRate = this._custodySnapshotBuild.intents > 0
+        ? this._custodySnapshotBuild.committed / this._custodySnapshotBuild.intents
+        : null
+      this._custodySnapshotComplete = Object.freeze({
+        ...this._custodySnapshotBuild,
+        completedHighWater: page.completedHighWater,
+        completedAt: Date.now()
+      })
+      this._custodySnapshotBuild = emptyCustodySnapshot()
     }
-    return {
-      intents,
-      withQuorum,
-      committed,
-      retired,
-      withProof,
-      withNonServingProof,
-      withWitnessTombstone,
-      totalReceipts,
-      totalProofs,
-      totalNonServingProofs,
-      totalWitnessTombstones,
-      // Derived health indicator: ratio of committed intents to total. A
-      // healthy registry should converge to ~1.0 over time. Sustained low
-      // values mean the network is failing to gather quorums.
-      commitRate: intents > 0 ? committed / intents : null
-    }
+    return page
   }
 
   get key () {
@@ -1292,6 +1570,14 @@ export class SeedingRegistry extends EventEmitter {
   async stop () {
     this.running = false
     this._stopping = true
+    for (const name of ['relay-registry-scan', 'registry-status', 'replication-monitor', 'acceptance-reconcile']) {
+      this._requestPopulation.unregister(name)
+    }
+    for (const name of ['custody-snapshot', 'custody-expiry', 'custody-witness']) {
+      this._custodyIntentPopulation.unregister(name)
+    }
+    this._requestStatusBuild = { activeRequests: 0, requests: [] }
+    this._custodySnapshotBuild = emptyCustodySnapshot()
 
     // Detach ingress first. Existing keyed mutations and index writes may
     // still finish against live logs, but no new swarm connection or append
@@ -1338,6 +1624,8 @@ export class SeedingRegistry extends EventEmitter {
       try {
         await this.localLog.close()
         this.localLog = null
+        this._localLogKeyHex = null
+        this._localSwarmPubkeyHex = null
       } catch (err) {
         this.emit('stop-error', { operation: 'localLog.close', error: err.message })
         if (!firstError) firstError = err

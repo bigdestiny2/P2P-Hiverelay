@@ -41,21 +41,15 @@ export function buildLeaseRoutePayload ({
 }
 
 export function countActiveLeaseManagedApps ({ appRegistry, now = Date.now() } = {}) {
-  let activeLeases = 0
-  const apps = appRegistry && appRegistry.apps
-  if (!apps || typeof apps[Symbol.iterator] !== 'function') return activeLeases
-
-  for (const [, entry] of apps) {
-    if (
-      entry &&
-      entry.leaseManaged === true &&
-      Number.isFinite(entry.retainUntil) &&
-      entry.retainUntil > now
-    ) {
-      activeLeases++
-    }
+  if (appRegistry && typeof appRegistry.advanceLeaseStatusSnapshot === 'function') {
+    appRegistry.advanceLeaseStatusSnapshot(64, now)
   }
-  return activeLeases
+  const snapshot = appRegistry && typeof appRegistry.leaseStatusSnapshot === 'function'
+    ? appRegistry.leaseStatusSnapshot()
+    : null
+  return Number.isSafeInteger(snapshot?.activeLeases) && snapshot.activeLeases >= 0
+    ? snapshot.activeLeases
+    : 0
 }
 
 export function buildLeaseStatusPayload ({ leaseManager, appRegistry, now = Date.now() } = {}) {

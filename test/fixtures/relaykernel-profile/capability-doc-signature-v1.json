@@ -53,7 +53,15 @@
       "maxCircuitRateBytesPerSecond": 1048576
     },
     "appRegistry": {
-      "catalog": []
+      "catalogStats": {
+        "total": 0,
+        "anchored": 0,
+        "apps": 0,
+        "drives": 0,
+        "resources": 0,
+        "datasets": 0,
+        "media": 0
+      }
     },
     "accountingReceipts": true,
     "relayCore": {
@@ -95,6 +103,7 @@
       "circuit-relay",
       "retrievability-proof-domain-v1",
       "retrievability-proof-http",
+      "seed-discovery-hints-single-drive-v1",
       "seed-request-replay-v1",
       "seed-revocability",
       "seed-signature-domain-v3"
@@ -213,6 +222,17 @@
           "http_opt_in": true
         }
       },
+      "seed_request": {
+        "discovery_hints": {
+          "profile": "single-drive-v1",
+          "raw_max": 64,
+          "unique_max": 1,
+          "accepted": [
+            "empty",
+            "canonical"
+          ]
+        }
+      },
       "services": null
     },
     "directory_privacy": {
@@ -253,10 +273,10 @@
     "attestedAt": 1782753600000,
     "signature": {
       "v": 1,
-      "sig": "20af845b9ae0b8f86604426edaae2eb7bc56c3a65af51eeab9762e105a132dc67956d91cdf0172e1217bb21be429e6a1849945a46cd900d5a65b648d0e9cb709"
+      "sig": "4f971efcad90719e32424d07af129093db9f26bdeaefcc77c32685093e54d25633dde98710dd117070bf69a7f5dec3f2b6afbd11bce16ee07f005cdc65f40308"
     }
   },
-  "signableHash": "87f8e8e8b22f369d1d634aa1ef577fc40b29a604f4807cb485e91289c7143b1e",
+  "signableHash": "efa6521296917479abccea35a6110e60ebdf9d87c79664656d77a5e474ecf989",
   "verdict": {
     "valid": true
   },

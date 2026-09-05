@@ -18,6 +18,19 @@ function makeKeyPair () {
   return { publicKey, secretKey }
 }
 
+function catalogStats (overrides = {}) {
+  return {
+    total: 0,
+    anchored: 0,
+    apps: 0,
+    drives: 0,
+    resources: 0,
+    datasets: 0,
+    media: 0,
+    ...overrides
+  }
+}
+
 // We test buildCapabilityDoc purely — no swarm, no HTTP server, no
 // filesystem. The builder accepts a partial relay-shaped object, so every
 // test constructs just enough to exercise one branch.
@@ -94,6 +107,13 @@ test('features list is sorted and reflects wired subsystems', async (t) => {
   t.ok(doc.features.includes('reputation'))
   t.ok(doc.features.includes('capability-doc'))
   t.ok(doc.features.includes('seed-signature-domain-v3'))
+  t.ok(doc.features.includes('seed-discovery-hints-single-drive-v1'))
+  t.alike(doc.protocol_profile.seed_request.discovery_hints, {
+    profile: 'single-drive-v1',
+    raw_max: 64,
+    unique_max: 1,
+    accepted: ['empty', 'canonical']
+  })
   t.is(doc.protocol_profile.signature_domains.seed_request.preferred, 'hiverelay.seed-request.v3')
   t.alike(doc.protocol_profile.signature_domains.seed_request.accepted, [
     'hiverelay.seed-request.v3',
@@ -146,7 +166,7 @@ test('relaykernel capability doc advertises only active kernel-compatible surfac
       fees: { storage: 1 }
     },
     swarm: { keyPair: kp },
-    appRegistry: { catalog: () => [] },
+    appRegistry: { catalogStats },
     federation: { snapshot: () => ({ followed: [{ url: 'https://relay.example' }] }) },
     serviceRegistry: { catalog: () => [{ name: 'identity' }] },
     paymentManager: { paymentProvider: {} },
@@ -217,7 +237,7 @@ test('directory_privacy distinguishes public catalog from global directory opt-i
   const doc = buildCapabilityDoc({
     relay: {
       config: {},
-      appRegistry: { catalog: () => [] }
+      appRegistry: { catalogStats }
     },
     gatewayUrl: 'https://relay.example',
     indexRoom: 'pear://index-room'
@@ -277,22 +297,25 @@ test('federation snapshot failure is tolerated (null not throw)', async (t) => {
   t.is(doc.federation, null)
 })
 
-test('catalog counts are computed from appRegistry.catalog()', async (t) => {
+test('catalog counts are read from O(1) AppRegistry metadata', async (t) => {
   const relay = {
     config: {},
     appRegistry: {
-      catalog: () => [
-        { type: 'app' },
-        { type: 'app' },
-        { type: 'drive' },
-        { type: 'drive', parentKey: 'pk1' },
-        { type: 'dataset' },
-        { type: 'media' }
-      ]
+      catalogStats: () => catalogStats({
+        total: 6,
+        anchored: 4,
+        apps: 2,
+        drives: 1,
+        resources: 1,
+        datasets: 1,
+        media: 1
+      }),
+      catalog: () => { throw new Error('capability counts must not materialize the catalog') }
     }
   }
   const doc = buildCapabilityDoc({ relay })
   t.is(doc.catalog.total, 6)
+  t.is(doc.catalog.anchored, 4)
   t.is(doc.catalog.apps, 2)
   t.is(doc.catalog.drives, 1)
   t.is(doc.catalog.resources, 1)
@@ -412,7 +435,7 @@ test('verifyCapabilityDoc detects retrievability proof signature profile tamperi
   const doc = buildCapabilityDoc({
     relay: {
       config: {},
-      appRegistry: { catalog: () => [] },
+      appRegistry: { catalogStats },
       swarm: { keyPair: kp }
     },
     runtime: 'node'
@@ -428,7 +451,7 @@ test('verifyCapabilityDoc detects circuit limit posture tampering', async (t) =>
   const doc = buildCapabilityDoc({
     relay: {
       config: {},
-      appRegistry: { catalog: () => [] },
+      appRegistry: { catalogStats },
       swarm: { keyPair: kp }
     },
     runtime: 'node'

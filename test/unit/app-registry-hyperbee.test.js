@@ -18,7 +18,7 @@ import { join } from 'path'
 // corestore-7 migration guard (storage-root-restore) — mirror that here or
 // hypercore-storage's tmpFixStorage sweeps the pre-created JSON into db/.
 import { openCorestore } from '../../packages/core/core/persistence/storage-root-restore.js'
-import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
+import { AppRegistry, APP_RETIREMENT_STATE } from 'p2p-hiverelay/core/app-registry.js'
 import { admitPublicHiveAppEntry } from 'p2p-hiverelay/gateway/public-app-admission.js'
 
 async function freshTmp () {
@@ -348,6 +348,190 @@ test('bee mode: empty JSON file is still migrated cleanly', async (t) => {
     t.ok(await exists(jsonPath + '.bak'))
 
     await store.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('bee mode: retirement tombstone preserves pending release across restart', async (t) => {
+  const dir = await freshTmp()
+  const appKey = 'e'.repeat(64)
+  const retirementId = 'a'.repeat(32)
+  const retiredAt = 1_700_000_000_000
+  try {
+    {
+      const store = openCorestore(dir)
+      await store.ready()
+      const reg = new AppRegistry(dir, { store })
+      await reg.load()
+      reg.set(appKey, { type: 'drive', appId: 'retire-me', maxStorage: 4096 }, { persist: false })
+      await reg.persistEntry(appKey, { throwOnError: true })
+      await reg.persistDelete(appKey, {
+        throwOnError: true,
+        retirementId,
+        retirementState: APP_RETIREMENT_STATE.RELEASE_PENDING,
+        retiredAt,
+        retirementBoundBytes: 4096
+      })
+      reg.delete(appKey, { persist: false })
+      t.absent(reg.has(appKey))
+      t.is(reg.retirementTombstone(appKey).state, APP_RETIREMENT_STATE.RELEASE_PENDING)
+      await store.close()
+    }
+
+    {
+      const store = openCorestore(dir)
+      await store.ready()
+      const reg = new AppRegistry(dir, { store })
+      const entries = await reg.load()
+      t.is(entries.length, 0, 'release-pending row is never replayed as live')
+      const pending = reg.retirementTombstone(appKey)
+      t.is(pending.retirementId, retirementId)
+      t.is(pending.boundBytes, 4096)
+      t.is(pending.state, APP_RETIREMENT_STATE.RELEASE_PENDING)
+      t.exception(
+        () => reg.set(appKey, { maxStorage: 4096 }, { persist: false }),
+        /cannot be resurrected/,
+        'release-pending state cannot be replaced by a new adoption'
+      )
+      await reg.persistRetirementState(appKey, {
+        retirementId,
+        retirementState: APP_RETIREMENT_STATE.FORGOTTEN,
+        retiredAt,
+        retirementBoundBytes: 4096
+      })
+      await store.close()
+    }
+
+    {
+      const store = openCorestore(dir)
+      await store.ready()
+      const reg = new AppRegistry(dir, { store })
+      await reg.load()
+      t.is(reg.retirementTombstone(appKey).state, APP_RETIREMENT_STATE.FORGOTTEN)
+      reg.set(appKey, { type: 'drive', appId: 'adopted-again', maxStorage: 8192 }, { persist: false })
+      await reg.persistEntry(appKey, { throwOnError: true })
+      t.is(reg.retirementTombstone(appKey), null, 'a new durable generation supersedes a forgotten tombstone')
+      await store.close()
+    }
+
+    {
+      const store = openCorestore(dir)
+      await store.ready()
+      const reg = new AppRegistry(dir, { store })
+      const entries = await reg.load()
+      t.is(entries.length, 1)
+      t.is(reg.get(appKey).appId, 'adopted-again')
+      t.is(reg.get(appKey).maxStorage, 8192)
+      await store.close()
+    }
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('bee mode: committed retirement append is never restored after later settlement failure', async (t) => {
+  const dir = await freshTmp()
+  const appKey = 'f'.repeat(64)
+  const retirementId = 'e'.repeat(32)
+  try {
+    const store = openCorestore(dir)
+    await store.ready()
+    const reg = new AppRegistry(dir, { store })
+    await reg.load()
+    reg.set(appKey, { type: 'drive', appId: 'no-resurrection', maxStorage: 4096 }, { persist: false })
+    await reg.persistEntry(appKey, { throwOnError: true })
+
+    const batch = reg._bee.batch.bind(reg._bee)
+    let inject = true
+    reg._bee.batch = (...args) => {
+      const pending = batch(...args)
+      const flush = pending.flush.bind(pending)
+      pending.flush = async (...flushArgs) => {
+        const result = await flush(...flushArgs)
+        if (inject) {
+          inject = false
+          throw new Error('post-append settlement failed')
+        }
+        return result
+      }
+      return pending
+    }
+    const result = await Promise.allSettled([reg.persistDelete(appKey, {
+      throwOnError: true,
+      retirementId,
+      retirementState: APP_RETIREMENT_STATE.RELEASE_PENDING,
+      retiredAt: 1_700_000_000_000,
+      retirementBoundBytes: 4096
+    })])
+    reg._bee.batch = batch
+    t.is(result[0].status, 'rejected')
+    t.is(result[0].reason?.reason, 'app-registry-journal-settlement-ambiguous')
+    t.is(result[0].reason?.durableDeleteCommitted, true)
+    t.is(result[0].reason?.retirementId, retirementId)
+    t.absent(reg.has(appKey), 'the live row is not manufactured after the durable tombstone append')
+    t.is(reg.retirementTombstone(appKey).state, APP_RETIREMENT_STATE.RELEASE_PENDING)
+    t.is(
+      reg._registryJournal.baselineBytes + reg._registryJournal.chargedBytes,
+      reg._bee.core.byteLength,
+      'the same-process journal adopts the committed tombstone debt'
+    )
+    await store.close()
+
+    const store2 = openCorestore(dir)
+    await store2.ready()
+    const reg2 = new AppRegistry(dir, { store: store2 })
+    const entries = await reg2.load()
+    t.is(entries.length, 0)
+    t.is(reg2.retirementTombstone(appKey).retirementId, retirementId)
+    await store2.close()
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('legacy JSON mode: committed retirement rename is never restored after later settlement failure', async (t) => {
+  const dir = await freshTmp()
+  const appKey = '1'.repeat(64)
+  const retirementId = '2'.repeat(32)
+  const retiredAt = 1_700_000_000_001
+  try {
+    const reg = new AppRegistry(dir)
+    await reg.load()
+    reg.set(appKey, { type: 'drive', appId: 'json-no-resurrection', maxStorage: 8192 }, { persist: false })
+    await reg.persistEntry(appKey, { throwOnError: true })
+
+    const save = reg.save.bind(reg)
+    let inject = true
+    reg.save = async (...args) => {
+      const result = await save(...args)
+      if (inject) {
+        inject = false
+        throw new Error('post-rename settlement failed')
+      }
+      return result
+    }
+    const result = await Promise.allSettled([reg.persistDelete(appKey, {
+      throwOnError: true,
+      retirementId,
+      retirementState: APP_RETIREMENT_STATE.RELEASE_PENDING,
+      retiredAt,
+      retirementBoundBytes: 8192
+    })])
+    reg.save = save
+
+    t.is(result[0].status, 'rejected')
+    t.is(result[0].reason?.durableDeleteCommitted, true)
+    t.is(result[0].reason?.retirementId, retirementId)
+    t.absent(reg.has(appKey), 'same-process JSON state stays absent after the committed rename')
+    t.is(reg.retirementTombstone(appKey).retirementId, retirementId)
+
+    const restarted = new AppRegistry(dir)
+    const entries = await restarted.load()
+    t.is(entries.length, 0, 'restart does not replay the deleted JSON row')
+    t.absent(restarted.has(appKey))
+    t.is(restarted.retirementTombstone(appKey).retirementId, retirementId)
+    t.is(restarted.retirementTombstone(appKey).state, APP_RETIREMENT_STATE.RELEASE_PENDING)
   } finally {
     await rm(dir, { recursive: true, force: true })
   }

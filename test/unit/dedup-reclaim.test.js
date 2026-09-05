@@ -8,6 +8,7 @@
 
 import test from 'brittle'
 import { EvictionManager } from 'p2p-hiverelay/core/relay-node/eviction.js'
+import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
 
 const A = 'a'.repeat(64) // older
 const B = 'b'.repeat(64) // newer / current
@@ -19,12 +20,10 @@ const PUB = '1'.repeat(64)
 const PUB2 = '2'.repeat(64)
 
 function harness (entries, bytes = {}, opts = {}) {
-  const reg = {
-    apps: new Map(entries),
-    get (k) { return this.apps.get(k) },
-    evictedCalls: [],
-    markEvicted (k) { this.evictedCalls.push(k) }
-  }
+  const reg = new AppRegistry(null)
+  for (const [appKey, entry] of entries) reg.set(appKey, entry, { persist: false })
+  reg.evictedCalls = []
+  reg.markEvicted = function (k) { this.evictedCalls.push(k) }
   const unseeds = []
   const purges = []
   const deps = {
@@ -125,4 +124,48 @@ test('no superseded versions → nothing reclaimed', async (t) => {
   const r = await ev.reclaimSuperseded({ dryRun: false })
   t.is(r.reclaimed.length, 0)
   t.is(r.freedBytes, 0)
+})
+
+test('reclaim consumes one finite page and never iterates the full registry', async (t) => {
+  const entries = []
+  const bytes = {}
+  const keyFor = (n) => n.toString(16).padStart(64, '0')
+  for (let group = 0; group < 40; group++) {
+    const older = keyFor(group * 2 + 1)
+    const current = keyFor(group * 2 + 2)
+    entries.push([older, app(`bounded-${group}`, '1.0.0')])
+    entries.push([current, app(`bounded-${group}`, '2.0.0')])
+    bytes[older] = 1
+  }
+  const { ev, reg } = harness(entries, bytes)
+  reg.apps[Symbol.iterator] = () => { throw new Error('full AppRegistry iterator forbidden') }
+
+  const first = await ev.reclaimSuperseded({ max: 10 })
+  t.is(first.examined, 10, 'max also bounds source inspection')
+  t.is(first.complete, false)
+  t.is(first.reclaimed.length, 5, 'only superseded rows inside the page are reported')
+  t.is(first.candidates, 5)
+  await ev.stop()
+  t.is(reg._appPopulation.consumerCount, 0, 'stop releases an incomplete reclaim cursor')
+})
+
+test('stop fences new reclaim and drains the exact active call', async (t) => {
+  let releaseUnseed
+  const unseedFlight = new Promise(resolve => { releaseUnseed = resolve })
+  const { ev } = harness(
+    [[A, app('drain', '1.0.0')], [B, app('drain', '2.0.0')]],
+    { [A]: 1 },
+    { unseedTimeoutMs: 5_000, unseed: () => unseedFlight }
+  )
+  const reclaim = ev.reclaimSuperseded({ dryRun: false })
+  await new Promise(resolve => setImmediate(resolve))
+  let stopped = false
+  const stop = ev.stop().then(() => { stopped = true })
+  await new Promise(resolve => setImmediate(resolve))
+  t.is(stopped, false, 'stop retains the active destructive flight')
+  releaseUnseed()
+  const result = await reclaim
+  await stop
+  t.alike(result.reclaimed.map(row => row.appKey), [A])
+  t.is((await ev.reclaimSuperseded()).stopped, true, 'post-stop calls cannot register new work')
 })

@@ -1,8 +1,18 @@
 import test from 'brittle'
 import http from 'http'
+import sodium from 'sodium-universal'
+import {
+  createAppCatalogExternalCursor,
+  createCanonicalCatalogRow
+} from 'p2p-hiverelay/core/relay-node/app-catalog-paged.js'
 
 const API_KEY = 'test-secret-key-12345'
 const STORAGE_BOUND = 1024 * 1024
+const TEST_KEY_PAIR = {
+  publicKey: Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES),
+  secretKey: Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+}
+sodium.crypto_sign_seed_keypair(TEST_KEY_PAIR.publicKey, TEST_KEY_PAIR.secretKey, Buffer.alloc(32, 1))
 
 /**
  * Create a minimal mock RelayNode that satisfies RelayAPI's needs.
@@ -72,6 +82,55 @@ function mockRelayNode () {
       catalog () { return node._catalogEntries },
       catalogForBroadcast () { return [] }
     },
+    appCatalogStore: {
+      readExternalPage ({ cursor, limit }) {
+        const rows = node._catalogEntries.map(entry => createCanonicalCatalogRow({
+          appKey: entry.appKey,
+          appId: entry.appId || entry.id || null,
+          type: entry.type,
+          parentKey: entry.parentKey || null,
+          mountPath: entry.mountPath || null,
+          version: entry.version || null,
+          discoveryKey: null,
+          blind: entry.blind === true,
+          storageClass: entry.storageClass || (entry.blind ? 'temporary' : 'persistent'),
+          availabilityClass: entry.availabilityClass || (entry.blind ? 'atomic-handoff' : 'always-on'),
+          privacyTier: entry.privacyTier || 'public',
+          seededAt: null,
+          redacted: false,
+          metadataVisibility: 'public',
+          blindContentId: null,
+          anchored: entry.anchored === true,
+          maxStorageBytes: null,
+          publisherPubkey: null,
+          durability: 0,
+          revocable: true,
+          retainUntil: null
+        }))
+        const prior = cursor ? rows.findIndex(row => row[0] === cursor.lastRowKey) : -1
+        const page = rows.slice(prior + 1, prior + 1 + limit)
+        const complete = prior + 1 + page.length >= rows.length
+        const snapshot = {
+          snapshotId: 'a'.repeat(64),
+          highWater: rows.length,
+          rootDigest: 'b'.repeat(64),
+          entryCount: rows.length,
+          senderPubkey: TEST_KEY_PAIR.publicKey.toString('hex')
+        }
+        return {
+          snapshot,
+          entries: page,
+          complete,
+          cursor: complete
+            ? null
+            : createAppCatalogExternalCursor({
+              highWater: snapshot.highWater,
+              rootDigest: snapshot.rootDigest,
+              lastRowKey: page[page.length - 1][0]
+            }, TEST_KEY_PAIR)
+        }
+      }
+    },
     getStats () { return { running: true, seededApps: 0, connections: 0 } },
     getHealthStatus () { return { healthy: true } },
     async stop () {},
@@ -129,7 +188,7 @@ function mockRelayNode () {
     seedingRegistry: null,
     relay: null,
     seeder: null,
-    swarm: null,
+    swarm: { keyPair: TEST_KEY_PAIR },
     on () {},
     removeListener () {},
     emit () {}
@@ -947,12 +1006,14 @@ test('api-auth: POST /seed forwards metadata fields with auth', async (t) => {
 test('api-auth: GET /catalog.json supports type filtering and typed buckets', async (t) => {
   const res = await request(port, 'GET', '/catalog.json?type=drive&page=1&pageSize=50')
   t.is(res.statusCode, 200, 'status is 200')
-  t.is(res.body.version, 2, 'catalog version is 2')
+  t.is(res.body.version, 3, 'cursor-backed catalog contract is version 3')
   t.is(res.body.filters.type, 'drive', 'type filter reported')
   t.ok(Array.isArray(res.body.drives), 'drives array present')
   t.ok(Array.isArray(res.body.apps), 'apps array present for compatibility')
   t.is(res.body.drives.length, 1, 'drive entry returned')
   t.is(res.body.apps.length, 0, 'apps empty when filtering by drive')
+  t.is(res.body.pageCount.drives, 1, 'count is explicitly page-local')
+  t.is(res.body.entryCount, 2, 'entryCount is the unfiltered snapshot total')
 })
 
 test('api-auth: GET /api/drives returns only seeded drives', async (t) => {
@@ -972,10 +1033,11 @@ test('api-auth: GET /api/drives returns only seeded drives', async (t) => {
 
   const res = await request(port, 'GET', '/api/drives')
   t.is(res.statusCode, 200, 'status is 200')
-  t.ok(Array.isArray(res.body), 'body is array')
-  t.is(res.body.length, 1, 'only one drive returned')
-  t.is(res.body[0].type, 'drive', 'entry marked as drive')
-  t.is(res.body[0].appKey, 'b'.repeat(64), 'drive key matches')
+  t.ok(Array.isArray(res.body.entries), 'body carries a bounded cursor envelope')
+  t.is(res.body.entries.length, 1, 'only one drive returned')
+  t.is(res.body.entries[0].type, 'drive', 'entry marked as drive')
+  t.is(res.body.entries[0].appKey, 'b'.repeat(64), 'drive key matches')
+  t.is(res.body.entryCount, 2)
 })
 
 test('api-auth: legacy catalog type routes are bounded and paginated', async (t) => {
@@ -993,19 +1055,24 @@ test('api-auth: legacy catalog type routes are bounded and paginated', async (t)
     appId: 'app-filtered'
   })
 
-  const first = await request(port, 'GET', '/api/drives?pageSize=999999')
+  const oversized = await request(port, 'GET', '/api/drives?limit=501')
+  t.is(oversized.statusCode, 400, 'limits above the relay cap fail before store access')
+
+  const first = await request(port, 'GET', '/api/drives?limit=500')
   t.is(first.statusCode, 200, 'status is 200')
-  t.is(first.body.length, 500, 'legacy typed response is capped at catalog page max')
-  t.is(first.body[0].appId, 'drive-0')
-  t.is(first.body[499].appId, 'drive-499')
+  t.is(first.body.entries.length, 500, 'legacy typed response is capped at catalog page max')
+  t.is(first.body.entries[0].appId, 'drive-0')
+  t.is(first.body.entries[499].appId, 'drive-499')
+  t.ok(first.body.cursor, 'bounded response carries a signed next cursor')
 
-  const second = await request(port, 'GET', '/api/drives?page=2&pageSize=3')
+  const encodedCursor = encodeURIComponent(JSON.stringify(first.body.cursor))
+  const second = await request(port, 'GET', `/api/drives?limit=3&cursor=${encodedCursor}`)
   t.is(second.statusCode, 200, 'second page status is 200')
-  t.alike(second.body.map(entry => entry.appId), ['drive-3', 'drive-4', 'drive-5'])
+  t.alike(second.body.entries.map(entry => entry.appId), ['drive-500', 'drive-501', 'drive-502'])
 
-  const apps = await request(port, 'GET', '/api/apps?pageSize=10')
+  const apps = await request(port, 'GET', `/api/apps?limit=10&cursor=${encodedCursor}`)
   t.is(apps.statusCode, 200, 'apps route status is 200')
-  t.alike(apps.body.map(entry => entry.appId), ['app-filtered'])
+  t.alike(apps.body.entries.map(entry => entry.appId), ['app-filtered'])
 })
 
 test('api-auth: GET /api/registry/pending returns sanitized pending queue', async (t) => {
@@ -1053,19 +1120,24 @@ test('api-auth: GET /api/registry requires auth and returns bounded sanitized st
   const originalRegistry = node.seedingRegistry
   t.teardown(() => { node.seedingRegistry = originalRegistry })
   const calls = []
+  const requests = [{
+    type: 'seed-request',
+    timestamp: 1,
+    appKey: 'a'.repeat(64),
+    discoveryKeys: ['b'.repeat(64)],
+    contentType: 'drive',
+    publisherPubkey: 'c'.repeat(64),
+    publisherSignature: 'do-not-leak'
+  }]
   node.seedingRegistry = {
     key: Buffer.alloc(32, 9),
-    async getActiveRequests () {
-      calls.push('active')
-      return [{
-        type: 'seed-request',
-        timestamp: 1,
-        appKey: 'a'.repeat(64),
-        discoveryKeys: ['b'.repeat(64)],
-        contentType: 'drive',
-        publisherPubkey: 'c'.repeat(64),
-        publisherSignature: 'do-not-leak'
-      }]
+    advanceRequestStatusSnapshot () {
+      calls.push('advance')
+      return { complete: true }
+    },
+    requestStatusSnapshot () {
+      calls.push('snapshot')
+      return { activeRequests: 1, requests, completedHighWater: 1, completedAt: 1 }
     },
     async getRelaysForApp (appKey) {
       calls.push(appKey)
@@ -1418,31 +1490,32 @@ test('api-auth: operator diagnostics require auth', async (t) => {
 
 test('api-auth: detailed anchor diagnostics require auth', async (t) => {
   const originalRegistry = node.appRegistry
+  const originalCatalogEntries = node._catalogEntries
   const originalCreateAnchorProof = node.createAnchorProof
   const originalLastCheckedAt = node._lastAnchorCheckAt
   t.teardown(() => {
     node.appRegistry = originalRegistry
+    node._catalogEntries = originalCatalogEntries
     node.createAnchorProof = originalCreateAnchorProof
     node._lastAnchorCheckAt = originalLastCheckedAt
   })
 
   node._lastAnchorCheckAt = 12345
+  node._catalogEntries = [{
+    appKey: 'a'.repeat(64),
+    type: 'drive',
+    anchored: false,
+    blind: true,
+    storageClass: 'temporary',
+    availabilityClass: 'atomic-handoff'
+  }]
   node.appRegistry = {
     anchorStats () {
       return { total: 1, anchored: 0, unanchored: 1, neverChecked: 0 }
     },
     catalog () {
-      return [{
-        appKey: 'a'.repeat(64),
-        type: 'drive',
-        anchored: false,
-        anchoredAt: null,
-        anchoredLength: 0,
-        custodyIntentId: 'b'.repeat(64),
-        blind: true,
-        storageClass: 'temporary',
-        availabilityClass: 'atomic-handoff'
-      }]
+      t.fail('detailed anchors must not enumerate the live registry')
+      return []
     }
   }
 
@@ -1462,7 +1535,13 @@ test('api-auth: detailed anchor diagnostics require auth', async (t) => {
   })
   t.is(allowed.statusCode, 200, 'authenticated detailed anchor diagnostics allowed')
   t.is(allowed.body.lastCheckedAt, 12345, 'last checked timestamp preserved')
-  t.is(allowed.body.entries[0].custodyIntentId, 'b'.repeat(64), 'custody linkage present under auth')
+  t.is(allowed.body.entries[0].appKey, 'a'.repeat(64), 'canonical snapshot entry returned')
+  t.absent(Object.prototype.hasOwnProperty.call(allowed.body.entries[0], 'custodyIntentId'))
+  t.alike(allowed.body.entrySchema, {
+    version: 2,
+    fields: ['appKey', 'type', 'anchored', 'blind', 'storageClass', 'availabilityClass'],
+    omittedLegacyFields: ['anchoredAt', 'anchoredLength', 'custodyIntentId']
+  })
 
   const proofKey = 'c'.repeat(64)
   node.createAnchorProof = async (appKey) => {

@@ -1,95 +1,187 @@
 #!/usr/bin/env bash
-# health-watchdog.sh — local systemd timer target.
-# If HiveRelay is "active" but /health fails repeatedly, force-kill and restart.
-# Covers event-loop hangs (LISTEN on :9100, no response) that systemd cannot see.
-#
-# State: /run/hiverelay-health-watchdog.failcount
-# Env (optional drop-in):
-#   HIVERELAY_HEALTH_URL      default http://127.0.0.1:9100/health
-#   HIVERELAY_HEALTH_TIMEOUT  curl max-time seconds (default 5)
-#   HIVERELAY_HEALTH_FAILS    consecutive failures before restart (default 2)
-set -uo pipefail
+# HiveRelay RC9 watchdog: bounded evidence capture and signed pidfd restart.
+# There are deliberately no environment-controlled policy, unit, path, URL,
+# threshold, command, or signal inputs in this process.
+set -euo pipefail
+umask 077
 
-URL="${HIVERELAY_HEALTH_URL:-http://127.0.0.1:9100/health}"
-TIMEOUT="${HIVERELAY_HEALTH_TIMEOUT:-5}"
-NEED_FAILS="${HIVERELAY_HEALTH_FAILS:-2}"
-STATE_FILE="${HIVERELAY_HEALTH_STATE:-/run/hiverelay-health-watchdog.failcount}"
-UNIT="${HIVERELAY_UNIT:-hiverelay}"
-LOG_TAG="hiverelay-health-watchdog"
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export LANG=C
+export LC_ALL=C
 
-log() { logger -t "$LOG_TAG" -- "$*"; echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+readonly UNIT=hiverelay.service
+readonly HEALTH_URL=http://127.0.0.1:9100/health
+readonly RUNTIME_DIR=/run/hiverelay-watchdog
+readonly LOCK_FILE=${RUNTIME_DIR}/watchdog.lock
+readonly POLICY_HELPER=/usr/local/libexec/hiverelay-health-watchdog-policy.mjs
+readonly SIGNAL_HELPER=/usr/local/libexec/hiverelay-health-watchdog-pidfd
+readonly NODE=/usr/bin/node
+readonly SYSTEMCTL=/usr/bin/systemctl
+readonly CURL=/usr/bin/curl
+readonly FLOCK=/usr/bin/flock
+readonly LOGGER=/usr/bin/logger
+readonly LOG_TAG=hiverelay-health-watchdog
 
-active=$(systemctl is-active "$UNIT" 2>/dev/null || echo inactive)
-if [ "$active" != "active" ] && [ "$active" != "activating" ]; then
-  # Unit not expected to answer health; clear streak
-  echo 0 >"$STATE_FILE" 2>/dev/null || true
-  exit 0
+log () {
+  "$LOGGER" -t "$LOG_TAG" -- "$*" 2>/dev/null || true
+  printf '%s\n' "$*"
+}
+
+clear_streak () {
+  "$NODE" "$POLICY_HELPER" clear >/dev/null
+}
+
+if [ "$(id -u)" != 0 ]; then
+  log 'refusing watchdog execution without uid 0'
+  exit 77
 fi
 
-# Skip while still starting (boot grace)
-MainPID=$(systemctl show "$UNIT" -p MainPID --value 2>/dev/null || echo 0)
-if [ -n "$MainPID" ] && [ "$MainPID" != "0" ] && [ -r "/proc/$MainPID" ]; then
-  # seconds of process life
-  start_ticks=$(awk '{print $22}' /proc/"$MainPID"/stat 2>/dev/null || echo 0)
-  hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
-  uptime_s=$(awk '{print int($1)}' /proc/uptime)
-  start_s=$(( start_ticks / hz ))
-  # approximate process age from boot - starttime is jiffies since boot
-  age=$(( uptime_s - start_s ))
-  if [ "$age" -ge 0 ] && [ "$age" -lt 90 ]; then
-    log "grace period age=${age}s pid=$MainPID — skip"
-    exit 0
+for directory in "$RUNTIME_DIR" /etc/hiverelay/watchdog /var/lib/hiverelay-watchdog /var/log/hiverelay-watchdog/diagnostics; do
+  if [ -L "$directory" ]; then
+    log "watchdog directory must not be a symlink: $directory"
+    exit 78
   fi
-fi
+  metadata=$(stat -Lc '%u:%g:%a:%F' -- "$directory" 2>/dev/null || true)
+  if [ "$metadata" != '0:0:700:directory' ]; then
+    log "watchdog directory authority mismatch: $directory"
+    exit 78
+  fi
+done
 
-# NOTE: deliberately not `curl -f`. -f discards the response body on a non-2xx
-# status, and the relay answers 503 with {"ok":false,"reason":"disk-critical"}
-# as a DELIBERATE drain signal (PRODUCTION.md:433-436). Without the body this
-# watchdog cannot tell "draining on purpose" from "event-loop hung", so it
-# counted the drain as a failure and SIGKILLed — and since a restart frees no
-# disk, the box then looped every ~4 minutes forever.
-body=$(curl -sS --max-time "$TIMEOUT" "$URL" 2>/dev/null || true)
-if echo "$body" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
-  echo 0 >"$STATE_FILE"
+exec 9>"$LOCK_FILE"
+if ! "$FLOCK" -n 9; then
+  log 'watchdog invocation already owns the fixed lock; skipping'
   exit 0
 fi
 
-# This watchdog exists for ONE failure mode: an event-loop hang that systemd
-# cannot see, where the unit is active and :9100 is listening but /health never
-# answers. A structured JSON answer — whatever it says — proves the loop is
-# turning, so it is by definition not the thing we are here to kill.
-#
-# Deliberate not-ok states (disk-critical drain, storage-fail-closed) are
-# reported precisely so an operator can act. SIGKILLing them destroys the signal
-# and fixes nothing: a restart frees no disk and does not clear a fail-closed
-# storage authority. Treat any reasoned reply as "responsive" and stand down.
-if echo "$body" | grep -q '"reason"[[:space:]]*:'; then
-  reason=$(echo "$body" | sed -n 's/.*"reason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-  log "relay responsive but not ok (reason=${reason:-unknown}) — reporting, not a hang; not restarting"
-  echo 0 >"$STATE_FILE"
+active=$("$SYSTEMCTL" is-active "$UNIT" 2>/dev/null || true)
+if [ "$active" != active ]; then
+  clear_streak
+  log "unit is not exactly active (state=${active:-unknown}); failure streak reset"
   exit 0
 fi
 
-fails=0
-if [ -f "$STATE_FILE" ]; then
-  fails=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
-fi
-fails=$((fails + 1))
-echo "$fails" >"$STATE_FILE"
-log "health FAIL $fails/$NEED_FAILS body=${body:0:80}"
-
-if [ "$fails" -lt "$NEED_FAILS" ]; then
+main_pid=$("$SYSTEMCTL" show "$UNIT" --property=MainPID --value --no-pager 2>/dev/null || true)
+if ! [[ "$main_pid" =~ ^[1-9][0-9]*$ ]]; then
+  clear_streak
+  log 'active unit has no exact MainPID; failure streak reset'
   exit 0
 fi
 
-log "forcing restart of $UNIT after $fails consecutive health failures"
-# Force-kill hung event loops (SIGTERM often does nothing when loop is stuck)
-systemctl kill -s SIGKILL "$UNIT" 2>/dev/null || true
-sleep 1
-fuser -k -9 9100/tcp 2>/dev/null || true
-sleep 1
-systemctl reset-failed "$UNIT" 2>/dev/null || true
-systemctl start "$UNIT" 2>/dev/null || systemctl restart "$UNIT" 2>/dev/null || true
-echo 0 >"$STATE_FILE"
-log "restart issued"
+if ! snapshot=$("$NODE" "$POLICY_HELPER" snapshot "$main_pid" 2>/dev/null); then
+  clear_streak
+  log 'could not bind the active unit to a complete process tuple; failure streak reset'
+  exit 0
+fi
+IFS=$'\t' read -r proc_starttime executable_sha256 cgroup_sha256 age_seconds extra <<<"$snapshot"
+if [ -n "${extra:-}" ] || ! [[ "$proc_starttime" =~ ^[1-9][0-9]*$ ]] ||
+   ! [[ "$executable_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+   ! [[ "$cgroup_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+   ! [[ "$age_seconds" =~ ^-?[0-9]+$ ]]; then
+  clear_streak
+  log 'process tuple helper returned a noncanonical snapshot; failure streak reset'
+  exit 0
+fi
+if [ "$age_seconds" -lt 90 ]; then
+  clear_streak
+  log "startup grace applies (age=${age_seconds}s); failure streak reset"
+  exit 0
+fi
+
+health_body=$(mktemp "$RUNTIME_DIR/health-body.XXXXXXXX")
+chmod 0600 "$health_body"
+cleanup () { rm -f -- "$health_body"; }
+trap cleanup EXIT HUP INT TERM
+
+set +e
+health_status=$(
+  ulimit -f 128
+  "$CURL" --silent --show-error --http1.1 --connect-timeout 5 --max-time 5 --max-filesize 65536 \
+    --output "$health_body" --write-out '%{http_code}' -- "$HEALTH_URL" 2>/dev/null
+)
+curl_exit=$?
+set -e
+if ! [[ "$health_status" =~ ^[0-9]{3}$ ]]; then health_status=000; fi
+
+if ! outcome=$("$NODE" "$POLICY_HELPER" classify "$health_body" "$health_status" "$curl_exit" 2>/dev/null); then
+  log 'health result could not be classified inside fixed bounds; no signal'
+  exit 1
+fi
+case "$outcome" in
+  healthy|responsive-not-restartable|eligible-empty|eligible-timeout) ;;
+  *)
+    log 'health classifier returned an unknown outcome; no signal'
+    exit 1
+    ;;
+esac
+
+if ! record=$("$NODE" "$POLICY_HELPER" record "$outcome" "$UNIT" "$main_pid" \
+  "$proc_starttime" "$executable_sha256" 2>/dev/null); then
+  log 'failure-state authority or persistence failed; no signal'
+  exit 1
+fi
+
+if [ "$outcome" = healthy ]; then
+  log 'healthy response observed; failure streak reset'
+  exit 0
+fi
+if [ "$outcome" = responsive-not-restartable ]; then
+  if ! responsive_diagnostic=$("$NODE" "$POLICY_HELPER" diagnose "$UNIT" "$main_pid" \
+    "$proc_starttime" "$executable_sha256" "$cgroup_sha256" "$health_status" "$health_body" 2>/dev/null); then
+    log "nonempty response observed (status=$health_status); restart forbidden; bounded diagnostic capture failed"
+    exit 1
+  fi
+  IFS=$'\t' read -r diagnostic_decision responsive_sha responsive_path extra <<<"$responsive_diagnostic"
+  if [ "$diagnostic_decision" != diagnostic ] || [ -n "${extra:-}" ] ||
+     ! [[ "$responsive_sha" =~ ^[0-9a-f]{64}$ ]] ||
+     ! [[ "$responsive_path" =~ ^/var/log/hiverelay-watchdog/diagnostics/watchdog-[0-9]{13}-[0-9a-f]{64}\.json$ ]]; then
+    log "nonempty response observed (status=$health_status); restart forbidden; diagnostic result was noncanonical"
+    exit 1
+  fi
+  log "nonempty response observed (status=$health_status); alert only, restart forbidden, diagnostic_sha256=$responsive_sha"
+  exit 0
+fi
+if [ "$record" != eligible ]; then
+  log "first eligible empty transport outcome recorded ($outcome); awaiting a distinct invocation"
+  exit 0
+fi
+
+set +e
+authorization=$("$NODE" "$POLICY_HELPER" authorize "$UNIT" "$main_pid" "$proc_starttime" \
+  "$executable_sha256" "$cgroup_sha256" "$health_status" "$health_body" 2>/dev/null)
+authorization_exit=$?
+set -e
+if [ "$authorization_exit" -ne 0 ]; then
+  log 'restart predicate reached but signed policy, state, sequence, or diagnostic gate denied signaling'
+  exit 0
+fi
+
+IFS=$'\t' read -r decision term_grace_ms kill_allowed policy_sha256 diagnostic_sha256 diagnostic_path extra <<<"$authorization"
+if [ "$decision" != authorized ] || [ -n "${extra:-}" ] ||
+   ! [[ "$term_grace_ms" =~ ^[0-9]+$ ]] || [ "$term_grace_ms" -lt 5000 ] || [ "$term_grace_ms" -gt 120000 ] ||
+   ! [[ "$kill_allowed" =~ ^[01]$ ]] || ! [[ "$policy_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+   ! [[ "$diagnostic_sha256" =~ ^[0-9a-f]{64}$ ]] ||
+   ! [[ "$diagnostic_path" =~ ^/var/log/hiverelay-watchdog/diagnostics/watchdog-[0-9]{13}-[0-9a-f]{64}\.json$ ]]; then
+  log 'authorization helper returned a noncanonical decision; consumed sequence is not retried and no signal is sent'
+  exit 1
+fi
+
+log "signed restart authorized policy_sha256=$policy_sha256 diagnostic_sha256=$diagnostic_sha256"
+set +e
+"$SIGNAL_HELPER" \
+  --unit "$UNIT" \
+  --pid "$main_pid" \
+  --starttime "$proc_starttime" \
+  --executable-sha256 "$executable_sha256" \
+  --cgroup-sha256 "$cgroup_sha256" \
+  --term-grace-ms "$term_grace_ms" \
+  --kill-allowed "$kill_allowed"
+signal_exit=$?
+set -e
+if [ "$signal_exit" -ne 0 ]; then
+  log "pidfd signal gate declined or failed (exit=$signal_exit); policy sequence remains consumed"
+  exit 1
+fi
+
+log 'pidfd-bound restart signal sequence completed; systemd owns any subsequent service restart'
 exit 0

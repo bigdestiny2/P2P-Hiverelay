@@ -139,6 +139,9 @@ export class BareHttpServer {
       services: this.relay.serviceRegistry
         ? { count: this.relay.serviceRegistry.services.size }
         : null,
+      appCatalogPaged: this.relay.appCatalogController
+        ? this.relay.appCatalogController.status()
+        : null,
       errors: 0
     }
   }

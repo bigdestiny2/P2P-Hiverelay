@@ -39,11 +39,14 @@ test('api lease: route helper maps exact paid lease routes', (t) => {
 })
 
 test('api lease: route payload helper dispatches paid lease status', (t) => {
+  let advances = 0
   const appRegistry = {
-    apps: new Map([
-      ['active', { leaseManaged: true, retainUntil: NOW + 1000 }],
-      ['expired', { leaseManaged: true, retainUntil: NOW - 1000 }]
-    ])
+    advanceLeaseStatusSnapshot (budget, now) {
+      advances++
+      t.is(budget, 64)
+      t.is(now, NOW)
+    },
+    leaseStatusSnapshot () { return { activeLeases: 1 } }
   }
 
   const result = buildLeaseRoutePayload({
@@ -80,6 +83,7 @@ test('api lease: route payload helper dispatches paid lease status', (t) => {
     providerConnected: true,
     activeLeases: 1
   })
+  t.is(advances, 1, 'request advances at most one finite aggregate page')
 
   const unknown = buildLeaseRoutePayload({
     route: resolveLeaseRoute('POST', '/api/lease/config'),
@@ -95,12 +99,8 @@ test('api lease: route payload helper dispatches paid lease status', (t) => {
 
 test('api lease: status payload shapes summary and counts active paid leases', (t) => {
   const appRegistry = {
-    apps: new Map([
-      ['active', { leaseManaged: true, retainUntil: NOW + 1000 }],
-      ['expired', { leaseManaged: true, retainUntil: NOW - 1000 }],
-      ['free', { leaseManaged: false, retainUntil: NOW + 1000 }],
-      ['malformed', { leaseManaged: true, retainUntil: Infinity }]
-    ])
+    advanceLeaseStatusSnapshot () {},
+    leaseStatusSnapshot () { return { activeLeases: 1 } }
   }
 
   const result = buildLeaseStatusPayload({

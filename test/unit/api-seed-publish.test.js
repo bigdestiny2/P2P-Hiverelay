@@ -15,6 +15,7 @@ import {
   serializeSeedRequestForReplaySigning,
   serializeSeedRequestForSigning
 } from '../../packages/core/core/protocol/seed-request.js'
+import { canonicalSeedDiscoveryHint } from '../../packages/core/core/protocol/seed-discovery-hints.js'
 
 const STORAGE_BOUND = 500 * 1024 * 1024
 
@@ -308,7 +309,7 @@ test('api seed publish: registry publish builds the signed catalog request', asy
     node,
     body: {
       appKey: 'a'.repeat(64),
-      discoveryKeys: ['b'.repeat(64)],
+      discoveryKeys: [b4a.toString(canonicalSeedDiscoveryHint(b4a.from('a'.repeat(64), 'hex')), 'hex')],
       contentType: 'drive',
       parentKey: 'c'.repeat(64),
       mountPath: ' /docs ',
@@ -325,7 +326,9 @@ test('api seed publish: registry publish builds the signed catalog request', asy
   t.alike(out.payload, { ok: true, entryId: 'registry-entry' })
   t.is(calls.length, 1)
   t.is(calls[0].appKey.toString('hex'), 'a'.repeat(64))
-  t.alike(calls[0].discoveryKeys.map(key => key.toString('hex')), ['b'.repeat(64)])
+  t.alike(calls[0].discoveryKeys.map(key => key.toString('hex')), [
+    b4a.toString(canonicalSeedDiscoveryHint(b4a.from('a'.repeat(64), 'hex')), 'hex')
+  ])
   t.is(calls[0].contentType, 'drive')
   t.is(calls[0].parentKey, 'c'.repeat(64))
   t.is(calls[0].mountPath, '/docs')

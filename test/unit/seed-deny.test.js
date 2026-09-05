@@ -15,6 +15,7 @@ import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { SeedProtocol } from 'p2p-hiverelay/core/protocol/seed-request.js'
 import { seedDenyEncoding } from 'p2p-hiverelay/core/protocol/messages.js'
+import { canonicalSeedDiscoveryHint } from '../../packages/core/core/protocol/seed-discovery-hints.js'
 import c from 'compact-encoding'
 
 function makeKeyPair () {
@@ -110,6 +111,48 @@ test('seedDeny: garbage signature denied with bad-signature', (t) => {
 
   t.is(sent.denies.length, 1, 'deny sent')
   t.is(sent.denies[0].reasonCode, 'bad-signature', 'invalid-signature reason')
+  clearIntervals(proto)
+})
+
+test('seedDeny: decoded overbound hint cardinality gets a structured denial', (t) => {
+  const proto = new SeedProtocol(null, { keyPair: makeKeyPair() })
+  const { channel, sent } = fakeChannel(b4a.alloc(32, 5))
+  proto._onSeedRequest(channel, {
+    appKey: b4a.alloc(32, 1),
+    error: 'too many discovery keys'
+  })
+  t.is(sent.denies.length, 1)
+  t.is(sent.denies[0].reasonCode, 'too-many-discovery-keys')
+  clearIntervals(proto)
+})
+
+test('seedDeny: signed hints accept canonical duplicates and reject a distinct value', (t) => {
+  const publisher = makeKeyPair()
+  const proto = new SeedProtocol(null, { keyPair: makeKeyPair() })
+  const appKey = b4a.alloc(32, 1)
+  const canonical = canonicalSeedDiscoveryHint(appKey)
+  const sign = discoveryKeys => {
+    const msg = baseRequest({
+      appKey,
+      discoveryKeys,
+      publisherPubkey: publisher.publicKey,
+      publisherSignature: b4a.alloc(64)
+    })
+    sodium.crypto_sign_detached(msg.publisherSignature, proto._serializeForSigning(msg), publisher.secretKey)
+    return msg
+  }
+
+  const canonicalChannel = fakeChannel(b4a.alloc(32, 5))
+  let emitted = 0
+  proto.once('seed-request', () => { emitted++ })
+  proto._onSeedRequest(canonicalChannel.channel, sign([canonical, canonical]))
+  t.is(emitted, 1)
+  t.is(canonicalChannel.sent.denies.length, 0)
+
+  const distinctChannel = fakeChannel(b4a.alloc(32, 6))
+  proto._onSeedRequest(distinctChannel.channel, sign([canonical, b4a.alloc(32, 9)]))
+  t.is(distinctChannel.sent.denies.length, 1)
+  t.is(distinctChannel.sent.denies[0].reasonCode, 'unsupported-discovery-key-set')
   clearIntervals(proto)
 })
 

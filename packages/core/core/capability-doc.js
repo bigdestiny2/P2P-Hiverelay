@@ -22,6 +22,10 @@ import { isBare } from 'which-runtime'
 import sodium from 'sodium-universal'
 import { resolveAcceptMode } from './accept-mode.js'
 import {
+  SEED_DISCOVERY_HINTS_FEATURE,
+  SEED_DISCOVERY_HINTS_PROFILE
+} from './protocol/seed-discovery-hints.js'
+import {
   RELAYKERNEL_CIRCUIT_BYTES_HARD_CAP,
   RELAYKERNEL_CIRCUIT_FRAME_HARD_CAP,
   RELAYKERNEL_CIRCUIT_MAX_PER_PEER_HARD_CAP,
@@ -231,6 +235,7 @@ export function buildCapabilityDoc (opts = {}) {
   // domain-separated preimage while retaining legacy v2/v1 compatibility.
   features.push(SEED_SIGNATURE_DOMAIN_V3_FEATURE)
   features.push(SEED_REQUEST_REPLAY_FEATURE)
+  features.push(SEED_DISCOVERY_HINTS_FEATURE)
   // AutoHeal — this relay actively maintains diversity-enforced replication
   // for archive-tier drives (durability=1). Clients publishing to archive
   // tier can prefer relays advertising this feature, since they're the only
@@ -258,20 +263,19 @@ export function buildCapabilityDoc (opts = {}) {
 
   // Counts — cheap. More detailed telemetry lives on /api/overview.
   let catalog = null
-  if (relay && relay.appRegistry && typeof relay.appRegistry.catalog === 'function') {
+  if (relay && relay.appRegistry && typeof relay.appRegistry.catalogStats === 'function') {
     try {
-      const entries = relay.appRegistry.catalog() || []
-      const anchored = entries.filter(e => e.anchored === true).length
+      const stats = relay.appRegistry.catalogStats() || {}
       catalog = {
-        total: entries.length,
-        anchored,
+        total: stats.total || 0,
+        anchored: stats.anchored || 0,
         // legacy field kept for backward-compat consumers; equals 'total'
-        accepted: entries.length,
-        apps: entries.filter(e => e.type === 'app').length,
-        drives: entries.filter(e => e.type === 'drive' && !e.parentKey).length,
-        resources: entries.filter(e => e.type === 'drive' && !!e.parentKey).length,
-        datasets: entries.filter(e => e.type === 'dataset').length,
-        media: entries.filter(e => e.type === 'media').length
+        accepted: stats.total || 0,
+        apps: stats.apps || 0,
+        drives: stats.drives || 0,
+        resources: stats.resources || 0,
+        datasets: stats.datasets || 0,
+        media: stats.media || 0
       }
     } catch (_) { catalog = null }
   }
@@ -474,6 +478,12 @@ function buildProtocolProfile ({
         ],
         legacy_accepted: true,
         http_opt_in: retrievabilityHttpEnabled
+      }
+    },
+    seed_request: {
+      discovery_hints: {
+        ...SEED_DISCOVERY_HINTS_PROFILE,
+        accepted: [...SEED_DISCOVERY_HINTS_PROFILE.accepted]
       }
     },
     services: buildServicesProtocolProfile(relay, servicesEnabled)

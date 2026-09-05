@@ -19,8 +19,9 @@ import {
 } from './messages.js'
 import { TokenBucketRateLimiter } from './rate-limiter.js'
 import { SEED_PROTOCOL_NAME } from '../constants.js'
+import { validateSeedDiscoveryHints } from './seed-discovery-hints.js'
 
-export const SEED_PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 0 })
+export const SEED_PROTOCOL_VERSION = Object.freeze({ major: 1, minor: 1 })
 export const MAX_PROTOCOL_HANDSHAKE_BYTES = 256
 export const SEED_PROTOCOL_HANDSHAKE_MAX_BYTES = MAX_PROTOCOL_HANDSHAKE_BYTES
 export const SEED_REQUEST_SIGNATURE_DOMAIN = 'hiverelay.seed-request.v3'
@@ -345,11 +346,21 @@ export class SeedProtocol extends EventEmitter {
 
   _onSeedRequest (channel, msg) {
     if (!msg || msg.error) {
+      const reasonCode = msg?.error === 'too many discovery keys'
+        ? 'too-many-discovery-keys'
+        : 'malformed-seed-request'
       this.emit('invalid-request', {
         appKey: keyHex(msg && msg.appKey),
         reason: msg && msg.error ? msg.error : 'malformed seed request',
-        reasonCode: 'malformed-seed-request'
+        reasonCode
       })
+      // Cardinality is decoded only after the fixed app key, so a request
+      // declaring more than 64 hints can still receive the same structured
+      // denial on Node and Bare. If the app key itself is malformed there is
+      // no safe fixed-width value to sign into a denial frame.
+      if (msg?.appKey && b4a.isBuffer(msg.appKey) && msg.appKey.byteLength === 32) {
+        this.denySeedRequest(channel, msg.appKey, reasonCode, msg.error || 'malformed seed request')
+      }
       return
     }
 
@@ -392,6 +403,22 @@ export class SeedProtocol extends EventEmitter {
       }
       this.emit('invalid-request', { appKey: b4a.toString(msg.appKey, 'hex'), reason: 'bad signature', reasonCode })
       this.denySeedRequest(channel, msg.appKey, reasonCode, detail)
+      return
+    }
+
+    // RC9 narrows the historical field to routing hints for this one drive.
+    // Verify the publisher signature over the original ordered list first,
+    // then apply semantics. A distinct value is never treated as a Hypercore
+    // public key and never reaches registry/adoption state.
+    const hints = validateSeedDiscoveryHints(msg.appKey, msg.discoveryKeys)
+    if (!hints.ok) {
+      this.emit('invalid-request', {
+        appKey: b4a.toString(msg.appKey, 'hex'),
+        reason: hints.reason,
+        reasonCode: hints.reason
+      })
+      this.denySeedRequest(channel, msg.appKey, hints.reason,
+        'discoveryKeys may be empty or contain only the canonical appKey discovery key')
       return
     }
 

@@ -54,6 +54,10 @@ import {
   parseGenerationReceiptRequiredEnvironment,
   resolveCorestoreGenerationReceiptLaunch
 } from '../core/persistence/storage-generation-receipt.js'
+import {
+  MAX_SEED_DISCOVERY_HINTS,
+  validateSeedDiscoveryHints
+} from '../core/protocol/seed-discovery-hints.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
@@ -1323,10 +1327,17 @@ function collectRegistryOptions (argv, appKey, metadata = {}) {
   if (argv['max-storage'] !== undefined) body.maxStorageBytes = parseBytes(String(argv['max-storage']))
   if (argv['discovery-key'] !== undefined) {
     const discoveryKeys = parseCsvValues(argv['discovery-key']).map(v => v.toLowerCase())
+    if (discoveryKeys.length > MAX_SEED_DISCOVERY_HINTS) {
+      throw new Error(`discovery-key accepts at most ${MAX_SEED_DISCOVERY_HINTS} routing hints`)
+    }
     for (const key of discoveryKeys) {
       if (!isValidHexKey(key, 64)) {
         throw new Error('discovery-key entries must be 64 hex characters')
       }
+    }
+    const hints = validateSeedDiscoveryHints(appKey, discoveryKeys)
+    if (!hints.ok) {
+      throw new Error('discovery-key must be the canonical routing hint derived from the app key')
     }
     body.discoveryKeys = discoveryKeys
   }
@@ -1712,7 +1723,7 @@ Seed / Ghost Drive Options:
   --replicas <n>                Replication target (default: 3)
   --geo <region>                Geo preference (e.g. NA,EU,AS)
   --ttl <days>                  Registry TTL days (default: 30)
-  --discovery-key <hex>         Extra discovery keys for registry publish (repeatable)
+  --discovery-key <hex>         Canonical app routing hint (repeatable, max 64; one unique value)
 
 Testnet Options:
   --nodes <n>                   Number of relay nodes (default: 3)

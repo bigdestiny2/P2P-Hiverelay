@@ -128,6 +128,53 @@ function physicalAuthority (opts = {}) {
   return { authority, provider }
 }
 
+test('storage authority: cached capacity is reject-only and never authorizes a mutation', (t) => {
+  const admission = authority({ cap: 1000, recoveryKinds: [] })
+  const complete = {
+    totalBytes: 400,
+    diskBytes: 400,
+    diskMeasuredAt: 10_000,
+    diskMeasureDurationMs: 10,
+    diskIntervalMs: 1000,
+    diskMeasurementComplete: true
+  }
+
+  const attempt = admission.cachedRejection(100, { storageSummary: complete, now: 10_100 })
+  t.is(attempt.reject, false)
+  t.is(attempt.exactRequired, true)
+  t.absent(Object.hasOwn(attempt, 'allowed'), 'cache result has no authorization field')
+  t.is(attempt.informationalAvailableBytes, 600)
+
+  const full = admission.cachedRejection(600, { storageSummary: complete, now: 10_100 })
+  t.is(full.reject, true)
+  t.is(full.exactRequired, false)
+  t.is(full.reason, 'storage-full')
+
+  const stale = admission.cachedRejection(1, { storageSummary: complete, now: 4_000_000 })
+  t.is(stale.reject, false, 'stale cache cannot authorize or invent a rejection')
+  t.is(stale.exactRequired, true)
+  t.is(stale.reason, 'storage-measurement-stale')
+})
+
+test('storage authority: cached rejection fails closed for recovery, fatal and stop state', (t) => {
+  const summary = {
+    totalBytes: 0,
+    diskBytes: 0,
+    diskMeasuredAt: Date.now(),
+    diskMeasureDurationMs: 0,
+    diskIntervalMs: 1000,
+    diskMeasurementComplete: true
+  }
+  const admission = authority({ cap: 1000, recoveryKinds: ['drives'] })
+  t.is(admission.cachedRejection(1, { storageSummary: summary }).reason, 'storage-recovery-inventory-pending')
+  admission.markRecoveryReady('drives')
+  admission.closeMutations('shutdown-fence')
+  t.is(admission.cachedRejection(1, { storageSummary: summary }).reason, 'shutdown-fence')
+  admission.openMutations()
+  admission.failClosed('fatal-proof-drift')
+  t.is(admission.cachedRejection(1, { storageSummary: summary }).reason, 'fatal-proof-drift')
+})
+
 async function captureRejection (run) {
   try {
     await run()
@@ -1074,4 +1121,27 @@ test('storage authority: the profile ceiling binds a real seeder against a real 
 
   await seeder.stop()
   await store.close()
+})
+
+test('storage authority: retirement release is idempotent only for the exact id', (t) => {
+  const a = authority({ recoveryKinds: [] })
+  const key = `drive:${K1}`
+  const retirementId = 'b'.repeat(32)
+  a.adoptRecovery(key, 4096, { kind: 'drive' })
+  t.ok(a.beginRetirement(key, retirementId), 'retirement id is bound before durable deletion')
+  t.ok(a.releaseRetirement(key, retirementId), 'first exact release removes the commitment')
+  t.ok(a.releaseRetirement(key, retirementId), 'same retirement id can safely repeat')
+  t.absent(a.releaseRetirement(key, 'c'.repeat(32)), 'another retirement id cannot claim the release')
+  t.is(a.get(key), null)
+  t.ok(a.completeRetirement(key, retirementId), 'final durable tombstone releases the in-memory retry receipt')
+  t.absent(a.releaseRetirement(key, retirementId), 'completed retry state does not accumulate indefinitely')
+
+  const next = a.reserve(key, 8192, { kind: 'drive' })
+  t.ok(next.allowed, 'a forgotten address may begin a genuinely new reservation generation')
+  t.ok(a.commit(next))
+  t.absent(a.releaseRetirement(key, retirementId), 'the old retirement id cannot release the new generation')
+  const nextRetirementId = 'd'.repeat(32)
+  t.ok(a.beginRetirement(key, nextRetirementId))
+  t.ok(a.releaseRetirement(key, nextRetirementId))
+  t.is(a.get(key), null)
 })

@@ -16,7 +16,13 @@ export {
   createAccountingReceipt,
   verifyAccountingReceipt,
   accountingFieldsFromStorageSummary,
-  accountingReceiptSignable
+  accountingReceiptSignable,
+  accountingReceiptEvidence,
+  ACCOUNTING_RECEIPT_KIND,
+  ACCOUNTING_RECEIPT_DOMAIN,
+  ACCOUNTING_RECEIPT_VERSION,
+  ACCOUNTING_RECEIPT_SOURCE,
+  ACCOUNTING_ALLOWED_INTERVAL_MS
 } from './protocol/accounting-receipt.js'
 export {
   buildRelayKernelProfile,

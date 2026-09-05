@@ -6,7 +6,7 @@
   "description": "Pins seed-channel handshake parsing and major-version negotiation before pending seed requests are replayed.",
   "localVersion": {
     "major": 1,
-    "minor": 0
+    "minor": 1
   },
   "maxHandshakeBytes": 256,
   "cases": [
@@ -18,7 +18,7 @@
         "action": "accept",
         "local": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "remote": null,
         "reason": null
@@ -28,18 +28,18 @@
       "id": "current-version",
       "handshakeJson": {
         "major": 1,
-        "minor": 0
+        "minor": 1
       },
       "verdict": {
         "valid": true,
         "action": "accept",
         "local": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "remote": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "reason": null
       }
@@ -55,7 +55,7 @@
         "action": "accept",
         "local": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "remote": {
           "major": 1,
@@ -75,7 +75,7 @@
         "action": "close",
         "local": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "remote": {
           "major": 2,
@@ -92,7 +92,7 @@
         "action": "close",
         "local": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "remote": null,
         "reason": "malformed handshake"
@@ -106,7 +106,7 @@
         "action": "close",
         "local": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "remote": null,
         "reason": "malformed handshake"
@@ -121,7 +121,7 @@
         "action": "close",
         "local": {
           "major": 1,
-          "minor": 0
+          "minor": 1
         },
         "remote": null,
         "reason": "handshake too large"

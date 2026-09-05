@@ -43,6 +43,8 @@
 import EventEmitter from 'events'
 import { fetchAndVerifyAnchorProof } from './anchor-proof-verifier.js'
 import { positiveStorageBound } from '../config/storage-cap.js'
+import { CompletionScheduler, strictPositiveInteger } from './completion-scheduler.js'
+import { GenerationPopulation } from './generation-population.js'
 
 // Default thresholds — tuned for an archival use case where availability
 // matters more than over-replication. Operators can override via opts.
@@ -65,26 +67,74 @@ export const DEFAULT_THRESHOLDS = {
 const DEFAULT_TICK_MS = 30 * 60 * 1000 // 30 min — slow loop; archival isn't latency-sensitive
 const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000 // 24h — peer info stale after this
 const ARCHIVE_TIER = 1
+const MAX_PASS_BUDGET = 64
+const MAX_PUBLIC_DRIVE_DETAILS = 32
+const MAX_THRESHOLD = 262_144
+
+function strictNonNegativeInteger (value, label, max = Number.MAX_SAFE_INTEGER) {
+  if (!Number.isSafeInteger(value) || value < 0 || value > max) {
+    throw new RangeError(`${label} must be a safe integer in [0,${max}]`)
+  }
+  return value
+}
 
 export class AutoHeal extends EventEmitter {
   constructor (node, opts = {}) {
     super()
     this.node = node
-    this.tickMs = opts.tickMs || DEFAULT_TICK_MS
-    this.staleMs = opts.staleMs || DEFAULT_STALE_MS
-    this.thresholds = { ...DEFAULT_THRESHOLDS, ...(opts.thresholds || {}) }
+    this.tickMs = strictPositiveInteger(opts.tickMs ?? DEFAULT_TICK_MS, 'autoHeal tickMs')
+    this.staleMs = strictPositiveInteger(opts.staleMs ?? DEFAULT_STALE_MS, 'autoHeal staleMs')
+    const thresholds = { ...DEFAULT_THRESHOLDS, ...(opts.thresholds || {}) }
+    this.thresholds = Object.freeze({
+      ...thresholds,
+      minReplicas: strictPositiveInteger(thresholds.minReplicas, 'autoHeal minReplicas', MAX_THRESHOLD),
+      minRegions: strictPositiveInteger(thresholds.minRegions, 'autoHeal minRegions', MAX_THRESHOLD),
+      minOperators: strictPositiveInteger(thresholds.minOperators, 'autoHeal minOperators', MAX_THRESHOLD),
+      replicaBuffer: strictNonNegativeInteger(thresholds.replicaBuffer ?? 0, 'autoHeal replicaBuffer', MAX_THRESHOLD),
+      ...(thresholds.maxPerOperator === undefined
+        ? {}
+        : { maxPerOperator: strictNonNegativeInteger(thresholds.maxPerOperator, 'autoHeal maxPerOperator', MAX_THRESHOLD) })
+    })
+    if (this.thresholds.minReplicas + this.thresholds.replicaBuffer > MAX_THRESHOLD) {
+      throw new RangeError(`autoHeal targetReplicas must be a safe integer in [1,${MAX_THRESHOLD}]`)
+    }
     // Don't ever try to recruit ourselves into more than this many archive
     // drives in a single tick — back-pressure against a thundering herd
     // of new archive content all becoming our responsibility at once.
-    this.maxRecruitsPerTick = opts.maxRecruitsPerTick || 3
+    this.maxRecruitsPerTick = strictPositiveInteger(
+      opts.maxRecruitsPerTick ?? 3,
+      'autoHeal maxRecruitsPerTick',
+      MAX_PASS_BUDGET
+    )
     // admission() refreshes filesystem identity and measures the exact storage
     // tree synchronously. Bound those expensive evaluations independently of
     // successful recruits so a huge peer catalog cannot turn one tick into an
     // unbounded sequence of event-loop-blocking disk walks.
-    this.maxCapacityChecksPerTick = Number.isSafeInteger(opts.maxCapacityChecksPerTick) &&
-      opts.maxCapacityChecksPerTick > 0
-      ? opts.maxCapacityChecksPerTick
-      : this.maxRecruitsPerTick
+    this.maxCapacityChecksPerTick = strictPositiveInteger(
+      opts.maxCapacityChecksPerTick ?? this.maxRecruitsPerTick,
+      'autoHeal maxCapacityChecksPerTick',
+      MAX_PASS_BUDGET
+    )
+    this.localRefreshBudget = strictPositiveInteger(
+      opts.localRefreshBudget ?? MAX_PASS_BUDGET,
+      'autoHeal localRefreshBudget',
+      MAX_PASS_BUDGET
+    )
+    this.federationRefreshBudget = strictPositiveInteger(
+      opts.federationRefreshBudget ?? MAX_PASS_BUDGET,
+      'autoHeal federationRefreshBudget',
+      MAX_PASS_BUDGET
+    )
+    this.decisionBudget = strictPositiveInteger(
+      opts.decisionBudget ?? MAX_PASS_BUDGET,
+      'autoHeal decisionBudget',
+      MAX_PASS_BUDGET
+    )
+    this.proofScanBudget = strictPositiveInteger(
+      opts.proofScanBudget ?? MAX_PASS_BUDGET,
+      'autoHeal proofScanBudget',
+      MAX_PASS_BUDGET
+    )
     // Soft storage cap — refuse to recruit past this fraction of
     // maxStorageBytes. Default 90% leaves headroom for the seed-request
     // path + manifest growth between ticks.
@@ -102,12 +152,19 @@ export class AutoHeal extends EventEmitter {
     // the per-archive proof-emit timer (every 30 min) has time to refresh,
     // short enough that a relay that silently dropped a drive is detected
     // within an hour.
-    this.proofFreshnessMs = opts.proofFreshnessMs || 60 * 60 * 1000
+    this.proofFreshnessMs = strictPositiveInteger(
+      opts.proofFreshnessMs ?? 60 * 60 * 1000,
+      'autoHeal proofFreshnessMs',
+      Math.floor(Number.MAX_SAFE_INTEGER / 2)
+    )
     // After AutoHeal recruits a new replica, give it this much grace
     // before we expect a fresh proof — replication takes time, and
     // demanding instant anchored-proof would prevent recruitment from
     // ever counting toward diversity.
-    this.proofGraceMs = opts.proofGraceMs || 60 * 60 * 1000
+    this.proofGraceMs = strictPositiveInteger(
+      opts.proofGraceMs ?? 60 * 60 * 1000,
+      'autoHeal proofGraceMs'
+    )
     // Inject a fetcher for tests; in production we use the real fetch.
     this._fetchProof = opts.fetchProof || fetchAndVerifyAnchorProof
     // Optional Protomux anchor channel — when present, the fetcher prefers
@@ -122,45 +179,100 @@ export class AutoHeal extends EventEmitter {
     // on subsequent ticks. With proofFreshnessMs/2 cache window this still
     // ensures every peer's proof is refreshed within the freshness window
     // — just not all in one tick.
-    this.maxProofsPerTick = opts.maxProofsPerTick || 64
+    this.maxProofsPerTick = strictPositiveInteger(
+      opts.maxProofsPerTick ?? MAX_PASS_BUDGET,
+      'autoHeal maxProofsPerTick',
+      MAX_PASS_BUDGET
+    )
     // Cache of verified proofs: `${appKey}:${peerPubkey}` → { proof, fetchedAt }
     // Prevents fetching the same proof every tick. Entries auto-expire
     // when they exceed proofFreshnessMs.
     this._proofCache = new Map()
+    this._proofCachePopulation = new GenerationPopulation({
+      name: 'auto-heal-proof-cache',
+      allowedConsumers: ['auto-heal-proof-cache']
+    })
     // ReplicaSets observed across the network: appKey → { relayPubkey → meta }
     this._fleet = new Map()
-    this._bounds = new Map()
+    this._fleetPopulation = new GenerationPopulation({
+      name: 'auto-heal-fleet',
+      allowedConsumers: ['auto-heal-proof', 'auto-heal-decision']
+    })
+    this._replicaPopulations = new Map()
     // Per-drive recruit-failure backoff. appKey → { failures, retryAt }.
     // Prevents tick-by-tick retry storms on permanently un-replicable drives.
     this._backoff = new Map()
     // Test seam — set to a deterministic [0,1) value to make jitter
     // decisions reproducible. In production it's Math.random.
     this._random = opts.random || (() => Math.random())
-    this._timer = null
+    this._initialTimer = null
+    this._scheduler = null
     this._running = false
+    this._phase = 'local-refresh'
+    this._federationState = null
+    this._proofActive = null
+    this._decisionActive = null
+    this._decisionCycleRecruits = 0
+    this._decisionCycleCapacityChecks = 0
+    this._snapshotBuild = { below: 0, drives: [] }
+    this._snapshotComplete = Object.freeze({ tracked: 0, below: 0, drives: Object.freeze([]), completedAt: null })
   }
 
   start () {
     if (this._running) return
     this._running = true
-    this._timer = setInterval(() => this._tick().catch((err) => {
-      this.emit('tick-error', { error: err.message })
-    }), this.tickMs)
-    if (this._timer.unref) this._timer.unref()
+    this._scheduler = new CompletionScheduler({
+      name: 'auto-heal',
+      intervalMs: this.tickMs,
+      run: async () => {
+        try {
+          return await this._tick()
+        } catch (err) {
+          this.emit('tick-error', { error: err.message })
+          throw err
+        }
+      }
+    })
+    this._scheduler.start({ immediate: false })
     // Run once shortly after start so newly-booted relays don't have to
     // wait a full tick before discovering archive drives that need help.
-    setTimeout(() => this._tick().catch(() => {}), 5000).unref?.()
+    this._initialTimer = setTimeout(() => {
+      this._initialTimer = null
+      if (this._running) this._scheduler?.trigger('initial')
+    }, 5000)
+    if (this._initialTimer.unref) this._initialTimer.unref()
     this.emit('started')
   }
 
   async stop () {
-    if (!this._running) return
+    if (!this._running && !this._scheduler) return
     this._running = false
-    if (this._timer) {
-      clearInterval(this._timer)
-      this._timer = null
-    }
+    if (this._initialTimer) clearTimeout(this._initialTimer)
+    this._initialTimer = null
+    const scheduler = this._scheduler
+    this._scheduler = null
+    if (scheduler) await scheduler.stop()
+    this._releaseCursors()
     this.emit('stopped')
+  }
+
+  _releaseCursors () {
+    this.node.appRegistry?.releasePopulationConsumer?.('auto-heal')
+    this.node.federation?.releaseAutoHealCursor?.()
+    this._fleetPopulation.unregister('auto-heal-proof')
+    this._fleetPopulation.unregister('auto-heal-decision')
+    this._proofCachePopulation.unregister('auto-heal-proof-cache')
+    for (const population of this._replicaPopulations.values()) {
+      population.unregister('auto-heal-proof')
+      population.unregister('auto-heal-decision')
+    }
+    this._phase = 'local-refresh'
+    this._federationState = null
+    this._proofActive = null
+    this._decisionActive = null
+    this._decisionCycleRecruits = 0
+    this._decisionCycleCapacityChecks = 0
+    this._snapshotBuild = { below: 0, drives: [] }
   }
 
   /**
@@ -169,22 +281,6 @@ export class AutoHeal extends EventEmitter {
    * + whether each meets the diversity threshold.
    */
   snapshot () {
-    const drives = []
-    for (const [appKey, replicas] of this._fleet) {
-      const live = this._liveReplicas(replicas, appKey)
-      const back = this._backoff.get(appKey) || null
-      drives.push({
-        appKey,
-        replicas: live.replicas,
-        regions: live.regions,
-        operators: live.operators,
-        meetsThreshold: this._meetsThreshold(live),
-        haveLocally: this.node.appRegistry?.has?.(appKey) === true,
-        backoff: back
-          ? { failures: back.failures, retryInMs: Math.max(0, back.retryAt - Date.now()) }
-          : null
-      })
-    }
     return {
       enabled: true,
       running: this._running,
@@ -196,191 +292,300 @@ export class AutoHeal extends EventEmitter {
       verifyProofs: this.verifyProofs,
       proofFreshnessMs: this.proofFreshnessMs,
       maxProofsPerTick: this.maxProofsPerTick,
-      tracked: drives.length,
-      below: drives.filter(d => !d.meetsThreshold).length,
+      localRefreshBudget: this.localRefreshBudget,
+      federationRefreshBudget: this.federationRefreshBudget,
+      decisionBudget: this.decisionBudget,
+      proofScanBudget: this.proofScanBudget,
+      tracked: this._snapshotComplete.tracked,
+      below: this._snapshotComplete.below,
       backoffs: this._backoff.size,
       proofCacheSize: this._proofCache.size,
-      drives
+      completedAt: this._snapshotComplete.completedAt,
+      drives: this._snapshotComplete.drives,
+      scheduler: this._scheduler ? this._scheduler.snapshot() : null
     }
   }
 
   // ─── Internal: tick ────────────────────────────────────────────────
 
   async _tick () {
-    if (!this._running) return
-    if (!this.node.appRegistry) return
+    if (!this._running || !this.node.appRegistry) return { complete: true }
 
-    // 1. Refresh from local catalog + peer catalogs.
-    this._bounds.clear()
-    this._refreshFromLocal()
-    this._refreshFromFederation()
-    this._pruneStale()
+    // A phase advances only after its own frozen high-water cycle completes.
+    // Small fleets can finish all four phases in one invocation; large fleets
+    // yield after a finite page and the completion scheduler resumes at once.
+    for (let advances = 0; advances < 4; advances++) {
+      if (this._phase === 'local-refresh') {
+        const result = this._refreshFromLocal()
+        if (!result.complete) return { complete: false, phase: this._phase, ...result }
+        this._phase = 'federation-refresh'
+        continue
+      }
+      if (this._phase === 'federation-refresh') {
+        const result = this._refreshFromFederation()
+        if (!result.complete) return { complete: false, phase: this._phase, ...result }
+        this._phase = 'proofs'
+        continue
+      }
+      if (this._phase === 'proofs') {
+        const result = this.verifyProofs
+          ? await this._refreshAnchorProofs()
+          : { complete: true, examined: 0 }
+        if (!this._running) return { complete: true, phase: 'stopped' }
+        if (!result.complete) return { complete: false, phase: this._phase, ...result }
+        this._phase = 'decision'
+        continue
+      }
+      const result = await this._runDecisionPass()
+      if (!result.complete) return { complete: false, phase: this._phase, ...result }
+      this._phase = 'local-refresh'
+      return { complete: true, phase: 'complete', ...result }
+    }
+    return { complete: false, phase: this._phase }
+  }
 
-    // 1b. Verify peer-claimed anchored bits via signed anchor proofs. This
-    // upgrades the trust model from "peer says they have it" to "peer
-    // cryptographically demonstrates they have it." Stale-cache aware: we
-    // only fetch a proof if we don't have one in the cache or the cached
-    // one is older than freshnessMs.
-    if (this.verifyProofs) await this._refreshAnchorProofs()
+  _newLiveBuild () {
+    return {
+      replicas: 0,
+      regions: new Set(),
+      operators: new Set(),
+      ourOperatorCount: 0,
+      hasOurRegion: false,
+      hasOurOperator: false,
+      maxStorage: null
+    }
+  }
 
-    // 2. For each archive drive, decide whether to recruit.
-    let recruits = 0
-    let capacityChecks = 0
-    for (const [appKey, replicas] of this._fleet) {
-      if (recruits >= this.maxRecruitsPerTick) break
+  _countLiveReplica (build, appKey, pubkey, meta) {
+    const bound = positiveStorageBound(meta?.maxStorage)
+    if (bound !== null) build.maxStorage = Math.max(build.maxStorage || 0, bound)
+    if (!meta || meta.anchored !== true) return
+    if (this.verifyProofs && pubkey !== this._localPubkey() && !this._hasFreshProof(appKey, pubkey)) return
+    const region = meta.region || 'unknown'
+    const operator = meta.operator || pubkey
+    build.replicas++
+    build.regions.add(region)
+    build.operators.add(operator)
+    if (region === this._localRegion()) build.hasOurRegion = true
+    if (operator === this._localOperator()) {
+      build.hasOurOperator = true
+      build.ourOperatorCount++
+    }
+  }
 
-      const live = this._liveReplicas(replicas, appKey)
-      if (this._meetsThreshold(live)) continue
+  _liveFromBuild (build) {
+    const regions = [...build.regions].slice(0, MAX_PASS_BUDGET)
+    const operators = [...build.operators].slice(0, MAX_PASS_BUDGET)
+    return {
+      replicas: build.replicas,
+      regions,
+      operators,
+      regionCount: build.regions.size,
+      operatorCount: build.operators.size,
+      ourOperatorCount: build.ourOperatorCount,
+      hasOurRegion: build.hasOurRegion,
+      hasOurOperator: build.hasOurOperator,
+      maxStorage: build.maxStorage
+    }
+  }
 
-      // Already seeding it locally? Nothing to do.
-      if (this.node.appRegistry.has(appKey)) continue
+  async _runDecisionPass () {
+    if (!this._fleetPopulation.isRegistered('auto-heal-decision')) {
+      this._fleetPopulation.register('auto-heal-decision')
+    }
+    let remaining = this.decisionBudget
+    let cycleComplete = false
+    let completedHighWater = null
 
-      // Would adding US to this fleet meaningfully improve diversity?
-      //
-      // Three cases qualify (see the wouldAddDiversity expression below):
-      //   A. We close a region gap — fleet doesn't already have our region.
-      //   B. We close an operator gap — fleet doesn't already have our
-      //      operator. Operator-diversity protects against correlated
-      //      infrastructure failures (e.g., one cloud region going down).
-      //   C. Both diversity dimensions are met but replicas < target — we
-      //      fill a buffer slot, requiring meetsOperatorThreshold AND that
-      //      our operator isn't already at the per-operator fairshare cap
-      //      (sybil-cluster resistance).
-      //
-      // Cases that DO NOT qualify:
-      //   - We share both region AND operator with the existing fleet, AND
-      //     the buffer-pad clause (C) doesn't apply — recruiting wouldn't
-      //     add a fault domain or fill the buffer. Stand down.
-      //   - Our operator is already at the fairshare cap. Even if we're a
-      //     valid relay, recruiting more from one operator dilutes diversity.
-      const ourRegion = this._localRegion()
-      const ourOperator = this._localOperator()
-      const ourPubkey = this._localPubkey()
-      const addsRegion = !live.regions.includes(ourRegion)
-      const addsOperator = !live.operators.includes(ourOperator)
-      const meetsRegionThreshold = live.regions.length >= this.thresholds.minRegions
-      const meetsOperatorThreshold = live.operators.length >= this.thresholds.minOperators
-      const belowReplicas = live.replicas < this._targetReplicas()
-      // Per-operator cap. Even when both diversity thresholds are met, a
-      // single operator with many relays could still pad the replica count
-      // (sybil cluster). Cap any operator at ceil(target / minOperators)
-      // replicas — that's the fairshare ceiling beyond which a single
-      // operator dominates. Default ON; set maxPerOperator: 0 to disable.
-      const ourOperatorCount = live.raw.filter(r => r.operator === ourOperator).length
-      const fairshareCap = Math.ceil(this._targetReplicas() / this.thresholds.minOperators)
-      const maxPerOperator = this.thresholds.maxPerOperator ?? fairshareCap
-      const operatorAtCap = maxPerOperator > 0 && ourOperatorCount >= maxPerOperator
+    while (remaining > 0 && !cycleComplete) {
+      if (!this._decisionActive) {
+        const apps = this._fleetPopulation.page(
+          'auto-heal-decision',
+          1,
+          appKey => this._fleet.get(appKey)
+        )
+        remaining -= apps.examined
+        const item = apps.entries[0]
+        if (!item) {
+          if (apps.complete) {
+            cycleComplete = true
+            completedHighWater = apps.completedHighWater
+          }
+          continue
+        }
+        const population = this._replicaPopulations.get(item.key)
+        if (!population) continue
+        if (!population.isRegistered('auto-heal-decision')) population.register('auto-heal-decision')
+        this._decisionActive = {
+          appKey: item.key,
+          outerComplete: apps.complete,
+          completedHighWater: apps.complete ? apps.completedHighWater : null,
+          build: this._newLiveBuild()
+        }
+        if (remaining === 0) break
+      }
 
-      // Three valid recruit paths:
-      //   A. We close a region gap (addsRegion). Highest-value.
-      //   B. We close an operator gap (addsOperator). Equally high-value —
-      //      operator-diversity protects against correlated infrastructure
-      //      failures (a whole AWS region going down).
-      //   C. Both diversity dimensions are at threshold but replica count is
-      //      below target — fill buffer with a redundant peer. Requires
-      //      meetsOperatorThreshold AND that our operator isn't already at
-      //      the per-operator cap (sybil-resistance).
-      const wouldAddDiversity = (
-        !replicas.has(ourPubkey) &&
-        !operatorAtCap &&
-        (addsRegion || addsOperator ||
-          (belowReplicas && meetsRegionThreshold && meetsOperatorThreshold))
-      )
-      if (!wouldAddDiversity) {
-        if (operatorAtCap) {
-          this.emit('recruit-skipped', { appKey, reason: 'operator-fairshare-cap', operator: ourOperator })
+      const active = this._decisionActive
+      const replicas = this._fleet.get(active.appKey)
+      const population = this._replicaPopulations.get(active.appKey)
+      if (!replicas || !population) {
+        this._decisionActive = null
+        if (active.outerComplete) {
+          cycleComplete = true
+          completedHighWater = active.completedHighWater
         }
         continue
       }
-
-      // Capacity / policy gates — same checks the seed-request handler
-      // would apply. We refuse to recruit if we'd violate accept-mode
-      // (operator may have explicitly closed the relay, set allowlist, etc.).
-      if (!this._canAccept(appKey)) continue
-
-      // A durable recruit is a promise for the catalog's full per-drive bound,
-      // not merely the bytes currently visible on another relay. Validate the
-      // bound before asking the shared admission authority to price that
-      // promise. admission() is a read-only gate here; seedApp() still owns the
-      // reservation/commit, so this does not double-reserve the same bytes.
-      const maxStorage = positiveStorageBound(this._bounds.get(appKey))
-      if (maxStorage === null) {
-        this.emit('recruit-skipped', { appKey, reason: 'storage-bound-invalid' })
-        continue
+      const page = population.page(
+        'auto-heal-decision',
+        remaining,
+        pubkey => replicas.get(pubkey)
+      )
+      remaining -= page.examined
+      const cutoff = Date.now() - this.staleMs
+      for (const item of page.entries) {
+        if (item.value.lastSeen < cutoff) {
+          replicas.delete(item.key)
+          population.delete(item.key)
+          continue
+        }
+        this._countLiveReplica(active.build, active.appKey, item.key, item.value)
       }
+      if (!page.complete) break
 
-      // Backoff gate — if recruiting this drive failed recently, wait before
-      // retrying. This and convergence jitter intentionally run before the
-      // expensive filesystem admission walk.
-      if (this._isInBackoff(appKey)) continue
-
-      // Convergence jitter — at scale, many archive-aware relays will see
-      // the same shortfall in the same tick and all decide to recruit. The
-      // result is that a drive needing 1 new replica gets 50, blowing
-      // through the diversity target. Mitigation: each relay independently
-      // recruits with probability proportional to "how much help is needed
-      // vs. how many relays could help." Roughly: with N relays observing
-      // the same gap and a gap of K replicas, each relay recruits with
-      // probability ≈ K/N.
-      //
-      // We don't know N (the network's total auto-heal-enabled fleet), so
-      // we approximate from the visible fleet size. This isn't perfectly
-      // tight but converges fast: relays that lose the dice roll see the
-      // recruitment in the next tick's catalog and stand down.
-      if (!this._jitterAccept(live)) {
-        this.emit('recruit-skipped', { appKey, reason: 'jitter-defer' })
-        continue
+      population.unregister('auto-heal-decision')
+      if (replicas.size === 0) {
+        this._dropEmptyFleetEntry(active.appKey)
+      } else {
+        const live = this._liveFromBuild(active.build)
+        await this._considerRecruit(active.appKey, replicas, live)
+        this._recordSnapshotDrive(active.appKey, live)
       }
-
-      if (capacityChecks >= this.maxCapacityChecksPerTick) {
-        this.emit('recruit-skipped', {
-          appKey,
-          reason: 'capacity-check-budget',
-          maxCapacityChecksPerTick: this.maxCapacityChecksPerTick
-        })
-        break
+      this._decisionActive = null
+      if (active.outerComplete) {
+        cycleComplete = true
+        completedHighWater = active.completedHighWater
       }
-      capacityChecks++
+    }
 
-      // Storage gate — refuse to recruit when the shared measured authority
-      // cannot prove room for the complete commitment. Its usedBytes already
-      // includes measured storage plus outstanding commitment debt, so never
-      // add Seeder's cumulative counter (or commitment bytes) a second time.
-      // The soft margin (default 90%) leaves headroom between recruitment and
-      // the hard admission boundary.
-      const storage = this._storageCapacity(maxStorage)
-      if (!storage.ok) {
-        this.emit('recruit-skipped', {
-          appKey,
-          reason: storage.reason,
-          usedBytes: storage.usedBytes,
-          maxStorageBytes: storage.maxStorageBytes,
-          storageMargin: storage.storageMargin,
-          requestedBytes: maxStorage,
-          availableBytes: storage.availableBytes
-        })
-        continue
-      }
+    if (cycleComplete) {
+      this._fleetPopulation.unregister('auto-heal-decision')
+      this._snapshotComplete = Object.freeze({
+        tracked: this._fleet.size,
+        below: this._snapshotBuild.below,
+        drives: Object.freeze(this._snapshotBuild.drives),
+        completedAt: Date.now(),
+        completedHighWater
+      })
+      this._snapshotBuild = { below: 0, drives: [] }
+      this._decisionCycleRecruits = 0
+      this._decisionCycleCapacityChecks = 0
+    }
+    return {
+      complete: cycleComplete,
+      examined: this.decisionBudget - remaining,
+      completedHighWater
+    }
+  }
 
-      // Recruit.
-      try {
-        await this.node.seedApp(appKey, {
-          durability: ARCHIVE_TIER,
-          revocable: false, // archive drives are non-revocable by definition
-          source: 'auto-heal',
-          maxStorage
-        })
-        recruits++
-        this._clearBackoff(appKey) // success — clear any prior backoff
-        let recruitReason
-        if (live.regions.length < this.thresholds.minRegions) recruitReason = 'region-gap'
-        else if (live.operators.length < this.thresholds.minOperators) recruitReason = 'operator-gap'
-        else recruitReason = 'replica-gap'
-        this.emit('recruited', { appKey, before: live, reason: recruitReason })
-      } catch (err) {
-        this._recordFailure(appKey)
-        this.emit('recruit-error', { appKey, error: err.message })
+  _recordSnapshotDrive (appKey, live) {
+    const meetsThreshold = this._meetsThreshold(live)
+    if (!meetsThreshold) this._snapshotBuild.below++
+    if (this._snapshotBuild.drives.length >= MAX_PUBLIC_DRIVE_DETAILS) return
+    const back = this._backoff.get(appKey) || null
+    this._snapshotBuild.drives.push(Object.freeze({
+      appKey,
+      replicas: live.replicas,
+      regions: Object.freeze([...live.regions]),
+      operators: Object.freeze([...live.operators]),
+      regionCount: live.regionCount,
+      operatorCount: live.operatorCount,
+      meetsThreshold,
+      haveLocally: this.node.appRegistry?.has?.(appKey) === true,
+      backoff: back
+        ? Object.freeze({ failures: back.failures, retryInMs: Math.max(0, back.retryAt - Date.now()) })
+        : null
+    }))
+  }
+
+  async _considerRecruit (appKey, replicas, live) {
+    if (!this._running) return false
+    if (this._meetsThreshold(live)) return false
+    if (this._decisionCycleRecruits >= this.maxRecruitsPerTick) return false
+    if (this.node.appRegistry.has(appKey)) return false
+
+    const ourOperator = this._localOperator()
+    const ourPubkey = this._localPubkey()
+    const addsRegion = !live.hasOurRegion
+    const addsOperator = !live.hasOurOperator
+    const meetsRegionThreshold = live.regionCount >= this.thresholds.minRegions
+    const meetsOperatorThreshold = live.operatorCount >= this.thresholds.minOperators
+    const belowReplicas = live.replicas < this._targetReplicas()
+    const fairshareCap = Math.ceil(this._targetReplicas() / this.thresholds.minOperators)
+    const maxPerOperator = this.thresholds.maxPerOperator ?? fairshareCap
+    const operatorAtCap = maxPerOperator > 0 && live.ourOperatorCount >= maxPerOperator
+    const wouldAddDiversity = !replicas.has(ourPubkey) && !operatorAtCap &&
+      (addsRegion || addsOperator || (belowReplicas && meetsRegionThreshold && meetsOperatorThreshold))
+    if (!wouldAddDiversity) {
+      if (operatorAtCap) {
+        this.emit('recruit-skipped', { appKey, reason: 'operator-fairshare-cap', operator: ourOperator })
       }
+      return false
+    }
+    if (!this._canAccept(appKey)) return false
+
+    const maxStorage = positiveStorageBound(live.maxStorage)
+    if (maxStorage === null) {
+      this.emit('recruit-skipped', { appKey, reason: 'storage-bound-invalid' })
+      return false
+    }
+    if (this._isInBackoff(appKey)) return false
+    if (!this._jitterAccept(live)) {
+      this.emit('recruit-skipped', { appKey, reason: 'jitter-defer' })
+      return false
+    }
+    if (this._decisionCycleCapacityChecks >= this.maxCapacityChecksPerTick) {
+      this.emit('recruit-skipped', {
+        appKey,
+        reason: 'capacity-check-budget',
+        maxCapacityChecksPerTick: this.maxCapacityChecksPerTick
+      })
+      return false
+    }
+    this._decisionCycleCapacityChecks++
+    const storage = this._storageCapacity(maxStorage)
+    if (!storage.ok) {
+      this.emit('recruit-skipped', {
+        appKey,
+        reason: storage.reason,
+        usedBytes: storage.usedBytes,
+        maxStorageBytes: storage.maxStorageBytes,
+        storageMargin: storage.storageMargin,
+        requestedBytes: maxStorage,
+        availableBytes: storage.availableBytes
+      })
+      return false
+    }
+
+    try {
+      await this.node.seedApp(appKey, {
+        durability: ARCHIVE_TIER,
+        revocable: false,
+        source: 'auto-heal',
+        maxStorage
+      })
+      this._decisionCycleRecruits++
+      this._clearBackoff(appKey)
+      let reason
+      if (live.regionCount < this.thresholds.minRegions) reason = 'region-gap'
+      else if (live.operatorCount < this.thresholds.minOperators) reason = 'operator-gap'
+      else reason = 'replica-gap'
+      this.emit('recruited', { appKey, before: live, reason })
+      return true
+    } catch (err) {
+      this._recordFailure(appKey)
+      this.emit('recruit-error', { appKey, error: err.message })
+      return false
     }
   }
 
@@ -408,76 +613,48 @@ export class AutoHeal extends EventEmitter {
     if (!Number.isSafeInteger(requested) || requested < 0) {
       return unavailable('storage-bound-invalid')
     }
-    if (!authority || typeof authority.admission !== 'function') {
+    if (!authority || typeof authority.cachedRejection !== 'function') {
       return unavailable()
     }
 
-    let admission
+    let hint
     try {
-      if (authority.fatalReason) return unavailable(String(authority.fatalReason))
-      if (authority.recoveryReady !== true) {
-        return unavailable('storage-recovery-inventory-pending')
-      }
-      admission = authority.admission(requested, { refresh: true })
+      const storageSummary = this.node.storageAccounting?.getSummary?.() || null
+      hint = authority.cachedRejection(requested, {
+        storageSummary,
+        limitRatio: margin
+      })
     } catch (_) {
       return unavailable('storage-capacity-unavailable')
     }
 
-    const cap = Number(admission?.capBytes)
-    const used = Number(admission?.usedBytes)
-    const available = Number(admission?.availableBytes)
-    const validSnapshot = Number.isSafeInteger(cap) && cap > 0 &&
-      Number.isSafeInteger(used) && used >= 0 &&
-      Number.isSafeInteger(available) && available >= 0
-    if (!validSnapshot) {
-      return unavailable(admission?.reason || 'storage-capacity-unavailable')
-    }
-    if (admission.allowed !== true) {
-      return {
-        ok: false,
-        reason: admission.reason || 'storage-capacity-unavailable',
-        usedBytes: used,
-        maxStorageBytes: cap,
-        availableBytes: available,
-        storageMargin: margin
-      }
-    }
-    const admittedAdditional = Number(admission.additionalBytes)
-    if (!Number.isSafeInteger(admittedAdditional) || admittedAdditional !== requested || requested > available) {
-      return unavailable('storage-capacity-unavailable', {
-        usedBytes: used,
-        maxStorageBytes: cap,
-        availableBytes: available
-      })
+    if (!hint || typeof hint !== 'object' || typeof hint.reject !== 'boolean' ||
+        (hint.reject === false && hint.exactRequired !== true)) {
+      return unavailable('storage-capacity-unavailable')
     }
 
-    // The admission snapshot already charges every outstanding commitment in
-    // usedBytes. Only add this candidate's as-yet-unreserved bound when
-    // applying the softer AutoHeal margin.
-    const projected = used + requested
-    if (!Number.isSafeInteger(projected)) {
-      return unavailable('storage-usage-invalid', {
-        usedBytes: used,
-        maxStorageBytes: cap,
-        availableBytes: available
-      })
-    }
-    if (projected >= cap * margin) {
+    const cap = Number(hint?.effectiveCapBytes)
+    const used = Number(hint?.usedBytes)
+    const available = Number(hint?.informationalAvailableBytes)
+    if (hint?.reject === true) {
       return {
         ok: false,
-        reason: 'storage-full',
-        usedBytes: used,
-        maxStorageBytes: cap,
-        availableBytes: available,
+        reason: hint.reason || 'storage-capacity-unavailable',
+        usedBytes: Number.isSafeInteger(used) ? used : null,
+        maxStorageBytes: Number.isSafeInteger(cap) ? cap : null,
+        availableBytes: Number.isSafeInteger(available) ? available : 0,
         storageMargin: margin
       }
     }
+    // `ok` means only "not rejected by the complete cache". seedApp() still
+    // performs the sole exact drive reservation before any session/range.
     return {
       ok: true,
-      reason: null,
-      usedBytes: used,
-      maxStorageBytes: cap,
-      availableBytes: available,
+      reason: hint?.reason || null,
+      exactRequired: true,
+      usedBytes: Number.isSafeInteger(used) ? used : null,
+      maxStorageBytes: Number.isSafeInteger(cap) ? cap : null,
+      availableBytes: Number.isSafeInteger(available) ? available : 0,
       storageMargin: margin
     }
   }
@@ -514,8 +691,8 @@ export class AutoHeal extends EventEmitter {
     // We need (replicas + regions + operators) all to hit threshold; use the
     // worst single-dimension shortfall as gap.
     const replicaGap = Math.max(0, this._targetReplicas() - live.replicas)
-    const regionGap = Math.max(0, this.thresholds.minRegions - live.regions.length)
-    const operatorGap = Math.max(0, this.thresholds.minOperators - live.operators.length)
+    const regionGap = Math.max(0, this.thresholds.minRegions - live.regionCount)
+    const operatorGap = Math.max(0, this.thresholds.minOperators - live.operatorCount)
     const gap = Math.max(replicaGap, regionGap, operatorGap)
     if (gap <= 0) return true // shouldn't happen; meetsThreshold gates above
 
@@ -528,9 +705,8 @@ export class AutoHeal extends EventEmitter {
   }
 
   _fleetSize () {
-    if (!this.node.federation || typeof this.node.federation.snapshot !== 'function') return 0
-    const snap = this.node.federation.snapshot()
-    return Array.isArray(snap?.peerCatalogs) ? snap.peerCatalogs.length : 0
+    const count = this.node.federation?.peerCatalogCount
+    return Number.isSafeInteger(count) && count >= 0 ? count : 0
   }
 
   // ─── Internal: data refresh ────────────────────────────────────────
@@ -540,27 +716,43 @@ export class AutoHeal extends EventEmitter {
     const ourPubkey = this._localPubkey()
     const ourRegion = this._localRegion()
     const ourOperator = this._localOperator()
-    if (!this.node.appRegistry.catalog) return
-
-    for (const entry of this.node.appRegistry.catalog()) {
-      if ((entry.durability || 0) !== ARCHIVE_TIER) continue
-      const set = this._setFor(entry.appKey)
-      set.set(ourPubkey, {
+    if (typeof this.node.appRegistry.page !== 'function') {
+      throw new Error('AutoHeal requires bounded AppRegistry pages')
+    }
+    const page = this.node.appRegistry.page('auto-heal', this.localRefreshBudget)
+    for (const item of page.entries) {
+      const entry = item.value
+      if ((entry.durability || 0) !== ARCHIVE_TIER) {
+        this._removeReplica(item.key, ourPubkey)
+        continue
+      }
+      const bound = positiveStorageBound(entry.maxStorageBytes ?? entry.maxStorage)
+      this._upsertReplica(item.key, ourPubkey, {
         region: ourRegion,
         operator: ourOperator,
         anchored: entry.anchored === true,
-        lastSeen: now
+        lastSeen: now,
+        url: null,
+        maxStorage: bound
       })
     }
+    return page
   }
 
   _refreshFromFederation () {
-    if (!this.node.federation || typeof this.node.federation.snapshot !== 'function') return
+    if (!this.node.federation) return { complete: true, examined: 0 }
+    if (typeof this.node.federation.getAutoHealPage !== 'function') {
+      throw new Error('AutoHeal requires bounded federation pages')
+    }
     const now = Date.now()
-    const snap = this.node.federation.snapshot()
-    if (!Array.isArray(snap?.peerCatalogs)) return
-
-    for (const peer of snap.peerCatalogs) {
+    const page = this.node.federation.getAutoHealPage(
+      this._federationState,
+      this.federationRefreshBudget
+    )
+    this._federationState = page.state
+    for (const item of page.entries) {
+      const peer = item.peer
+      const app = item.app
       const peerPubkey = peer.pubkey
       const peerRegion = peer.region || 'unknown'
       // Operator identity: prefer the peer's self-declared operator ID
@@ -571,81 +763,64 @@ export class AutoHeal extends EventEmitter {
       // a stable operator field so diversity scoring reflects real fault
       // domains, not raw key counts.
       const peerOperator = peer.operator || peerPubkey
-      if (!peerPubkey || !Array.isArray(peer.apps)) continue
+      if (!peerPubkey || !app || (app.durability || 0) !== ARCHIVE_TIER) continue
+      const appKey = app.appKey || app.driveKey || app.key
+      if (!appKey) continue
+      const bound = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
 
-      for (const app of peer.apps) {
-        if ((app.durability || 0) !== ARCHIVE_TIER) continue
-        const appKey = app.appKey || app.driveKey || app.key
-        if (!appKey) continue
-        const bound = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
-        if (bound !== null) {
-          const prior = this._bounds.get(appKey) || 0
-          this._bounds.set(appKey, Math.max(prior, bound))
-        }
-
-        const set = this._setFor(appKey)
-        set.set(peerPubkey, {
-          region: peerRegion,
-          operator: peerOperator,
-          anchored: app.anchored === true,
-          lastSeen: now
-        })
-      }
+      this._upsertReplica(appKey, peerPubkey, {
+        region: peerRegion,
+        operator: peerOperator,
+        anchored: app.anchored === true,
+        lastSeen: now,
+        url: peer.url || null,
+        maxStorage: bound
+      })
     }
+    return page
   }
 
-  _pruneStale () {
-    const cutoff = Date.now() - this.staleMs
-    for (const [appKey, replicas] of this._fleet) {
-      for (const [pubkey, meta] of replicas) {
-        if (meta.lastSeen < cutoff) replicas.delete(pubkey)
-      }
-      if (replicas.size === 0) this._fleet.delete(appKey)
-    }
+  _upsertReplica (appKey, pubkey, meta) {
+    const replicas = this._setFor(appKey)
+    const population = this._replicaPopulations.get(appKey)
+    if (!replicas.has(pubkey)) population.insert(pubkey)
+    replicas.set(pubkey, meta)
   }
 
   _setFor (appKey) {
     let s = this._fleet.get(appKey)
     if (!s) {
       s = new Map()
+      this._fleetPopulation.insert(appKey)
       this._fleet.set(appKey, s)
+      this._replicaPopulations.set(appKey, new GenerationPopulation({
+        name: `auto-heal-replicas:${appKey}`,
+        allowedConsumers: ['auto-heal-proof', 'auto-heal-decision']
+      }))
     }
     return s
   }
 
-  // ─── Internal: scoring / policy ────────────────────────────────────
-
-  _liveReplicas (replicas, appKey) {
-    // Count only ANCHORED replicas — a relay that accepted the seed but
-    // hasn't actually replicated bytes is not a real availability vote.
-    //
-    // When verifyProofs is on, "anchored" requires a recently-verified
-    // signed anchor proof in addition to the peer's self-report. This
-    // raises the bar from "they say they have it" to "we cryptographically
-    // confirmed they had it within the freshness window."
-    //
-    // Local relay (us) is always trusted because we trust our own registry.
-    const ourPubkey = this._localPubkey()
-    const anchored = []
-    for (const [pubkey, meta] of replicas) {
-      if (!meta.anchored) continue
-      if (this.verifyProofs && pubkey !== ourPubkey && appKey) {
-        if (!this._hasFreshProof(appKey, pubkey)) continue
-      }
-      // Operator: meta.operator if peer declared one; else pubkey (each relay
-      // counts as its own operator — backward-compat for catalogs without
-      // operator IDs).
-      anchored.push({ pubkey, region: meta.region, operator: meta.operator || pubkey })
-    }
-    const regions = [...new Set(anchored.map(r => r.region).filter(Boolean))]
-    const operators = [...new Set(anchored.map(r => r.operator).filter(Boolean))]
-    return {
-      replicas: anchored.length,
-      regions,
-      operators,
-      raw: anchored
-    }
+  _removeReplica (appKey, pubkey) {
+    const replicas = this._fleet.get(appKey)
+    const population = this._replicaPopulations.get(appKey)
+    if (!replicas || !population || !replicas.delete(pubkey)) return false
+    population.delete(pubkey)
+    return true
   }
+
+  _dropEmptyFleetEntry (appKey) {
+    const replicas = this._fleet.get(appKey)
+    if (replicas && replicas.size > 0) return false
+    const population = this._replicaPopulations.get(appKey)
+    population?.unregister('auto-heal-proof')
+    population?.unregister('auto-heal-decision')
+    this._replicaPopulations.delete(appKey)
+    if (this._fleet.delete(appKey)) this._fleetPopulation.delete(appKey)
+    return true
+  }
+
+  // ─── Internal: scoring / policy ────────────────────────────────────
 
   _hasFreshProof (appKey, peerPubkey) {
     const cached = this._proofCache.get(`${appKey}:${peerPubkey}`)
@@ -657,79 +832,154 @@ export class AutoHeal extends EventEmitter {
   }
 
   async _refreshAnchorProofs () {
-    if (!this.node.federation || typeof this.node.federation.snapshot !== 'function') return
-    const snap = this.node.federation.snapshot()
-    if (!Array.isArray(snap?.peerCatalogs)) return
-
-    // Build a peer pubkey → URL map so we know where to fetch from
-    const peerToUrl = new Map()
-    for (const peer of snap.peerCatalogs) {
-      if (peer.pubkey && peer.url) peerToUrl.set(peer.pubkey, peer.url)
+    if (!this._fleetPopulation.isRegistered('auto-heal-proof')) {
+      this._fleetPopulation.register('auto-heal-proof')
     }
-
+    let remaining = this.proofScanBudget
+    let cycleComplete = false
+    let completedHighWater = null
     const ourPubkey = this._localPubkey()
-    // Phase 1: collect candidates with their staleness so we can prioritize.
-    // A candidate is a (appKey, peerPubkey) pair we haven't recently verified.
-    const candidates = []
-    for (const [appKey, replicas] of this._fleet) {
-      for (const [peerPubkey, meta] of replicas) {
-        if (!meta.anchored) continue
-        if (peerPubkey === ourPubkey) continue
-        const url = peerToUrl.get(peerPubkey)
-        if (!url) continue
-        const cacheKey = `${appKey}:${peerPubkey}`
+    const selected = []
+
+    while (remaining > 0 && !cycleComplete && selected.length < this.maxProofsPerTick) {
+      if (!this._proofActive) {
+        const apps = this._fleetPopulation.page(
+          'auto-heal-proof',
+          1,
+          appKey => this._fleet.get(appKey)
+        )
+        remaining -= apps.examined
+        const item = apps.entries[0]
+        if (!item) {
+          if (apps.complete) {
+            cycleComplete = true
+            completedHighWater = apps.completedHighWater
+          }
+          continue
+        }
+        const population = this._replicaPopulations.get(item.key)
+        if (!population) continue
+        if (!population.isRegistered('auto-heal-proof')) population.register('auto-heal-proof')
+        this._proofActive = {
+          appKey: item.key,
+          outerComplete: apps.complete,
+          completedHighWater: apps.complete ? apps.completedHighWater : null
+        }
+        if (remaining === 0) break
+      }
+
+      const active = this._proofActive
+      const replicas = this._fleet.get(active.appKey)
+      const population = this._replicaPopulations.get(active.appKey)
+      if (!replicas || !population) {
+        this._proofActive = null
+        if (active.outerComplete) {
+          cycleComplete = true
+          completedHighWater = active.completedHighWater
+        }
+        continue
+      }
+      const page = population.page('auto-heal-proof', 1, pubkey => replicas.get(pubkey))
+      remaining -= page.examined
+      const item = page.entries[0]
+      if (item) {
+        const meta = item.value
+        const cacheKey = `${active.appKey}:${item.key}`
         const cached = this._proofCache.get(cacheKey)
-        // Skip if recently fetched (cache covers freshnessMs/2 to ensure
-        // we always have a valid cache entry between ticks)
-        if (cached && (Date.now() - cached.fetchedAt) < this.proofFreshnessMs / 2) continue
-        const staleness = cached ? Date.now() - cached.fetchedAt : Infinity
-        candidates.push({ appKey, peerPubkey, url, staleness, cacheKey })
+        if (meta.anchored === true && item.key !== ourPubkey && meta.url &&
+            (!cached || (Date.now() - cached.fetchedAt) >= this.proofFreshnessMs / 2)) {
+          selected.push({
+            appKey: active.appKey,
+            peerPubkey: item.key,
+            url: meta.url,
+            cacheKey
+          })
+        }
+      }
+      if (page.complete) {
+        population.unregister('auto-heal-proof')
+        this._proofActive = null
+        if (active.outerComplete) {
+          cycleComplete = true
+          completedHighWater = active.completedHighWater
+        }
       }
     }
 
-    // Phase 2: sort by staleness desc (oldest first → highest priority) and
-    // cap at the per-tick budget. Prevents O(K·N) blow-up on large fleets;
-    // remaining entries are picked up by subsequent ticks before they expire
-    // (cache window is freshnessMs/2 wide).
-    candidates.sort((a, b) => b.staleness - a.staleness)
-    const selected = candidates.slice(0, this.maxProofsPerTick)
-    if (candidates.length > selected.length) {
+    if (selected.length >= this.maxProofsPerTick && !cycleComplete) {
       this.emit('proof-budget-throttled', {
-        candidates: candidates.length,
+        candidates: selected.length + 1,
         budget: this.maxProofsPerTick,
-        deferred: candidates.length - selected.length
+        deferred: 1
       })
     }
 
-    const tasks = selected.map(c => this._fetchProof(c.url, c.appKey, {
-      expectedPubkey: c.peerPubkey,
-      freshnessMs: this.proofFreshnessMs * 2, // give some slack on remote clock
-      anchorChannel: this._anchorChannel,
-      peerPubkey: c.peerPubkey
-    }).then(result => {
-      this._proofCache.set(c.cacheKey, { result, fetchedAt: Date.now() })
-      if (!result.ok) {
-        this.emit('proof-failed', { appKey: c.appKey, peerPubkey: c.peerPubkey, reason: result.reason })
+    // Items enter this fixed queue only after their outer and child
+    // population inspections consumed budget. Workers launch lazily.
+    let position = 0
+    const workers = Array.from({ length: Math.min(16, selected.length) }, async () => {
+      while (position < selected.length) {
+        const candidate = selected[position++]
+        try {
+          const result = await this._fetchProof(candidate.url, candidate.appKey, {
+            expectedPubkey: candidate.peerPubkey,
+            freshnessMs: this.proofFreshnessMs * 2,
+            anchorChannel: this._anchorChannel,
+            peerPubkey: candidate.peerPubkey
+          })
+          this._setProofCache(candidate.cacheKey, { result, fetchedAt: Date.now() })
+          if (!result.ok) {
+            this.emit('proof-failed', {
+              appKey: candidate.appKey,
+              peerPubkey: candidate.peerPubkey,
+              reason: result.reason
+            })
+          }
+        } catch {
+          this._setProofCache(candidate.cacheKey, {
+            result: { ok: false, reason: 'fetch-error' },
+            fetchedAt: Date.now()
+          })
+        }
       }
-    }).catch(() => {
-      this._proofCache.set(c.cacheKey, {
-        result: { ok: false, reason: 'fetch-error' },
-        fetchedAt: Date.now()
-      })
-    }))
+    })
+    await Promise.all(workers)
 
-    // Cap concurrent fetches at 16 — even within a tick, we don't want to
-    // open hundreds of sockets at once.
-    const BATCH = 16
-    for (let i = 0; i < tasks.length; i += BATCH) {
-      await Promise.all(tasks.slice(i, i + BATCH))
+    if (cycleComplete) {
+      this._fleetPopulation.unregister('auto-heal-proof')
     }
+    this._pruneProofCache()
+    return {
+      complete: cycleComplete,
+      examined: this.proofScanBudget - remaining,
+      fetched: selected.length,
+      completedHighWater
+    }
+  }
 
-    // Prune stale cache entries
+  _setProofCache (key, value) {
+    if (!this._proofCache.has(key)) this._proofCachePopulation.insert(key)
+    this._proofCache.set(key, value)
+  }
+
+  _pruneProofCache () {
+    if (!this._proofCachePopulation.isRegistered('auto-heal-proof-cache')) {
+      this._proofCachePopulation.register('auto-heal-proof-cache')
+    }
     const cutoff = Date.now() - this.proofFreshnessMs
-    for (const [key, entry] of this._proofCache) {
-      if (entry.fetchedAt < cutoff) this._proofCache.delete(key)
+    const page = this._proofCachePopulation.page(
+      'auto-heal-proof-cache',
+      this.proofScanBudget,
+      key => this._proofCache.get(key)
+    )
+    for (const item of page.entries) {
+      if (item.value.fetchedAt < cutoff) {
+        this._proofCache.delete(item.key)
+        this._proofCachePopulation.delete(item.key)
+      }
     }
+    if (page.complete) this._proofCachePopulation.unregister('auto-heal-proof-cache')
+    return page
   }
 
   // Target = min + buffer. We keep recruiting until we hit target so that
@@ -741,8 +991,8 @@ export class AutoHeal extends EventEmitter {
   _meetsThreshold (live) {
     return (
       live.replicas >= this._targetReplicas() &&
-      live.regions.length >= this.thresholds.minRegions &&
-      live.operators.length >= this.thresholds.minOperators
+      live.regionCount >= this.thresholds.minRegions &&
+      live.operatorCount >= this.thresholds.minOperators
     )
   }
 

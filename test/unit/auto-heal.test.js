@@ -37,6 +37,13 @@ function makeNode (opts = {}) {
   }))
   const acceptMode = opts.acceptMode || 'open'
   const seededApps = []
+  let localCursor = 0
+  const pageStats = {
+    localMaxExamined: 0,
+    federationMaxExamined: 0,
+    localReleases: 0,
+    federationReleases: 0
+  }
 
   const config = {
     regions: [region],
@@ -47,13 +54,13 @@ function makeNode (opts = {}) {
 
   // AutoHeal must consult the same authority used by every durable writer.
   // Keep this mock deliberately shaped like StorageAdmissionAuthority's
-  // admission() result so tests cannot accidentally fall back to Seeder's
-  // cumulative byte counter.
+  // reject-only cache result so tests cannot accidentally reintroduce exact
+  // filesystem scans or fall back to Seeder's cumulative byte counter.
   const authorityUsedBytes = Object.hasOwn(opts, 'authorityUsedBytes') ? opts.authorityUsedBytes : 0
   const defaultStorageAdmission = {
     recoveryReady: true,
     fatalReason: null,
-    admission (additionalBytes, admissionOpts) {
+    cachedRejection (additionalBytes, admissionOpts) {
       const capBytes = config.maxStorageBytes
       const usedBytes = authorityUsedBytes
       const valid = Number.isSafeInteger(capBytes) && capBytes > 0 &&
@@ -61,34 +68,25 @@ function makeNode (opts = {}) {
         Number.isSafeInteger(additionalBytes) && additionalBytes >= 0
       if (!valid) {
         return {
-          allowed: false,
+          reject: true,
+          exactRequired: false,
           reason: 'storage-bound-invalid',
-          capBytes: Number.isSafeInteger(capBytes) ? capBytes : 0,
+          effectiveCapBytes: Number.isSafeInteger(capBytes) ? capBytes : 0,
           usedBytes: Number.isSafeInteger(usedBytes) ? usedBytes : 0,
-          availableBytes: 0,
+          informationalAvailableBytes: 0,
           additionalBytes
         }
       }
-      if (admissionOpts?.refresh !== true) {
-        return {
-          allowed: false,
-          reason: 'storage-filesystem-sample-stale',
-          capBytes,
-          usedBytes,
-          availableBytes: 0,
-          additionalBytes
-        }
-      }
-      const availableBytes = Math.max(0, capBytes - usedBytes)
-      const reason = usedBytes >= capBytes
-        ? 'storage-cap-reached'
-        : (additionalBytes > availableBytes ? 'insufficient-storage' : null)
+      const limit = Math.floor(capBytes * admissionOpts.limitRatio)
+      const availableBytes = Math.max(0, limit - usedBytes)
+      const reason = usedBytes + additionalBytes >= limit ? 'storage-full' : null
       return {
-        allowed: reason === null && availableBytes > 0,
+        reject: reason !== null,
+        exactRequired: reason === null,
         reason,
-        capBytes,
+        effectiveCapBytes: capBytes,
         usedBytes,
-        availableBytes,
+        informationalAvailableBytes: availableBytes,
         additionalBytes
       }
     }
@@ -99,10 +97,69 @@ function makeNode (opts = {}) {
     swarm: { keyPair: { publicKey: pubkey } },
     appRegistry: {
       catalog: () => localCatalog,
+      page: (consumer, budget) => {
+        if (consumer !== 'auto-heal') throw new Error('unexpected population consumer')
+        if (!Number.isSafeInteger(budget) || budget < 1 || budget > 64) throw new RangeError('invalid mock page budget')
+        const entries = localCatalog.slice(localCursor, localCursor + budget).map(entry => ({
+          key: entry.appKey,
+          value: entry
+        }))
+        const examined = entries.length
+        localCursor += examined
+        const complete = localCursor >= localCatalog.length
+        if (complete) localCursor = 0
+        pageStats.localMaxExamined = Math.max(pageStats.localMaxExamined, examined)
+        return { entries, examined, complete, completedHighWater: complete ? localCatalog.length : null }
+      },
+      releasePopulationConsumer: (consumer) => {
+        if (consumer !== 'auto-heal') return false
+        localCursor = 0
+        pageStats.localReleases++
+        return true
+      },
       has: (key) => localCatalog.some(e => e.appKey === key) || seededApps.includes(key)
     },
     federation: {
-      snapshot: () => ({ peerCatalogs })
+      snapshot: () => ({ peerCatalogs }),
+      get peerCatalogCount () { return peerCatalogs.length },
+      getAutoHealPage: (priorState, budget) => {
+        if (!Number.isSafeInteger(budget) || budget < 1 || budget > 64) throw new RangeError('invalid mock federation budget')
+        const state = priorState || { peerIndex: 0, highWater: peerCatalogs.length, active: null }
+        let remaining = budget
+        const entries = []
+        while (remaining > 0) {
+          if (!state.active) {
+            if (state.peerIndex >= state.highWater) break
+            state.active = { peer: peerCatalogs[state.peerIndex++], appIndex: 0 }
+            remaining--
+            if (remaining === 0) break
+          }
+          if (state.active.appIndex >= state.active.peer.apps.length) {
+            state.active = null
+            continue
+          }
+          entries.push({
+            peer: state.active.peer,
+            app: state.active.peer.apps[state.active.appIndex++]
+          })
+          remaining--
+          if (state.active.appIndex >= state.active.peer.apps.length) state.active = null
+        }
+        const complete = state.active === null && state.peerIndex >= state.highWater
+        const examined = budget - remaining
+        pageStats.federationMaxExamined = Math.max(pageStats.federationMaxExamined, examined)
+        return {
+          entries,
+          examined,
+          complete,
+          completedHighWater: complete ? state.highWater : null,
+          state: complete ? null : state
+        }
+      },
+      releaseAutoHealCursor: () => {
+        pageStats.federationReleases++
+        return true
+      }
     },
     storageAdmission: Object.hasOwn(opts, 'storageAdmission')
       ? opts.storageAdmission
@@ -118,7 +175,8 @@ function makeNode (opts = {}) {
       if (mode === 'allowlist') return 'reject'
       return 'accept'
     },
-    _seededApps: seededApps
+    _seededApps: seededApps,
+    _autoHealPageStats: pageStats
   }
   return node
 }
@@ -436,14 +494,15 @@ test('AutoHeal: bounds expensive capacity walks across a large deficient catalog
     storageAdmission: {
       recoveryReady: true,
       fatalReason: null,
-      admission (additionalBytes) {
+      cachedRejection (additionalBytes) {
         capacityChecks++
         return {
-          allowed: false,
+          reject: true,
+          exactRequired: false,
           reason: 'insufficient-storage',
-          capBytes: 10 * STORAGE_BOUND,
+          effectiveCapBytes: 10 * STORAGE_BOUND,
           usedBytes: 9 * STORAGE_BOUND,
-          availableBytes: STORAGE_BOUND,
+          informationalAvailableBytes: STORAGE_BOUND,
           additionalBytes
         }
       }
@@ -460,7 +519,7 @@ test('AutoHeal: bounds expensive capacity walks across a large deficient catalog
   heal._running = true
   await heal._tick()
 
-  t.is(capacityChecks, 2, 'one tick performs at most the configured number of exact disk walks')
+  t.is(capacityChecks, 2, 'one tick performs at most the configured number of cached checks')
   t.ok(skipped.some(info => info.reason === 'capacity-check-budget'))
   t.is(node._seededApps.length, 0)
 })
@@ -474,14 +533,15 @@ test('AutoHeal: fresh shared authority wins over stale seeder counters', async (
     storageAdmission: {
       recoveryReady: true,
       fatalReason: null,
-      admission (additionalBytes, opts) {
+      cachedRejection (additionalBytes, opts) {
         reads.push({ additionalBytes, opts })
         return {
-          allowed: true,
+          reject: false,
+          exactRequired: true,
           reason: null,
-          capBytes: 50 * 1024 * 1024 * 1024,
+          effectiveCapBytes: 50 * 1024 * 1024 * 1024,
           usedBytes: 2 * 1024 * 1024,
-          availableBytes: 50 * 1024 * 1024 * 1024 - 2 * 1024 * 1024,
+          informationalAvailableBytes: 50 * 1024 * 1024 * 1024 - 2 * 1024 * 1024,
           additionalBytes
         }
       }
@@ -505,7 +565,7 @@ test('AutoHeal: fresh shared authority wins over stale seeder counters', async (
   t.is(recruited.length, 1, 'stale high seeder counter does not veto authoritative capacity')
   t.is(reads.length, 1, 'authority read once')
   t.is(reads[0].additionalBytes, STORAGE_BOUND, 'authority prices full catalog bound')
-  t.alike(reads[0].opts, { refresh: true }, 'authority read explicitly refreshes filesystem state')
+  t.alike(reads[0].opts, { storageSummary: null, limitRatio: 0.9 }, 'authority read is cache-only and margin-bound')
 })
 
 test('AutoHeal: refuses to recruit when shared storage authority is unavailable', async (t) => {
@@ -567,22 +627,22 @@ test('AutoHeal: unready, fatal, throwing and malformed authorities stop recruitm
     {
       name: 'recovery pending',
       reason: 'storage-recovery-inventory-pending',
-      authority: { recoveryReady: false, fatalReason: null, admission: () => { throw new Error('must not read') } }
+      authority: { recoveryReady: false, fatalReason: null, cachedRejection: () => ({ reject: true, exactRequired: false, reason: 'storage-recovery-inventory-pending' }) }
     },
     {
       name: 'fatal invariant',
       reason: 'storage-authority-fatal',
-      authority: { recoveryReady: true, fatalReason: 'storage-authority-fatal', admission: () => { throw new Error('must not read') } }
+      authority: { recoveryReady: true, fatalReason: 'storage-authority-fatal', cachedRejection: () => ({ reject: true, exactRequired: false, reason: 'storage-authority-fatal' }) }
     },
     {
       name: 'read throws',
       reason: 'storage-capacity-unavailable',
-      authority: { recoveryReady: true, fatalReason: null, admission: () => { throw new Error('sample failed') } }
+      authority: { recoveryReady: true, fatalReason: null, cachedRejection: () => { throw new Error('sample failed') } }
     },
     {
       name: 'malformed success',
       reason: 'storage-capacity-unavailable',
-      authority: { recoveryReady: true, fatalReason: null, admission: () => ({ allowed: true }) }
+      authority: { recoveryReady: true, fatalReason: null, cachedRejection: () => ({ reject: false }) }
     }
   ]
 
@@ -1119,11 +1179,14 @@ test('AutoHeal: proof-fetch budget caps fetches per tick (sampling)', async (t) 
   })
   heal.on('proof-budget-throttled', e => events.push(e))
   heal._running = true
-  await heal._tick()
+  for (let pass = 0; pass < 8; pass++) {
+    if (calls > 0) break
+    await heal._tick()
+  }
 
   t.is(calls, 32, 'capped at maxProofsPerTick')
   t.is(events.length, 1, 'emitted throttle event')
-  t.is(events[0].deferred, 68, '68 deferred to subsequent ticks')
+  t.ok(events[0].deferred >= 1, 'reports bounded deferred work without scanning the tail')
 })
 
 test('AutoHeal: constructor honors all bridge options (config pass-through)', async (t) => {
@@ -1248,10 +1311,155 @@ test('AutoHeal: subsequent ticks pick up deferred peers (eventual coverage)', as
   })
   heal._running = true
 
-  await heal._tick() // 25 fetched
-  t.is(calledFor.size, 25, 'tick 1: 25 fetched')
-  await heal._tick() // remaining ~25 fetched (cached entries skipped within freshness/2)
-  t.ok(calledFor.size >= 50, 'tick 2: ≥50 unique peers covered cumulatively')
-  await heal._tick() // pick up the rest
-  t.is(calledFor.size, 60, 'tick 3: all 60 peers eventually verified')
+  const coverage = []
+  for (let pass = 0; pass < 8; pass++) {
+    if (calledFor.size >= 60) break
+    const before = calledFor.size
+    await heal._tick()
+    coverage.push(calledFor.size)
+    t.ok(calledFor.size - before <= 25, `pass ${pass + 1}: proof launch cap held`)
+  }
+  t.ok(coverage.includes(25), 'first proof page fetched exactly 25')
+  t.ok(coverage.some(size => size >= 50), 'later page covered at least 50 peers cumulatively')
+  t.is(calledFor.size, 60, 'all 60 peers eventually verified')
+})
+
+test('AutoHeal: rejects ambiguous numeric pass and threshold configuration', async (t) => {
+  const node = makeNode()
+  const invalidBudgets = [0, -1, 1.5, NaN, Infinity, '1', 65]
+  for (const field of [
+    'localRefreshBudget',
+    'federationRefreshBudget',
+    'decisionBudget',
+    'proofScanBudget',
+    'maxProofsPerTick',
+    'maxRecruitsPerTick',
+    'maxCapacityChecksPerTick'
+  ]) {
+    for (const value of invalidBudgets) {
+      await t.exception.all(() => new AutoHeal(node, { [field]: value }), /safe integer/, `${field} rejects ${String(value)}`)
+    }
+  }
+  for (const field of ['minReplicas', 'minRegions', 'minOperators']) {
+    await t.exception.all(() => new AutoHeal(node, { thresholds: { [field]: 0 } }), /safe integer/, `${field} rejects zero`)
+  }
+  for (const field of ['replicaBuffer', 'maxPerOperator']) {
+    await t.exception.all(() => new AutoHeal(node, { thresholds: { [field]: -1 } }), /safe integer/, `${field} rejects negative values`)
+  }
+  await t.exception.all(() => new AutoHeal(node, {
+    thresholds: { minReplicas: 262_144, replicaBuffer: 1 }
+  }), /targetReplicas/, 'combined target is bounded')
+  await t.exception.all(() => new AutoHeal(node, {
+    proofFreshnessMs: Number.MAX_SAFE_INTEGER
+  }), /safe integer/, 'proof freshness cannot overflow the verifier window')
+})
+
+test('AutoHeal: bounded pages retain the prior complete snapshot until high-water completion', async (t) => {
+  const localCatalog = Array.from({ length: 100 }, (_, index) => ({
+    appKey: `local-${index}`,
+    durability: 1,
+    anchored: true,
+    maxStorageBytes: STORAGE_BOUND
+  }))
+  const node = makeNode({ localCatalog })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    localRefreshBudget: 8,
+    federationRefreshBudget: 8,
+    decisionBudget: 8,
+    thresholds: { minReplicas: 2, minRegions: 2, minOperators: 2, replicaBuffer: 0 }
+  })
+  heal._running = true
+
+  let sawPartialDecision = false
+  for (let pass = 0; pass < 64; pass++) {
+    const result = await heal._tick()
+    const snapshot = heal.snapshot()
+    if (result.complete === false && heal._phase === 'decision') {
+      sawPartialDecision = true
+      t.is(snapshot.tracked, 0, 'partial decision retains the previous complete aggregate')
+    }
+    if (snapshot.completedAt !== null) break
+  }
+
+  const snapshot = heal.snapshot()
+  t.ok(sawPartialDecision, 'large fleet required more than one bounded decision page')
+  t.is(snapshot.tracked, 100, 'complete high-water publishes the full tracked count')
+  t.is(snapshot.below, 100, 'complete high-water publishes the full below-threshold count')
+  t.is(snapshot.drives.length, 32, 'public detail remains capped independently of aggregate counts')
+  t.ok(node._autoHealPageStats.localMaxExamined <= 8, 'local source never exceeds its page budget')
+  t.ok(node._autoHealPageStats.federationMaxExamined <= 8, 'federation source never exceeds its page budget')
+  await heal.stop()
+})
+
+test('AutoHeal: diversity membership remains exact beyond the public detail cap', async (t) => {
+  const peerCatalogs = Array.from({ length: 65 }, (_, index) => ({
+    pubkey: `peer-${index}`,
+    region: `region-${index}`,
+    operator: `operator-${index}`,
+    apps: [{ appKey: 'wide-drive', durability: 1, anchored: true }]
+  }))
+  const node = makeNode({
+    region: 'region-64',
+    operator: 'operator-64',
+    peerCatalogs
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    verifyProofs: false,
+    random: () => 0,
+    thresholds: { minReplicas: 100, minRegions: 100, minOperators: 100, replicaBuffer: 0 }
+  })
+  heal._running = true
+  for (let pass = 0; pass < 8; pass++) {
+    const result = await heal._tick()
+    if (result.complete) break
+  }
+  t.is(node._seededApps.length, 0, 'relay does not falsely add diversity hidden after the first 64 labels')
+  await heal.stop()
+})
+
+test('AutoHeal: stop fences new decisions, drains proof work, and releases every cursor', async (t) => {
+  let releaseProof
+  let markProofStarted
+  const proofStarted = new Promise(resolve => { markProofStarted = resolve })
+  const proofGate = new Promise(resolve => { releaseProof = resolve })
+  const node = makeNode({
+    peerCatalogs: [{
+      pubkey: 'peer-a',
+      region: 'EU',
+      url: 'https://peer-a.example',
+      apps: [{ appKey: 'stop-drive', durability: 1, anchored: true }]
+    }]
+  })
+  const heal = new AutoHeal(node, {
+    tickMs: 60_000,
+    fetchProof: async () => {
+      markProofStarted()
+      await proofGate
+      return { ok: true, proof: { anchored: true, version: 1, attestedAt: Date.now() } }
+    },
+    thresholds: { minReplicas: 2, minRegions: 2, minOperators: 2, replicaBuffer: 0 }
+  })
+
+  heal.start()
+  heal._scheduler.trigger('test')
+  await proofStarted
+  let stopped = false
+  const stopping = heal.stop().then(() => { stopped = true })
+  await Promise.resolve()
+  t.is(stopped, false, 'stop waits for the in-flight proof page')
+  t.is(node._autoHealPageStats.federationReleases, 0, 'cursor remains owned until the flight drains')
+  releaseProof()
+  await stopping
+
+  t.is(node._seededApps.length, 0, 'no recruit begins after the stop fence')
+  t.is(node._autoHealPageStats.localReleases, 1, 'local cursor released after drain')
+  t.is(node._autoHealPageStats.federationReleases, 1, 'federation cursor released after drain')
+  t.is(heal._fleetPopulation.consumerCount, 0, 'fleet cursors released')
+  t.is(heal._proofCachePopulation.consumerCount, 0, 'proof cache cursor released')
+  for (const population of heal._replicaPopulations.values()) {
+    t.is(population.consumerCount, 0, 'child replica cursors released')
+  }
 })

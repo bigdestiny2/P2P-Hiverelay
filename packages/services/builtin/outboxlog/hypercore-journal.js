@@ -10,6 +10,7 @@
 import { EventEmitter } from 'node:events'
 import Hypercore from 'hypercore'
 import { positiveStorageBound } from 'p2p-hiverelay/config/storage-cap.js'
+import { sharedCoreInfo, sharedOperationFlights } from 'p2p-hiverelay/core/shared-flight-registry.js'
 
 export const OUTBOXLOG_HYPERCORE_JOURNAL_NAME = 'outboxlog/operations'
 export const OUTBOXLOG_HYPERCORE_APPEND_TIMEOUT_MS = 5000
@@ -181,7 +182,10 @@ class JournalStorageController {
     let actual = 0
     for (const core of this.cores) {
       if (!core || typeof core.info !== 'function') throw new Error('OutboxLog exact core storage info unavailable')
-      const info = await core.info({ storage: true })
+      const info = await sharedCoreInfo(core, {
+        owner: this,
+        timeoutMs: OUTBOXLOG_HYPERCORE_APPEND_TIMEOUT_MS
+      })
       if (!info) throw new Error('OutboxLog exact core storage info unavailable')
       if (!info.storage) {
         // corestore 7 / RocksDB-backed storage no longer exposes per-core
@@ -235,6 +239,7 @@ class JournalStorageController {
   }
 
   close () {
+    sharedOperationFlights.invalidateOwner(this, { retire: true })
     if (!this.ownershipHandoff) return false
     const released = this.authority.releaseOwnedHandoff(this.ownershipHandoff)
     this.ownershipHandoff = null

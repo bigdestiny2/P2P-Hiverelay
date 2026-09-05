@@ -86,6 +86,9 @@ p2p-hiverelay seed <64-hex-key> \
 - `POST /registry/publish`
   - required: `appKey`
   - optional: `replicas`, `geo`, `ttlDays`, `maxStorageBytes`, `discoveryKeys[]`, `privacyTier`
+  - `discoveryKeys` is a bounded signed routing-hint list for the one `appKey`
+    drive: at most 64 raw entries, empty or duplicates of that drive's canonical
+    Hypercore discovery key only. It is not a list of extra core public keys.
 - `GET /catalog.json`
   - read-only public catalog for discovery/search
 

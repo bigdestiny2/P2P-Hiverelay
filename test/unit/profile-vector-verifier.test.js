@@ -46,6 +46,7 @@ test('profile vector verifier accepts all checked-in transplant vectors', async 
   t.ok(SUPPORTED_PROFILE_VECTOR_NAMES.includes('relaykernel-http-route-matrix-v1-blindspark-compat'), 'supported vector inventory includes RelayKernel route matrix vector')
   t.ok(names.has('relaykernel-profile-v1-app-module-boundary'), 'fixture set includes RelayKernel app-module boundary vector')
   t.ok(names.has('capability-doc-signature-v1'), 'fixture set includes signed capability-doc conformance vector')
+  t.ok(names.has('accounting-receipt-v2-os-grounded'), 'fixture set includes RC9 accounting evidence')
   t.ok(names.has('relaykernel-http-route-matrix-v1-blindspark-compat'), 'fixture set includes RelayKernel HTTP route matrix vector')
   t.ok(names.has('seed-protocol-binary-v1'), 'fixture set includes seed protocol binary conformance vector')
   t.ok(names.has('seed-protocol-handshake-v1'), 'fixture set includes seed protocol version-negotiation vector')

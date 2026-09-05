@@ -39,8 +39,12 @@ import {
   verifySeedRequestSignatureDetails
 } from './protocol/seed-request.js'
 import { positiveStorageBound } from '../config/storage-cap.js'
+import {
+  MAX_SEED_DISCOVERY_HINTS,
+  validateSeedDiscoveryHints
+} from './protocol/seed-discovery-hints.js'
 
-export const MAX_DISCOVERY_KEYS = 100
+export const MAX_DISCOVERY_KEYS = MAX_SEED_DISCOVERY_HINTS
 export const PUBLISHER_SEED_REPLAY_WINDOW_MS = 60 * 60 * 1000
 export const PUBLISHER_SEED_REPLAY_FUTURE_SKEW_MS = 60 * 1000
 export const PUBLISHER_SEED_REPLAY_CACHE_MAX = 50_000
@@ -241,6 +245,12 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
     return reject('INVALID_SIGNATURE: seed replay envelope must use replay-v1 signature profile', 403)
   }
 
+  // Preserve and verify the publisher-signed order above. Only after the
+  // signature succeeds may the historical field be narrowed to routing hints
+  // for this appKey. Distinct values are not additional core public keys.
+  const hints = validateSeedDiscoveryHints(sigMsg.appKey, discoveryKeys)
+  if (!hints.ok) return reject(hints.reason)
+
   // ── Assemble core seedOpts ──
   const seedOpts = {
     replicas: replicationFactor,
@@ -252,7 +262,8 @@ export function buildPublisherSignedSeedOpts (body, opts = {}) {
     durability,
     publisherPubkey: body.publisherPubkey.toLowerCase(),
     publisherSignature: body.publisherSignature.toLowerCase(),
-    seedSignatureProfile: sigDetails.layout
+    seedSignatureProfile: sigDetails.layout,
+    discoveryKeys: discoveryKeys.map((key) => b4a.toString(key, 'hex'))
   }
   if (replayEnvelope.replay) {
     seedOpts.issuedAt = replayEnvelope.replay.issuedAt

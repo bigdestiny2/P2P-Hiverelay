@@ -36,8 +36,8 @@ import { EventEmitter } from 'events'
 import b4a from 'b4a'
 import Hyperdrive from 'hyperdrive'
 import { raceTimeout } from './storage-accounting.js'
-import { buildDedupReport } from './dedup-report.js'
-import { compareVersions } from '../constants.js'
+import { compareCatalogSemanticVersions } from './app-catalog-paged.js'
+import { CompletionScheduler, strictPositiveInteger } from '../completion-scheduler.js'
 
 const DEFAULTS = {
   enabled: false,
@@ -68,6 +68,10 @@ const DEFAULTS = {
   unseedTimeoutMs: 30_000,
   purgeTimeoutMs: 60_000
 }
+
+const MAX_EVICTION_SCAN_BUDGET = 64
+const MAX_EVICTIONS_PER_PAGE = 64
+const MAX_DEDUP_RECLAIM_BUDGET = 64
 
 const TIMEOUT = Symbol('eviction-timeout')
 
@@ -190,26 +194,65 @@ export class EvictionManager extends EventEmitter {
     this.deps = deps
     this._getStorageCap = typeof deps.getStorageCap === 'function' ? deps.getStorageCap : () => 0
     this.config = { ...DEFAULTS, ...config }
+    this.config.scanBudget = strictPositiveInteger(
+      config.scanBudget ?? MAX_EVICTION_SCAN_BUDGET,
+      'EvictionManager scanBudget',
+      MAX_EVICTION_SCAN_BUDGET
+    )
+    this.config.maxEvictionsPerSweep = strictPositiveInteger(
+      this.config.maxEvictionsPerSweep,
+      'EvictionManager maxEvictionsPerSweep',
+      MAX_EVICTIONS_PER_PAGE
+    )
 
-    this._interval = null
-    this._sweeping = false
+    this._scheduler = null
+    this._sweepFlight = null
+    this._reclaimFlight = null
+    this._stopping = false
+    this._stopPromise = null
     this._evictedTotal = 0
     this._freedBytesTotal = 0
     this._lastSweep = null // { at, scanned, candidates, evicted, freedBytes, skipped }
   }
 
   start () {
-    if (this._interval) return
-    this._interval = setInterval(() => {
-      this.sweep().catch(err => this.emit('error', err))
-    }, this.config.sweepIntervalMs)
-    if (this._interval.unref) this._interval.unref()
+    if (this._scheduler) return
+    if (this._stopping) throw new Error('EvictionManager cannot restart after stop')
+    if (typeof this.deps.appRegistry.page !== 'function') {
+      throw new TypeError('EvictionManager: appRegistry.page is required for bounded eviction')
+    }
+    this._scheduler = new CompletionScheduler({
+      name: 'eviction',
+      intervalMs: strictPositiveInteger(this.config.sweepIntervalMs, 'EvictionManager sweepIntervalMs'),
+      run: async () => {
+        try {
+          return await this.sweep()
+        } catch (err) {
+          this.emit('error', err)
+          throw err
+        }
+      }
+    })
+    // Preserve the old cadence: the first pressure scan occurs after one
+    // interval, and every later page is armed from completion.
+    this._scheduler.start({ immediate: false })
   }
 
   stop () {
-    if (this._interval) {
-      clearInterval(this._interval)
-      this._interval = null
+    if (this._stopPromise) return this._stopPromise
+    this._stopPromise = this._stop()
+    return this._stopPromise
+  }
+
+  async _stop () {
+    this._stopping = true
+    if (this._scheduler) await this._scheduler.stop()
+    this._scheduler = null
+    if (this._sweepFlight) await this._sweepFlight.catch(() => {})
+    if (this._reclaimFlight) await this._reclaimFlight.catch(() => {})
+    if (typeof this.deps.appRegistry.releasePopulationConsumer === 'function') {
+      this.deps.appRegistry.releasePopulationConsumer('eviction')
+      this.deps.appRegistry.releasePopulationConsumer('dedup-reclaim')
     }
   }
 
@@ -230,6 +273,12 @@ export class EvictionManager extends EventEmitter {
     return purgeDriveCores(this.deps.store, appKeyHex, { purgeTimeoutMs: this.config.purgeTimeoutMs })
   }
 
+  _releasePopulationConsumer (name) {
+    if (typeof this.deps.appRegistry.releasePopulationConsumer === 'function') {
+      this.deps.appRegistry.releasePopulationConsumer(name)
+    }
+  }
+
   /**
    * Reclaim disk held by SUPERSEDED app versions — entries whose appId is
    * indexed to a newer appKey, i.e. stale versions the catalog already hides
@@ -244,85 +293,110 @@ export class EvictionManager extends EventEmitter {
    *
    * @param {object} [opts]
    * @param {boolean} [opts.dryRun=true]  report-only (no deletes) by default
-   * @param {number}  [opts.retainVersions=0] keep the N newest superseded versions per appId
-   * @param {number}  [opts.max=Infinity]  cap reclaims this pass
-   * @returns {{dryRun, reclaimed:[], skipped:[], freedBytes, candidates}}
+   * @param {number}  [opts.retainVersions=0] keep the N newest superseded version tiers per publisher/appId
+   * @param {number}  [opts.max=64] cap both source inspection and reclaims this pass
+   * @returns {{dryRun, reclaimed:[], skipped:[], freedBytes, candidates, examined, complete}}
    */
   async reclaimSuperseded (opts = {}) {
-    const dryRun = opts.dryRun !== false
-    const retainVersions = Number.isFinite(opts.retainVersions) ? Math.max(0, opts.retainVersions) : 0
-    const max = Number.isFinite(opts.max) ? opts.max : Infinity
-    const now = Date.now()
+    if (this._stopping) return { dryRun: opts.dryRun !== false, stopped: true, reclaimed: [], skipped: [], freedBytes: 0, candidates: 0, examined: 0, complete: true, unmeasured: 0, note: 'eviction manager is stopped' }
+    if (this._reclaimFlight) return { dryRun: opts.dryRun !== false, skipped: 'reclaim-in-progress', reclaimed: [], freedBytes: 0, candidates: 0, examined: 0, complete: false, unmeasured: 0, note: 'dedup reclaim already in progress' }
+    const flight = this._reclaimPage(opts)
+    this._reclaimFlight = flight
+    try {
+      return await flight
+    } finally {
+      if (this._reclaimFlight === flight) this._reclaimFlight = null
+    }
+  }
 
-    const report = buildDedupReport(this.deps.appRegistry, this.deps.storageAccounting)
+  async _reclaimPage (opts = {}) {
+    if (typeof this.deps.appRegistry.page !== 'function' ||
+        typeof this.deps.appRegistry.catalogWinner !== 'function' ||
+        typeof this.deps.appRegistry.catalogSupersededRank !== 'function') {
+      throw new TypeError('EvictionManager: bounded AppRegistry dedup indexes are required')
+    }
+    const dryRun = opts.dryRun !== false
+    const retainVersions = opts.retainVersions === undefined ? 0 : opts.retainVersions
+    if (!Number.isSafeInteger(retainVersions) || retainVersions < 0 || retainVersions > MAX_DEDUP_RECLAIM_BUDGET) {
+      throw new TypeError(`retainVersions must be a safe integer within 0..${MAX_DEDUP_RECLAIM_BUDGET}`)
+    }
+    const max = strictPositiveInteger(
+      opts.max ?? MAX_DEDUP_RECLAIM_BUDGET,
+      'dedup reclaim max',
+      MAX_DEDUP_RECLAIM_BUDGET
+    )
+    const now = Date.now()
+    const page = this.deps.appRegistry.page('dedup-reclaim', Math.min(max, MAX_DEDUP_RECLAIM_BUDGET))
     const reclaimed = []
     const skipped = []
     let freedBytes = 0
+    let candidates = 0
+    let unmeasured = 0
 
-    for (const group of report.supersededVersions.groups) {
-      const current = this.deps.appRegistry.get(group.current)
-      let candidates = group.superseded
-      if (retainVersions > 0) {
-        // Keep the retainVersions newest superseded versions; reclaim the rest.
-        // Deterministic order: version desc, then born-time desc, then appKey —
-        // so versionless/equal-version ties don't reclaim on iteration order.
-        candidates = [...group.superseded]
-          .map(s => {
-            const e = this.deps.appRegistry.get(s.appKey) || {}
-            return { ...s, version: e.version || '0.0.0', bornAt: e.seededAt || e.startedAt || 0 }
-          })
-          .sort((a, b) => compareVersions(b.version, a.version) || (b.bornAt - a.bornAt) || (a.appKey < b.appKey ? -1 : a.appKey > b.appKey ? 1 : 0))
-          .slice(retainVersions)
+    for (const item of page.entries) {
+      if (this._stopping || reclaimed.length >= max) break
+      const appKey = item.key
+      const entry = item.value
+      if (!entry || entry.type !== 'app' || entry.blind === true ||
+          typeof entry.appId !== 'string' || entry.appId.length === 0 ||
+          typeof entry.publisherPubkey !== 'string') continue
+      const current = this.deps.appRegistry.catalogWinner(entry.appId, entry.publisherPubkey)
+      if (!current || !current.entry || current.appKey === appKey ||
+          compareCatalogSemanticVersions(entry.version ?? null, current.entry.version ?? null) >= 0) continue
+      const rank = this.deps.appRegistry.catalogSupersededRank(entry.appId, entry.publisherPubkey, appKey)
+      if (rank === null) {
+        skipped.push({ appKey, reason: 'supersession-unverified' })
+        continue
       }
-      for (const s of candidates) {
-        if (reclaimed.length >= max) break
-        const entry = this.deps.appRegistry.get(s.appKey)
-        if (!entry) continue
-        // Belt-and-suspenders: re-verify (independently of the report) that this
-        // entry is provably an OLDER version of the SAME publisher's current —
-        // a stale index or appId collision must never delete a live/unrelated
-        // drive. The report already enforces this; this is defense-in-depth
-        // against drift between report-build and now.
-        if (!current ||
-            !entry.publisherPubkey || entry.publisherPubkey !== current.publisherPubkey ||
-            compareVersions(entry.version || '0.0.0', current.version || '0.0.0') >= 0) {
-          skipped.push({ appKey: s.appKey, reason: 'supersession-unverified' })
-          continue
-        }
-        // Never reclaim a sacred entry, even if superseded.
-        try {
-          assertPurgable(entry, now)
-        } catch (err) {
-          skipped.push({ appKey: s.appKey, reason: err.code || 'not-purgable' })
-          continue
-        }
-        if (dryRun) {
-          reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
-          freedBytes += (s.bytes || 0)
-          continue
-        }
-        // Bound a wedged unseed (a disk-full-corrupt core can hang the await
-        // forever) — same guard the sweep uses. Bail BEFORE markEvicted/purge
-        // so the tombstone-before-purge ordering is preserved.
-        const unseeded = await raceTimeout(
-          Promise.resolve().then(() => this.deps.unseed(s.appKey, { evictedAt: now })).then(() => true),
-          this.config.unseedTimeoutMs,
-          TIMEOUT
-        )
-        if (unseeded === TIMEOUT) {
-          skipped.push({ appKey: s.appKey, reason: 'unseed-timeout' })
-          continue
-        }
-        try {
-          await this.deps.appRegistry.markEvicted(s.appKey, now)
-          await this._purgeDrive(s.appKey)
-          reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
-          freedBytes += (s.bytes || 0)
-          this._freedBytesTotal += (s.bytes || 0)
-          this.emit('reclaimed', { appKey: s.appKey, bytes: s.bytes || 0, appId: group.appId, reason: 'superseded' })
-        } catch (err) {
-          skipped.push({ appKey: s.appKey, reason: err.code || err.message })
-        }
+      candidates++
+      const bytes = this.deps.storageAccounting.getBytes(appKey)
+      const measured = Number.isSafeInteger(bytes) && bytes >= 0 ? bytes : null
+      if (measured === null) unmeasured++
+      if (rank < retainVersions) {
+        skipped.push({ appKey, reason: 'retained-version' })
+        continue
+      }
+      // Never reclaim a sacred entry, even if superseded.
+      try {
+        assertPurgable(entry, now)
+      } catch (err) {
+        skipped.push({ appKey, reason: err.code || 'not-purgable' })
+        continue
+      }
+      if (dryRun) {
+        reclaimed.push({ appKey, bytes: measured, appId: entry.appId })
+        freedBytes += measured || 0
+        continue
+      }
+      // Re-read the exact publisher-scoped winner immediately before the
+      // destructive boundary. An unrelated appId collision or equal-version
+      // tie can never become deletion authority.
+      const verified = this.deps.appRegistry.catalogWinner(entry.appId, entry.publisherPubkey)
+      if (!verified || !verified.entry || verified.appKey === appKey ||
+          compareCatalogSemanticVersions(entry.version ?? null, verified.entry.version ?? null) >= 0) {
+        skipped.push({ appKey, reason: 'supersession-unverified' })
+        continue
+      }
+      // Bound a wedged unseed and bail before tombstone/purge so the durable
+      // ordering remains unseed -> markEvicted -> purge.
+      const unseeded = await raceTimeout(
+        Promise.resolve().then(() => this.deps.unseed(appKey, { evictedAt: now })).then(() => true),
+        this.config.unseedTimeoutMs,
+        TIMEOUT
+      )
+      if (unseeded === TIMEOUT) {
+        skipped.push({ appKey, reason: 'unseed-timeout' })
+        continue
+      }
+      try {
+        await this.deps.appRegistry.markEvicted(appKey, now)
+        await this._purgeDrive(appKey)
+        reclaimed.push({ appKey, bytes: measured, appId: entry.appId })
+        freedBytes += measured || 0
+        this._freedBytesTotal += measured || 0
+        this.emit('reclaimed', { appKey, bytes: measured || 0, appId: entry.appId, reason: 'superseded' })
+      } catch (err) {
+        skipped.push({ appKey, reason: err.code || err.message })
       }
     }
 
@@ -331,10 +405,15 @@ export class EvictionManager extends EventEmitter {
       reclaimed,
       skipped,
       freedBytes,
-      candidates: report.supersededVersions.count,
-      unmeasured: report.supersededVersions.unmeasured,
-      note: report.note
+      candidates,
+      examined: page.examined,
+      complete: page.complete,
+      unmeasured,
+      note: unmeasured > 0
+        ? `${unmeasured} superseded entr${unmeasured === 1 ? 'y' : 'ies'} not yet measured — freedBytes is a lower bound`
+        : 'all examined superseded entries measured'
     }
+    if (page.complete) this._releasePopulationConsumer('dedup-reclaim')
     this.emit('reclaim-sweep', result)
     return result
   }
@@ -344,160 +423,186 @@ export class EvictionManager extends EventEmitter {
    * the same pressure gate unless { force: true }.
    */
   async sweep (opts = {}) {
-    if (this._sweeping) return { skipped: 'sweep-in-progress' }
-    this._sweeping = true
+    if (this._stopping) return { skipped: 'stopped', complete: true, examined: 0 }
+    if (this._sweepFlight) return { skipped: 'sweep-in-progress', complete: false, examined: 0 }
+    const flight = this._sweepPage(opts)
+    this._sweepFlight = flight
     try {
-      const now = opts.now || Date.now()
-      const disk = this.deps.diskMonitor.getInfo()
-      if (!disk || !Number.isFinite(disk.usedPct)) {
-        return this._finish({ at: now, skipped: 'no-disk-signal', scanned: 0, candidates: 0, evicted: [], freedBytes: 0 })
+      return await flight
+    } finally {
+      if (this._sweepFlight === flight) this._sweepFlight = null
+    }
+  }
+
+  async _sweepPage (opts = {}) {
+    if (typeof this.deps.appRegistry.page !== 'function') {
+      throw new TypeError('EvictionManager: appRegistry.page is required for bounded eviction')
+    }
+    const now = opts.now || Date.now()
+    const disk = this.deps.diskMonitor.getInfo()
+    if (!disk || !Number.isFinite(disk.usedPct)) {
+      this._releasePopulationConsumer('eviction')
+      return this._finish({ at: now, skipped: 'no-disk-signal', scanned: 0, examined: 0, complete: true, candidates: 0, evicted: [], freedBytes: 0 })
+    }
+    // Over the operator-DESIGNATED cap? Then shed regardless of whole-disk
+    // pressure — this is what makes "designate N GB and shrink to fit" work
+    // on a box whose physical disk is nowhere near full. Cap 0 = unlimited.
+    const cap = Number(this._getStorageCap()) || 0
+    const usedBytes = this._measuredUsedBytes()
+    const overCap = cap > 0 && usedBytes > cap
+    if (!opts.force && !overCap && disk.usedPct < this.config.diskPressurePct) {
+      this._releasePopulationConsumer('eviction')
+      return this._finish({ at: now, skipped: 'below-pressure', usedPct: disk.usedPct, scanned: 0, examined: 0, complete: true, candidates: 0, evicted: [], freedBytes: 0 })
+    }
+
+    const health = this.deps.getReplicationHealth() || new Map()
+    const my = this.deps.myPubkeyHex
+    const candidates = []
+    const page = this.deps.appRegistry.page('eviction', this.config.scanBudget)
+    const scanned = page.examined
+    // Skip-reason counters — without these, "candidates: 0" on a full
+    // disk is undiagnosable from the outside (learned on the utah
+    // canary, 2026-06-11).
+    const skips = { archive: 0, custody: 0, lease: 0, young: 0, noBirth: 0, noCensus: 0, floor: 0, rank: 0, registryError: 0 }
+
+    for (const item of page.entries) {
+      if (this._stopping) break
+      const appKey = item.key
+      const entry = item.value
+      if (!entry) continue
+      if ((entry.durability || 0) >= 1) { skips.archive++; continue } // archive / operator pin
+      if (entry.custodyIntentId) { skips.custody++; continue } // custody contract
+      // Paid pin-lease — sacred until its window lapses (don't take payment
+      // then shed early). After expiry the custody-expiry sweep unseeds it.
+      if (entry.leaseManaged === true && Number.isFinite(entry.retainUntil) && entry.retainUntil > now) { skips.lease++; continue }
+      const bornAt = entry.addedAt || entry.startedAt || entry.seededAt || entry.firstSeenAt || 0
+      if (!bornAt) { skips.noBirth++; continue }
+      if (now - bornAt < this.config.minAgeMs) { skips.young++; continue }
+
+      let relays
+      try {
+        relays = await raceTimeout(
+          Promise.resolve(this.deps.seedingRegistry.getRelaysForApp(appKey)),
+          this.config.registryTimeoutMs,
+          TIMEOUT
+        )
+        if (relays === TIMEOUT) { skips.registryError++; continue }
+      } catch {
+        skips.registryError++
+        continue
       }
-      // Over the operator-DESIGNATED cap? Then shed regardless of whole-disk
-      // pressure — this is what makes "designate N GB and shrink to fit" work
-      // on a box whose physical disk is nowhere near full. Cap 0 = unlimited.
-      const cap = Number(this._getStorageCap()) || 0
-      const usedBytes = this._measuredUsedBytes()
-      const overCap = cap > 0 && usedBytes > cap
-      if (!opts.force && !overCap && disk.usedPct < this.config.diskPressurePct) {
-        return this._finish({ at: now, skipped: 'below-pressure', usedPct: disk.usedPct, scanned: 0, candidates: 0, evicted: [], freedBytes: 0 })
+      const holders = (relays || []).map(r => r.relayPubkey).filter(Boolean)
+
+      // Census: the replication-health row when present (it knows the
+      // per-request replicationFactor), else fall back to the registry
+      // acceptance list with target = the configured replica floor.
+      // The health map computes `current` from the SAME acceptance
+      // records (getRelaysForApp), so the fallback is exactly as
+      // trustworthy — it only lacks a per-request target. Without
+      // this, boot-replayed entries with no active request (417 of
+      // utah's 961 on the 2026-06-11 canary) are permanently
+      // un-evictable. Entries with NO acceptance records at all stay
+      // untouchable — never evict blind.
+      let h = health.get(appKey)
+      if (!h || !Number.isFinite(h.current) || !Number.isFinite(h.target)) {
+        if (!holders.length) { skips.noCensus++; continue }
+        h = { current: holders.length, target: Math.max(1, this.config.targetFloor) }
+        skips.censusFallback = (skips.censusFallback || 0) + 1 // informational: counted AND still considered
+      }
+      const weAreCounted = holders.includes(my)
+      // Replicas remaining if we leave. When the census doesn't count
+      // us, leaving changes nothing — but then our copy is also not
+      // load-bearing for the floor, so the same threshold applies.
+      const remaining = weAreCounted ? h.current - 1 : h.current
+      if (remaining < h.target + this.config.floorMargin) { skips.floor++; continue }
+
+      // Deterministic stagger: only the K farthest holders may shed
+      // this entry, K = how many copies the network can spare. Skipped
+      // above rankBypassPct — politeness must not starve a critical
+      // box when the farther holders are unpressured and will never
+      // act (floor + margin remain the real safety). Also skipped when
+      // we are over the operator's DESIGNATED cap: the operator asked us
+      // to shrink to N bytes, so rank-politeness must not block it (floor
+      // + margin still protect the network).
+      const surplus = remaining - (h.target + this.config.floorMargin) + 1
+      if (!overCap && disk.usedPct < this.config.rankBypassPct && weAreCounted && holders.length > 1) {
+        const ranked = holders
+          .map(pk => ({ pk, d: xorDistance(pk, appKey) }))
+          .sort((a, b) => compareBuffers(b.d, a.d)) // farthest first
+        const ourRank = ranked.findIndex(r => r.pk === my)
+        if (ourRank === -1 || ourRank >= surplus) { skips.rank++; continue }
       }
 
-      const health = this.deps.getReplicationHealth() || new Map()
-      const my = this.deps.myPubkeyHex
-      const candidates = []
-      let scanned = 0
-      // Skip-reason counters — without these, "candidates: 0" on a full
-      // disk is undiagnosable from the outside (learned on the utah
-      // canary, 2026-06-11).
-      const skips = { archive: 0, custody: 0, lease: 0, young: 0, noBirth: 0, noCensus: 0, floor: 0, rank: 0, registryError: 0 }
+      let bytes = this.deps.storageAccounting.getBytes(appKey)
+      if (bytes == null) {
+        bytes = await raceTimeout(
+          Promise.resolve().then(() => this.deps.storageAccounting.measure(appKey)),
+          this.config.measureTimeoutMs,
+          0
+        )
+      }
+      candidates.push({ appKey, bytes: bytes || 0, remaining, target: h.target })
+    }
 
-      for (const [appKey, entry] of this.deps.appRegistry.entries()) {
-        scanned++
-        if (!entry) continue
-        if ((entry.durability || 0) >= 1) { skips.archive++; continue } // archive / operator pin
-        if (entry.custodyIntentId) { skips.custody++; continue } // custody contract
-        // Paid pin-lease — sacred until its window lapses (don't take payment
-        // then shed early). After expiry the custody-expiry sweep unseeds it.
-        if (entry.leaseManaged === true && Number.isFinite(entry.retainUntil) && entry.retainUntil > now) { skips.lease++; continue }
-        const bornAt = entry.addedAt || entry.startedAt || entry.seededAt || entry.firstSeenAt || 0
-        if (!bornAt) { skips.noBirth++; continue }
-        if (now - bornAt < this.config.minAgeMs) { skips.young++; continue }
+    // Biggest first — free the most disk with the fewest contract exits.
+    candidates.sort((a, b) => b.bytes - a.bytes)
 
-        let relays
-        try {
-          relays = await raceTimeout(
-            Promise.resolve(this.deps.seedingRegistry.getRelaysForApp(appKey)),
-            this.config.registryTimeoutMs,
-            TIMEOUT
-          )
-          if (relays === TIMEOUT) { skips.registryError++; continue }
-        } catch {
-          skips.registryError++
+    const evicted = []
+    let freedBytes = 0
+    const volTotal = disk.totalBytes || null
+    for (const cand of candidates) {
+      if (this._stopping) break
+      if (evicted.length >= this.config.maxEvictionsPerSweep) break
+      // Keep shedding while EITHER reason to sweep still holds: we're still
+      // over the operator-designated cap, OR the physical disk is still
+      // pressured. Stop once both are satisfied. (Pre-cap behaviour — stop at
+      // resumePct — is preserved when no cap is set.)
+      const stillOverCap = cap > 0 && (usedBytes - freedBytes) > cap
+      const stillPressured = volTotal ? (disk.usedPct - (freedBytes / volTotal) * 100) > this.config.resumePct : true
+      if (!stillOverCap && !stillPressured) break
+      try {
+        const unseeded = await raceTimeout(
+          Promise.resolve().then(() => this.deps.unseed(cand.appKey, { evictedAt: now })).then(() => true),
+          this.config.unseedTimeoutMs,
+          TIMEOUT
+        )
+        if (unseeded === TIMEOUT) {
+          this.emit('evict-failed', { appKey: cand.appKey, error: 'unseed timeout' })
           continue
         }
-        const holders = (relays || []).map(r => r.relayPubkey).filter(Boolean)
-
-        // Census: the replication-health row when present (it knows the
-        // per-request replicationFactor), else fall back to the registry
-        // acceptance list with target = the configured replica floor.
-        // The health map computes `current` from the SAME acceptance
-        // records (getRelaysForApp), so the fallback is exactly as
-        // trustworthy — it only lacks a per-request target. Without
-        // this, boot-replayed entries with no active request (417 of
-        // utah's 961 on the 2026-06-11 canary) are permanently
-        // un-evictable. Entries with NO acceptance records at all stay
-        // untouchable — never evict blind.
-        let h = health.get(appKey)
-        if (!h || !Number.isFinite(h.current) || !Number.isFinite(h.target)) {
-          if (!holders.length) { skips.noCensus++; continue }
-          h = { current: holders.length, target: Math.max(1, this.config.targetFloor) }
-          skips.censusFallback = (skips.censusFallback || 0) + 1 // informational: counted AND still considered
-        }
-        const weAreCounted = holders.includes(my)
-        // Replicas remaining if we leave. When the census doesn't count
-        // us, leaving changes nothing — but then our copy is also not
-        // load-bearing for the floor, so the same threshold applies.
-        const remaining = weAreCounted ? h.current - 1 : h.current
-        if (remaining < h.target + this.config.floorMargin) { skips.floor++; continue }
-
-        // Deterministic stagger: only the K farthest holders may shed
-        // this entry, K = how many copies the network can spare. Skipped
-        // above rankBypassPct — politeness must not starve a critical
-        // box when the farther holders are unpressured and will never
-        // act (floor + margin remain the real safety). Also skipped when
-        // we are over the operator's DESIGNATED cap: the operator asked us
-        // to shrink to N bytes, so rank-politeness must not block it (floor
-        // + margin still protect the network).
-        const surplus = remaining - (h.target + this.config.floorMargin) + 1
-        if (!overCap && disk.usedPct < this.config.rankBypassPct && weAreCounted && holders.length > 1) {
-          const ranked = holders
-            .map(pk => ({ pk, d: xorDistance(pk, appKey) }))
-            .sort((a, b) => compareBuffers(b.d, a.d)) // farthest first
-          const ourRank = ranked.findIndex(r => r.pk === my)
-          if (ourRank === -1 || ourRank >= surplus) { skips.rank++; continue }
-        }
-
-        let bytes = this.deps.storageAccounting.getBytes(appKey)
-        if (bytes == null) {
-          bytes = await raceTimeout(
-            Promise.resolve().then(() => this.deps.storageAccounting.measure(appKey)),
-            this.config.measureTimeoutMs,
-            0
-          )
-        }
-        candidates.push({ appKey, bytes: bytes || 0, remaining, target: h.target })
+        // Tombstone as soon as the registry entry is gone — even if the
+        // purge below fails (corrupt core), repair must not re-adopt a
+        // drive we just established the network holds in surplus.
+        await this.deps.appRegistry.markEvicted(cand.appKey, now)
+        await this._purgeDrive(cand.appKey)
+        freedBytes += cand.bytes
+        this._evictedTotal++
+        this._freedBytesTotal += cand.bytes
+        evicted.push(cand.appKey)
+        this.emit('evicted', {
+          appKey: cand.appKey,
+          bytes: cand.bytes,
+          remainingReplicas: cand.remaining,
+          target: cand.target,
+          usedPct: disk.usedPct
+        })
+      } catch (err) {
+        this.emit('evict-failed', { appKey: cand.appKey, error: err.code || err.message })
       }
-
-      // Biggest first — free the most disk with the fewest contract exits.
-      candidates.sort((a, b) => b.bytes - a.bytes)
-
-      const evicted = []
-      let freedBytes = 0
-      const volTotal = disk.totalBytes || null
-      for (const cand of candidates) {
-        if (evicted.length >= this.config.maxEvictionsPerSweep) break
-        // Keep shedding while EITHER reason to sweep still holds: we're still
-        // over the operator-designated cap, OR the physical disk is still
-        // pressured. Stop once both are satisfied. (Pre-cap behaviour — stop at
-        // resumePct — is preserved when no cap is set.)
-        const stillOverCap = cap > 0 && (usedBytes - freedBytes) > cap
-        const stillPressured = volTotal ? (disk.usedPct - (freedBytes / volTotal) * 100) > this.config.resumePct : true
-        if (!stillOverCap && !stillPressured) break
-        try {
-          const unseeded = await raceTimeout(
-            Promise.resolve().then(() => this.deps.unseed(cand.appKey, { evictedAt: now })).then(() => true),
-            this.config.unseedTimeoutMs,
-            TIMEOUT
-          )
-          if (unseeded === TIMEOUT) {
-            this.emit('evict-failed', { appKey: cand.appKey, error: 'unseed timeout' })
-            continue
-          }
-          // Tombstone as soon as the registry entry is gone — even if the
-          // purge below fails (corrupt core), repair must not re-adopt a
-          // drive we just established the network holds in surplus.
-          await this.deps.appRegistry.markEvicted(cand.appKey, now)
-          await this._purgeDrive(cand.appKey)
-          freedBytes += cand.bytes
-          this._evictedTotal++
-          this._freedBytesTotal += cand.bytes
-          evicted.push(cand.appKey)
-          this.emit('evicted', {
-            appKey: cand.appKey,
-            bytes: cand.bytes,
-            remainingReplicas: cand.remaining,
-            target: cand.target,
-            usedPct: disk.usedPct
-          })
-        } catch (err) {
-          this.emit('evict-failed', { appKey: cand.appKey, error: err.code || err.message })
-        }
-      }
-
-      return this._finish({ at: now, usedPct: disk.usedPct, scanned, candidates: candidates.length, skips, evicted, freedBytes })
-    } finally {
-      this._sweeping = false
     }
+
+    return this._finish({
+      at: now,
+      usedPct: disk.usedPct,
+      scanned,
+      examined: page.examined,
+      complete: page.complete,
+      completedHighWater: page.completedHighWater,
+      candidates: candidates.length,
+      skips,
+      evicted,
+      freedBytes
+    })
   }
 
   _finish (summary) {
@@ -511,7 +616,8 @@ export class EvictionManager extends EventEmitter {
       enabled: true,
       evictedTotal: this._evictedTotal,
       freedBytesTotal: this._freedBytesTotal,
-      lastSweep: this._lastSweep
+      lastSweep: this._lastSweep,
+      scheduler: this._scheduler?.snapshot() || null
     }
   }
 }

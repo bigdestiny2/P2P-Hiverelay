@@ -28,6 +28,7 @@ import { readFile, writeFile, mkdir, rename, unlink } from 'fs/promises'
 import { dirname, basename, join } from 'path'
 import { verifyForkProof, verifyForkEvidence } from './fork-proof-signing.js'
 import { positiveStorageBound } from '../config/storage-cap.js'
+import { GenerationPopulation } from './generation-population.js'
 
 const DEFAULT_FOLLOW_INTERVAL = 5 * 60 * 1000 // 5 minutes
 const FETCH_TIMEOUT = 10_000
@@ -175,6 +176,12 @@ export class Federation extends EventEmitter {
     // Updated on every successful _pollOne; never grows beyond the
     // followed set's cardinality.
     this._peerCatalogs = new Map()
+    this._peerCatalogVersions = new Map()
+    this._peerCatalogRevision = 0
+    this._peerCatalogPopulation = new GenerationPopulation({
+      name: 'federation-peer-catalogs',
+      allowedConsumers: ['auto-heal']
+    })
   }
 
   /**
@@ -357,6 +364,10 @@ export class Federation extends EventEmitter {
     const removedFollow = this.followed.delete(url)
     const mirrorEntry = this.mirrored.get(url)
     const removedMirror = this.mirrored.delete(url)
+    if (this._peerCatalogs.delete(url)) {
+      this._peerCatalogVersions.delete(url)
+      this._peerCatalogPopulation.delete(url)
+    }
     if (mirrorEntry?.pubkey) this._mirroredPubkeys.delete(mirrorEntry.pubkey)
     if (removedFollow || removedMirror) {
       this.emit('unfollowed', { url })
@@ -412,6 +423,101 @@ export class Federation extends EventEmitter {
     }
   }
 
+  get peerCatalogCount () { return this._peerCatalogs.size }
+
+  /**
+   * Return a bounded peer/app work page without materializing the peer set or
+   * retaining a live Map iterator across caller awaits. Selecting a peer and
+   * inspecting each app both consume the finite budget.
+   */
+  getAutoHealPage (state = null, budget = 64) {
+    if (!Number.isSafeInteger(budget) || budget < 1 || budget > 64) {
+      throw new RangeError('federation auto-heal budget must be a safe integer in [1,64]')
+    }
+    if (!this._peerCatalogPopulation.isRegistered('auto-heal')) {
+      this._peerCatalogPopulation.register('auto-heal')
+    }
+    let active = state && typeof state === 'object' ? state.active || null : null
+    let remaining = budget
+    let complete = false
+    let completedHighWater = null
+    const entries = []
+
+    while (remaining > 0 && !complete) {
+      if (!active) {
+        const peers = this._peerCatalogPopulation.page(
+          'auto-heal',
+          1,
+          url => this._peerCatalogs.get(url)
+        )
+        remaining -= peers.examined
+        const item = peers.entries[0]
+        if (!item) {
+          if (peers.complete) {
+            complete = true
+            completedHighWater = peers.completedHighWater
+          }
+          continue
+        }
+        active = {
+          url: item.key,
+          version: this._peerCatalogVersions.get(item.key),
+          index: 0,
+          outerComplete: peers.complete,
+          completedHighWater: peers.complete ? peers.completedHighWater : null
+        }
+        if (remaining === 0) break
+      }
+
+      const peer = this._peerCatalogs.get(active.url)
+      const currentVersion = this._peerCatalogVersions.get(active.url)
+      if (!peer || currentVersion !== active.version || !Array.isArray(peer.apps)) {
+        const wasComplete = active.outerComplete
+        const highWater = active.completedHighWater
+        active = null
+        if (wasComplete) {
+          complete = true
+          completedHighWater = highWater
+        }
+        continue
+      }
+      if (active.index >= peer.apps.length) {
+        const wasComplete = active.outerComplete
+        const highWater = active.completedHighWater
+        active = null
+        if (wasComplete) {
+          complete = true
+          completedHighWater = highWater
+        }
+        continue
+      }
+
+      entries.push({ peer, app: peer.apps[active.index++] })
+      remaining--
+      if (active.index >= peer.apps.length) {
+        const wasComplete = active.outerComplete
+        const highWater = active.completedHighWater
+        active = null
+        if (wasComplete) {
+          complete = true
+          completedHighWater = highWater
+        }
+      }
+    }
+
+    return {
+      entries,
+      examined: budget - remaining,
+      complete,
+      completedHighWater,
+      state: complete ? null : { active }
+    }
+  }
+
+  releaseAutoHealCursor () {
+    return this._peerCatalogPopulation.unregister('auto-heal')
+  }
+
   // ─── Polling followed catalogs ──────────────────────────────────────
 
   _scheduleNextPoll () {
@@ -443,6 +549,13 @@ export class Federation extends EventEmitter {
     // Cache the peer catalog so AutoHeal and the dashboard can read who's
     // seeding what without re-fetching. Stored as the latest snapshot;
     // updated on every successful poll.
+    if (this._peerCatalogRevision >= Number.MAX_SAFE_INTEGER) {
+      const err = new Error('federation peer catalog revision exhausted; operator rebuild required')
+      err.code = 'FEDERATION_CATALOG_REVISION_EXHAUSTED'
+      throw err
+    }
+    if (!this._peerCatalogs.has(entry.url)) this._peerCatalogPopulation.insert(entry.url)
+    this._peerCatalogVersions.set(entry.url, ++this._peerCatalogRevision)
     this._peerCatalogs.set(entry.url, {
       url: entry.url,
       pubkey: entry.pubkey || data.pubkey || null,

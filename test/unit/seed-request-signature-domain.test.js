@@ -13,6 +13,7 @@ import {
   verifySeedRequestSignatureDetails
 } from 'p2p-hiverelay/core/protocol/seed-request.js'
 import { buildPublisherSignedSeedOpts } from 'p2p-hiverelay/core/seed-request-builder.js'
+import { canonicalSeedDiscoveryHint } from 'p2p-hiverelay/core/protocol/seed-discovery-hints.js'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 function keyPair () {
@@ -157,7 +158,8 @@ test('seed request signature: replay envelope rejects legacy signature', (t) => 
 
 test('seed request builder accepts domain-separated publisher signatures', (t) => {
   const kp = keyPair()
-  const msg = baseMessage(kp)
+  const appKey = b4a.alloc(32, 0x42)
+  const msg = baseMessage(kp, { appKey, discoveryKeys: [canonicalSeedDiscoveryHint(appKey)] })
   signInto(msg, serializeSeedRequestForDomainSigning(msg), kp)
 
   const body = bodyFromMessage(msg)

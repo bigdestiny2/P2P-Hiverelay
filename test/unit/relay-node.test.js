@@ -36,6 +36,56 @@ function permitFixtureStorageRelease (node) {
   node.appRegistry.setStorageAdmission(null, { requirePhysicalEnforcement: false })
 }
 
+function completeRequestPage (entries) {
+  return {
+    entries,
+    examined: entries.length,
+    gcExamined: 0,
+    reclaimed: 0,
+    complete: true,
+    completedHighWater: entries.length,
+    nextHighWater: entries.length,
+    cyclesCompleted: 1
+  }
+}
+
+function insertAppFixture (node, appKey, entry) {
+  node.appRegistry._appPopulation.insert(appKey)
+  node.appRegistry.apps.set(appKey, entry)
+}
+
+function custodyWitnessRegistryFixture ({ intent, proofs = [], witnesses = [], sourceRetirement = null, record }) {
+  return {
+    getCustodyIntent: (id) => id === intent.intentId ? intent : null,
+    getCustodyIntentPage: () => ({
+      entries: [{ key: intent.intentId, value: intent, generation: 1 }],
+      examined: 1,
+      complete: true,
+      completedHighWater: 1
+    }),
+    getCustodyWitnessWork: (intentId, { witnessPubkey, cursor = 0, budget }) => {
+      const end = Math.min(proofs.length, cursor + budget)
+      const already = new Set(witnesses
+        .filter(witness => witness.witnessPubkey === witnessPubkey)
+        .map(witness => witness.relayPubkey))
+      const candidates = proofs.slice(cursor, end)
+        .filter(proof => proof.relayPubkey !== witnessPubkey && !already.has(proof.relayPubkey))
+      return {
+        intent: intentId === intent.intentId ? intent : null,
+        sourceRetirement,
+        candidates,
+        examined: end - cursor,
+        complete: end >= proofs.length,
+        nextCursor: end >= proofs.length ? 0 : end
+      }
+    },
+    recordCustodyExpiryWitness: async (witness) => {
+      if (record) return record(witness)
+      return witness
+    }
+  }
+}
+
 test('RelayNode - concurrent start callers share one exact completion authority', async (t) => {
   const gate = deferred()
   const node = Object.create(RelayNode.prototype)
@@ -90,6 +140,52 @@ test('RelayNode - defaults custody to blind mode', (t) => {
   t.is(node.config.custody.requireEncryptedPayload, true, 'custody requires encrypted payloads')
   t.is(node.config.custody.metadataVisibility, 'redacted', 'blind custody redacts metadata by default')
   t.is(node.config.custody.proofTarget, 'ciphertext', 'proofs target ciphertext')
+})
+
+test('RelayNode - AutoHeal population budgets are finite, strict and deep-merged', async (t) => {
+  const node = new RelayNode({
+    storage: tmpStorage(),
+    enableAPI: false,
+    autoHeal: { enabled: true, decisionBudget: 7 }
+  })
+
+  t.is(node.config.autoHeal.enabled, true, 'enablement remains separate from the pass budgets')
+  t.is(node.config.autoHeal.localRefreshBudget, 64, 'local refresh retains its finite default')
+  t.is(node.config.autoHeal.federationRefreshBudget, 64, 'federation refresh retains its finite default')
+  t.is(node.config.autoHeal.decisionBudget, 7, 'operator decision budget survives the nested merge')
+  t.is(node.config.autoHeal.proofScanBudget, 64, 'proof scan retains its finite default')
+
+  for (const field of ['localRefreshBudget', 'federationRefreshBudget', 'decisionBudget', 'proofScanBudget']) {
+    for (const value of [0, -1, 1.5, NaN, Infinity, '1', 65]) {
+      await t.exception.all(
+        () => new RelayNode({ storage: tmpStorage(), enableAPI: false, autoHeal: { enabled: false, [field]: value } }),
+        /safe integer/,
+        `${field} rejects ${String(value)} while the feature is disabled`
+      )
+    }
+  }
+  await t.exception.all(
+    () => new RelayNode({ storage: tmpStorage(), enableAPI: false, autoHeal: 'enabled' }),
+    /autoHeal must be an object/
+  )
+})
+
+test('RelayNode - appCatalogPaged is a strict plain object with finite hard bounds', async (t) => {
+  for (const value of ['enabled', [], new Date(), 1]) {
+    await t.exception.all(
+      () => new RelayNode({ storage: tmpStorage(), enableAPI: false, appCatalogPaged: value }),
+      /appCatalogPaged must be a plain object/
+    )
+  }
+  await t.exception.all(
+    () => new RelayNode({ storage: tmpStorage(), enableAPI: false, appCatalogPaged: { actionLimit: 11 } }),
+    /safe integer/
+  )
+  const section = Object.create(null)
+  section.sourceBudget = 7
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, appCatalogPaged: section })
+  t.is(node.config.appCatalogPaged.sourceBudget, 7)
+  t.is(node.config.appCatalogPaged.actionLimit, 10)
 })
 
 test('RelayNode - validates public Hive gateway isolation before initialization', async (t) => {
@@ -504,6 +600,92 @@ test('RelayNode - _onConnection assigns relay-admin service role from allowlist'
   t.is(assigned[0].role, 'relay-admin', 'allowlisted peer promoted to relay-admin')
 })
 
+test('RelayNode - Core-only ingress already owns paged and legacy catalog channels', (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, enableServices: false })
+  const remotePub = randomBytes(32)
+  const remoteHex = remotePub.toString('hex')
+  const attached = []
+  node.appCatalogController = {
+    stopped: false,
+    attach (_conn, key) { attached.push(['paged', Buffer.from(key).toString('hex')]) },
+    scheduleLegacyFallback () { return true },
+    cancelLegacyFallback () {},
+    legacyEnvelope () { return { envelope: {}, reason: null } }
+  }
+  const protocol = node._startCoreServiceProtocol()
+  t.is(node.serviceRegistry.services.size, 0, 'Core-only registry is bounded and empty')
+  protocol.attach = (_conn, key) => { attached.push(['legacy', key]) }
+  node.store = { replicate () {} }
+  node._openStorageIngress()
+
+  const conn = new EventEmitter()
+  conn.remotePublicKey = remotePub
+  conn.destroy = () => {}
+  node._onConnection(conn, { publicKey: randomBytes(32) })
+  t.alike(attached, [['paged', remoteHex], ['legacy', remoteHex]])
+})
+
+test('RelayNode - synchronous stop fence rejects a queued legacy frame and shared catalog action', (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false, enableSeeding: true })
+  let verified = 0
+  let dispatched = 0
+  node._verifyCatalogEnvelope = () => { verified++; return true }
+  const apply = node._applyCatalogActions.bind(node)
+  node._applyCatalogActions = input => { dispatched++; return apply(input) }
+  const protocol = node._startCoreServiceProtocol()
+
+  node._storageIngressReady = false
+  node._stopRequested = true
+  protocol.emit('app-catalog', {
+    apps: [{ appKey: 'a'.repeat(64), maxStorageBytes: 1 }],
+    remotePubkey: 'b'.repeat(64),
+    relayPubkey: 'b'.repeat(64),
+    catalogTimestamp: Date.now(),
+    signature: 'c'.repeat(128)
+  })
+
+  t.is(verified, 0, 'decoded type-7 work is rejected before signature or throttle state')
+  t.is(dispatched, 0, 'queued legacy work never reaches the action scheduler')
+  t.alike(apply({
+    apps: [{ appKey: 'a'.repeat(64), maxStorageBytes: 1 }],
+    peerKey: 'b'.repeat(64)
+  }), { acted: 0, stop: true }, 'shared paged/legacy action path is fenced too')
+})
+
+test('RelayNode - shutdown retires seeded apps through finite registry pages', async (t) => {
+  const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
+  t.teardown(async () => { try { await node.store.close() } catch (_) {} })
+  for (let i = 0; i < 130; i++) {
+    insertAppFixture(node, i.toString(16).padStart(64, '0'), {})
+  }
+  const page = node.appRegistry.page.bind(node.appRegistry)
+  let pageCalls = 0
+  let largestPage = 0
+  let largestBudget = 0
+  node.appRegistry.page = (consumer, budget) => {
+    const result = page(consumer, budget)
+    pageCalls++
+    largestPage = Math.max(largestPage, result.entries.length)
+    largestBudget = Math.max(largestBudget, budget)
+    return result
+  }
+  let unseeded = 0
+  let allForgetFalse = true
+  node.unseedApp = async (_appKey, opts) => {
+    if (opts.forget !== false) allForgetFalse = false
+    unseeded++
+  }
+
+  await node._drainSeededAppsForShutdown(1_000)
+  t.ok(allForgetFalse, 'shutdown preserves every durable registry row')
+  t.is(unseeded, 130, 'each frozen high-water member is retired once')
+  t.is(largestBudget, 64, 'shutdown never widens the page budget')
+  t.is(largestPage, 64, 'no shutdown page materializes more than the bound')
+  t.is(pageCalls, 3, 'the 130-member high-water advances in three finite pages')
+  t.is(node.appRegistry._appPopulation.isRegistered('node-shutdown'), false,
+    'shutdown releases its population cursor after settlement')
+})
+
 test('RelayNode - emits started event with publicKey', async (t) => {
   t.plan(1)
   const node = new RelayNode({ storage: tmpStorage(), enableAPI: false })
@@ -543,17 +725,17 @@ test('RelayNode - replication health monitor attempts local repair', async (t) =
   node.config.registryAutoAccept = true
   node.config.replicationRepairEnabled = true
   node.config.targetReplicaFloor = 2
-  node._storageAdmission = () => ({ allowed: true, availableBytes: STORAGE_BOUND })
+  node._cachedStorageRejection = () => ({ reject: false, exactRequired: true })
 
   node.seedingRegistry = {
-    async getActiveRequests () {
-      return [{
+    getActiveRequestsPage () {
+      return completeRequestPage([{
         appKey,
         replicationFactor: 2,
         maxStorageBytes: STORAGE_BOUND,
         publisherPubkey: 'b'.repeat(64),
         privacyTier: 'public'
-      }]
+      }])
     },
     async getRelaysForApp () { return [] },
     async recordAcceptance (key, relayPubkey, region) {
@@ -755,7 +937,7 @@ test('RelayNode - custody expiry removes expired temporary atomic entries only',
   }
   node.on('custody-expired', event => expiredEvents.push(event))
 
-  node.appRegistry.apps.set(expiredKey, {
+  insertAppFixture(node, expiredKey, {
     storageClass: 'temporary',
     availabilityClass: 'atomic-handoff',
     blind: true,
@@ -763,7 +945,7 @@ test('RelayNode - custody expiry removes expired temporary atomic entries only',
     discoveryKey: randomBytes(32),
     drive: { async close () { closed.push(expiredKey) } }
   })
-  node.appRegistry.apps.set(activeKey, {
+  insertAppFixture(node, activeKey, {
     storageClass: 'temporary',
     availabilityClass: 'atomic-handoff',
     blind: true,
@@ -771,7 +953,7 @@ test('RelayNode - custody expiry removes expired temporary atomic entries only',
     discoveryKey: randomBytes(32),
     drive: { async close () { closed.push(activeKey) } }
   })
-  node.appRegistry.apps.set(persistentKey, {
+  insertAppFixture(node, persistentKey, {
     storageClass: 'persistent',
     availabilityClass: 'always-on',
     blind: false,
@@ -825,7 +1007,7 @@ test('RelayNode - custody expiry auto-emits non-serving-proof for blind handoffs
   }
   node.on('custody-non-serving-attested', e => attestedEvents.push(e))
 
-  node.appRegistry.apps.set(appKey, {
+  insertAppFixture(node, appKey, {
     storageClass: 'temporary',
     availabilityClass: 'atomic-handoff',
     blind: true,
@@ -876,7 +1058,7 @@ test('RelayNode - custody expiry without custodyIntentId expires but does not at
   node.on('custody-non-serving-attested', e => attestedEvents.push(e))
   node.on('custody-non-serving-attest-error', e => errorEvents.push(e))
 
-  node.appRegistry.apps.set(appKey, {
+  insertAppFixture(node, appKey, {
     storageClass: 'temporary',
     availabilityClass: 'atomic-handoff',
     blind: true,
@@ -918,7 +1100,7 @@ test('RelayNode - custody expiry surfaces attest errors but keeps unseed clean',
   node.on('custody-expired', e => expiredEvents.push(e))
   node.on('custody-non-serving-attest-error', e => errorEvents.push(e))
 
-  node.appRegistry.apps.set(appKey, {
+  insertAppFixture(node, appKey, {
     storageClass: 'temporary',
     availabilityClass: 'atomic-handoff',
     blind: true,
@@ -963,21 +1145,14 @@ test('RelayNode - witness pass signs expiry-witness for peer relay non-serving-p
     keyPair: { publicKey: Buffer.alloc(32, 9), secretKey: Buffer.alloc(64, 8) },
     async leave () {}
   }
-  node.seedingRegistry = {
-    _custodyIntents: new Map([[intentId, { intentId, addressKey: appKey, retainUntil: now - 5000, blindContentId: 'c'.repeat(64), publisherPubkey: 'd'.repeat(64) }]]),
-    getCustodyIntent: (id) => id === intentId
-      ? { intentId, addressKey: appKey, retainUntil: now - 5000, blindContentId: 'c'.repeat(64), publisherPubkey: 'd'.repeat(64) }
-      : null,
-    getCustodyStatus: () => ({
-      intent: { intentId, addressKey: appKey, retainUntil: now - 5000, blindContentId: 'c'.repeat(64), publisherPubkey: 'd'.repeat(64) },
-      nonServingProofs: [peerProof],
-      expiryWitnesses: []
-    }),
-    recordCustodyExpiryWitness: async (witness) => {
+  node.seedingRegistry = custodyWitnessRegistryFixture({
+    intent: { intentId, addressKey: appKey, retainUntil: now - 5000, blindContentId: 'c'.repeat(64), publisherPubkey: 'd'.repeat(64) },
+    proofs: [peerProof],
+    record: async (witness) => {
       recordedWitnesses.push(witness)
       return witness
     }
-  }
+  })
   node.on('custody-witness-attested', e => attestedEvents.push(e))
 
   const result = await node._runCustodyExpiryWitnessPass(now)
@@ -1014,16 +1189,11 @@ test('RelayNode - witness pass skips own non-serving-proofs', async (t) => {
     keyPair: { publicKey: Buffer.alloc(32, 7), secretKey: Buffer.alloc(64, 0) },
     async leave () {}
   }
-  node.seedingRegistry = {
-    _custodyIntents: new Map([[intentId, { intentId, retainUntil: now - 1000 }]]),
-    getCustodyIntent: () => ({ intentId, retainUntil: now - 1000 }),
-    getCustodyStatus: () => ({
-      intent: { intentId, retainUntil: now - 1000 },
-      nonServingProofs: [ownProof],
-      expiryWitnesses: []
-    }),
-    recordCustodyExpiryWitness: async () => { recordCalls++ }
-  }
+  node.seedingRegistry = custodyWitnessRegistryFixture({
+    intent: { intentId, retainUntil: now - 1000 },
+    proofs: [ownProof],
+    record: async () => { recordCalls++ }
+  })
 
   const result = await node._runCustodyExpiryWitnessPass(now)
 
@@ -1055,16 +1225,12 @@ test('RelayNode - witness pass deduplicates by (intent, relay) pair', async (t) 
     keyPair: { publicKey: Buffer.alloc(32, 5), secretKey: Buffer.alloc(64, 0) },
     async leave () {}
   }
-  node.seedingRegistry = {
-    _custodyIntents: new Map([[intentId, { intentId, retainUntil: now - 1000 }]]),
-    getCustodyIntent: () => ({ intentId, retainUntil: now - 1000 }),
-    getCustodyStatus: () => ({
-      intent: { intentId, retainUntil: now - 1000 },
-      nonServingProofs: [peerProof],
-      expiryWitnesses: [existingWitness]
-    }),
-    recordCustodyExpiryWitness: async () => { recordCalls++ }
-  }
+  node.seedingRegistry = custodyWitnessRegistryFixture({
+    intent: { intentId, retainUntil: now - 1000 },
+    proofs: [peerProof],
+    witnesses: [existingWitness],
+    record: async () => { recordCalls++ }
+  })
 
   const result = await node._runCustodyExpiryWitnessPass(now)
 
@@ -1085,16 +1251,10 @@ test('RelayNode - witness pass skips intents whose retainUntil has not passed', 
     keyPair: { publicKey: Buffer.alloc(32, 1), secretKey: Buffer.alloc(64, 0) },
     async leave () {}
   }
-  node.seedingRegistry = {
-    _custodyIntents: new Map([[intentId, { intentId, retainUntil: now + 60_000 }]]),
-    getCustodyIntent: () => ({ intentId, retainUntil: now + 60_000 }),
-    getCustodyStatus: () => ({
-      intent: { intentId, retainUntil: now + 60_000 },
-      nonServingProofs: [],
-      expiryWitnesses: []
-    }),
-    recordCustodyExpiryWitness: async () => { recordCalls++ }
-  }
+  node.seedingRegistry = custodyWitnessRegistryFixture({
+    intent: { intentId, retainUntil: now + 60_000 },
+    record: async () => { recordCalls++ }
+  })
 
   const result = await node._runCustodyExpiryWitnessPass(now)
 
@@ -1176,14 +1336,14 @@ test('RelayNode - replication repair skips non-public tiers in strict privacy mo
   node.config.strictSeedingPrivacy = true
 
   node.seedingRegistry = {
-    async getActiveRequests () {
-      return [{
+    getActiveRequestsPage () {
+      return completeRequestPage([{
         appKey,
         replicationFactor: 2,
         maxStorageBytes: STORAGE_BOUND,
         publisherPubkey: 'f'.repeat(64),
         privacyTier: 'local-first'
-      }]
+      }])
     },
     async getRelaysForApp () { return [] },
     async recordAcceptance () {}

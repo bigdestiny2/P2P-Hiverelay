@@ -53,6 +53,10 @@ import { join, relative, resolve, dirname } from 'path'
 import { BootstrapCache } from 'p2p-hiverelay/core/bootstrap-cache.js'
 import { verifyAccountingReceipt } from 'p2p-hiverelay/core/protocol/accounting-receipt.js'
 import {
+  closeSharedDriveEntity,
+  sharedGetBlobs
+} from 'p2p-hiverelay/core/shared-flight-registry.js'
+import {
   PROOF_KIND_RETRIEVABILITY,
   RETRIEVABILITY_PROOF_LIMITATION,
   RETRIEVABILITY_PROOF_SIGNATURE_PROFILE,
@@ -60,6 +64,7 @@ import {
   verifyStorageProof
 } from 'p2p-hiverelay/core/protocol/proof-of-storage.js'
 import {
+  SEED_PROTOCOL_VERSION,
   SEED_REQUEST_SIGNATURE_DOMAIN,
   serializeSeedRequestForDomainSigning
 } from 'p2p-hiverelay/core/protocol/seed-request.js'
@@ -246,6 +251,10 @@ export class HiveRelayClient extends EventEmitter {
     this.connectionTimeout = config.connectionTimeout || 10_000
     this._destroyTimeout = config.destroyTimeout || 15_000
     this.bootstrap = config.bootstrap || null
+    this._bootstrapCacheOpts = {
+      enabled: config.bootstrapCacheEnabled !== false,
+      maxPeers: config.bootstrapCachePeers
+    }
 
     // Relay tracking
     this.relays = new Map() // pubkey hex -> { conn, info, channels, connectedAt }
@@ -546,6 +555,7 @@ export class HiveRelayClient extends EventEmitter {
       await this._destroyDriveDiscovery(keyHex)
       if (drive && typeof drive.close === 'function') {
         await this._awaitOwnerOperation(`drive:${keyHex}`, drive, () => drive.close())
+        closeSharedDriveEntity(drive, 'client failed-open drive close completed')
       }
     } catch (teardownError) {
       // Preserve the exact owner for destroy() retry. Never lose a drive whose
@@ -593,6 +603,7 @@ export class HiveRelayClient extends EventEmitter {
       owner.drive,
       () => owner.drive.close()
     )
+    closeSharedDriveEntity(owner.drive, 'client provisional publish drive close completed')
     if (this._provisionalPublishDrives.get(id) === owner) {
       this._provisionalPublishDrives.delete(id)
     }
@@ -786,7 +797,7 @@ export class HiveRelayClient extends EventEmitter {
     if (this._ownsSwarm && !this.swarm) {
       let bootstrap = this.bootstrap
       if (this._storagePath) {
-        this._bootstrapCache = new BootstrapCache(this._storagePath)
+        this._bootstrapCache = new BootstrapCache(this._storagePath, this._bootstrapCacheOpts)
         await this._bootstrapCache.load()
         bootstrap = this._bootstrapCache.merge(bootstrap)
       }
@@ -975,8 +986,7 @@ export class HiveRelayClient extends EventEmitter {
     }
     if (this._bootstrapCache) {
       const cache = this._bootstrapCache
-      cache.stop()
-      await this._awaitOwnerOperation('bootstrap-cache-save', cache, () => cache.save())
+      await this._awaitOwnerOperation('bootstrap-cache-stop', cache, () => cache.stop())
       if (this._bootstrapCache === cache) this._bootstrapCache = null
     }
     if (this._ownsSwarm && this.swarm) {
@@ -1458,6 +1468,7 @@ export class HiveRelayClient extends EventEmitter {
     if (!drive) return
     await this._destroyDriveDiscovery(keyHex)
     await this._awaitOwnerOperation(`drive:${keyHex}`, drive, () => drive.close())
+    closeSharedDriveEntity(drive, 'client drive close completed')
     this._removeDriveForkListeners(keyHex)
     if (this.drives.get(keyHex) === drive) this.drives.delete(keyHex)
   }
@@ -1494,9 +1505,7 @@ export class HiveRelayClient extends EventEmitter {
     // drive, so relays consuming `msg.discoveryKeys` looked in the wrong
     // place and never connected to the publisher. Callers can also pass
     // `opts.discoveryKey` to pin an explicit value (e.g. from drive.discoveryKey).
-    const discoveryKey = opts.discoveryKey
-      ? (typeof opts.discoveryKey === 'string' ? b4a.from(opts.discoveryKey, 'hex') : opts.discoveryKey)
-      : hypercoreCrypto.discoveryKey(keyBuf)
+    const discoveryKey = this._resolveSeedDiscoveryHint(keyBuf, opts)
     this._joinDriveDiscovery(keyHex, discoveryKey, { server: true, client: true })
 
     // Publisher commitments — all committed by the publisher signature so
@@ -1772,6 +1781,27 @@ export class HiveRelayClient extends EventEmitter {
     return 0
   }
 
+  _resolveSeedDiscoveryHint (appKey, opts = {}) {
+    const canonical = hypercoreCrypto.discoveryKey(appKey)
+    if (!Object.prototype.hasOwnProperty.call(opts, 'discoveryKey')) return canonical
+
+    const supplied = opts.discoveryKey
+    let decoded = null
+    if (typeof supplied === 'string' && /^[0-9a-f]{64}$/i.test(supplied)) {
+      decoded = b4a.from(supplied, 'hex')
+    } else if (b4a.isBuffer(supplied) && supplied.byteLength === 32) {
+      decoded = supplied
+    }
+
+    if (!decoded || !b4a.equals(decoded, canonical)) {
+      const err = new Error('unsupported-discovery-key-set')
+      err.code = 'UNSUPPORTED_DISCOVERY_KEY_SET'
+      err.terminal = true
+      throw err
+    }
+    return decoded
+  }
+
   // ─── Persistent seed retry queue ──────────────────────────────────
 
   _pendingSeedsFile () {
@@ -1782,18 +1812,33 @@ export class HiveRelayClient extends EventEmitter {
   async _loadPendingSeeds () {
     const file = this._pendingSeedsFile()
     if (!file) { this._pendingSeedsLoaded = true; return }
+    let quarantined = false
     try {
       const raw = await readFile(file, 'utf-8')
       const list = JSON.parse(raw)
       if (Array.isArray(list)) {
         for (const entry of list) {
-          if (entry && entry.appKey) this._pendingSeeds.set(entry.appKey, entry)
+          if (!entry || typeof entry.appKey !== 'string' || !/^[0-9a-f]{64}$/i.test(entry.appKey)) continue
+          try {
+            this._resolveSeedDiscoveryHint(b4a.from(entry.appKey, 'hex'), entry.opts || {})
+          } catch (err) {
+            if (err?.code === 'UNSUPPORTED_DISCOVERY_KEY_SET') {
+              quarantined = true
+              this.emit('seed-pending-quarantined', { appKey: entry.appKey, reason: err.message })
+              continue
+            }
+            throw err
+          }
+          this._pendingSeeds.set(entry.appKey.toLowerCase(), entry)
         }
       }
     } catch (_) {
       // Missing file or parse error — start with empty queue
     }
     this._pendingSeedsLoaded = true
+    // Rewrite the queue after quarantine so a terminal legacy override cannot
+    // be rediscovered and reported on every process restart.
+    if (quarantined) await this._savePendingSeedsOwned()
   }
 
   _savePendingSeeds () {
@@ -1889,6 +1934,11 @@ export class HiveRelayClient extends EventEmitter {
       // Pass retryPersistent:true so failures re-enqueue rather than swallowing
       await this.seed(appKey, { ...entry.opts, retryPersistent: true })
     } catch (err) {
+      if (err?.code === 'UNSUPPORTED_DISCOVERY_KEY_SET') {
+        this._clearPendingSeed(appKey, 'terminal-invalid-discovery-key')
+        this.emit('seed-pending-failed', { appKey, attempts: entry.attempts, reason: err.message })
+        return
+      }
       // seed() itself rarely throws — it resolves with acceptances.
       // On unexpected error, re-enqueue with bumped attempts.
       this._enqueuePendingSeed(appKey, entry.opts, 'exception:' + err.message)
@@ -3528,7 +3578,13 @@ export class HiveRelayClient extends EventEmitter {
       throw new Error('fetchAccountingReceipt: pubkey mismatch (expected ' + opts.expectedPubkey + ', got ' + check.receipt.relayPubkey + ')')
     }
 
-    return { ok: true, verified: true, receipt: check.receipt }
+    return {
+      ok: true,
+      verified: true,
+      evidenceEligible: check.evidenceEligible === true,
+      legacy: check.legacy === true,
+      receipt: check.receipt
+    }
   }
 
   /**
@@ -4208,7 +4264,7 @@ export class HiveRelayClient extends EventEmitter {
     let blobsLength = 0
     try {
       if (metaLength > 0) await metaCore.download({ start: 0, end: metaLength }).done()
-      const blobs = await drive.getBlobs()
+      const blobs = await sharedGetBlobs(drive, { timeoutMs: timeout })
       blobsLength = (blobs && blobs.core && blobs.core.length) || 0
       if (blobsLength > 0) await blobs.core.download({ start: 0, end: blobsLength }).done()
       contentVerified = true
@@ -4536,7 +4592,7 @@ export class HiveRelayClient extends EventEmitter {
 
       seedChannel._hiverelay = { requestMsg, acceptMsg, unseedMsg, denyMsg }
       channels.seed = { channel: seedChannel, requestMsg, acceptMsg, unseedMsg, denyMsg }
-      seedChannel.open(b4a.from(JSON.stringify({ major: 1, minor: 0 })))
+      seedChannel.open(b4a.from(JSON.stringify(SEED_PROTOCOL_VERSION)))
     } catch (err) {
       this.emit('protocol-error', { relay: pubkeyHex, protocol: 'seed', error: err })
     }
@@ -5218,9 +5274,13 @@ export class HiveRelayClient extends EventEmitter {
 
     // Stop and persist bootstrap cache
     if (this._bootstrapCache) {
-      this._bootstrapCache.stop()
-      try { await this._bootstrapCache.save() } catch (_) {}
-      this._bootstrapCache = null
+      const cache = this._bootstrapCache
+      try {
+        await this._awaitOwnerOperation('bootstrap-cache-stop', cache, () => cache.stop())
+        if (this._bootstrapCache === cache) this._bootstrapCache = null
+      } catch (err) {
+        if (!firstOwnershipError) firstOwnershipError = err
+      }
     }
 
     try { await this._destroyDiscoveryHandles() } catch (err) {

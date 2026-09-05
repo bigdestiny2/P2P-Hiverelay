@@ -1,4 +1,5 @@
 export const MAX_HEALTH_DISK_ERROR_BYTES = 256
+export const MAX_HEALTH_FATAL_REASON_BYTES = 128
 
 const DISK_STATUSES = new Set(['ok', 'warn', 'critical'])
 
@@ -53,6 +54,41 @@ function safeDiskStatus (value) {
   return status && DISK_STATUSES.has(status) ? status : null
 }
 
+function resourceDiagnosticsSnapshot (node) {
+  if (!node || typeof node.getResourceDiagnostics !== 'function') return null
+  try {
+    const snapshot = node.getResourceDiagnostics()
+    if (!snapshot || snapshot.kind !== 'HiveRelayResourceDiagnosticsV1' || snapshot.version !== 1) return null
+    return snapshot
+  } catch {
+    return null
+  }
+}
+
+function formatUptime (ms) {
+  if (!Number.isSafeInteger(ms) || ms < 0) return null
+  const days = Math.floor(ms / 86400000)
+  const hours = Math.floor((ms % 86400000) / 3600000)
+  const minutes = Math.floor((ms % 3600000) / 60000)
+  const parts = []
+  if (days > 0) parts.push(`${days}d`)
+  if (hours > 0) parts.push(`${hours}h`)
+  parts.push(`${minutes}m`)
+  return {
+    ms,
+    hours: Math.round(ms / 3600000 * 100) / 100,
+    human: parts.join(' ')
+  }
+}
+
+function healthUptime (node, diagnostics) {
+  const sampled = diagnostics?.process?.uptimeMs
+  if (Number.isSafeInteger(sampled) && sampled >= 0) return formatUptime(sampled)
+  const startedAt = node?.metrics?.startedAt
+  if (!Number.isSafeInteger(startedAt) || startedAt < 0) return null
+  return formatUptime(Math.max(0, Date.now() - startedAt))
+}
+
 export function diskHealthSummary (disk) {
   if (!disk) return null
   const error = safeHealthString(disk.error, {
@@ -69,12 +105,17 @@ export function diskHealthSummary (disk) {
 export function buildHealthResponse ({ node, version }) {
   const disk = node && node.diskMonitor ? node.diskMonitor.getInfo() : null
   const diskSummary = diskHealthSummary(disk)
-  const uptime = node && node.metrics ? node.metrics.getSummary().uptime : null
+  const resourceDiagnostics = resourceDiagnosticsSnapshot(node)
+  const uptime = healthUptime(node, resourceDiagnostics)
   const running = node ? node.running : false
   const storageGeneration = node && typeof node.getStorageGenerationStatus === 'function'
     ? node.getStorageGenerationStatus()
     : null
   const storageFatal = node && node.storageAdmission ? node.storageAdmission.fatalReason : null
+  const storageFatalReason = safeHealthString(storageFatal, {
+    maxBytes: MAX_HEALTH_FATAL_REASON_BYTES,
+    truncate: true
+  })
 
   // A fail-closed storage authority is a terminal state that used to be
   // invisible everywhere: failClosed() sets _fatalReason with no emit, log or
@@ -90,12 +131,14 @@ export function buildHealthResponse ({ node, version }) {
       payload: {
         ok: false,
         reason: 'storage-fail-closed',
-        storageFatalReason: String(storageFatal),
+        reasons: [{ code: 'storage-fail-closed', detail: storageFatalReason }],
+        storageFatalReason,
         version,
         uptime,
         running,
         disk: diskSummary,
-        storageGeneration
+        storageGeneration,
+        resourceDiagnostics
       }
     }
   }
@@ -111,11 +154,13 @@ export function buildHealthResponse ({ node, version }) {
       payload: {
         ok: false,
         reason: 'disk-critical',
+        reasons: [{ code: 'disk-critical', status: 'critical' }],
         version,
         uptime,
         running,
         disk: diskSummary,
-        storageGeneration
+        storageGeneration,
+        resourceDiagnostics
       }
     }
   }
@@ -128,7 +173,8 @@ export function buildHealthResponse ({ node, version }) {
       uptime,
       running,
       disk: diskSummary,
-      storageGeneration
+      storageGeneration,
+      resourceDiagnostics
     }
   }
 }

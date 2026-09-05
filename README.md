@@ -910,6 +910,10 @@ added.
 They also advertise `seed-signature-domain-v3` when publisher seed requests can
 use the preferred `hiverelay.seed-request.v3` domain-separated signature
 preimage; SDK producers keep legacy v2 by default for mixed relay fleets.
+Protocol 1.1 additionally advertises
+`seed-discovery-hints-single-drive-v1`: the legacy `discoveryKeys` field is a
+bounded canonical routing-hint list for the one requested drive, not a
+multi-core public-key fan-out.
 Relays with circuit support advertise `circuit-limits-profile-v1` and sign the
 effective RelayKernel-compatible circuit caps in
 `protocol_profile.circuit_limits`.

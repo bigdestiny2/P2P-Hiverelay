@@ -28,6 +28,7 @@ import { isIssuedExactAppContext } from './exact-app-context.js'
 import { updateWithTimeout } from '../core/relay-node/cancellable-drive-update.js'
 import { admitPublicHiveAppEntry } from './public-app-admission.js'
 import { isVerifyRequest, serveVerifyBundle } from './verify-bundle.js'
+import { closeSharedDriveEntity, sharedOperationFlights } from '../core/shared-flight-registry.js'
 import {
   applyGatewayEdgeHeaders,
   buildHivePathLinkHeader,
@@ -1600,6 +1601,7 @@ export class HyperGateway extends EventEmitter {
         Math.min(DRIVE_CLOSE_TIMEOUT, this._driveOperationTimeout),
         `drive.${operation}()`
       )
+      closeSharedDriveEntity(drive, `gateway ${operation} completed`)
     } catch (err) {
       this.emit(operation === 'evict-close' ? 'drive-cache-error' : 'drive-close-error', {
         operation,
@@ -1839,6 +1841,7 @@ export class HyperGateway extends EventEmitter {
 
   async _close () {
     const shutdownError = createAbortError('Gateway is shutting down')
+    sharedOperationFlights.invalidateOwner(this, { retire: true })
     this._disarmDenylistListener()
     const requestStates = [...this._activeRequestStates]
     for (const state of requestStates) {

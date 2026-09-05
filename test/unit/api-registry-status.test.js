@@ -6,6 +6,7 @@ import {
   buildRegistryStatusRoutePayload,
   resolveRegistryStatusRoute
 } from 'p2p-hiverelay/core/relay-node/api-registry-status.js'
+import { SeedingRegistry } from 'p2p-hiverelay/core/registry/index.js'
 
 function requestEntry (appKey, overrides = {}) {
   return {
@@ -61,9 +62,12 @@ test('api registry status: route payload helper dispatches operator status reads
     route: resolveRegistryStatusRoute('GET', '/api/registry'),
     registry: {
       key: Buffer.alloc(32, 2),
-      async getActiveRequests () {
+      advanceRequestStatusSnapshot () {
         activeRequests++
-        return requests
+        return { complete: true }
+      },
+      requestStatusSnapshot () {
+        return { activeRequests: requests.length, requests, completedHighWater: 2, completedAt: 456 }
       },
       async getRelaysForApp () {
         relayLookups++
@@ -86,7 +90,10 @@ test('api registry status: route payload helper dispatches operator status reads
   const unknown = await buildRegistryStatusRoutePayload({
     route: null,
     registry: {
-      async getActiveRequests () {
+      advanceRequestStatusSnapshot () {
+        throw new Error('should not query registry')
+      },
+      requestStatusSnapshot () {
         throw new Error('should not query registry')
       }
     }
@@ -104,12 +111,16 @@ test('api registry status: sanitizes request fields and relay metadata', async (
   const out = await buildRegistryStatusPayload({
     registry: {
       key: Buffer.alloc(32, 1),
-      async getActiveRequests () {
-        return [requestEntry(appKey, {
+      advanceRequestStatusSnapshot () {
+        return { complete: true }
+      },
+      requestStatusSnapshot () {
+        const requests = [requestEntry(appKey, {
           geoPreference: [' EU ', 99, 'x'.repeat(65)],
           discoveryKeys: ['B'.repeat(64), '../secret'],
           relaysSecret: 'do-not-leak'
         })]
+        return { activeRequests: requests.length, requests, completedHighWater: 1, completedAt: 456 }
       },
       async getRelaysForApp (key) {
         calls.push(key)
@@ -158,10 +169,10 @@ test('api registry status: sanitizes request fields and relay metadata', async (
 })
 
 test('api registry status: caps request enrichment and per-request relays', async (t) => {
-  t.is(MAX_REGISTRY_STATUS_REQUESTS, 500)
+  t.is(MAX_REGISTRY_STATUS_REQUESTS, 64)
   t.is(MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST, 100)
   const requests = []
-  for (let i = 0; i < 505; i++) {
+  for (let i = 0; i < 69; i++) {
     requests.push(requestEntry(String(i % 10).repeat(64)))
   }
   const relayList = []
@@ -172,8 +183,11 @@ test('api registry status: caps request enrichment and per-request relays', asyn
   const out = await buildRegistryStatusPayload({
     registry: {
       key: null,
-      async getActiveRequests () {
-        return requests
+      advanceRequestStatusSnapshot () {
+        return { complete: true }
+      },
+      requestStatusSnapshot () {
+        return { activeRequests: requests.length, requests, completedHighWater: 69, completedAt: 456 }
       },
       async getRelaysForApp () {
         relayLookups++
@@ -182,13 +196,42 @@ test('api registry status: caps request enrichment and per-request relays', asyn
     }
   })
 
-  t.is(out.payload.activeRequests, 505)
-  t.is(out.payload.count, 500)
-  t.is(out.payload.total, 505)
+  t.is(out.payload.activeRequests, 69)
+  t.is(out.payload.count, 64)
+  t.is(out.payload.total, 69)
   t.is(out.payload.truncated, true)
-  t.is(out.payload.requests.length, 500)
-  t.is(relayLookups, 500, 'capped-out requests are not relay-enriched')
+  t.is(out.payload.requests.length, 64)
+  t.is(relayLookups, 64, 'capped-out requests are not relay-enriched')
   t.is(out.payload.requests[0].acceptedRelays, 105)
   t.is(out.payload.requests[0].relays.length, 100)
   t.is(out.payload.requests[0].relaysTruncated, true)
+})
+
+test('api registry status: publishes only a completed bounded request cycle', async (t) => {
+  const registry = new SeedingRegistry(null, null)
+  const now = Date.now()
+  for (let i = 0; i < 70; i++) {
+    const appKey = i.toString(16).padStart(64, '0')
+    const entry = requestEntry(appKey, { timestamp: now, ttlSeconds: 3600 })
+    registry._requestPopulation.insert(appKey)
+    registry._requests.set(appKey, entry)
+  }
+
+  const first = registry.advanceRequestStatusSnapshot(32)
+  t.is(first.complete, false)
+  t.is(first.examined, 32, 'first pass inspects only its finite budget')
+  t.is(registry.requestStatusSnapshot().activeRequests, 0, 'partial pass retains the prior complete aggregate')
+  registry.advanceRequestStatusSnapshot(32)
+  const terminal = registry.advanceRequestStatusSnapshot(32)
+  t.is(terminal.complete, true)
+
+  const snapshot = registry.requestStatusSnapshot()
+  t.is(snapshot.activeRequests, 70)
+  t.is(snapshot.requests.length, 64, 'complete aggregate retains a fixed detail cap')
+  registry.getActiveRequests = () => { throw new Error('full registry snapshot is forbidden') }
+  const out = await buildRegistryStatusPayload({ registry })
+  t.is(out.ok, true)
+  t.is(out.payload.total, 70)
+  t.is(out.payload.count, 64)
+  t.is(out.payload.refreshing, true, 'next high-water cycle advances without erasing the completed aggregate')
 })

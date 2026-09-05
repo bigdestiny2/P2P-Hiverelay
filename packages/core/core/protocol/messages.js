@@ -9,6 +9,7 @@
 
 import c from 'compact-encoding'
 import b4a from 'b4a'
+import { MAX_SEED_DISCOVERY_HINTS } from './seed-discovery-hints.js'
 
 // Message type constants
 export const MSG = {
@@ -88,7 +89,7 @@ export const REGIONS = {
 export const DURABILITY_STANDARD = 0
 export const DURABILITY_ARCHIVE = 1
 
-export const MAX_SEED_DISCOVERY_KEYS = 64
+export const MAX_SEED_DISCOVERY_KEYS = MAX_SEED_DISCOVERY_HINTS
 export const MAX_SEED_GEO_PREFERENCE_BYTES = 2048
 export const MAX_SEED_REGION_BYTES = 64
 export const MAX_SEED_DENY_REASON_BYTES = 128

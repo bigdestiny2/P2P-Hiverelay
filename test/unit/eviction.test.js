@@ -31,11 +31,33 @@ function fakeDrive (metaBytes, blobBytes) {
 function fakeRegistry (entries) {
   const map = new Map(entries)
   const evicted = new Map()
+  const cursors = new Map()
+  const listeners = new Set()
   return {
     get: (k) => map.get(k),
     keys: () => map.keys(),
     entries: () => map.entries(),
-    delete: (k) => map.delete(k),
+    delete: (k) => {
+      const deleted = map.delete(k)
+      if (deleted) for (const listener of listeners) listener({ type: 'delete', appKey: k })
+      return deleted
+    },
+    page: (consumer, budget) => {
+      const keys = [...map.keys()]
+      const position = cursors.get(consumer) || 0
+      const selected = keys.slice(position, position + budget)
+      const complete = position + selected.length >= keys.length
+      cursors.set(consumer, complete ? 0 : position + selected.length)
+      return {
+        entries: selected.map((key, generation) => ({ key, value: map.get(key), generation: position + generation + 1 })),
+        examined: selected.length,
+        complete,
+        completedHighWater: complete ? keys.length : 0
+      }
+    },
+    releasePopulationConsumer: (consumer) => cursors.delete(consumer),
+    on: (name, listener) => { if (name === 'change') listeners.add(listener) },
+    off: (name, listener) => { if (name === 'change') listeners.delete(listener) },
     markEvicted: (k, at) => evicted.set(k, at || Date.now()),
     isEvicted: (k) => evicted.has(k),
     clearEvicted: (k) => evicted.delete(k),
@@ -103,7 +125,7 @@ test('accounting: paces in batches and prunes removed entries', async (t) => {
   t.is(acc.getSummary().measuredEntries, 2, 'first tick measures only batchSize entries')
   await acc._tick()
   t.is(acc.getSummary().measuredEntries, 3, 'second tick completes the pass')
-  reg._map.delete('b')
+  reg.delete('b')
   await acc._tick() // wraps: cursor reset + prune
   t.absent([...reg._map.keys()].includes('b'), 'entry removed from registry')
   await acc._tick(); await acc._tick()

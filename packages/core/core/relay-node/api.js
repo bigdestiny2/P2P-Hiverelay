@@ -1051,11 +1051,31 @@ export class RelayAPI extends EventEmitter {
           // traffic away from a relay that's about to run out of disk.
           // Default behavior unchanged (still returns 200 even on
           // critical) to preserve existing operator expectations.
-          const result = buildHealthResponse({
-            node: this.node,
-            version: this._relayVersion()
-          })
-          return this._json(res, result.payload, result.status)
+          const startedAt = process.hrtime.bigint()
+          let result = null
+          let completed = false
+          try {
+            result = buildHealthResponse({
+              node: this.node,
+              version: this._relayVersion()
+            })
+            const response = this._json(res, result.payload, result.status)
+            completed = true
+            return response
+          } finally {
+            const elapsedNs = process.hrtime.bigint() - startedAt
+            try {
+              this.node.resourceDiagnostics?.recordHealthRequest({
+                durationMs: Number(elapsedNs) / 1e6,
+                status: result?.status,
+                // writeJson always emits a JSON object plus newline. A
+                // server-side empty response is therefore impossible unless
+                // the write itself throws before this point.
+                bytes: completed ? 1 : 0,
+                error: completed === false
+              })
+            } catch {}
+          }
         }
 
         if (statusRoute && statusRoute.kind === 'status') {
@@ -1337,6 +1357,8 @@ export class RelayAPI extends EventEmitter {
           const result = buildAnchorStatusRoutePayload({
             route: anchorStatusRoute,
             context: route,
+            node: this.node,
+            url,
             appRegistry: this.node.appRegistry,
             lastCheckedAt: this.node._lastAnchorCheckAt || null
           })

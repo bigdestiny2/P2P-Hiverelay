@@ -41,6 +41,8 @@ test('AppRegistry: snapshot restore preserves map identity and indexes', (t) => 
   t.absent(registry.has(keyB), 'new entry rolled back')
   t.is(registry.byAppId.get('keep-me'), keyA, 'dedup index restored')
   t.absent(registry.byAppId.get('new-entry'), 'dedup index rollback removed new appId')
+  t.is(registry.catalogWinner('keep-me').appKey, keyA, 'catalog winner index restored')
+  t.is(registry.catalogWinner('new-entry'), null, 'catalog winner rollback removed new appId')
 })
 
 test('AppRegistry: explicit JSON persistence rejects write failures', async (t) => {

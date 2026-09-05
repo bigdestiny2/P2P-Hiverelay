@@ -26,6 +26,8 @@ function keypairFromSeed (byte) {
 function runtimeNode (opts = {}) {
   const node = Object.create(RelayNode.prototype)
   let measureCount = 0
+  const completedAt = Date.now() - 100
+  const observedAt = completedAt - 100
   Object.assign(node, {
     keyPair: opts.keyPair || keypairFromSeed(4),
     storageAccounting: {
@@ -35,7 +37,10 @@ function runtimeNode (opts = {}) {
           totalBytes: 4096,
           diskBytes: 3072,
           perEntryBytes: 2048,
-          measuredEntries: 2
+          measuredEntries: 2,
+          diskMeasurementComplete: true,
+          diskObservedAt: observedAt,
+          diskCompletedAt: completedAt
         }
       }
     },
@@ -114,9 +119,6 @@ async function server (t, node) {
 test('RelayNode.createAccountingReceipt signs the OS-grounded runtime summary', async (t) => {
   const node = runtimeNode()
   const receipt = await node.createAccountingReceipt({
-    periodStart: 100,
-    periodEnd: 200,
-    measuredAt: 201,
     nonce: '11'.repeat(16)
   })
 
@@ -136,7 +138,10 @@ test('RelayNode.createAccountingReceipt refuses to sign without OS disk measurem
       totalBytes: 4096,
       diskBytes: null,
       perEntryBytes: 2048,
-      measuredEntries: 2
+      measuredEntries: 2,
+      diskMeasurementComplete: false,
+      diskObservedAt: Date.now() - 200,
+      diskCompletedAt: Date.now() - 100
     }
   })
 
@@ -178,14 +183,14 @@ test('api accounting receipt helper preserves refresh and error contract', async
     node: {
       async createAccountingReceipt (opts) {
         calls.push(opts)
-        return { kind: 'hiverelay-accounting-receipt-v1' }
+        return { kind: 'hiverelay-accounting-receipt-v2' }
       }
     },
     refresh: false
   })
   t.alike(ok, {
     status: 200,
-    payload: { receipt: { kind: 'hiverelay-accounting-receipt-v1' } }
+    payload: { receipt: { kind: 'hiverelay-accounting-receipt-v2' } }
   })
   t.alike(calls, [{ refresh: false }])
 
@@ -202,12 +207,36 @@ test('api accounting receipt helper preserves refresh and error contract', async
   })
 })
 
+test('api accounting receipt helper attaches only the cached typed diagnostics snapshot', async (t) => {
+  const resourceDiagnostics = {
+    kind: 'HiveRelayResourceDiagnosticsV1',
+    version: 1,
+    sample: { available: true }
+  }
+  const out = await buildAccountingReceiptPayload({
+    node: {
+      async createAccountingReceipt () { return { kind: 'hiverelay-accounting-receipt-v2' } },
+      getResourceDiagnostics () { return resourceDiagnostics },
+      getStats () { throw new Error('accounting API must not walk stats') }
+    },
+    refresh: false
+  })
+
+  t.alike(out, {
+    status: 200,
+    payload: {
+      receipt: { kind: 'hiverelay-accounting-receipt-v2' },
+      resourceDiagnostics
+    }
+  })
+})
+
 test('api accounting receipt route payload helper dispatches receipt reads', async (t) => {
   const calls = []
   const node = {
     async createAccountingReceipt (opts) {
       calls.push(opts)
-      return { kind: 'hiverelay-accounting-receipt-v1', refresh: opts.refresh }
+      return { kind: 'hiverelay-accounting-receipt-v2', refresh: opts.refresh }
     }
   }
 
@@ -218,7 +247,7 @@ test('api accounting receipt route payload helper dispatches receipt reads', asy
   })
   t.alike(noRefresh, {
     status: 200,
-    payload: { receipt: { kind: 'hiverelay-accounting-receipt-v1', refresh: false } }
+    payload: { receipt: { kind: 'hiverelay-accounting-receipt-v2', refresh: false } }
   })
 
   const defaultRefresh = await buildAccountingReceiptRoutePayload({
@@ -228,7 +257,7 @@ test('api accounting receipt route payload helper dispatches receipt reads', asy
   })
   t.alike(defaultRefresh, {
     status: 200,
-    payload: { receipt: { kind: 'hiverelay-accounting-receipt-v1', refresh: true } }
+    payload: { receipt: { kind: 'hiverelay-accounting-receipt-v2', refresh: true } }
   })
   t.alike(calls, [{ refresh: false }, { refresh: true }])
 
@@ -254,9 +283,6 @@ test('GET /api/accounting/receipt is auth-gated and returns a verifiable receipt
       refreshes.push(opts.refresh)
       return node.createAccountingReceipt({
         ...opts,
-        periodStart: 100,
-        periodEnd: 200,
-        measuredAt: 201,
         nonce: '33'.repeat(16)
       })
     }

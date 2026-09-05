@@ -1,12 +1,21 @@
+import b4a from 'b4a'
 import { CONTENT_TYPES, normalizeContentType } from '../constants.js'
+import {
+  validateAppCatalogExternalCursor,
+  verifyAppCatalogExternalCursor
+} from './app-catalog-paged.js'
 import { buildFederationSnapshotPayload } from './api-federation-management.js'
-import { queryInt } from './api-validation.js'
+import { validatePositiveInt } from './api-validation.js'
 
 export const RELAY_CATALOG_PAGE_SIZE_MAX = 500
 export const GATEWAY_CATALOG_PAGE_SIZE_MAX = 200
 export const CATALOG_TYPE_ERROR = `type must be one of: ${Array.from(CONTENT_TYPES).join(', ')}`
+export const CATALOG_CURSOR_EXPIRED = 'CURSOR_EXPIRED'
+export const CATALOG_FILTER_UNAVAILABLE = 'CATALOG_FILTER_UNAVAILABLE'
+export const CATALOG_LIMIT_AMBIGUOUS = 'CATALOG_LIMIT_AMBIGUOUS'
 const CATALOG_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 const MAX_CATALOG_LABEL_BYTES = 128
+const MAX_EXTERNAL_CURSOR_BYTES = 2_048
 
 const CATALOG_READ_ROUTES = Object.freeze({
   'GET /catalog.json': Object.freeze({
@@ -47,15 +56,12 @@ export function buildCatalogReadRoutePayload ({
   }
 
   if (route.kind === 'legacy-type') {
-    return {
-      status: 200,
-      payload: catalogEntriesByType({
-        node,
-        type: route.type,
-        url,
-        maxPageSize
-      })
-    }
+    return catalogEntriesByType({
+      node,
+      type: route.type,
+      url,
+      maxPageSize
+    })
   }
 
   return {
@@ -71,8 +77,6 @@ export function buildRelayCatalogPayload ({
   maxPageSize = RELAY_CATALOG_PAGE_SIZE_MAX
 } = {}) {
   const parsed = asUrl(url)
-  const page = queryInt(parsed, 'page', 1, 1, 1_000_000)
-  const pageSize = queryInt(parsed, 'pageSize', 50, 1, maxPageSize)
   const requestedType = parsed.searchParams.get('type')
   const type = requestedType ? normalizeContentType(requestedType, null) : null
   if (requestedType && !type) {
@@ -81,19 +85,17 @@ export function buildRelayCatalogPayload ({
 
   const parent = parsed.searchParams.get('parent')
   const category = parsed.searchParams.get('category')
-  const { entries, counts } = pageCatalogEntries(catalogEntries(node), {
-    type,
-    parent,
-    category,
-    page,
-    pageSize
-  })
+  if (category !== null) return unavailableCategoryFilter()
+  const read = readExternalCatalogPage({ node, url: parsed, maxPageSize })
+  if (!read.ok) return read
+  const entries = filterCatalogPageEntries(read.entries, { type, parent })
+  const counts = countCatalogEntries(entries)
   const buckets = bucketCatalogEntries(entries)
 
   return {
     ok: true,
     payload: {
-      version: 2,
+      version: 3,
       name: 'HiveRelay Content Catalog',
       relayKey: safeCatalogHexKey(relayKey),
       catalogBeeKey: safeCatalogHexKey(node?.catalogBeeKey),
@@ -103,17 +105,16 @@ export function buildRelayCatalogPayload ({
       filters: {
         type,
         parent: parent || null,
-        category: category || null
+        category: null
       },
       pagination: {
-        page,
-        pageSize,
-        total: counts.total,
-        totalPages: Math.ceil(counts.total / pageSize),
-        hasNext: (page - 1) * pageSize + pageSize < counts.total,
-        hasPrev: page > 1
+        limit: read.limit,
+        nextCursor: read.cursor,
+        complete: read.complete
       },
-      count: counts,
+      snapshot: read.snapshot,
+      entryCount: read.snapshot.entryCount,
+      pageCount: counts,
       apps: buckets.apps,
       drives: buckets.drives,
       resources: buckets.resources,
@@ -132,25 +133,25 @@ export function buildGatewayCatalogPayload ({
   maxPageSize = GATEWAY_CATALOG_PAGE_SIZE_MAX
 } = {}) {
   const parsed = asUrl(url)
-  const page = queryInt(parsed, 'page', 1, 1, 1_000_000)
-  const pageSize = queryInt(parsed, 'pageSize', 50, 1, maxPageSize)
   const requestedType = parsed.searchParams.get('type')
   const type = requestedType ? normalizeContentType(requestedType, null) : null
   if (requestedType && !type) {
     return { ok: false, status: 400, payload: { error: CATALOG_TYPE_ERROR } }
   }
-
-  const { entries, counts } = pageCatalogEntries(catalogEntries(node), {
+  if (parsed.searchParams.has('category')) return unavailableCategoryFilter()
+  const read = readExternalCatalogPage({ node, url: parsed, maxPageSize, status: true })
+  if (!read.ok) return read
+  const entries = filterCatalogPageEntries(read.entries, {
     type,
-    page,
-    pageSize
+    parent: parsed.searchParams.get('parent')
   })
   const payload = {
     items: entries,
-    page,
-    pageSize,
-    total: counts.total,
-    hasMore: (page - 1) * pageSize + pageSize < counts.total
+    limit: read.limit,
+    cursor: read.cursor,
+    complete: read.complete,
+    snapshot: read.snapshot,
+    entryCount: read.snapshot.entryCount
   }
   const catalogBeeKey = node?.config?.catalogBeeKey
   if (typeof catalogBeeKey === 'string' && /^[0-9a-f]{64}$/i.test(catalogBeeKey)) {
@@ -160,16 +161,85 @@ export function buildGatewayCatalogPayload ({
 }
 
 export function catalogEntriesByType ({ node, type, url, maxPageSize = RELAY_CATALOG_PAGE_SIZE_MAX } = {}) {
-  const parsed = asUrl(url)
   const normalizedType = normalizeContentType(type, null)
-  if (!normalizedType) return []
-  const page = queryInt(parsed, 'page', 1, 1, 1_000_000)
-  const pageSize = queryInt(parsed, 'pageSize', maxPageSize, 1, maxPageSize)
-  return pageCatalogEntries(catalogEntries(node), {
-    type: normalizedType,
-    page,
-    pageSize
-  }).entries
+  if (!normalizedType) return { ok: false, status: 400, payload: { error: CATALOG_TYPE_ERROR } }
+  const read = readExternalCatalogPage({ node, url, maxPageSize, defaultLimit: maxPageSize })
+  if (!read.ok) return read
+  return {
+    ok: true,
+    status: 200,
+    payload: {
+      entries: filterCatalogPageEntries(read.entries, { type: normalizedType }),
+      limit: read.limit,
+      cursor: read.cursor,
+      complete: read.complete,
+      snapshot: read.snapshot,
+      entryCount: read.snapshot.entryCount
+    }
+  }
+}
+
+export function readExternalCatalogPage ({
+  node,
+  url,
+  maxPageSize = RELAY_CATALOG_PAGE_SIZE_MAX,
+  defaultLimit = 50,
+  status = false
+} = {}) {
+  const parsed = asUrl(url)
+  const hardMaxPageSize = status
+    ? GATEWAY_CATALOG_PAGE_SIZE_MAX
+    : RELAY_CATALOG_PAGE_SIZE_MAX
+  const requestedMaxPageSize = Number.isSafeInteger(maxPageSize) && maxPageSize > 0
+    ? maxPageSize
+    : hardMaxPageSize
+  const effectiveMaxPageSize = Math.min(requestedMaxPageSize, hardMaxPageSize)
+  const requestedDefaultLimit = Number.isSafeInteger(defaultLimit) && defaultLimit > 0
+    ? defaultLimit
+    : Math.min(50, effectiveMaxPageSize)
+  const effectiveDefaultLimit = Math.min(requestedDefaultLimit, effectiveMaxPageSize)
+  const request = parseExternalCatalogRequest(parsed, {
+    maxPageSize: effectiveMaxPageSize,
+    defaultLimit: effectiveDefaultLimit
+  })
+  if (!request.ok) return request
+  const store = node?.appCatalogStore
+  const keyPair = node?.swarm?.keyPair || node?.keyPair || null
+  const signerPubkey = cursorSignerPubkey(keyPair)
+  if (!store || typeof store.readExternalPage !== 'function' || !keyPair || signerPubkey === null) {
+    return { ok: false, status: 503, payload: { error: 'CATALOG_UNAVAILABLE' } }
+  }
+  if (request.cursor !== null) {
+    try {
+      request.cursor = verifyAppCatalogExternalCursor(request.cursor, signerPubkey)
+    } catch {
+      return { ok: false, status: 400, payload: { error: 'INVALID_CATALOG_CURSOR' } }
+    }
+  }
+  try {
+    const page = store.readExternalPage({
+      cursor: request.cursor,
+      limit: request.limit,
+      status,
+      keyPair
+    })
+    if (!page || !page.snapshot || !Array.isArray(page.entries)) {
+      return { ok: false, status: 503, payload: { error: 'CATALOG_UNAVAILABLE' } }
+    }
+    return {
+      ok: true,
+      limit: request.limit,
+      entries: page.entries.map(catalogApiEntry),
+      snapshot: catalogApiSnapshot(page.snapshot),
+      complete: page.complete === true,
+      cursor: page.cursor || null
+    }
+  } catch (err) {
+    if (request.cursor !== null && (err?.code === 'CURSOR_EXPIRED' || err?.code === 'HISTORY_EXPIRED')) {
+      return { ok: false, status: 409, payload: { error: CATALOG_CURSOR_EXPIRED } }
+    }
+    return { ok: false, status: 503, payload: { error: 'CATALOG_UNAVAILABLE' } }
+  }
 }
 
 function asUrl (url) {
@@ -177,13 +247,73 @@ function asUrl (url) {
   return new URL(url || '/', 'http://0.0.0.0')
 }
 
-function catalogEntries (node) {
-  const registry = node?.appRegistry
-  if (!registry || typeof registry.catalog !== 'function') return []
-  const entries = registry.catalog({
-    redactPrivate: node?.config?.custody?.redactedCatalog !== false
-  })
-  return Array.isArray(entries) ? entries : []
+function parseExternalCatalogRequest (url, { maxPageSize, defaultLimit }) {
+  const rawPage = url.searchParams.get('page')
+  if (rawPage !== null && rawPage !== '' && rawPage !== '1') {
+    return { ok: false, status: 400, payload: { error: 'CATALOG_CURSOR_REQUIRED' } }
+  }
+  if (url.searchParams.has('limit') && url.searchParams.has('pageSize')) {
+    return { ok: false, status: 400, payload: { error: CATALOG_LIMIT_AMBIGUOUS } }
+  }
+  const limitName = url.searchParams.has('limit') ? 'limit' : 'pageSize'
+  const rawLimit = url.searchParams.get(limitName)
+  let limit = defaultLimit
+  if (rawLimit !== null && rawLimit !== '') {
+    const parsed = validatePositiveInt(rawLimit, 1, maxPageSize, limitName)
+    if (!parsed.ok) return { ok: false, status: 400, payload: { error: parsed.error } }
+    limit = parsed.value
+  }
+  const rawCursor = url.searchParams.get('cursor')
+  if (rawCursor === null || rawCursor === '') return { ok: true, limit, cursor: null }
+  if (b4a.byteLength(rawCursor, 'utf8') > MAX_EXTERNAL_CURSOR_BYTES) {
+    return { ok: false, status: 400, payload: { error: 'INVALID_CATALOG_CURSOR' } }
+  }
+  try {
+    const cursor = JSON.parse(rawCursor)
+    if (!cursor || typeof cursor !== 'object' || Array.isArray(cursor)) throw new Error('invalid cursor')
+    return { ok: true, limit, cursor: validateAppCatalogExternalCursor(cursor) }
+  } catch {
+    return { ok: false, status: 400, payload: { error: 'INVALID_CATALOG_CURSOR' } }
+  }
+}
+
+function catalogApiSnapshot (snapshot) {
+  return {
+    snapshotId: snapshot.snapshotId,
+    highWater: snapshot.highWater,
+    rootDigest: snapshot.rootDigest,
+    entryCount: snapshot.entryCount,
+    senderPubkey: snapshot.senderPubkey
+  }
+}
+
+function catalogApiEntry (row) {
+  if (!Array.isArray(row) || row.length !== 22) throw new Error('invalid canonical catalog row')
+  const redacted = row[13] === true
+  return {
+    rowKey: row[0],
+    appKey: row[1],
+    appId: row[2],
+    type: row[3],
+    parentKey: row[4],
+    mountPath: row[5],
+    version: row[6],
+    discoveryKey: row[7],
+    blind: row[8],
+    storageClass: row[9],
+    availabilityClass: row[10],
+    privacyTier: row[11],
+    seededAt: row[12],
+    redacted,
+    metadataVisibility: row[14],
+    blindContentId: row[15],
+    anchored: row[16],
+    maxStorageBytes: row[17],
+    publisherPubkey: row[18],
+    durability: row[19],
+    revocable: row[20],
+    retainUntil: row[21]
+  }
 }
 
 function federationCatalogSnapshot (node) {
@@ -228,11 +358,11 @@ function hasControlChar (value) {
 }
 
 function truncateUtf8 (value, maxBytes) {
-  if (Buffer.byteLength(value, 'utf8') <= maxBytes) return value
+  if (b4a.byteLength(value, 'utf8') <= maxBytes) return value
   let out = ''
   let used = 0
   for (const ch of value) {
-    const size = Buffer.byteLength(ch, 'utf8')
+    const size = b4a.byteLength(ch, 'utf8')
     if (used + size > maxBytes) break
     out += ch
     used += size
@@ -240,15 +370,13 @@ function truncateUtf8 (value, maxBytes) {
   return out
 }
 
-function pageCatalogEntries (entries, {
-  type = null,
-  parent = null,
-  category = null,
-  page = 1,
-  pageSize = 50
-} = {}) {
-  const start = (page - 1) * pageSize
-  const pageEntries = []
+function filterCatalogPageEntries (entries, { type = null, parent = null } = {}) {
+  return entries.filter(entry => entry && typeof entry === 'object' &&
+    (!type || entry.type === type) &&
+    (!parent || entry.parentKey === parent))
+}
+
+function countCatalogEntries (entries) {
   const counts = {
     total: 0,
     apps: 0,
@@ -258,18 +386,8 @@ function pageCatalogEntries (entries, {
     media: 0
   }
 
-  for (const entry of entries) {
-    if (!entry || typeof entry !== 'object') continue
-    if (type && entry.type !== type) continue
-    if (parent && entry.parentKey !== parent) continue
-    if (category && !entryHasCategory(entry, category)) continue
-
-    const index = counts.total
-    countEntry(counts, entry)
-    if (index >= start && pageEntries.length < pageSize) pageEntries.push(entry)
-  }
-
-  return { entries: pageEntries, counts }
+  for (const entry of entries) countEntry(counts, entry)
+  return counts
 }
 
 function bucketCatalogEntries (entries) {
@@ -299,14 +417,25 @@ function countEntry (counts, entry) {
   else if (entry.type === 'media') counts.media++
 }
 
-function entryHasCategory (entry, category) {
-  const categories = Array.isArray(entry.categories) ? entry.categories : []
-  const wanted = String(category).toLowerCase()
-  return categories.some(value => String(value).toLowerCase() === wanted)
+function unavailableCategoryFilter () {
+  return {
+    ok: false,
+    status: 400,
+    payload: {
+      error: CATALOG_FILTER_UNAVAILABLE,
+      filter: 'category'
+    }
+  }
 }
 
 function relayPublicKeyHex (node) {
   const key = node?.swarm?.keyPair?.publicKey
   if (!key || typeof key.length !== 'number') return null
-  return Buffer.from(key).toString('hex')
+  return b4a.toString(key, 'hex')
+}
+
+function cursorSignerPubkey (keyPair) {
+  const key = keyPair?.publicKey
+  if (!key || key.byteLength !== 32) return null
+  return b4a.toString(key, 'hex')
 }

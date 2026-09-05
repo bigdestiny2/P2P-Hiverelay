@@ -221,6 +221,14 @@ feature `seed-signature-domain-v3` and include
 "hiverelay.seed-request.v3"`. Publishers can use this to prefer the stronger
 preimage on upgraded relay sets while retaining legacy v2 for mixed fleets.
 
+Seed protocol version 1.1 narrows the historical `discoveryKeys` field to
+signed routing hints for the single `appKey` drive. Relays advertise
+`seed-discovery-hints-single-drive-v1` and accept at most 64 raw hints: the
+list may be empty or contain only duplicates of
+`hypercoreCrypto.discoveryKey(appKey)` (one semantic unique value). A distinct
+or malformed value rejects the entire request and is never interpreted as an
+additional Hypercore public key.
+
 Publisher-signed HTTP and `hiverelay-publish` seed ingress can opt into
 replay hardening with `hiverelay.seed-request.replay-v1`. That preimage signs
 the same `seedRequestV2` bytes plus:
@@ -1093,7 +1101,7 @@ Publisher              DHT/Swarm             Relay Node
     |<--- connection -----|--- connection ----->|
     |                     |                     |
     |== open hiverelay-seed channel ==========>|
-    |   (handshake: {"major":1,"minor":0})     |
+    |   (handshake: {"major":1,"minor":1})     |
     |                                           |
     |--- SEED_REQUEST (signed) --------------->|
     |                                           |

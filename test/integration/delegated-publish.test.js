@@ -151,10 +151,19 @@ async function injectAndScan (node, entry, eventNames = ['registry-seed-accepted
     node.on(name, h)
   }
   node.seedingRegistry._requests.set(entry.appKey, entry)
+  node.seedingRegistry._requestPopulation.insert(entry.appKey)
   let timer = null
   try {
     await Promise.race([
-      node._scanRegistry(),
+      (async () => {
+        // A membership inserted after the prior cycle's frozen high-water is
+        // intentionally deferred. Advance at most one completion boundary,
+        // then consume the newly captured high-water on the next bounded page.
+        for (let pass = 0; pass < 2; pass++) {
+          await node._scanRegistry()
+          if (events.some(event => event.payload?.appKey === entry.appKey)) break
+        }
+      })(),
       new Promise((_resolve, reject) => {
         timer = setTimeout(() => {
           const err = new Error('delegated publish registry scan timed out')

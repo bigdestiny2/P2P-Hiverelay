@@ -1,6 +1,6 @@
 import { isValidHexKey } from '../constants.js'
 
-export const MAX_REGISTRY_STATUS_REQUESTS = 500
+export const MAX_REGISTRY_STATUS_REQUESTS = 64
 export const MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST = 100
 
 const REGISTRY_STATUS_ROUTES = Object.freeze({
@@ -91,13 +91,18 @@ export async function buildRegistryStatusPayload ({
   maxRequests = MAX_REGISTRY_STATUS_REQUESTS,
   maxRelaysPerRequest = MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST
 } = {}) {
-  if (!registry || typeof registry.getActiveRequests !== 'function') {
+  if (!registry || typeof registry.advanceRequestStatusSnapshot !== 'function' ||
+      typeof registry.requestStatusSnapshot !== 'function') {
     return { ok: false, status: 503, payload: errorPayload('Registry not running') }
   }
   const requestLimit = normalizeLimit(maxRequests, MAX_REGISTRY_STATUS_REQUESTS)
   const relayLimit = normalizeLimit(maxRelaysPerRequest, MAX_REGISTRY_STATUS_RELAYS_PER_REQUEST)
-  const requests = await registry.getActiveRequests()
-  const source = Array.isArray(requests) ? requests : []
+  let refresh = null
+  try {
+    refresh = registry.advanceRequestStatusSnapshot(Math.max(1, requestLimit))
+  } catch (_) {}
+  const snapshot = registry.requestStatusSnapshot() || {}
+  const source = Array.isArray(snapshot.requests) ? snapshot.requests : []
   const selected = source.slice(0, requestLimit)
   const enriched = await Promise.all(selected.map(async (request) => {
     const item = sanitizeRequest(request)
@@ -119,7 +124,9 @@ export async function buildRegistryStatusPayload ({
     }
   }))
 
-  const total = source.length
+  const total = Number.isSafeInteger(snapshot.activeRequests) && snapshot.activeRequests >= 0
+    ? snapshot.activeRequests
+    : 0
   return {
     ok: true,
     payload: {
@@ -128,6 +135,11 @@ export async function buildRegistryStatusPayload ({
       count: enriched.length,
       total,
       truncated: total > enriched.length,
+      refreshing: refresh?.complete === false,
+      completedHighWater: Number.isSafeInteger(snapshot.completedHighWater)
+        ? snapshot.completedHighWater
+        : null,
+      completedAt: Number.isSafeInteger(snapshot.completedAt) ? snapshot.completedAt : null,
       maxRequests: requestLimit,
       requests: enriched
     }
