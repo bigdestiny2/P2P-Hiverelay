@@ -18,7 +18,7 @@ import { EventEmitter } from 'events'
 import Hyperbee from 'hyperbee'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
-import { GenerationPopulation } from './generation-population.js'
+import { GenerationPopulation, MAX_POPULATION_RECORDS } from './generation-population.js'
 import {
   compareCatalogAppWinners,
   compareCatalogSemanticVersions
@@ -189,6 +189,7 @@ function sumBlockBytes (blocks) {
 function validatedLegacyEntries (parsed) {
   if (!parsed || typeof parsed !== 'object') throw registryInventoryError('unsupported-json-shape')
   const entries = Array.isArray(parsed) ? parsed : Object.values(parsed)
+  if (entries.length > MAX_POPULATION_RECORDS) throw registryInventoryError('inventory-row-limit')
   const seen = new Set()
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -1735,8 +1736,16 @@ export class AppRegistry extends EventEmitter {
   async _readBeeInventory () {
     const inventory = []
     const seen = new Set()
-    for await (const node of this._bee.createReadStream()) {
-      const entry = node.value
+    // The existing per-drive metadata allowance also bounds recovery decoding.
+    // Check raw bytes before JSON can expand an oversized persisted row.
+    for await (const node of this._bee.createReadStream({ valueEncoding: 'binary' })) {
+      if (inventory.length >= MAX_POPULATION_RECORDS) throw registryInventoryError('inventory-row-limit')
+      if (!b4a.isBuffer(node.value)) throw registryInventoryError('bee-row-encoding-invalid')
+      if (node.value.byteLength + APP_REGISTRY_LEGACY_ROW_PREFLIGHT_MARGIN_BYTES >
+          STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES) {
+        throw registryInventoryError('storage-metadata-row-exceeds-commitment')
+      }
+      const entry = JSON.parse(b4a.toString(node.value, 'utf8'))
       const appKey = node.key
       if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
           typeof appKey !== 'string' || !CANONICAL_APP_KEY.test(appKey) ||

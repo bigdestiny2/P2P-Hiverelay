@@ -29,6 +29,34 @@ async function exists (path) {
   try { await access(path); return true } catch { return false }
 }
 
+test('bee recovery rejects oversized encoded metadata without adopting a valid prefix', async (t) => {
+  const dir = await freshTmp()
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const store = openCorestore(dir)
+  t.teardown(() => store.close())
+  await store.ready()
+  const reg = new AppRegistry(dir, { store })
+  await reg.load()
+  reg.set('a'.repeat(64), { appId: 'valid-prefix', maxStorage: 4096 })
+  await reg.flush()
+  // A damaged/foreign writer bypasses the measured metadata planner. Recovery
+  // must bound the encoded value before a JSON codec expands it into objects.
+  const badKey = 'b'.repeat(64)
+  const oversized = Buffer.from(JSON.stringify({ appKey: badKey, description: 'x'.repeat(64 * 1024) }))
+  await reg._bee.put(badKey, oversized, { valueEncoding: 'binary' })
+  const priorLength = reg._bee.core.length
+  await reg._bee.close()
+  const restarted = new AppRegistry(dir, { store })
+  const error = await restarted.load().then(() => null, err => err)
+  t.is(error?.cause?.reason, 'storage-metadata-row-exceeds-commitment')
+  t.is(restarted.size, 0, 'no valid prefix is partially hydrated')
+  t.is(restarted._metadataBudgets.size, 0, 'no partial journal inventory is adopted')
+  t.is(restarted._bee.core.length, priorLength, 'failed recovery does not rewrite the feed')
+  const retained = await restarted._bee.get(badKey, { valueEncoding: 'binary' })
+  t.alike(retained.value, oversized, 'oversized durable bytes remain available for explicit repair')
+  await restarted._bee.close()
+})
+
 test('bee mode: empty start, set, restart preserves entries', async (t) => {
   const dir = await freshTmp()
   try {
