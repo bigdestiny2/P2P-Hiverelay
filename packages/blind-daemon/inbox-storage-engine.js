@@ -621,6 +621,7 @@ export class BlindInboxStorageEngine {
       beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector
     })
+    this.generationAcknowledgmentFailure = null
     this.onBlindWriteAcknowledged = options.onBlindWriteAcknowledged || null
     if (this.onBlindWriteAcknowledged != null && typeof this.onBlindWriteAcknowledged !== 'function') {
       throw new TypeError('onBlindWriteAcknowledged must be a function')
@@ -680,7 +681,9 @@ export class BlindInboxStorageEngine {
             await this.advanceEpochFloor(nowEpochFromMillis(this.nowUnixMillis()))
             await this.#sweepExpiredRetryPins(4096)
             await this.#sweepExpired(4096)
-          }).catch(() => { this.readOnlyReason = this.readOnlyReason || 'CLOCK_TIMER_FAILED' })
+          }).catch(error => {
+            if (error !== this.generationAcknowledgmentFailure) this.readOnlyReason = this.readOnlyReason || 'CLOCK_TIMER_FAILED'
+          })
         }, 60_000)
         if (typeof this.clockTimer.unref === 'function') this.clockTimer.unref()
       }
@@ -700,6 +703,7 @@ export class BlindInboxStorageEngine {
 
   #assertWritable (leaseMutation = false) {
     this.#assertOpen()
+    this.#assertGenerationWritable()
     if (this.readOnlyReason) fail('INTERNAL', `store is read-only: ${this.readOnlyReason}`)
     if (leaseMutation && this.clockUnsafe) fail('BUSY', 'store clock is unsafe', true)
   }
@@ -754,6 +758,7 @@ export class BlindInboxStorageEngine {
   }
 
   async #appendAndApply (type, transactionId, virtualBucket, value) {
+    this.#assertGenerationWritable()
     const codec = WAL_CODECS.get(type)
     if (!codec) throw new BlindWalIntegrityError(`unknown Inbox WAL type ${type}`)
     const frame = await this.transactionStore.appendAndApply({
@@ -761,17 +766,35 @@ export class BlindInboxStorageEngine {
       transactionId,
       virtualBucket,
       payload: encodeCanonical(codec, value)
-    }, frame => this.#applyFrame(frame))
+    }, frame => this.#applyFrame(frame), { prewriteFence: () => this.#assertGenerationWritable() })
     if ([
       BLIND_INBOX_WAL_TYPE.CREATE_COMMITTED,
       BLIND_INBOX_WAL_TYPE.RENEW_COMMITTED,
       BLIND_INBOX_WAL_TYPE.CLOSE_COMMITTED,
       BLIND_INBOX_WAL_TYPE.APPEND_COMMITTED
     ].includes(type)) await this.#acknowledgeBlindWrite({ walSequence: frame.sequence, walHash: frame.walHash })
+    this.#assertGenerationWritable()
     return frame
   }
 
+  #assertGenerationWritable () {
+    if (this.generationAcknowledgmentFailure) throw this.generationAcknowledgmentFailure
+    try {
+      this.onBlindWriteAcknowledged?.assertWritable?.()
+    } catch (error) {
+      this.generationAcknowledgmentFailure = error
+      throw error
+    }
+  }
+
+  #writerQuarantineReason () {
+    return this.generationAcknowledgmentFailure
+      ? 'BLIND_GENERATION_ACKNOWLEDGMENT_FAILED'
+      : this.onBlindWriteAcknowledged?.quarantineReason?.() || null
+  }
+
   async #acknowledgeBlindWrite (storeEvidence = null) {
+    this.#assertGenerationWritable()
     if (!this.onBlindWriteAcknowledged) return false
     if (storeEvidence == null) {
       storeEvidence = {
@@ -779,7 +802,14 @@ export class BlindInboxStorageEngine {
         walHash: this.transactionStore.walHash
       }
     }
-    return this.onBlindWriteAcknowledged(storeEvidence)
+    try {
+      const acknowledged = await this.onBlindWriteAcknowledged(storeEvidence)
+      this.#assertGenerationWritable()
+      return acknowledged
+    } catch (error) {
+      this.generationAcknowledgmentFailure = this.generationAcknowledgmentFailure || error
+      throw error
+    }
   }
 
   #applyFrame (frame) {
@@ -1392,6 +1422,7 @@ export class BlindInboxStorageEngine {
       epochFloor: this.epochFloor,
       clockUnsafe: this.clockUnsafe,
       readOnlyReason: this.readOnlyReason,
+      writerQuarantineReason: this.#writerQuarantineReason(),
       walSequence: this.transactionStore.walSequence,
       walHash: b4a.from(this.transactionStore.walHash),
       inboxCount: this.inboxes.size,
@@ -1424,6 +1455,7 @@ export class BlindInboxStorageEngine {
 
   preparedInboxOperationState (input) {
     this.#assertOpen()
+    this.#assertGenerationWritable()
     const prepared = preparedView(input.preparedAdmission)
     if (!equal(prepared.value.requestCommitment, fixed(input.requestCommitment, 32, 'requestCommitment', true))) {
       fail('SPEND_INVALID', 'prepared admission does not match requestCommitment')
@@ -1433,6 +1465,7 @@ export class BlindInboxStorageEngine {
 
   closeRequestState (requestCommitment) {
     this.#assertOpen()
+    this.#assertGenerationWritable()
     requestCommitment = fixed(requestCommitment, 32, 'requestCommitment', true)
     return this.requestResults.has(hex(requestCommitment))
       ? Object.freeze({ kind: 'replay' })
@@ -1744,6 +1777,7 @@ export class BlindInboxStorageEngine {
   }
 
   #mutationResult (spend, record) {
+    this.#assertGenerationWritable()
     return Object.freeze({
       replay: true,
       receiptEpoch: spend.committedEpoch,
@@ -2060,6 +2094,7 @@ export class BlindInboxStorageEngine {
 
   chargedPageState (input) {
     this.#assertOpen()
+    this.#assertGenerationWritable()
     const prepared = preparedView(input.preparedAdmission)
     const disposition = this.#spendDisposition(prepared, input.operationId)
     return spendViewOrFresh(disposition)
@@ -2081,6 +2116,7 @@ export class BlindInboxStorageEngine {
   }
 
   async #pinnedPage (spendTag) {
+    this.#assertGenerationWritable()
     const pin = this.retryPins.get(hex(spendTag))
     const spend = this.spends.get(hex(spendTag))
     if (!pin || !spend) fail('RETRY_TERMINAL', 'Inbox retry pin is absent')
@@ -2097,6 +2133,7 @@ export class BlindInboxStorageEngine {
       entries.push({ appendRevision: frame.appendRevision, frameHash: b4a.from(frame.frameHash), frameClass: frame.frameClass, frame: body })
     }
     if (!equal(inboxEntriesCommitment(entries), pin.entriesCommitment)) fail('INTERNAL', 'Inbox retry entries commitment changed')
+    this.#assertGenerationWritable()
     return Object.freeze({
       spendTag: b4a.from(spend.spendTag),
       requestCommitment: b4a.from(spend.requestCommitment),
@@ -2118,6 +2155,7 @@ export class BlindInboxStorageEngine {
       const requestCommitment = fixed(input.requestCommitment, 32, 'requestCommitment', true)
       const resultCommitment = fixed(input.resultCommitment, 32, 'resultCommitment', true)
       return this.transactionStore.withLocks([`spend:${hex(spendTag)}`], async () => {
+        this.#assertGenerationWritable()
         const spend = this.spends.get(hex(spendTag))
         const pin = this.retryPins.get(hex(spendTag))
         if (!spend || !pin || !equal(spend.requestCommitment, requestCommitment)) fail('SPEND_REPLAY', 'Inbox read finalization does not match its spend')

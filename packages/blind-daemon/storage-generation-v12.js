@@ -50,6 +50,23 @@ const TRIGGER_KIND = Object.freeze({
 })
 const MAX_SIGNED_AUTHORITY_BYTES = 1024 * 1024
 
+// The production engines open before the installation floor is assembled.
+// Keep that existing startup boundary explicit while sharing one live writer
+// quarantine once the floor exists. The callback also carries a synchronous
+// guard suitable for the transaction store's final prewrite fence.
+export function createBlindGenerationWriterAcknowledgment (getFloor, role) {
+  if (typeof getFloor !== 'function') throw new TypeError('getFloor must be a function')
+  role = storeRole(role)
+  const acknowledge = evidence => {
+    const floor = getFloor()
+    if (!floor) throw new Error('blind generation floor is not assembled')
+    return floor.acknowledgeWrite({ role, kind: TRIGGER_KIND[role], storeEvidence: evidence })
+  }
+  acknowledge.assertWritable = () => getFloor()?.assertWritable()
+  acknowledge.quarantineReason = () => getFloor()?.writerQuarantineReason || null
+  return acknowledge
+}
+
 export async function openBlindStoreGenerationFloor (controlDirectory, options = {}) {
   if (typeof controlDirectory !== 'string' || controlDirectory.length === 0) {
     throw new TypeError('controlDirectory must be a non-empty string')
@@ -163,12 +180,18 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
 
   const pendingAcknowledgments = []
   let acknowledgmentDrain = null
+  let writerQuarantine = null
 
   return {
     get firstBlindOnlyWriteAcknowledged () { return acknowledged },
     get firstIrreversibleWriteAcknowledged () { return acknowledged },
     get trigger () { return trigger == null ? null : publicTrigger(trigger, latest) },
     get capabilities () { return BLIND_STORE_GENERATION_CAPABILITIES },
+    get writerQuarantineReason () { return writerQuarantine?.code || null },
+    assertWritable () {
+      if (writerQuarantine) throw writerQuarantine
+      return true
+    },
     assertReaderMode (mode) {
       if (mode !== BLIND_STORE_READER_MODE.BLIND_ONLY) {
         throw new Error('only blind-only reader mode is implemented; dual-read rollback belongs to a separately verified compatibility target')
@@ -226,7 +249,11 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
   }
 
   function queueAcknowledgment (candidate) {
+    if (writerQuarantine) return Promise.reject(writerQuarantine)
     if (acknowledged) return Promise.resolve(false)
+    // Invalid caller evidence is a precondition rejection, not an uncertain
+    // publication. Only an admitted publication failure quarantines writers.
+    try { validateCandidate(candidate) } catch (error) { return Promise.reject(error) }
     const operation = new Promise((resolve, reject) => {
       pendingAcknowledgments.push({ candidate, resolve, reject })
     })
@@ -236,15 +263,21 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
 
   async function drainAcknowledgments () {
     const batch = pendingAcknowledgments.splice(0)
+    let durableTrigger = acknowledged
     try {
       const diskRecords = await loadRecords()
       validateChain(diskRecords)
       if (diskRecords.at(-1).sequence > latest.sequence) {
+        // Valid records are created by synchronizing the temporary file before
+        // linking it. Synchronize their namespace before adopting a concurrent
+        // publisher's record as this acknowledgment's durable commit point.
+        await syncDirectory()
         latest = diskRecords.at(-1)
         records = diskRecords
         registrations = registrationMap(records)
         acknowledged = latest.firstIrreversibleWriteAcknowledged
         trigger = latest.trigger
+        durableTrigger = acknowledged
         await writeHead(latest)
       }
       if (acknowledged) {
@@ -254,23 +287,33 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       for (const item of batch) validateCandidate(item.candidate)
       const selected = batch.map(item => item.candidate).sort(compareTriggers)[0]
       const next = record(latest.sequence + 1, true, recordHash(latest), selected, [])
-      await writeExclusive(recordPath(next.sequence), signed(next))
-      records.push(next)
-      latest = next
-      acknowledged = true
-      trigger = selected
+      await writeExclusive(recordPath(next.sequence), signed(next), () => {
+        // Commit point: record bytes and its published directory entry have
+        // both synchronized. Temp cleanup and a lagging head are recoverable.
+        records.push(next)
+        latest = next
+        acknowledged = true
+        trigger = selected
+        durableTrigger = true
+      })
       if (options.faultInjector) await options.faultInjector('after-record-sync')
       await writeHead(next)
       for (const item of batch) item.resolve(true)
     } catch (error) {
+      if (!durableTrigger) {
+        writerQuarantine = new Error(`blind generation acknowledgment failed; reopen required: ${error.message}`, { cause: error })
+        writerQuarantine.code = 'BLIND_GENERATION_ACKNOWLEDGMENT_FAILED'
+      }
       for (const item of batch) {
-        if (acknowledged) item.resolve(true)
-        else item.reject(error)
+        if (durableTrigger) item.resolve(true)
+        else item.reject(writerQuarantine)
       }
     } finally {
       acknowledgmentDrain = null
       if (pendingAcknowledgments.length > 0) {
-        if (acknowledged) {
+        if (writerQuarantine) {
+          for (const item of pendingAcknowledgments.splice(0)) item.reject(writerQuarantine)
+        } else if (acknowledged) {
           for (const item of pendingAcknowledgments.splice(0)) item.resolve(false)
         } else {
           acknowledgmentDrain = Promise.resolve().then(drainAcknowledgments)
@@ -486,7 +529,8 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
     await writeAtomic(path.join(controlDirectory, BLIND_STORE_GENERATION.headFile), signed(body))
   }
 
-  async function writeExclusive (file, value) {
+  async function writeExclusive (file, value, onPublished = null) {
+    if (options.faultInjector) await options.faultInjector('before-record-publication', { sequence: value.sequence })
     const temporary = temporaryPath('record')
     const bytes = canonicalBytes(value)
     const handle = await open(temporary, 'wx', 0o600)
@@ -497,6 +541,7 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
         await options.faultInjector('after-record-temp-partial', { sequence: value.sequence })
       }
       await writeAll(handle, bytes.subarray(split))
+      if (options.faultInjector) await options.faultInjector('before-record-file-sync', { sequence: value.sequence })
       await handle.sync()
     } finally {
       await handle.close()
@@ -511,7 +556,9 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       const existing = await readAuthorityFile(file, 'generation record')
       if (!b4a.equals(existing, bytes)) throw new Error('conflicting blind store generation record already exists')
     }
+    if (options.faultInjector) await options.faultInjector('before-record-directory-sync', { sequence: value.sequence })
     await syncDirectory()
+    if (onPublished) onPublished()
     if (options.faultInjector) {
       await options.faultInjector('after-record-link', { sequence: value.sequence })
     }

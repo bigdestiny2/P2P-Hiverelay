@@ -70,6 +70,7 @@ import { loadBundledBlindStoreFormatAuthority } from './store-format-binding.js'
 import {
   BLIND_STORE_GENERATION_CAPABILITIES,
   BLIND_STORE_READER_MODE,
+  createBlindGenerationWriterAcknowledgment,
   openBlindStoreGenerationFloor
 } from './storage-generation-v12.js'
 import { loadProductionEntrypointConfig } from './production-entrypoint.js'
@@ -87,6 +88,13 @@ const DESCRIBE_OPERATION_BITS = operationBits(FAMILY.DESCRIBE, Object.values(OPE
 const CELL_OPERATION_BITS = operationBits(FAMILY.CELL, Object.values(OPERATION.CELL))
 const INBOX_OPERATION_BITS = operationBits(FAMILY.INBOX, Object.values(OPERATION.INBOX))
 const CORE_UNARY_OPERATION_BITS = operationBits(FAMILY.CORE, [OPERATION.CORE.MIRROR, OPERATION.CORE.PROVE])
+const GENERATION_WRITE_OPERATION_BITS = operationBits(FAMILY.CELL, [
+  OPERATION.CELL.PUT, OPERATION.CELL.RENEW, OPERATION.CELL.DROP
+]) | operationBits(FAMILY.INBOX, [
+  OPERATION.INBOX.CREATE, OPERATION.INBOX.RENEW, OPERATION.INBOX.CLOSE, OPERATION.INBOX.APPEND
+]) | operationBits(FAMILY.CORE, [
+  OPERATION.CORE.MIRROR, OPERATION.CORE.PROVE, OPERATION.CORE.OPEN_REPLICATION
+])
 const DESCRIBE_AND_CELL_OPERATION_BITS = DESCRIBE_OPERATION_BITS | CELL_OPERATION_BITS
 const DESCRIBE_CELL_INBOX_OPERATION_BITS = DESCRIBE_AND_CELL_OPERATION_BITS | INBOX_OPERATION_BITS
 const DESCRIBE_CELL_INBOX_CORE_OPERATION_BITS = DESCRIBE_CELL_INBOX_OPERATION_BITS | CORE_UNARY_OPERATION_BITS
@@ -1397,6 +1405,16 @@ export function productionStorageOperationalIntegrity (status) {
   })
 }
 
+export function productionGenerationReadyOperationBits (status, enabledOperationBits) {
+  // Floor publication uncertainty is a writer failure, not evidence that
+  // already verified payload bytes are corrupt. Uncharged reader operations
+  // retain their integrity contract; charged reads still require their WAL
+  // fence and cannot create or replay a charge after quarantine.
+  return status.writerQuarantineReason == null
+    ? enabledOperationBits
+    : enabledOperationBits & ~GENERATION_WRITE_OPERATION_BITS
+}
+
 function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits, writeReadinessGuard = null, inboxReadinessGuard = null) {
   return async input => {
     const status = storage.status()
@@ -1408,9 +1426,10 @@ function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits
     const operationalIntegrity = productionStorageOperationalIntegrity(status)
     const writeReady = writeReadinessGuard == null || writeReadinessGuard(input) === true
     const inboxReady = inboxReadinessGuard == null || inboxReadinessGuard() === true
-    const readyOperationBits = writeReady
+    const writeOperationBits = writeReady
       ? enabledOperationBits
       : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2
+    const readyOperationBits = productionGenerationReadyOperationBits(status, writeOperationBits)
     return Object.freeze({
       selfVerified: true,
       descriptorSequence: input.descriptorSequence,
@@ -1747,9 +1766,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
         ownerFenceTokenHash,
         durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
         storeFormatAuthority,
-        onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeWrite({
-          role: 'cell', kind: 'blind-only-write', storeEvidence: evidence
-        })
+        onBlindWriteAcknowledged: createBlindGenerationWriterAcknowledgment(() => storeFloor, 'cell')
       })
       await storage.open()
       if (requireManifestFloor) {
@@ -1787,9 +1804,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
           ownerFenceTokenHash,
           durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
           storeFormatAuthority,
-          onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeWrite({
-            role: 'inbox', kind: 'blind-only-write', storeEvidence: evidence
-          })
+          onBlindWriteAcknowledged: createBlindGenerationWriterAcknowledgment(() => storeFloor, 'inbox')
         })
         await inboxStorage.open()
       }
@@ -1804,9 +1819,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
           maximumSponsoredCoreLength: descriptorSnapshot.descriptor.maxSponsoredCoreLength,
           nowEpoch: currentLeaseEpoch,
           nowUnixMillis: currentUnixMillis,
-          onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeWrite({
-            role: 'core', kind: 'blind-only-write', storeEvidence: evidence
-          })
+          onBlindWriteAcknowledged: createBlindGenerationWriterAcknowledgment(() => storeFloor, 'core')
         })
         await coreStorage.open()
       }
