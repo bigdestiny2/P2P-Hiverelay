@@ -7,6 +7,7 @@ import { AppRegistry, APP_RETIREMENT_STATE } from 'p2p-hiverelay/core/app-regist
 import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
 import { LifecycleScope } from 'p2p-hiverelay/core/relay-node/lifecycle-scope.js'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
+import createTestnet from '@hyperswarm/testnet'
 import { measureStorageTreeBytes } from '../../packages/core/config/storage-cap.js'
 
 function tmpStorage () {
@@ -103,10 +104,12 @@ test('AppLifecycle: failed durable unseed retains retry debt after ordered live 
 })
 
 test('RelayNode: seedApp rolls back registry when explicit registry persist fails', async (t) => {
+  const testnet = await createTestnet(2, t)
   const storage = tmpStorage()
   await mkdir(storage, { recursive: true })
   const node = new RelayNode({
     storage,
+    bootstrapNodes: testnet.bootstrap,
     enableAPI: false,
     enableNetworkDiscovery: false,
     enableHolesail: false,
