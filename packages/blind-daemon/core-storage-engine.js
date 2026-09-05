@@ -398,7 +398,7 @@ function sourceOf (value) {
 }
 
 export class BlindCoreStorageEngine {
-  // Validated transitions remain historical facts after sponsorship/pin expiry.
+  // Validated paid transitions remain historical facts after lifecycle expiry.
   #hasIrreversibleHistory = false
 
   static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
@@ -1414,7 +1414,8 @@ export class BlindCoreStorageEngine {
     if ([
       BLIND_CORE_WAL_TYPE.MIRROR_ACCEPTED,
       BLIND_CORE_WAL_TYPE.MIRROR_ACTIVATED,
-      BLIND_CORE_WAL_TYPE.PROVE_PINNED
+      BLIND_CORE_WAL_TYPE.PROVE_PINNED,
+      BLIND_CORE_WAL_TYPE.OPEN_STATE
     ].includes(frame.type)) this.#hasIrreversibleHistory = true
   }
 
