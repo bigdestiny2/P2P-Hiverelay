@@ -5,7 +5,7 @@ const bytes = max => ({ bytes: [1, max] })
 const legacy = name => ({ legacy: name })
 const fields = (...pairs) => pairs
 
-export const validatorSha256 = '8ae2eb834aa1a11008bba6f24b5c010ff36e0f0d9c6559ca671e833cf64cb976'
+export const validatorSha256 = 'e08abbb4dfe5ca3489f877a2f95ee9f6b7538b495b1d3209a50dba5dc8b46f4f'
 
 export const predecessorPins = {
   'codec.js': '4102aac14a1cc3192d76b7c8d351ffc7e9fd7b7e5023b8f599e6424923d17e83',
@@ -65,7 +65,7 @@ export const limits = {
 export const rules = {
   scope: 'Private candidate internal-store format 2.0; codec/interface proof only; no runtime selection or migration executor.',
   reasonForMajor: 'New role checkpoint hydration, cumulative history and complete CORE records are incompatible with format 1.2 recovery-only/full-WAL rules.',
-  rowKeys: 'Canonical key=(kind:u8,subtype:u8,identity bytes), family implied by root role. CELL/INBOX identity recipes and semantic joins remain exact pinned predecessor snapshot implementations; codec validates framing, sorted unique keys and named values; engine hydration must validate key/value correspondence.',
+  rowKeys: 'Canonical key=(kind:u8,subtype:u8,identity bytes), family implied by root role. CELL/INBOX identity recipes and semantic joins remain exact pinned predecessor snapshot implementations; codec validates framing, sorted unique keys, named values and key/value correspondence; engine hydration must validate complete semantic joins.',
   indexSemantics: 'CORE activation revision begins at zero and advances by one per core; candidate revision follows its accepted basis and is independent. No removal of CORE admissions, attempts, generations, floors, proofs or OPEN rows. Proof expiry retains original evidence and no longer owns body bytes. Existing result signatures and descriptor lineage remain required.',
   encoding: 'Closed ordered field grammar; existing codec.js primitives; big-endian fixed integers, canonical compact-uint array/byte lengths, optional presence byte, exact fields and no trailing bytes.',
   artifactHash: 'BLAKE2B-256 using existing hashStoreFormat recipe over exact UTF-8 canonical JSON artifact bytes with terminal LF.',
@@ -76,6 +76,9 @@ export const rules = {
   history: 'History is a monotone fact derived by real accepted reducers and authenticated predecessor plus suffix; never infer false from empty maps. First-trigger hash is an immutable installation trigger reference, not a claim that this role triggered first.',
   completeCore: 'Each paid admission owns exactly one MIRROR, PROVE or OPEN row. PROVE including expired spends retains original admission/pin evidence; lane B must reconstruct missing map evidence from authenticated full WAL before any prune.',
   generationRetention: 'Retain historical activation records required by mirror attempts, floors and live/expired proof receipts. Only active floors or live proof pins own corpus bodies. An old ACTIVE mirror is historical; candidateRevision is not activation revision.',
+  mirrorSuccessor: 'Retain exact immutable MIRROR acceptance fields. ACCEPTED may advance to RETRY_PENDING, ACTIVE or TERMINAL; RETRY_PENDING may increment its retry count or advance to ACTIVE/TERMINAL. Counts never decrease; unchanged counts retain their reason. ACTIVE/TERMINAL rows are final. Changed lifecycle WAL must lie in the new suffix.',
+  floorSuccessor: 'Latest generation never regresses or disappears. At the same generation, an active floor may expire with new suffix evidence; an inactive floor and its exact expiry evidence are immutable. A new generation requires a later suffix activation, preserving all prior generation records.',
+  relationshipWork: 'CORE joins use one canonical identity index per retained group, then bounded passes over rows/bytes. Sorted unique identities are validated before constructing indexes. The finite capacity regression measures 128, 512 and 2048 retained records per group; it does not qualify the 65536-row refusal ceiling as deployment capacity.',
   lifecycle: 'No transient CELL/INBOX reservations/provisional work in checkpoint. Persisted CORE reserved/live OPEN is retained but actual recovery terminalizes it before serving; no upstream ticket or child resurrection.',
   semanticBoundary: 'Codec checks are not MAC/signature, body, lease or reducer authenticity. Real engine-owned detached shadow must validate all existing family semantics and complete accounting/reference ownership before mutable recovery.',
   publication: 'Capture under engine drain and active owner/WAL barrier; snapshot temp write/fsync/semantic verify/no-replace/directory sync/readback; checkpoint same order; exact two-slot linked manifest CAS; then revalidate and mint in-memory coverage authority.',

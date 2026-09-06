@@ -157,13 +157,14 @@ function validateCore (v) {
     if (length < 1n || expectedClass > 45 || a.resourceClass !== expectedClass || m.targetLeaseEpoch < m.acceptedAtEpoch + LEASE_CLASS_EPOCHS[m.request.leaseClass] || (basis && (m.targetLeaseEpoch < basis.leaseEpoch || m.request.fork < basis.fork || (m.request.fork === basis.fork && (m.request.length < basis.length || (m.request.length === basis.length && !same(m.request.signedHeadHash, basis.signedHeadHash))))))) fail('mirror accepted basis/resource class invalid')
     if (m.request.fork !== m.result.fork || m.request.length !== m.result.length || !same(m.request.clientNonce, m.result.requestNonce)) fail('mirror result request mismatch')
   }
-  if (new Set(v.generations.map(g => hex(g.mirrorSpendTag))).size !== v.generations.length) fail('mirror activated more than once')
+  const activatedMirrors = new Set(v.generations.map(g => hex(g.mirrorSpendTag)))
+  if (activatedMirrors.size !== v.generations.length) fail('mirror activated more than once')
   for (const g of v.generations) {
     const m = mirrors.get(hex(g.mirrorSpendTag))
     if (!m || m.state !== 3 || !same(m.request.corePublicKey, g.key.corePublicKey) || m.request.fork !== g.fork || m.request.length !== g.length || !same(m.request.signedHeadHash, g.signedHeadHash) || m.targetLeaseEpoch !== g.leaseEpoch || g.activationWal.sequence <= m.acceptanceWal.sequence || canonicalJSON(g.activationWal) !== canonicalJSON(m.lifecycleWal)) fail('activation has no matching historically ACTIVE mirror')
   }
   for (const g of v.generations) if (g.activationBasis) { const prior = generations.get(generationKey(g.activationBasis)); if (!prior || prior.activationWal.sequence >= g.activationWal.sequence) fail('activation predecessor missing or regressed') }
-  for (const m of v.mirrors) if (m.state === 3 && !v.generations.some(g => same(g.mirrorSpendTag, m.spendTag))) fail('ACTIVE mirror lacks activation evidence')
+  for (const m of v.mirrors) if (m.state === 3 && !activatedMirrors.has(hex(m.spendTag))) fail('ACTIVE mirror lacks activation evidence')
   const latest = new Map()
   for (const g of v.generations) latest.set(hex(g.key.corePublicKey), g.key)
   if (latest.size !== v.floors.length || v.floors.some(f => generationKey(latest.get(hex(f.key.corePublicKey)) || f.key) !== generationKey(f.key))) fail('durable latest floor missing or regressed')
@@ -284,15 +285,42 @@ export function assertSnapshotSuccessor (previous, next) {
   if (next.floors.epoch < previous.floors.epoch || next.floors.descriptorSequence < previous.floors.descriptorSequence || (next.floors.descriptorSequence === previous.floors.descriptorSequence && !same(next.floors.descriptorHash, previous.floors.descriptorHash)) || next.compactionWalHighWater < previous.compactionWalHighWater) fail('checkpoint floor regressed or forked')
   if (next.writer.mapGeneration < previous.writer.mapGeneration || next.writer.writerEpoch < previous.writer.writerEpoch || (next.writer.writerEpoch === previous.writer.writerEpoch && !same(next.writer.fenceHash, previous.writer.fenceHash)) || next.retainFromSequence < previous.retainFromSequence) fail('writer or retention floor regressed/forked')
   if (previous.core) {
+    // One canonical identity index per retained group. No per-record history scans.
     const retained = new Map(next.core.admissions.map(a => [hex(a.value.spendTag), canonicalJSON(a)]))
+    const mirrors = new Map(next.core.mirrors.map(m => [hex(m.spendTag), m]))
+    const generations = new Map(next.core.generations.map(g => [generationKey(g.key), g]))
+    const floors = new Map(next.core.floors.map(f => [hex(f.key.corePublicKey), f]))
+    const proofs = new Map(next.core.proofs.map(p => [hex(p.spendTag), p]))
+    const opens = new Map(next.core.opens.map(o => [hex(o.value.logicalRetryKey), o]))
     for (const a of previous.core.admissions) if (retained.get(hex(a.value.spendTag)) !== canonicalJSON(a)) fail('CORE paid admission retired without a retention contract')
-    for (const g of previous.core.generations) if (!next.core.generations.some(n => canonicalJSON(n) === canonicalJSON(g))) fail('CORE historical generation changed/retired')
+    const acceptance = m => {
+      const { state, retryCount, retryReason, terminalReason, lifecycleWal, ...immutable } = m
+      return canonicalJSON(immutable)
+    }
+    for (const m of previous.core.mirrors) {
+      const n = mirrors.get(hex(m.spendTag))
+      if (!n || acceptance(m) !== acceptance(n)) fail('CORE MIRROR acceptance evidence changed/retired')
+      if (canonicalJSON(m) === canonicalJSON(n)) continue
+      if (m.state === 3 || m.state === 4 || n.state < m.state || n.retryCount < m.retryCount || (n.retryCount === m.retryCount && n.retryReason !== m.retryReason) || (n.state === 2 && n.retryCount === m.retryCount) || n.state === 1 || n.lifecycleWal.sequence <= previous.coveredWal.sequence) fail('CORE MIRROR lifecycle regressed or final evidence changed')
+    }
+    for (const g of previous.core.generations) if (canonicalJSON(generations.get(generationKey(g.key))) !== canonicalJSON(g)) fail('CORE historical generation changed/retired')
+    for (const f of previous.core.floors) {
+      const n = floors.get(hex(f.key.corePublicKey))
+      if (!n || n.key.revision < f.key.revision) fail('CORE durable floor regressed/retired')
+      if (n.key.revision === f.key.revision) {
+        if (canonicalJSON(n) === canonicalJSON(f)) continue
+        if (!f.active || n.active || n.expiryWal.sequence <= previous.coveredWal.sequence) fail('CORE floor expiry changed or generation reactivated')
+      } else {
+        const g = generations.get(generationKey(n.key))
+        if (g.activationWal.sequence <= previous.coveredWal.sequence || (f.expiryWal && g.activationWal.sequence <= f.expiryWal.sequence)) fail('CORE floor advance lacks later activation')
+      }
+    }
     for (const p of previous.core.proofs) {
-      const n = next.core.proofs.find(n => same(n.spendTag, p.spendTag))
+      const n = proofs.get(hex(p.spendTag))
       if (!n || canonicalJSON({ ...p, expiryWal: null, expiredAtUnixMillis: null }) !== canonicalJSON({ ...n, expiryWal: null, expiredAtUnixMillis: null }) || (p.expiredAtUnixMillis !== null && canonicalJSON(n) !== canonicalJSON(p))) fail('CORE proof evidence changed/retired')
     }
     for (const o of previous.core.opens) {
-      const n = next.core.opens.find(n => same(n.value.logicalRetryKey, o.value.logicalRetryKey))
+      const n = opens.get(hex(o.value.logicalRetryKey))
       if (!n || n.value.lifecycleState < o.value.lifecycleState || (o.value.lifecycleState === 3 && canonicalJSON(o) !== canonicalJSON(n))) fail('CORE OPEN lifecycle regressed/retired')
     }
   }

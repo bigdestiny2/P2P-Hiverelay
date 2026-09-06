@@ -1,5 +1,6 @@
 // Deterministic structural fixtures. Hashes/signatures are synthetic; no store authority.
 import b4a from 'b4a'
+import { readFileSync } from 'node:fs'
 import * as primitive from '../codec.js'
 import * as internal from '../client-internal-schemas.js'
 import * as wire from '../schemas.js'
@@ -10,6 +11,16 @@ import { formatHash, coreBucket, openLogicalKey, canonicalJSON, snapshotHash, MA
 export const H = n => b4a.alloc(32, n)
 export const wal = n => ({ sequence: BigInt(n), hash: H(Number(BigInt(n) % 250n) + 1) })
 export const clone = v => JSON.parse(canonicalJSON(v), (k, x) => x && x.$u64 !== undefined ? BigInt(x.$u64) : x && x.$bytes !== undefined ? b4a.from(x.$bytes, 'hex') : x)
+export function populatedFamily (id) {
+  const data = JSON.parse(readFileSync(new URL('./populated-family-fixtures.json', import.meta.url), 'utf8'), (k, x) => x && x.$u64 !== undefined ? BigInt(x.$u64) : x && x.$bytes !== undefined ? b4a.from(x.$bytes, 'hex') : x)
+  const f = data.fixtures.find(f => f.id === id)
+  if (!f) throw new Error('unknown populated family fixture')
+  const s = base(f.role)
+  Object.assign(s.identity, f.identity); Object.assign(s.floors, f.floors)
+  s.history.irreversible = 1; s.history.firstTriggerHash = H(13)
+  s[f.role === 1 ? 'cell' : 'inbox'] = f.rows
+  return s
+}
 export function base (role) {
   return { magic: b4a.from('HRBCS002'), formatMajor: 2, formatMinor: 0, formatHash: formatHash(), identity: { installationId: H(1), rootId: H(role + 1), role, relayPublicKey: H(5), storeId: H(6), durabilityContinuityHash: H(7) }, coveredWal: wal(300001), writer: { mapGeneration: 1n, writerEpoch: 1n, fenceHash: H(8) }, floors: { epoch: 10, descriptorSequence: 1n, descriptorHash: H(9), clockUnsafe: 0, recoveryGap: 0 }, history: { irreversible: 0, authoritySequence: 1n, authorityRecordHash: H(10), firstTriggerHash: null }, revision: 1n, previousSnapshotHash: null, compactionWalHighWater: 0n, retainFromSequence: 1n, cell: null, inbox: null, core: null }
 }
@@ -72,8 +83,37 @@ export function positives () {
   const participants = { magic: b4a.from('HRBPA001'), installationId: H(1), revision: 1n, previousAuthorityHash: null, firstTriggerHash: H(13), blind, hc11 }
   const coverage = { identity: retired.identity, writer: retired.writer, formatHash: formatHash(), wal: retired.coveredWal, snapshotHash: snapshotHash(retired), checkpointHash: H(41), manifestHash: H(42), manifestRevision: 1n, historyRecordHash: H(10), retainFromSequence: 300001n }
   return [
+    ...['cell-populated', 'inbox-populated-retry', 'inbox-expired-append'].map(id => [id, 'Snapshot', populatedFamily(id)]),
+    ...lifecycleSuccessors().map(([id, previous, next]) => [id, 'Snapshot', next]),
     ['mirror-accepted', 'Snapshot', mirrorLifecycle(1)], ['mirror-retry-pending', 'Snapshot', mirrorLifecycle(2)], ['mirror-terminal', 'Snapshot', mirrorLifecycle(4)], ['core-historical-active-generations', 'Snapshot', historicalActivation()], ['cell-pristine', 'Snapshot', cell], ['inbox-pristine', 'Snapshot', family(2)], ['core-pristine', 'Snapshot', core], ['cell-retired-history', 'Snapshot', retired], ['core-paid-open-reserved', 'Snapshot', paidOpen(1)], ['core-paid-open-live', 'Snapshot', paidOpen(2)], ['core-paid-open-terminal', 'Snapshot', paidOpen(3)], ['core-expired-floor-live-proof', 'Snapshot', coreWithProof()], ['core-retained-expired-proof', 'Snapshot', coreWithProof(true)], ['u64-high-checkpoint', 'Snapshot', high], ['typed-four-participants', 'Participants', participants], ['coverage-description', 'CoverageBinding', coverage], ['bounded-large-head-empty-suffix', 'ReplayBinding', { coverage, head: coverage.wal, observedFrames: 0, observedBytes: 0n, maximumFrames: 1, maximumBytes: 1024n }]
   ]
+}
+
+export function lifecycleSuccessors () {
+  const accepted = mirrorLifecycle(1)
+  const pending = successor(accepted)
+  Object.assign(pending.core.mirrors[0], { state: 2, retryCount: 1, retryReason: 1, lifecycleWal: pending.coveredWal })
+  const retried = successor(pending)
+  Object.assign(retried.core.mirrors[0], { retryCount: 2, retryReason: 2, lifecycleWal: retried.coveredWal })
+  const terminal = successor(retried)
+  Object.assign(terminal.core.mirrors[0], { state: 4, terminalReason: 1, lifecycleWal: terminal.coveredWal })
+  const active = successor(retried); const generation = clone(coreWithProof().core.generations[0])
+  Object.assign(active.core.mirrors[0], { state: 3, lifecycleWal: active.coveredWal })
+  generation.activationWal = active.coveredWal
+  active.core.generations = [generation]
+  active.core.floors = [{ key: generation.key, active: 1, expiredAtEpoch: null, expiryWal: null }]
+  Object.assign(active.core.counts, { generations: 1, floors: 1, activeCores: 1, liveCorpusBytes: 100n })
+  const expired = successor(active)
+  Object.assign(expired.core.floors[0], { active: 0, expiredAtEpoch: 5, expiryWal: expired.coveredWal })
+  Object.assign(expired.core.counts, { activeCores: 0, liveCorpusBytes: 0n })
+  const advanced = successor(expired); advanced.coveredWal = wal(expired.coveredWal.sequence + 2n)
+  const newer = historicalActivation().core
+  const mirror = clone(newer.mirrors[1]); mirror.acceptanceWal = wal(expired.coveredWal.sequence + 1n); mirror.lifecycleWal = advanced.coveredWal; mirror.acceptanceBasis.originWal = generation.activationWal
+  const nextGeneration = clone(newer.generations[1]); nextGeneration.activationWal = advanced.coveredWal
+  advanced.core.admissions.push(clone(newer.admissions[2])); advanced.core.mirrors.push(mirror); advanced.core.generations.push(nextGeneration)
+  advanced.core.floors = [{ key: nextGeneration.key, active: 1, expiredAtEpoch: null, expiryWal: null }]
+  Object.assign(advanced.core.counts, { admissions: 2, mirrors: 2, generations: 2, activeCores: 1, liveCorpusBytes: 100n, controlBytes: 1024n })
+  return [['mirror-accepted-to-pending', accepted, pending], ['mirror-pending-retry-increment', pending, retried], ['mirror-pending-to-terminal', retried, terminal], ['mirror-pending-to-active', retried, active], ['floor-active-to-expired', active, expired], ['floor-expired-to-new-activation', expired, advanced]]
 }
 
 export function mirrorLifecycle (state) {

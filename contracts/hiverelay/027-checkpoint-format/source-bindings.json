@@ -218,6 +218,24 @@
       "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "sha256": "592fa68f32de0944477ac2cf868265e3a0b1ea41957ef7a9ff0abf51fc8d9135",
       "bytes": 3923
+    },
+    {
+      "path": "packages/blind-daemon/test/cell-control-snapshot.test.js",
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
+      "sha256": "9f6866e1b04873bb659a9504bf51a94d0452ab07d0a286c44fdd0e034973aff7",
+      "bytes": 18620
+    },
+    {
+      "path": "packages/blind-daemon/test/inbox-control-snapshot.test.js",
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
+      "sha256": "104f766ca3ea25542455725f90e3ca7c5ec2a255291e483109a8e28703791bc1",
+      "bytes": 25907
+    },
+    {
+      "path": "packages/blind-daemon/virtual-bucket.js",
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
+      "sha256": "a048c6d09bf15f64a2e26aa14c34d944191e4bf4724affd8228b8c4209ec667d",
+      "bytes": 1101
     }
   ]
 }

@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import { encode, decode, canonicalJSON, formatHash, artifactBytes, assertSnapshotSuccessor, assertParticipantsSuccessor, participantHash, compatibility, predecessorPins, validatorSha256 } from './codec.js'
-import { positives, successor, clone, H } from './fixtures.js'
+import { positives, successor, clone, H, lifecycleSuccessors } from './fixtures.js'
 import { negatives } from './cases.js'
 const checks = []
 const check = (name, fn) => { fn(); checks.push(name); console.log(`ok ${checks.length} - ${name}`) }
@@ -19,6 +19,7 @@ for (const c of negatives()) {
     if (c.mode === 'participants-successor') assertParticipantsSuccessor(c.previous, c.input)
   }, new RegExp(c.pattern)))
 }
+for (const [id, previous, next] of lifecycleSuccessors()) check(`${id} relation`, () => assert.equal(assertSnapshotSuccessor(previous, next), true))
 check('authority byte export cannot mutate format hash', () => { const before = formatHash(); artifactBytes().fill(0); assert.deepEqual(formatHash(), before) })
 check('participant unchanged coverage successor', () => {
   const previous = positives().find(([id]) => id === 'typed-four-participants')[2]; const next = clone(previous)

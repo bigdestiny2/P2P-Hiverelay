@@ -1,5 +1,5 @@
 import b4a from 'b4a'
-import { positives, clone, H, family, paidOpen, coreWithProof, successor } from './fixtures.js'
+import { positives, clone, H, family, paidOpen, coreWithProof, successor, mirrorLifecycle, lifecycleSuccessors, populatedFamily } from './fixtures.js'
 import { encode, participantHash } from './codec.js'
 
 export function negatives () {
@@ -21,6 +21,13 @@ export function negatives () {
   value('unknown-row', cell, s => { s.cell[0].subtype = 9 }, 'unknown family')
   value('provisional-row', cell, s => { s.cell[0].kind = 2 }, 'drain')
   value('malformed-row-bytes', cell, s => { s.cell[0].value = b4a.from([1]) }, 'truncated')
+  for (const id of ['cell-populated', 'inbox-populated-retry', 'inbox-expired-append']) {
+    const make = () => populatedFamily(id)
+    const rows = s => s.cell || s.inbox
+    value(`${id}-key-mismatch`, make, s => { rows(s)[0].key[0] ^= 1 }, 'key/value identity')
+    value(`${id}-false-history`, make, s => { s.history.irreversible = 0 }, 'false history')
+    value(`${id}-malformed-row`, make, s => { rows(s)[0].value = b4a.from([1]) }, 'truncated')
+  }
   value('compaction-beyond-anchor', cell, s => { s.compactionWalHighWater = s.coveredWal.sequence + 1n }, 'coverage mismatch')
   value('retention-beyond-anchor', cell, s => { s.retainFromSequence = s.coveredWal.sequence + 1n }, 'coverage mismatch')
   value('u64-overflow', cell, s => { s.coveredWal.sequence = 1n << 64n }, 'outside u64')
@@ -42,6 +49,8 @@ export function negatives () {
   value('inactive-floor-without-expiry', coreWithProof, s => { s.core.floors[0].expiryWal = null }, 'expiry evidence')
   value('missing-durable-floor', coreWithProof, s => { s.core.floors = []; s.core.counts.floors = 0 }, 'latest floor')
   value('missing-activation', coreWithProof, s => { s.core.generations = [] }, 'activation evidence')
+  for (const group of ['admissions', 'mirrors', 'generations', 'proofs']) value(`duplicate-core-${group}`, coreWithProof, s => { s.core[group].push(clone(s.core[group][0])) }, 'sorted and unique')
+  value('duplicate-core-opens', paidOpen, s => { s.core.opens.push(clone(s.core.opens[0])) }, 'sorted and unique')
   value('candidate-not-activation-revision', coreWithProof, s => { s.core.mirrors[0].candidateRevision = 1n }, 'basis/revision')
   value('wrong-corpus-bucket', coreWithProof, s => { s.core.generations[0].corpus.virtualBucket ^= 1 }, 'bucket mismatch')
   value('activation-beyond-anchor', coreWithProof, s => { s.coveredWal.sequence = 2n }, 'checkpoint')
@@ -60,6 +69,18 @@ export function negatives () {
   relation('descriptor-fork', s => { s.floors.descriptorHash = H(80) }, 'forked')
   relation('writer-fork', s => { s.writer.fenceHash = H(80) }, 'writer')
   relation('core-admissions-retired', s => { s.core.admissions = []; s.core.opens = []; Object.assign(s.core.counts, { admissions: 0, opens: 0, controlBytes: 0n }) }, 'retired')
+  relation('mirror-terminal-regresses-to-accepted', s => { Object.assign(s.core.mirrors[0], { state: 1, terminalReason: null }) }, 'MIRROR lifecycle', () => mirrorLifecycle(4))
+  relation('mirror-acceptance-wal-replaced', s => { s.core.mirrors[0].acceptanceWal.hash = H(88) }, 'acceptance evidence', () => mirrorLifecycle(2))
+  relation('mirror-retry-count-regresses', s => { Object.assign(s.core.mirrors[0], { state: 1, retryCount: 0, retryReason: null }) }, 'MIRROR lifecycle', () => mirrorLifecycle(2))
+  relation('mirror-retry-reason-replaced', s => { s.core.mirrors[0].retryReason = 2; s.core.mirrors[0].lifecycleWal = s.coveredWal }, 'MIRROR lifecycle', () => mirrorLifecycle(2))
+  relation('mirror-terminal-reason-replaced', s => { s.core.mirrors[0].terminalReason = 2 }, 'MIRROR lifecycle', () => mirrorLifecycle(4))
+  const expiredFloor = () => lifecycleSuccessors().find(([id]) => id === 'floor-active-to-expired')[2]
+  relation('expired-floor-reactivated-same-generation', s => { Object.assign(s.core.floors[0], { active: 1, expiredAtEpoch: null, expiryWal: null }); Object.assign(s.core.counts, { activeCores: 1, liveCorpusBytes: 100n }) }, 'floor expiry', expiredFloor)
+  relation('floor-expiry-evidence-replaced', s => { s.core.floors[0].expiryWal.hash = H(88) }, 'floor expiry', expiredFloor)
+  relation('mirror-active-retry-evidence-replaced', s => { s.core.mirrors[0].retryReason = 1 }, 'MIRROR lifecycle', expiredFloor)
+  const progress = lifecycleSuccessors().find(([id]) => id === 'mirror-pending-retry-increment')
+  const early = clone(progress[2]); early.core.mirrors[0].lifecycleWal = progress[1].coveredWal
+  cases.push({ id: 'mirror-progress-outside-suffix', mode: 'snapshot-successor', previous: progress[1], input: early, pattern: 'MIRROR lifecycle' })
   const participants = positives().find(([id]) => id === 'typed-four-participants')[2]
   const participant = (id, mutate, pattern) => { const input = clone(participants); mutate(input); cases.push({ id, mode: 'encode', type: 'Participants', input, pattern }) }
   participant('hc11-is-not-blind-wal', s => { s.hc11.wal = s.blind[0].wal }, 'exact fields')
