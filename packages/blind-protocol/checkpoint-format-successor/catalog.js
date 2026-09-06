@@ -1,0 +1,197 @@
+// Private format-2 contract. No predecessor catalog or runtime export changes.
+const array = (of, max = 65536) => ({ array: of, max })
+const maybe = optional => ({ optional })
+const bytes = max => ({ bytes: [1, max] })
+const legacy = name => ({ legacy: name })
+const fields = (...pairs) => pairs
+
+export const validatorSha256 = '8ae2eb834aa1a11008bba6f24b5c010ff36e0f0d9c6559ca671e833cf64cb976'
+
+export const predecessorPins = {
+  'codec.js': '4102aac14a1cc3192d76b7c8d351ffc7e9fd7b7e5023b8f599e6424923d17e83',
+  'client-internal-schemas.js': '86b0f0f292ca73dbec006cb3cb741d9cf900dd4ef1145d8f2cffe5ad7542d46c',
+  'schemas.js': 'f9bd83e70fe802f099e9bbf6c1ebc053fedc4b7f511b9286200d37d1bb87054d',
+  'result-binding.js': '987d2a593497ae66b9e90831677859a7db78cb80b010658d192caec9c408f8b3',
+  'registry.js': '267816d1a71c5fb374d60a90ad58b9b93ac854d8b0a766e992d76ae9f7f0dd19',
+  'hashes.js': '5c764dee359d9fba7324cca1e5fb7491e12c4ecb581b292ac2da3151ad0b8fd6',
+  'wire-runtime-authority.js': '3c861d390f8f6b60a390334e3320cd22cdce6071dfe3a5f42231460e73f52cea',
+  'hiverelay-blind-wire-authority-v1.json': 'd6b757334bbec7b85d949085ce4b896a5fe960bc4c86c7f9001f81be78d0cefc'
+}
+
+export const definitions = {
+  Wal: fields(['sequence', 'u64'], ['hash', 'hash']),
+  Identity: fields(['installationId', 'hash'], ['rootId', 'hash'], ['role', { enum: [1, 2, 3] }], ['relayPublicKey', 'hash'], ['storeId', 'hash'], ['durabilityContinuityHash', 'hash']),
+  Writer: fields(['mapGeneration', 'u64'], ['writerEpoch', 'u64'], ['fenceHash', 'hash']),
+  History: fields(['irreversible', 'bool'], ['authoritySequence', 'u64'], ['authorityRecordHash', 'hash'], ['firstTriggerHash', maybe('hash')]),
+  Floors: fields(['epoch', 'u32'], ['descriptorSequence', 'u64'], ['descriptorHash', 'hash'], ['clockUnsafe', 'bool'], ['recoveryGap', 'bool']),
+  Row: fields(['kind', { enum: [1, 2, 3, 4, 6, 8] }], ['subtype', 'u8'], ['key', { bytes: [0, 254] }], ['value', bytes(65535)]),
+  Body: fields(['virtualBucket', 'u16'], ['objectId', 'hash'], ['byteLength', 'u32'], ['hash', 'hash']),
+  GenerationKey: fields(['corePublicKey', 'hash'], ['revision', 'u64']),
+  AcceptanceBasis: fields(['fork', 'u64'], ['length', 'u64'], ['signedHeadHash', 'hash'], ['leaseEpoch', 'u32'], ['stateRevision', 'u64'], ['originWal', 'Wal']),
+  Admission: fields(['operation', { enum: [1, 2, 3] }], ['value', legacy('blindPreparedAdmissionStoreV1')]),
+  Mirror: fields(['spendTag', 'hash'], ['request', legacy('coreMirrorRequestV1')], ['result', legacy('blindCoreAckV1')], ['acceptedAtEpoch', 'u32'], ['acceptanceWal', 'Wal'], ['acceptanceBasis', maybe('AcceptanceBasis')], ['targetLeaseEpoch', 'u32'], ['candidateRevision', 'u64'], ['virtualBucket', 'u16'], ['lifecycleWal', 'Wal'], ['state', { enum: [1, 2, 3, 4] }], ['retryCount', { enum: [0, 1, 2, 3] }], ['retryReason', maybe({ enum: [1, 2] })], ['terminalReason', maybe({ enum: [1, 2, 3, 4] })]),
+  Generation: fields(['key', 'GenerationKey'], ['mirrorSpendTag', 'hash'], ['activationWal', 'Wal'], ['activationBasis', maybe('GenerationKey')], ['fork', 'u64'], ['length', 'u64'], ['signedHeadHash', 'hash'], ['leaseEpoch', 'u32'], ['activatedAtEpoch', 'u32'], ['corpus', 'Body']),
+  CoreFloor: fields(['key', 'GenerationKey'], ['active', 'bool'], ['expiredAtEpoch', maybe('u32')], ['expiryWal', maybe('Wal')]),
+  Proof: fields(['spendTag', 'hash'], ['request', legacy('coreServeChallengeV1')], ['acknowledgement', legacy('blindCoreAckV1')], ['source', 'GenerationKey'], ['pinWal', 'Wal'], ['expiryWal', maybe('Wal')], ['proofByteLength', 'u32'], ['proofHash', 'hash'], ['pinnedAtUnixMillis', 'u64'], ['expiresAtUnixMillis', 'u64'], ['expiredAtUnixMillis', maybe('u64')]),
+  PaidOpen: fields(['value', legacy('blindCoreOpenReplicationRetrySnapshotV1')], ['lifecycleWal', 'Wal']),
+  CoreCounts: fields(['admissions', 'u32'], ['mirrors', 'u32'], ['generations', 'u32'], ['floors', 'u32'], ['proofs', 'u32'], ['opens', 'u32'], ['activeCores', 'u32'], ['liveProofPins', 'u32'], ['liveCorpusBytes', 'u64'], ['controlBytes', 'u64'], ['proofPinBytes', 'u64'], ['tombstoneBytes', 'u64']),
+  CoreState: fields(['admissions', array('Admission')], ['mirrors', array('Mirror')], ['generations', array('Generation')], ['floors', array('CoreFloor')], ['proofs', array('Proof')], ['opens', array('PaidOpen')], ['counts', 'CoreCounts']),
+  Snapshot: fields(['magic', { ascii: 'HRBCS002' }], ['formatMajor', { constant: 2, width: 'u16' }], ['formatMinor', { constant: 0, width: 'u16' }], ['formatHash', 'hash'], ['identity', 'Identity'], ['coveredWal', 'Wal'], ['writer', 'Writer'], ['floors', 'Floors'], ['history', 'History'], ['revision', 'u64'], ['previousSnapshotHash', maybe('hash')], ['compactionWalHighWater', 'u64'], ['retainFromSequence', 'u64'], ['cell', maybe(array('Row', 262144))], ['inbox', maybe(array('Row', 262144))], ['core', maybe('CoreState')]),
+  BlindEvidence: fields(['role', { enum: [1, 2, 3] }], ['rootId', 'hash'], ['storeId', 'hash'], ['durabilityContinuityHash', 'hash'], ['formatHash', 'hash'], ['wal', 'Wal'], ['checkpointHash', 'hash'], ['snapshotHash', 'hash'], ['irreversible', 'bool']),
+  Hc11Evidence: fields(['rootId', 'hash'], ['envelopeManifestHash', 'hash'], ['databaseIdentityHash', 'hash'], ['activationKey', 'hash'], ['length', 'u64'], ['fork', 'u64'], ['activationBlockHash', 'hash'], ['triggerReceiptHash', 'hash']),
+  Participants: fields(['magic', { ascii: 'HRBPA001' }], ['installationId', 'hash'], ['revision', 'u64'], ['previousAuthorityHash', maybe('hash')], ['firstTriggerHash', maybe('hash')], ['blind', array('BlindEvidence', 3)], ['hc11', maybe('Hc11Evidence')]),
+  CoverageBinding: fields(['identity', 'Identity'], ['writer', 'Writer'], ['formatHash', 'hash'], ['wal', 'Wal'], ['snapshotHash', 'hash'], ['checkpointHash', 'hash'], ['manifestHash', 'hash'], ['manifestRevision', 'u64'], ['historyRecordHash', 'hash'], ['retainFromSequence', 'u64']),
+  ReplayBinding: fields(['coverage', 'CoverageBinding'], ['head', 'Wal'], ['observedFrames', 'u32'], ['observedBytes', 'u64'], ['maximumFrames', 'u32'], ['maximumBytes', 'u64'])
+}
+
+export const rowCodecs = {
+  1: {
+    '1:1': 'blindCellCommittedPutSpendSnapshotV1', '1:2': 'blindCellCommittedRenewSpendSnapshotV1', '1:3': 'blindCellTerminalSpendSnapshotV1', '1:4': 'blindCellRequestResultSnapshotV1', '1:5': 'blindCellAtomicCommittedPutSpendSnapshotV1', '2:1': 'blindCellReservedSpendSnapshotV1', '3:1': 'blindCellRecordSnapshotV1', '6:1': 'blindCellControlGlobalSnapshotV1', '6:2': 'blindCellProfileStagingSnapshotV1', '6:3': 'blindCellIntegrityEvidenceSnapshotV1', '8:1': 'blindCellChargedReadRetrySnapshotV1'
+  },
+  2: {
+    '1:1': 'blindInboxCommittedSpendSnapshotV1', '1:2': 'blindInboxTerminalSpendSnapshotV1', '1:3': 'blindInboxRequestResultSnapshotV1', '1:4': 'blindInboxExpiredAppendSpendSnapshotV1', '2:1': 'blindInboxReservedSpendSnapshotV1', '4:1': 'blindInboxRecordSnapshotV1', '4:2': 'blindInboxFrameSnapshotV1', '6:1': 'blindInboxControlGlobalSnapshotV1', '6:2': 'blindInboxProfileStagingSnapshotV1', '6:3': 'blindInboxIntegrityEvidenceSnapshotV1', '8:1': 'chargedUnaryRetryV1', '8:2': 'blindInboxRetryFramePinSnapshotV1', '8:3': 'blindInboxRetryMaterialSnapshotV1'
+  }
+}
+
+export const limits = {
+  maximumSnapshotBytes: 256 * 1024 * 1024,
+  maximumRoleRows: 262144,
+  maximumCoreRowsPerKind: 65536,
+  maximumParticipants: 4,
+  maximumRetainedWalFrames: 262144,
+  maximumRetainedWalBytes: 256 * 1024 * 1024
+}
+
+export const rules = {
+  scope: 'Private candidate internal-store format 2.0; codec/interface proof only; no runtime selection or migration executor.',
+  reasonForMajor: 'New role checkpoint hydration, cumulative history and complete CORE records are incompatible with format 1.2 recovery-only/full-WAL rules.',
+  rowKeys: 'Canonical key=(kind:u8,subtype:u8,identity bytes), family implied by root role. CELL/INBOX identity recipes and semantic joins remain exact pinned predecessor snapshot implementations; codec validates framing, sorted unique keys and named values; engine hydration must validate key/value correspondence.',
+  indexSemantics: 'CORE activation revision begins at zero and advances by one per core; candidate revision follows its accepted basis and is independent. No removal of CORE admissions, attempts, generations, floors, proofs or OPEN rows. Proof expiry retains original evidence and no longer owns body bytes. Existing result signatures and descriptor lineage remain required.',
+  encoding: 'Closed ordered field grammar; existing codec.js primitives; big-endian fixed integers, canonical compact-uint array/byte lengths, optional presence byte, exact fields and no trailing bytes.',
+  artifactHash: 'BLAKE2B-256 using existing hashStoreFormat recipe over exact UTF-8 canonical JSON artifact bytes with terminal LF.',
+  snapshotHash: 'BLAKE2B-256(ASCII(hiverelay.blind.checkpoint-snapshot.v2)||U64BE(byteLength)||canonical Snapshot bytes).',
+  predecessor: 'All format-1/1.2 schemas, catalogs, artifacts, runtime bindings and decoders remain unchanged. Existing runtime must refuse this format. No automatic upgrade or downgrade.',
+  outerAuthority: 'Existing v1 manifest/checkpoint field layouts may carry formatMajor=2, formatMinor=0 and this exact hash in a future explicitly selected runtime. Their current format-1.2 artifact does not authorize these new payloads. No filename/slot migration is implemented.',
+  roleTopology: 'Separate CELL/INBOX/CORE roots and independent WAL anchors. Identity.rootId is an installation-assigned opaque nonzero ID, never a path. A shared storeId alone is not role/root identity.',
+  history: 'History is a monotone fact derived by real accepted reducers and authenticated predecessor plus suffix; never infer false from empty maps. First-trigger hash is an immutable installation trigger reference, not a claim that this role triggered first.',
+  completeCore: 'Each paid admission owns exactly one MIRROR, PROVE or OPEN row. PROVE including expired spends retains original admission/pin evidence; lane B must reconstruct missing map evidence from authenticated full WAL before any prune.',
+  generationRetention: 'Retain historical activation records required by mirror attempts, floors and live/expired proof receipts. Only active floors or live proof pins own corpus bodies. An old ACTIVE mirror is historical; candidateRevision is not activation revision.',
+  lifecycle: 'No transient CELL/INBOX reservations/provisional work in checkpoint. Persisted CORE reserved/live OPEN is retained but actual recovery terminalizes it before serving; no upstream ticket or child resurrection.',
+  semanticBoundary: 'Codec checks are not MAC/signature, body, lease or reducer authenticity. Real engine-owned detached shadow must validate all existing family semantics and complete accounting/reference ownership before mutable recovery.',
+  publication: 'Capture under engine drain and active owner/WAL barrier; snapshot temp write/fsync/semantic verify/no-replace/directory sync/readback; checkpoint same order; exact two-slot linked manifest CAS; then revalidate and mint in-memory coverage authority.',
+  capability: 'CoverageBinding and ReplayBinding are passive serializable descriptions, never mintable runtime capabilities. Only a nonexported live coordinator bound to retained OS ownership may mint a WeakMap-branded handle after actual durable publication and semantic verification.',
+  pruning: 'Future pruning requires that live coverage handle, exact root/role/anchor and anti-replay retention; sealed covered prefix only, oldest-first and directory sync per unlink; never live WAL; retain all snapshot/checkpoint finals. No pruning implementation here.',
+  recovery: 'Authenticate all roles/common authority read-only; hydrate each detached shadow at its own anchor; mechanically verify covered bytes and apply only suffix frames once; validate live bodies, quotas, identities/floors and leases before truncation/cleanup/sweeps/visibility.',
+  bounds: 'Cumulative sequence is u64 and independent of observed retained frame/byte budgets. Reject over-limit work; never clear maps or silently prune state to fit.',
+  cumulativeAuthority: 'Participants represents immutable first-trigger history plus per-role captured coverage and actual HC11 activation receipt identity. It is not a log of every subsequent HC11/data append and is not proof all later acknowledgments survive restore.',
+  hc11: 'Typed HC11 evidence never uses blind WAL sequence/hash. Real envelope/sentinel/database identity validation and common coordinator acknowledgment are required in lane C; supplied fixtures confer no runtime authority.',
+  uncertainty: 'Uncertain common-authority publication quarantines all writers and cached positive replies while verified readers remain distinct; owner lifetime survives cancellation until every participant closes. Durable record namespace sync is the commit point, with recoverable head lag.',
+  rollback: 'D7: after first blind-only write legacy-only operation is forbidden. Dual-reader rollback/old-writer/inner-path/device-rebind proof remains G05.',
+  restore: 'Closed whole-copy equality is not authenticated pruned recovery. A self-consistent stale whole installation cannot be detected using only copied local MACs; independent retained floor/lease/witness or externally pinned restore evidence is required.',
+  gc: 'No new INBOX/CORE control retention transitions or checkpoint/snapshot GC. Preserve retained spends, retry pins, floors and original trigger bytes; future retirement requires a reviewed successor.',
+  claims: 'No full G02/G04/G05, engine hydration, physical durability, Bare/Pear daemon, device/fleet or production proof. No production flags changed.'
+}
+
+function freeze (value) {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) freeze(child)
+    Object.freeze(value)
+  }
+  return value
+}
+freeze(definitions)
+freeze(limits)
+freeze(rules)
+
+freeze(rowCodecs)
+freeze(predecessorPins)
+
+export const rowKeys = {
+  1: {
+    '1:1': [
+      'spendTag'
+    ],
+    '1:2': [
+      'spendTag'
+    ],
+    '1:3': [
+      'spendTag'
+    ],
+    '1:4': [
+      'requestCommitment'
+    ],
+    '1:5': [
+      'spendTag'
+    ],
+    '2:1': [
+      'spendTag'
+    ],
+    '3:1': [
+      'storageSlot'
+    ],
+    '6:1': [],
+    '6:2': [
+      'profileId:u16'
+    ],
+    '6:3': [
+      'evidenceHash'
+    ],
+    '8:1': [
+      'spendTag'
+    ]
+  },
+  2: {
+    '1:1': [
+      'spendTag'
+    ],
+    '1:2': [
+      'spendTag'
+    ],
+    '1:3': [
+      'requestCommitment'
+    ],
+    '1:4': [
+      'spendTag'
+    ],
+    '2:1': [
+      'spendTag'
+    ],
+    '4:1': [
+      'physicalTopic'
+    ],
+    '4:2': [
+      'physicalTopic',
+      'appendRevision:u64'
+    ],
+    '6:1': [],
+    '6:2': [
+      'profileId:u16'
+    ],
+    '6:3': [
+      'evidenceHash'
+    ],
+    '8:1': [
+      'spendTag'
+    ],
+    '8:2': [
+      'spendTag',
+      'appendRevision:u64'
+    ],
+    '8:3': [
+      'spendTag'
+    ]
+  }
+}
+freeze(rowKeys)
+
+export const semanticSourcePins = {
+  'packages/blind-daemon/cell-control-snapshot.js': '0d2afadb5fd36f6e5b764879e65f5e2dcb182bfcd18f5b3be0c2c0fa4c511ca7',
+  'packages/blind-daemon/inbox-control-snapshot.js': '879e9b11320a210075c69d49868cfd5c9d55e9dc75e3b1ea5934e28643bca487',
+  'packages/blind-daemon/core-control-snapshot.js': '4744e6d1f4052cccb92b30f8b83f22dc30cedaaa34b0c28ec25fdb815536ec13',
+  'packages/blind-daemon/storage-engine.js': 'ed35804f31ddd8e29a4321059022e946a132331a770cb487d99840ce33eeb6bc',
+  'packages/blind-daemon/inbox-storage-engine.js': 'a63dc9aa2a562a3c8e6db949cc19cdecf8cbb72905c43a04a3c3959d728b7c3e',
+  'packages/blind-daemon/core-storage-engine.js': '5f91d4aad9f5eb5d679c6040c734ec9659b8ffdf73f929af07fc6d31a55ec57e',
+  'packages/blind-daemon/core-stream.js': 'cbc2d1d2cf546b31759b1c33be437703bc18e62b93f145119f840f2d2bfcc5ad',
+  'packages/blind-daemon/virtual-bucket.js': 'a048c6d09bf15f64a2e26aa14c34d944191e4bf4724affd8228b8c4209ec667d'
+}
+freeze(semanticSourcePins)

@@ -1,0 +1,50 @@
+{
+  "schema": "hiverelay.checkpoint-compatibility.v1",
+  "candidate": {
+    "major": 2,
+    "minor": 0,
+    "runtime_enabled": false,
+    "package_exported": false
+  },
+  "matrix": [
+    {
+      "input": "exact predecessor 1.2, full WAL",
+      "action": "delegate frozen authority/reader; candidate does not decode or mutate"
+    },
+    {
+      "input": "predecessor 1.2, pruned",
+      "action": "refuse"
+    },
+    {
+      "input": "exact candidate 2.0",
+      "action": "codec-only decode; no runtime authority"
+    },
+    {
+      "input": "unknown version/hash/role/schema",
+      "action": "refuse without mutation"
+    },
+    {
+      "input": "2.0 on frozen runtime",
+      "action": "refuse unsupported"
+    },
+    {
+      "input": "1.2 to 2.0 migration",
+      "action": "not implemented; explicit later offline full-WAL migration proof required"
+    },
+    {
+      "input": "2.0 pruned to 1.2 downgrade",
+      "action": "refuse"
+    }
+  ],
+  "D7": "legacy-only operation forbidden after first blind-only write; G05 dual-reader rollback/old-writer/rebind proof remains required",
+  "closed_copy_is_pruned_restore": false,
+  "copied_local_mac_is_external_freshness": false,
+  "runtime_and_devices_unproven": [
+    "real capture/hydration/pruning",
+    "joint blind/HC11 acknowledgement and restore",
+    "Bare/Pear packaged daemon",
+    "native power loss and filesystem devices",
+    "OS installation",
+    "production and fleet"
+  ]
+}
