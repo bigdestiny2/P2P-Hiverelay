@@ -672,3 +672,15 @@ test('release distribution env check rejects placeholder StartOS registry hosts 
   t.ok(body.includes('HIVERELAY_RELEASE_SURFACES_STATUS=blocked'))
   t.ok(body.includes('HIVERELAY_STARTOS_REGISTRY_STATUS=invalid-registry-url'))
 })
+
+test('artifact stage validates only publication credentials and refuses fleet overrides', async t => {
+  const out = await envFile(t)
+  const good = await runCheck(['--stage', 'artifact-v1', '--channel', 'none', '--prerelease', 'false', '--github-env', out], { NPM_TOKEN: TEST_NPM_TOKEN, STARTOS_DEVELOPER_KEY_PEM: TEST_STARTOS_PRIVATE_KEY })
+  t.is(good.status, 0, good.stderr)
+  t.ok((await readFile(out, 'utf8')).includes('passed-artifact'))
+  t.is((await runCheck(['--stage', 'artifact-v1', '--channel', 'both', '--prerelease', 'false'], { NPM_TOKEN: TEST_NPM_TOKEN, STARTOS_DEVELOPER_KEY_PEM: TEST_STARTOS_PRIVATE_KEY })).status, 1)
+  t.is((await runCheck(['--stage', 'artifact-v1', '--channel', 'none', '--prerelease', 'false'], {})).status, 1)
+  t.is((await runCheck(['--stage', 'stable-v1', '--channel', 'both', '--prerelease', 'false'], { NPM_TOKEN: TEST_NPM_TOKEN, STARTOS_DEVELOPER_KEY_PEM: TEST_STARTOS_PRIVATE_KEY })).status, 1, 'stable credentials remain required')
+  const file = await candidateEnvFile(t, `HIVERELAY_RELEASE_STAGE=artifact-v1\nNPM_TOKEN=${TEST_NPM_TOKEN}\n`)
+  t.is((await runCheck(['--env-file', file, '--prerelease', 'true'], { HIVERELAY_RELEASE_STAGE: 'stable-v1' })).status, 0, 'env-file stage is hermetic')
+})

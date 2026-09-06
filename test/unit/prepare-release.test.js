@@ -62,7 +62,7 @@ test('prepare-release local bypass preserves an existing immutable Umbrel pin', 
   t.absent(after.includes('p2p-hiverelay:9.9.9-beta.1\n'), 'local bypass does not weaken the pin to a tag')
 })
 
-test('prepare-release defaults full release channel to both', async (t) => {
+test('prepare-release defaults full release channel to none', async (t) => {
   const repo = await mkdtemp(path.join(tmpdir(), 'hiverelay-release-both-fixture-'))
   t.teardown(async () => {
     await rm(repo, { recursive: true, force: true })
@@ -78,8 +78,8 @@ test('prepare-release defaults full release channel to both', async (t) => {
 
   t.is(res.status, 0, res.stderr)
   const channels = JSON.parse(await readFile(path.join(repo, 'fleet', 'channels.json'), 'utf8'))
-  t.is(channels.canary, 'v9.9.9', 'implicit full release bumps canary')
-  t.is(channels.stable, 'v9.9.9', 'implicit full release bumps stable')
+  t.is(channels.canary, 'v0.16.3', 'implicit artifact preparation preserves canary')
+  t.is(channels.stable, 'v0.16.3', 'implicit artifact preparation preserves stable')
 
   const startosManifest = await readFile(path.join(repo, 'startos', 'manifest.yaml'), 'utf8')
   t.absent(startosManifest.includes('metadata.license'), 'StartOS release-notes block keeps the following key on a new line')
@@ -133,6 +133,7 @@ test('prepare-release cannot move fleet channels for an enabled public gateway r
 
   const blocked = await runPrepare([
     'v9.9.9',
+    '--channel', 'both',
     '--image-digest', DIGEST,
     '--no-umbrel-store',
     '--no-ecosystem-consumers'

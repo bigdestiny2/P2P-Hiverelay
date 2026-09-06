@@ -224,6 +224,7 @@ jobs:
           unzip -q "$authority_zip" -d "$evidence_dir"
 
           binding_env="$RUNNER_TEMP/startos-0.4-release-binding.env"
+          node scripts/release-stages/assert-artifact.mjs --file "$evidence_dir/release-evidence.json"
           node scripts/resolve-startos-04-release.mjs \
             --tag "$HIVERELAY_RELEASE_TAG" \
             --tag-sha "$HIVERELAY_RELEASE_SHA" \

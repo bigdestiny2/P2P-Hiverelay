@@ -119,13 +119,13 @@ test('release workflow resolves the tagged gateway policy before every irreversi
   const resolver = workflow.indexOf('node hiverelay/scripts/resolve-public-hive-gateway-release.mjs')
 
   t.ok(resolver > 0)
-  t.ok(resolver < workflow.indexOf('- name: Ensure GitHub Release exists'))
+  t.ok(resolver < workflow.indexOf('- name: Ensure explicit non-latest artifact Release'))
   t.ok(resolver < workflow.indexOf('docker buildx build'))
-  t.ok(resolver < workflow.indexOf('npm publish "./$pkg"'))
+  t.ok(resolver < workflow.indexOf('node scripts/release-stages/publish-npm.mjs'))
   t.ok(workflow.includes('channel="$resolved_channel"'))
   t.ok(workflow.includes('--public-gateway-release "$' + '{{ steps.rel.outputs.public_gateway_enabled }}"'))
   t.ok(workflow.includes('HIVERELAY_FLEET_ROLLOUT_STATUS=$fleet_rollout_status'))
-  t.ok(workflow.includes('fleet_rollout_status=deferred-gateway-canary-gated'))
+  t.ok(workflow.includes('fleet_rollout_status=deferred-stable-promotion'))
   t.ok(workflow.includes('Release tag moved after public gateway policy resolution.'))
 
   const localResolver = release.indexOf('scripts/resolve-public-hive-gateway-release.mjs')

@@ -5,6 +5,9 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import {
+  validateReleaseStage,
+  assertArtifactSurfaceState,
+  isArtifactRelease,
   RELEASE_CLOSURE_EVIDENCE,
   RELEASE_SYNC_WORKFLOW_SCOPE,
   expectedReleaseClosureStatus,
@@ -257,7 +260,7 @@ async function verifyReleaseEvidence (body, opts) {
   requireOneOf(
     'release.channel',
     body.release.channel,
-    body.release.prerelease || publicGatewayRelease ? ['none'] : ['canary', 'stable', 'both']
+    body.release.prerelease || publicGatewayRelease || isArtifactRelease(body) ? ['none'] : ['canary', 'stable', 'both']
   )
   requireOneOf('release gate audit/unit', body.gates?.auditAndUnit, ['passed'])
   requireOneOf('release gate image manifest', body.gates?.imageManifest, ['passed'])
@@ -292,6 +295,11 @@ async function verifyReleaseEvidence (body, opts) {
     UMBREL_PACKAGE_SMOKE_CHECKS,
     imageManifestGeneratedAtMs
   )
+
+  if (validateReleaseStage(body)) {
+    assertArtifactSurfaceState(body)
+    return
+  }
 
   if (body.release.prerelease) {
     verifyPrereleaseSkips(body)
@@ -367,6 +375,7 @@ function assertReleaseEvidenceSchema (body) {
     'tagSha',
     'metadataSha',
     'publicGateway',
+    'stage',
     'workflow',
     'closure'
   ])

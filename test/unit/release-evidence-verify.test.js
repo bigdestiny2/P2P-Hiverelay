@@ -3159,3 +3159,32 @@ test('release evidence verifier rejects smoke evidence without dashboard WebSock
   t.ok(err)
   t.ok(err.stderr.includes('umbrel-package-smoke evidence is missing required check dashboardWebSocket'))
 })
+
+test('shared artifact stage round-trips semantic artifact and handoff verifiers but cannot clear full distribution', async t => {
+  const dir = await fixtureDir(t)
+  const s9pkFile = path.join(dir, 'blindspark.s9pk')
+  await writeFile(s9pkFile, 'fake-s9pk')
+  await writeJson(path.join(dir, 'release-image-smoke-evidence.json'), releaseImageSmokeEvidence())
+  await writeJson(path.join(dir, 'umbrel-package-smoke-evidence.json'), umbrelSmokeEvidence())
+  const body = releaseEvidence({ startosSha: await sha256File(s9pkFile), imageSmokeSha: await sha256File(path.join(dir, 'release-image-smoke-evidence.json')), umbrelSmokeSha: await sha256File(path.join(dir, 'umbrel-package-smoke-evidence.json')) })
+  const contract = await import('../../scripts/lib/release-evidence-contract.mjs')
+  body.release.channel = 'none'
+  body.release.stage = { schemaVersion: 1, name: contract.RELEASE_ARTIFACT_STAGE, npmDistTag: 'next', githubLatest: false, metadataBranch: 'main', deferredSurfaces: contract.RELEASE_DEFERRED_SURFACES, promotionEvidence: contract.RELEASE_PROMOTION_EVIDENCE, packages: contract.RELEASE_NPM_PACKAGES.map(name => ({ name, version: '9.9.9', integrity: 'sha512-' + Buffer.alloc(64).toString('base64'), shasum: '0'.repeat(40) })) }
+  body.gates.distributionPreflight = 'passed-artifact'
+  const s = body.surfaces
+  s.npmPackages = 'published-next'
+  for (const key of ['metadataCommit', 'fleetRollout', 'startosRegistry']) s[key] = contract.RELEASE_DEFERRED_STATUS
+  for (const key of ['fleetRolloutChannel', 'startosRegistryUrl', 'startosRegistryPackageUrl']) s[key] = ''
+  for (const key of ['fleetRolloutEvidence', 'fleetChannelConfig', 'startosRegistryEvidence']) s[key] = { path: '', sha256: '' }
+  for (const key of Object.keys(s.umbrelOfficial)) s.umbrelOfficial[key] = key === 'status' ? contract.RELEASE_DEFERRED_STATUS : (key === 'isDraft' ? null : '')
+  for (const key of Object.keys(s.umbrelCommunityStore)) s.umbrelCommunityStore[key] = ['validation', 'publish'].includes(key) ? contract.RELEASE_DEFERRED_STATUS : ''
+  await writeJson(path.join(dir, 'release-evidence.json'), body)
+  t.ok((await runVerify(['--bundle-dir', dir])).stdout.includes('verified'))
+  const handoff = argv => new Promise(resolve => execFile(process.execPath, ['scripts/verify-release-handoff-evidence.mjs', '--bundle-dir', dir, ...argv], { cwd: process.cwd(), timeout: 15000 }, (error, stdout, stderr) => resolve({ status: error ? error.code : 0, stdout, stderr })))
+  const artifact = await handoff([])
+  t.is(artifact.status, 0, artifact.stderr)
+  t.is((await handoff(['--require-umbrel-runtime-review'])).status, 1, 'artifact-only handoff cannot pass the full gate')
+  body.release.stage.githubLatest = true
+  await writeJson(path.join(dir, 'release-evidence.json'), body)
+  try { await runVerify(['--bundle-dir', dir]); t.fail('changed stage must be rejected') } catch (error) { t.ok(error.stderr.includes('artifact stage')) }
+})

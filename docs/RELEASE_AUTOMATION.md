@@ -1,3 +1,7 @@
+# Current staged release policy
+
+Ordinary release triggers now publish the versioned artifact phase only. Stable pointers, fleet and deferred distribution require the separately authenticated promotion workflow and receipt. See [RELEASE_STAGING.md](RELEASE_STAGING.md) for the current commands, proof contract and final acceptance gate. Historical monolithic workflow descriptions below do not authorize stable publication from artifact success.
+
 # Release Automation
 
 HiveRelay release surfaces are synchronized by `scripts/prepare-release.mjs`

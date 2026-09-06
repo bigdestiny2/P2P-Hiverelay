@@ -6,10 +6,18 @@ on:
       - ship/core3-release-readiness-2026-06-24
   workflow_dispatch:
     inputs:
+      stage:
+        description: Credential phase to validate
+        required: true
+        default: artifact-v1
+        type: choice
+        options:
+          - artifact-v1
+          - stable-v1
       channel:
         description: Fleet/app-store channel value to validate
         required: true
-        default: both
+        default: none
         type: choice
         options:
           - canary
@@ -78,6 +86,7 @@ jobs:
         run: |
           set -euo pipefail
           node scripts/check-release-distribution-env.mjs \
+            --stage "${{ inputs.stage || 'artifact-v1' }}" \
             --channel "${{ steps.rel.outputs.channel }}" \
             --prerelease "${{ steps.rel.outputs.prerelease }}" \
             --github-env "$GITHUB_ENV"
