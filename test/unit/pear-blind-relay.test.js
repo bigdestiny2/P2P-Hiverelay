@@ -1,126 +1,322 @@
 import test from 'brittle'
 import b4a from 'b4a'
 import { EventEmitter } from 'events'
-import { PearBlindRelayTransport } from 'p2p-hiverelay/transports/pear-blind-relay/index.js'
+import { duplexPair } from 'stream'
+import { createRequire } from 'module'
+import { readFileSync } from 'fs'
+import { createHash } from 'crypto'
+import blindRelay from 'blind-relay'
+import { PearBlindRelayTransport, PEAR_BLIND_RELAY_DEFAULTS } from '../../packages/core/transports/pear-blind-relay/index.js'
 
-class FakeSession extends EventEmitter {}
-
-class FakeRelayServer {
-  constructor ({ createStream }) {
-    this.createStream = createStream
-    this.accepted = []
-    this.closed = false
-    this.stats = {
-      sessions: { accepted: 0, opened: 0, closed: 0, active: 0 },
-      pairings: { requested: 0, matched: 0, cancelled: 0, pending: 0, active: 0 },
-      streams: { opened: 0, closed: 0, errors: 0, active: 0 }
-    }
+const require = createRequire(import.meta.url)
+const delay = ms => new Promise(resolve => setTimeout(resolve, ms))
+async function until (predicate, label = 'condition') {
+  const end = Date.now() + 2000
+  while (!predicate()) {
+    if (Date.now() > end) throw new Error(`Timed out: ${label}`)
+    await delay(5)
   }
+}
+const token = n => { const b = b4a.alloc(32); b.writeUInt32LE(n); return b }
 
-  accept (socket, opts) {
-    const session = new FakeSession()
-    this.accepted.push({ socket, opts, session })
-    this.stats.sessions.accepted++
-    this.stats.sessions.active++
-    session.once('close', () => {
-      this.stats.sessions.active--
-      this.stats.sessions.closed++
-    })
-    return session
+class RawStream extends EventEmitter {
+  constructor (id, opts) { super(); this.id = id; this.opts = opts; this.destroyed = false; this.closed = false }
+  relayTo (other) { this.remote = other; return this }
+  destroy () {
+    if (this.destroyed) return
+    this.destroyed = true
+    queueMicrotask(() => { this.closed = true; this.emit('close') })
   }
-
-  async close () { this.closed = true }
 }
 
-class FakeSocket extends EventEmitter {
-  constructor (remotePublicKey = b4a.alloc(32, 7)) {
-    super()
-    this.remotePublicKey = remotePublicKey
-    this.keepAliveMs = null
-    this.destroyed = false
-  }
-
-  setKeepAlive (ms) { this.keepAliveMs = ms }
-  destroy () { this.destroyed = true }
-}
-
-function fixture (opts = {}) {
-  const rawStreams = []
+async function fixture (t, opts = {}, hooks = {}) {
+  const raw = []
+  const peers = []
+  let connection
+  let listeners = 0
   const dht = {
-    createRawStream (rawOpts) {
-      rawStreams.push(rawOpts)
-      return { rawOpts }
+    createRawStream (streamOpts) {
+      if (hooks.failRawAt === raw.length) throw new Error('injected raw stream failure')
+      const stream = new RawStream(raw.length + 1, streamOpts)
+      raw.push(stream)
+      return stream
     },
-    createServer (onconnection) {
+    createServer (accept) {
+      connection = accept
+      listeners++
       return {
         publicKey: b4a.alloc(32, 3),
-        onconnection,
-        listenedWith: null,
-        closed: false,
-        async listen (keyPair) { this.listenedWith = keyPair },
-        async close () { this.closed = true }
+        async listen () { await hooks.listen?.() },
+        async close () { await hooks.close?.() }
       }
     }
   }
-  const keyPair = { publicKey: b4a.alloc(32, 3), secretKey: b4a.alloc(64, 4) }
   const transport = new PearBlindRelayTransport({
     dht,
-    keyPair,
-    RelayServer: FakeRelayServer,
+    keyPair: { publicKey: b4a.alloc(32, 3), secretKey: b4a.alloc(64, 4) },
     ...opts
   })
-  return { transport, dht, keyPair, rawStreams }
+  t.teardown(async () => {
+    for (const { client, clientSocket, serverSocket } of peers) {
+      client?.destroy()
+      clientSocket.destroy()
+      serverSocket.destroy()
+    }
+    for (const stream of raw) stream.destroy()
+    await transport.stop()
+  })
+  async function connect (open = true) {
+    const [serverSocket, clientSocket] = duplexPair()
+    serverSocket.remotePublicKey = b4a.alloc(32, peers.length + 7)
+    serverSocket.setKeepAlive = ms => { serverSocket.keepAlive = ms }
+    for (const socket of [serverSocket, clientSocket]) socket.on('error', () => {})
+    const peer = { serverSocket, clientSocket, client: null }
+    peers.push(peer)
+    connection(serverSocket)
+    if (!open) return peer
+    peer.client = new blindRelay.Client(clientSocket, { id: serverSocket.remotePublicKey })
+    peer.client.on('error', () => {})
+    await new Promise((resolve, reject) => {
+      peer.client.once('open', resolve)
+      peer.client.once('error', reject)
+    })
+    return peer
+  }
+  await transport.start()
+  return { transport, raw, peers, connect, listeners: () => listeners }
 }
 
-test('Pear blind relay uses the v3.4 framed UDX contract and reports a z32 key', async (t) => {
-  const { transport, keyPair, rawStreams } = fixture({ maxSessions: 2, keepAliveMs: 1234 })
-  await transport.start()
+function pair (peer, n, initiator = true) {
+  const request = peer.client.pair(initiator, token(n), { id: n + 1 })
+  request.on('error', () => {})
+  request.resume()
+  return request
+}
 
-  t.ok(transport.running)
-  t.is(transport.server.listenedWith, keyPair)
-  const stream = transport.relay.createStream({ firewall: 'allow' })
-  t.alike(rawStreams, [{ firewall: 'allow', framed: true }])
-  t.is(stream.rawOpts.framed, true)
-
-  const socket = new FakeSocket()
-  transport.server.onconnection(socket)
-  t.is(socket.keepAliveMs, 1234)
-  t.is(transport.relay.accepted[0].opts.id, socket.remotePublicKey)
-
-  const stats = transport.getStats()
-  t.is(stats.publicKey.length, 52)
-  t.is(stats.maxSessions, 2)
-  t.is(stats.sessions.accepted, 1)
-  t.is(stats.sessions.refused, 0)
-
-  await transport.stop()
-  t.absent(transport.running)
+// The adapter reaches into the exact pinned library for admission BEFORE its
+// raw allocation. Any dependency drift requires a fresh semantic audit.
+test('Pear relay private admission adapter binds the reviewed dependency source', t => {
+  for (const [name, version, digest] of [
+    ['blind-relay', '1.6.1', '3ec1ffbe6599f12cef96c5100785ae699e4c67d33a3dc9ed33a90d7418d6a863'],
+    ['protomux', '3.11.0', '58ff75fe2f7d7406cfc70c9a5785b4c3084fb2b2755fd7a754ee2f75ebfd8f95']
+  ]) {
+    t.is(require(`${name}/package.json`).version, version)
+    t.is(createHash('sha256').update(readFileSync(require.resolve(name))).digest('hex'), digest)
+  }
 })
 
-test('Pear blind relay refuses sessions beyond its independent ceiling', async (t) => {
-  const { transport } = fixture({ maxSessions: 1 })
-  await transport.start()
-
-  const first = new FakeSocket()
-  const second = new FakeSocket()
-  transport.server.onconnection(first)
-  transport.server.onconnection(second)
-
-  t.absent(first.destroyed)
-  t.ok(second.destroyed)
-  t.is(transport.getStats().sessions.refused, 1)
-
-  transport.relay.accepted[0].session.emit('close')
-  const third = new FakeSocket()
-  transport.server.onconnection(third)
-  t.absent(third.destroyed)
-  t.is(transport.getStats().sessions.accepted, 2)
-
-  await transport.stop()
+test('Pear relay real-library sessions preserve framed streams, identity and counters', async t => {
+  const f = await fixture(t, { maxSessions: 2, keepAliveMs: 1234 })
+  const key = f.transport.getStats().publicKey
+  const a = await f.connect(); const b = await f.connect()
+  pair(a, 1); pair(b, 1, false)
+  await until(() => f.transport.getStats().pairings.matched === 1)
+  t.is(key.length, 52)
+  t.is(a.serverSocket.keepAlive, 1234)
+  t.is(f.raw.length, 2)
+  t.ok(f.raw.every(stream => stream.opts.framed === true))
+  t.is(f.transport.getStats().streams.active, 2)
+  await f.transport.stop()
+  t.is(f.transport.getStats().sockets.active, 0)
+  t.is(f.transport.getStats().streams.active, 0)
+  t.is(f.transport.getStats().pairings.pending, 0)
+  t.is(f.transport.getStats().sessions.accepted, 2, 'counters survive stop')
+  await f.transport.start()
+  t.is(f.transport.getStats().publicKey, key, 'same stable identity on restart')
 })
 
-test('Pear blind relay validates finite operator limits', async (t) => {
-  await t.exception.all(() => fixture({ maxSessions: 0 }), /maxSessions/)
-  await t.exception.all(() => fixture({ keepAliveMs: 0 }), /keepAliveMs/)
+test('Pear relay bounds pending tokens before allocating a thousand requests', async t => {
+  const f = await fixture(t, { maxPendingPerSession: 4 })
+  let high = 0
+  const a = await f.connect()
+  const receive = f.transport._pair.bind(f.transport)
+  f.transport._pair = (...args) => { receive(...args); high = Math.max(high, f.transport.relay.stats.pairings.pending) }
+  for (let i = 0; i < 1000; i++) pair(a, i)
+  await until(() => a.serverSocket.destroyed)
+  t.ok(high <= 4, 'pre-allocation ceiling applies inside same decoded batch')
+  t.is(f.raw.length, 0)
+  t.is(f.transport.getStats().pairings.refused, 1)
+  t.is(f.transport.getStats().pairings.pending, 0)
+})
+
+test('Pear relay enforces global pending budget across clients', async t => {
+  const f = await fixture(t, { maxPendingPairings: 2, maxPendingPerSession: 4 })
+  const a = await f.connect(); const b = await f.connect()
+  pair(a, 1); pair(a, 2)
+  await until(() => f.transport.getStats().pairings.pending === 2)
+  pair(b, 3)
+  await until(() => b.serverSocket.destroyed)
+  t.is(f.transport.getStats().pairings.pending, 2)
+  t.absent(a.serverSocket.destroyed)
+})
+
+for (const limits of [{ maxActiveLinks: 2 }, { maxActiveLinksPerSession: 1 }]) {
+  test(`Pear relay enforces ${Object.keys(limits)[0]} before raw stream allocation`, async t => {
+    const f = await fixture(t, limits)
+    const a = await f.connect(); const b = await f.connect()
+    pair(a, 1); pair(b, 1, false)
+    await until(() => f.raw.length === 2)
+    pair(a, 2); pair(b, 2, false)
+    await until(() => b.serverSocket.destroyed)
+    t.is(f.raw.length, 2, 'no over-budget raw streams ever created')
+    await until(() => f.transport.getStats().streams.active === 0)
+    t.is(f.transport.getStats().pairings.active, 0)
+  })
+}
+
+test('Pear relay rejects same-session pairing and active-token overwrite', async t => {
+  const f = await fixture(t)
+  const a = await f.connect()
+  a.client._pair.send({ token: token(1), isInitiator: true, id: 1, seq: 0 })
+  a.client._pair.send({ token: token(1), isInitiator: false, id: 2, seq: 0 })
+  await until(() => a.serverSocket.destroyed)
+  t.is(f.raw.length, 0)
+  const b = await f.connect(); const c = await f.connect()
+  pair(b, 2); pair(c, 2, false)
+  await until(() => f.raw.length === 2)
+  b.client._pair.send({ token: token(2), isInitiator: true, id: 4, seq: 0 })
+  await until(() => b.serverSocket.destroyed)
+  t.is(f.raw.length, 2)
+  await until(() => f.transport.getStats().streams.active === 0)
+})
+
+test('Pear relay expires unmatched requests and idle channels', async t => {
+  const f = await fixture(t, { pairingTimeoutMs: 30, idleTimeoutMs: 80 })
+  const a = await f.connect(); const b = await f.connect()
+  pair(a, 1)
+  await until(() => a.serverSocket.destroyed)
+  t.is(f.transport.getStats().expired.pending, 1)
+  t.is(f.transport.getStats().pairings.pending, 0)
+  await until(() => b.serverSocket.destroyed)
+  t.is(f.transport.getStats().expired.idle, 1)
+})
+
+test('Pear relay expires active raw links and tears down their counterpart', async t => {
+  const f = await fixture(t, { maxLinkLifetimeMs: 30 })
+  const a = await f.connect(); const b = await f.connect()
+  pair(a, 1); pair(b, 1, false)
+  await until(() => f.raw.length === 2)
+  await until(() => f.transport.getStats().streams.active === 0)
+  t.ok(f.transport.getStats().expired.links >= 1)
+  t.is(f.transport.getStats().pairings.active, 0)
+  t.ok(f.raw.every(stream => stream.destroyed))
+})
+
+test('Pear relay protocol close destroys owned sockets and both raw links', async t => {
+  const f = await fixture(t, { maxSessions: 2 })
+  const a = await f.connect(); const b = await f.connect()
+  const refused = await f.connect(false)
+  t.ok(refused.serverSocket.destroyed)
+  pair(a, 1); pair(b, 1, false)
+  await until(() => f.raw.length === 2)
+  a.client.destroy()
+  await until(() => a.serverSocket.destroyed && f.transport.getStats().streams.active === 0)
+  t.is(f.transport.getStats().sessions.refused, 1)
+  t.is(f.transport.getStats().sockets.active, 1)
+  const c = await f.connect()
+  t.absent(c.serverSocket.destroyed)
+})
+
+test('Pear relay raw allocation failure cleans up the first stream and both sessions', async t => {
+  const f = await fixture(t, {}, { failRawAt: 1 })
+  const a = await f.connect(); const b = await f.connect()
+  pair(a, 1); pair(b, 1, false)
+  await until(() => a.serverSocket.destroyed && b.serverSocket.destroyed)
+  await until(() => f.transport.getStats().streams.active === 0)
+  t.is(f.raw.length, 1)
+  t.is(f.transport.getStats().pairings.pending, 0)
+})
+
+test('Pear relay concurrent stop drains pending work and preserves completion ownership', async t => {
+  const f = await fixture(t)
+  const a = await f.connect()
+  pair(a, 1)
+  await until(() => f.transport.getStats().pairings.pending === 1)
+  const stopping = f.transport.stop()
+  t.is(f.transport.stop(), stopping)
+  await stopping
+  t.ok(a.serverSocket.destroyed)
+  t.is(f.transport.getStats().sessions.active, 0)
+  t.is(f.transport.getStats().pairings.pending, 0)
+  t.is(f.transport.getStats().sockets.active, 0)
+})
+
+test('Pear relay stop timeout retains listener ownership for cleanup retry', async t => {
+  let closeResolve
+  let block = true
+  const f = await fixture(t, { stopTimeoutMs: 30 }, { close: () => block ? new Promise(resolve => { closeResolve = resolve }) : undefined })
+  await t.exception(f.transport.stop(), /shutdown deadline/)
+  t.ok(f.transport.server, 'failed close is retained, not reported complete')
+  await t.exception(f.transport.start(), /cleanup incomplete/)
+  block = false
+  closeResolve()
+  await f.transport.stop()
+  t.absent(f.transport.server)
+})
+
+test('Pear relay finite operator limits fail closed', async t => {
+  for (const name of Object.keys(PEAR_BLIND_RELAY_DEFAULTS)) {
+    await t.exception.all(() => new PearBlindRelayTransport({ dht: {}, keyPair: { publicKey: 1, secretKey: 1 }, [name]: 0 }), new RegExp(name))
+  }
   await t.exception.all(() => new PearBlindRelayTransport({}), /dht is required/)
+})
+
+test('Pear relay coalesces starts and a stop during listen cannot become running', async t => {
+  const f = await fixture(t)
+  await f.transport.stop()
+  let release
+  const barrier = new Promise(resolve => { release = resolve })
+  const createServer = f.transport.dht.createServer
+  f.transport.dht.createServer = accept => {
+    const server = createServer(accept)
+    server.listen = () => barrier
+    return server
+  }
+  const starting = f.transport.start()
+  t.is(f.transport.start(), starting)
+  const stopping = f.transport.stop()
+  t.is(f.transport.stop(), stopping)
+  release()
+  await Promise.all([starting, stopping])
+  t.absent(f.transport.running)
+  t.absent(f.transport.server)
+  t.is(f.listeners(), 2, 'one initial listener and one coalesced restart')
+})
+
+test('Pear relay cancellation releases token expiry before reuse', async t => {
+  const f = await fixture(t, { pairingTimeoutMs: 80 })
+  const a = await f.connect(); const b = await f.connect()
+  pair(a, 1)
+  await until(() => f.transport.getStats().pairings.pending === 1)
+  await delay(30)
+  a.client.unpair(token(1))
+  await until(() => f.transport.getStats().pairings.pending === 0)
+  pair(b, 1)
+  await until(() => f.transport.getStats().pairings.pending === 1)
+  await delay(55)
+  t.absent(b.serverSocket.destroyed, 'original owner timer cannot close the successor')
+  await until(() => b.serverSocket.destroyed)
+  t.is(f.transport.getStats().expired.pending, 1)
+})
+
+
+test('Pear relay shutdown deadline also bounds a pending listen', async t => {
+  const f = await fixture(t, { stopTimeoutMs: 30 })
+  await f.transport.stop()
+  let release
+  const createServer = f.transport.dht.createServer
+  f.transport.dht.createServer = accept => {
+    const server = createServer(accept)
+    server.listen = () => new Promise(resolve => { release = resolve })
+    return server
+  }
+  const starting = f.transport.start()
+  await t.exception(f.transport.stop(), /shutdown deadline/)
+  t.ok(f.transport.getStats().stopping)
+  release()
+  await starting
+  t.absent(f.transport.running, 'late listen cannot advertise a stopped generation')
+  await f.transport.stop()
+  t.absent(f.transport.server)
+  t.absent(f.transport.getStats().stopping)
 })

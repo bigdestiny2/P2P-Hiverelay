@@ -356,7 +356,15 @@ export default {
 
   pearBlindRelay: {
     maxSessions: 1024,
-    keepAliveMs: 5000
+    keepAliveMs: 5000,
+    maxPendingPairings: 1024,
+    maxPendingPerSession: 16,
+    maxActiveLinks: 2048,
+    maxActiveLinksPerSession: 16,
+    pairingTimeoutMs: 30000,
+    idleTimeoutMs: 60000,
+    maxLinkLifetimeMs: 3600000,
+    stopTimeoutMs: 5000
   },
 
   // Holesail API tunnel (for relays behind NAT)

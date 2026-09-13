@@ -1948,7 +1948,15 @@ export class RelayNode extends EventEmitter {
           dht: this.swarm.dht,
           keyPair: relayKeyPair,
           maxSessions: relayCfg.maxSessions,
-          keepAliveMs: relayCfg.keepAliveMs
+          keepAliveMs: relayCfg.keepAliveMs,
+          maxPendingPairings: relayCfg.maxPendingPairings,
+          maxPendingPerSession: relayCfg.maxPendingPerSession,
+          maxActiveLinks: relayCfg.maxActiveLinks,
+          maxActiveLinksPerSession: relayCfg.maxActiveLinksPerSession,
+          pairingTimeoutMs: relayCfg.pairingTimeoutMs,
+          idleTimeoutMs: relayCfg.idleTimeoutMs,
+          maxLinkLifetimeMs: relayCfg.maxLinkLifetimeMs,
+          stopTimeoutMs: relayCfg.stopTimeoutMs
         })
         this.pearBlindRelay.on('started', ({ publicKey }) => {
           this.emit('pear-blind-relay-ready', { publicKey })
