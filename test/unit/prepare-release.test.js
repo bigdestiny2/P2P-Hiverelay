@@ -98,7 +98,7 @@ test('prepare-release defaults full release channel to none', async (t) => {
   t.ok(truenasManifest.includes('app_version: 9.9.9'), 'TrueNAS upstream version is synchronized')
   t.ok(truenasManifest.includes('version: 1.0.1'), 'TrueNAS catalog revision is bumped once')
   t.ok(truenasImages.includes('tag: 9.9.9'), 'TrueNAS image tag is synchronized')
-  t.ok(truenasReadme.includes('Upstream HiveRelay release: `9.9.9`'), 'TrueNAS README is synchronized')
+  t.ok(truenasReadme.includes('Target HiveRelay version: `9.9.9`'), 'TrueNAS README is synchronized')
 
   const unraidTemplate = await readFile(path.join(repo, 'unraid-app', 'templates', 'blindspark.xml'), 'utf8')
   t.ok(unraidTemplate.includes(`ghcr.io/bigdestiny2/p2p-hiverelay:9.9.9@${DIGEST}`), 'Unraid image digest is synchronized')

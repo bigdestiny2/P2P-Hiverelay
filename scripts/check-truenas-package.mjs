@@ -66,7 +66,7 @@ function validatePackage () {
     'TrueNAS rendering library hash'
   )
   validateVendorProvenance(provenance, app)
-  includesAll(readme, [`Upstream HiveRelay release: \`${upstreamVersion}\``], 'TrueNAS app README')
+  includesAll(readme, [`Target HiveRelay version: \`${upstreamVersion}\``], 'TrueNAS app README')
 
   includesAll(app, [
     'uid: 999',

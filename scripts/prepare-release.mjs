@@ -427,8 +427,8 @@ function syncTrueNas () {
   replaceTrueNasImageVersion(imageValues)
   replaceInFile(
     appReadme,
-    /Upstream HiveRelay release:\s*`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`/,
-    `Upstream HiveRelay release: \`${version}\``,
+    /(?:Upstream HiveRelay release|Target HiveRelay version):\s*`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`/,
+    `Target HiveRelay version: \`${version}\``,
     'TrueNAS app README upstream version'
   )
   if (needsCatalogRevision) replaceYamlScalar(appManifest, 'version', bumpPatchVersion(oldCatalogVersion))
@@ -510,7 +510,7 @@ function readTrueNasImageVersion (file) {
 }
 
 function readTrueNasReadmeVersion (file) {
-  const match = read(file).match(/Upstream HiveRelay release:\s*`(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`/)
+  const match = read(file).match(/(?:Upstream HiveRelay release|Target HiveRelay version):\s*`(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`/)
   if (!match) die(`Could not find upstream HiveRelay release in ${relative(file)}.`)
   return match[1]
 }
