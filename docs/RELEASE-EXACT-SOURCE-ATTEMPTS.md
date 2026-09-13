@@ -15,7 +15,7 @@ same SHA-512 integrity and SHA-1 shasum before the staging tag can be repaired.
 After publication, immutable registry metadata is retried only for an explicit
 npm E404, at most 12 reads with a 30-second command timeout and delays starting at
 2 seconds and capped at 15 seconds. Authentication errors, transport ambiguity,
-malformed metadata and mismatched hashes fail immediately. The source receipt
+malformed metadata and mismatched hashes fail immediately. The tarballs, source receipt
 and a flushed per-package progress log survive an incomplete run. A successful
 publish acknowledgment is recorded before readback. A process or host failure
 between publication and acknowledgment can still leave an unrecorded remote

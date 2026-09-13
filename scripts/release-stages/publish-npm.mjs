@@ -16,7 +16,8 @@ if (!args['--out']) throw new Error('--out is required')
 const sha = args['--sha'] || process.env.HIVERELAY_RELEASE_SHA
 if (!/^[a-f0-9]{40}$/.test(sha || '')) throw new Error('Exact admitted release SHA is required')
 const output = path.resolve(args['--out'])
-if (/[\r\n]/.test(output) || [output, `${output}.source.json`, `${output}.progress.jsonl`].some(file => fs.existsSync(file))) throw new Error('Fresh safe artifact evidence output paths are required')
+const retainedPackages = `${output}.packages`
+if (/[\r\n]/.test(output) || [output, `${output}.source.json`, `${output}.progress.jsonl`, retainedPackages].some(file => fs.existsSync(file))) throw new Error('Fresh safe artifact evidence output paths are required')
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'hiverelay-artifact-npm-'))
 const rows = []
 let published = false
@@ -24,6 +25,7 @@ let progressFd
 try {
   const exact = createExactReleaseSource({ repoRoot, sha, destination: path.join(temp, 'committed') })
   writeJson(`${output}.source.json`, exact.receipt)
+  fs.mkdirSync(retainedPackages, { mode: 0o700 })
   progressFd = fs.openSync(`${output}.progress.jsonl`, 'wx', 0o600)
   const record = value => { fs.writeSync(progressFd, JSON.stringify({ sourceCommit: sha, ...value }) + '\n'); fs.fsyncSync(progressFd) }
   const artifacts = []
@@ -34,12 +36,12 @@ try {
     // Publish precisely the packed bytes whose integrity is retained. On retry,
     // an occupied version must have these same bytes; version presence alone
     // is never permission to substitute another package.
-    const packed = JSON.parse(run('npm', ['pack', pkgPath, '--json', '--ignore-scripts', '--pack-destination', temp], { cwd: exact.source, timeout: 600000 }))
+    const packed = JSON.parse(run('npm', ['pack', pkgPath, '--json', '--ignore-scripts', '--pack-destination', retainedPackages], { cwd: exact.source, timeout: 600000 }))
     if (packed.length !== 1 || path.basename(packed[0].filename) !== packed[0].filename) throw new Error('npm pack returned an invalid artifact')
-    const file = path.join(temp, packed[0].filename)
+    const file = path.join(retainedPackages, packed[0].filename)
     const files = verifyPackedReleaseSource({ file, packageDirectory: `packages/${directory}`, inventory: exact.inventory, destination: path.join(temp, `verified-${directory}`) })
     const expected = { name: pkg.name, version, integrity: `sha512-${digest(file, 'sha512', 'base64')}`, shasum: digest(file, 'sha1') }
-    record({ phase: 'prepared', package: expected, files })
+    record({ phase: 'prepared', package: expected, filename: packed[0].filename, files })
     artifacts.push({ file, expected })
   }
   // Finish checking every package before the first irreversible publication.

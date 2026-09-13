@@ -910,6 +910,7 @@ jobs:
             ${{ runner.temp }}/release-npm-identities.json
             ${{ runner.temp }}/release-npm-identities.json.source.json
             ${{ runner.temp }}/release-npm-identities.json.progress.jsonl
+            ${{ runner.temp }}/release-npm-identities.json.packages/*.tgz
             ${{ runner.temp }}/release-image-source.json
           if-no-files-found: ignore
           retention-days: 90

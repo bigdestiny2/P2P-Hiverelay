@@ -2,6 +2,7 @@ import test from 'brittle'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import yaml from 'js-yaml'
 
@@ -166,6 +167,10 @@ test('actual npm artifact CLI retains exact packed integrity through delayed vis
   t.ok(source.files.some(f => f.path === 'packages/core/package.json'))
   const progress = fs.readFileSync(output + '.progress.jsonl', 'utf8').trim().split('\n').map(JSON.parse)
   t.alike(progress.slice(0, 4).map(p => p.phase), Array(4).fill('prepared'), 'all artifacts prepared before mutation')
+  for (const row of progress.slice(0, 4)) {
+    const bytes = fs.readFileSync(path.join(output + '.packages', row.filename))
+    t.is('sha512-' + crypto.createHash('sha512').update(bytes).digest('base64'), row.package.integrity, 'retains the exact verified tarball')
+  }
   t.is(progress.filter(p => p.phase === 'publish-returned-success').length, 4)
   t.is(progress.filter(p => p.phase === 'immutable-dist-verified').length, 4)
   t.is(firstState.calls.slice(0, 4).filter(c => c[0] === 'pack').length, 4)
@@ -191,11 +196,13 @@ test('post-publication readback failure retains partial receipts without release
   t.absent(fs.existsSync(output), 'no complete identity receipt')
   const progress = fs.readFileSync(output + '.progress.jsonl', 'utf8').trim().split('\n').map(JSON.parse)
   t.alike(progress.map(p => p.phase), [...Array(4).fill('prepared'), 'publish-returned-success'])
+  t.is(fs.readdirSync(output + '.packages').length, 4, 'prepared tarballs survive failed metadata readback')
   const calls = JSON.parse(fs.readFileSync(state)).calls
   t.is(calls.filter(c => c[0] === 'publish').length, 1)
   t.absent(calls.some(c => c[0] === 'dist-tag'))
   const upload = workflow.jobs.sync.steps.find(s => s.name === 'Upload exact source and npm attempt receipts')
   t.ok(upload.if.includes('always()'), 'attempt receipts survive failed workflow')
   t.ok(upload.with.path.includes('release-npm-identities.json.progress.jsonl'))
+  t.ok(upload.with.path.includes('release-npm-identities.json.packages/*.tgz'))
   t.ok(upload.with.path.includes('release-image-source.json'))
 })
