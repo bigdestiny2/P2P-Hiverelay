@@ -497,12 +497,17 @@ function addEvidenceFileChecks () {
   }
 }
 
+function isStagedBundle () {
+  try { return isArtifactRelease(JSON.parse(fs.readFileSync(path.join(bundleDir, 'release-evidence.json'), 'utf8'))) } catch { return false }
+}
+
 function requiredEvidenceFiles () {
-  let staged = false
-  try { staged = isArtifactRelease(JSON.parse(fs.readFileSync(path.join(bundleDir, 'release-evidence.json'), 'utf8'))) } catch {}
+  const staged = isStagedBundle()
   // Later distribution has its own immutable authority and timestamps. The
   // old checkpoint sidecars cannot describe that later operation.
-  return EVIDENCE_FILES.filter(row => !staged || !['evidence.official-umbrel-pr', 'evidence.startos-registry'].includes(row.id))
+  return EVIDENCE_FILES.filter(row => staged
+    ? !['evidence.official-umbrel-pr', 'evidence.startos-registry'].includes(row.id)
+    : row.id !== 'evidence.stable-promotion')
 }
 
 function addReleaseVerifierChecks () {
@@ -535,15 +540,17 @@ function addReleaseVerifierChecks () {
     return
   }
 
-  addCommandItem({
-    id: 'release.stable-promotion.verify',
-    passSummary: 'distinct stable promotion receipt and current distribution verify',
-    failSummary: 'artifact-only or unverified stable promotion cannot clear full release',
-    script: 'release-stages/promote.mjs',
-    argv: ['--bundle-dir', bundleDir, '--mode', 'verify'],
-    timeout: 600000,
-    command: 'node scripts/release-stages/promote.mjs --mode verify --bundle-dir <dir>'
-  })
+  if (isStagedBundle()) {
+    addCommandItem({
+      id: 'release.stable-promotion.verify',
+      passSummary: 'distinct stable promotion receipt and current distribution verify',
+      failSummary: 'artifact-only or unverified stable promotion cannot clear full release',
+      script: 'release-stages/promote.mjs',
+      argv: ['--bundle-dir', bundleDir, '--mode', 'verify'],
+      timeout: 600000,
+      command: 'node scripts/release-stages/promote.mjs --mode verify --bundle-dir <dir>'
+    })
+  }
 
   addCommandItem({
     id: 'release.evidence.verify',

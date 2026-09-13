@@ -961,19 +961,8 @@ jobs:
             --pattern 'blindspark.s9pk' \
             --dir "$bundle_dir/startos" \
             --clobber
-          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ] && \
-             [ "${{ steps.rel.outputs.public_gateway_enabled }}" != "true" ]; then
-            gh release download "${{ steps.rel.outputs.version }}" \
-              --pattern 'fleet-rollout-evidence.json' \
-              --dir "$bundle_dir" \
-              --clobber
-          fi
-          if [ "${{ steps.rel.outputs.is_prerelease }}" != "true" ]; then
-            gh release download "${{ steps.rel.outputs.version }}" \
-              --pattern 'startos-registry-evidence.json' \
-              --dir "$bundle_dir" \
-              --clobber
-          fi
+          # Every trigger publishes artifact-v1. Fleet and registry proof is
+          # produced later by stable promotion, including for a GA identity.
           npm run release:verify-evidence -- --bundle-dir "$bundle_dir"
 
   dispatch-startos-04:

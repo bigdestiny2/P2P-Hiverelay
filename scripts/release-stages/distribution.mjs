@@ -7,7 +7,7 @@ import { run, digest, exactKeys } from './io.mjs'
 
 export const RELEASE_REPOSITORY = 'bigdestiny2/P2P-Hiverelay'
 const SHA = /^[a-f0-9]{40}$/
-const METADATA = ['package.json', 'package-lock.json', 'README.md', 'packages/core/package.json', 'packages/client/package.json', 'packages/verifier/package.json', 'packages/services/package.json', 'umbrel-app/docker-compose.yml', 'umbrel-app/umbrel-app.yml', 'startos/manifest.yaml', 'startos/Makefile', 'startos/README.md', 'truenas-app/app.yaml', 'truenas-app/ix_values.yaml', 'truenas-app/README.md', 'unraid-app/templates/blindspark.xml', 'zimaos-app/Apps/Blindspark/docker-compose.yml', 'runtipi-app/apps/blindspark/config.json', 'runtipi-app/apps/blindspark/docker-compose.yml', 'hexos-app/blindspark.json']
+const METADATA = ['package.json', 'package-lock.json', 'README.md', 'packages/core/package.json', 'packages/client/package.json', 'packages/verifier/package.json', 'packages/services/package.json', 'umbrel-app/docker-compose.yml', 'umbrel-app/umbrel-app.yml', 'startos/manifest.yaml', 'startos/Makefile', 'startos/README.md', 'startos-0.4/startos/manifest/index.ts', 'startos-0.4/startos/versions/current.ts', 'truenas-app/app.yaml', 'truenas-app/ix_values.yaml', 'truenas-app/README.md', 'unraid-app/templates/blindspark.xml', 'zimaos-app/Apps/Blindspark/docker-compose.yml', 'runtipi-app/apps/blindspark/config.json', 'runtipi-app/apps/blindspark/docker-compose.yml', 'hexos-app/blindspark.json']
 const COMMUNITY = ['hiverelay-blindspark/docker-compose.yml', 'hiverelay-blindspark/umbrel-app.yml', 'package.json', 'README.md', 'index.html']
 
 export function distributionTargets (release, env) {

@@ -21,6 +21,33 @@ function cli (file, args, dir, extra = {}) {
   return spawnSync(process.execPath, [path.join(ROOT, 'scripts/release-stages', file), ...args], { cwd: dir, env: { PATH: `${dir}/bin:${process.env.PATH}`, ...extra }, encoding: 'utf8', timeout: 30000 })
 }
 
+test('published artifact readback succeeds before deferred promotion assets exist', t => {
+  const dir = fixture(t)
+  const log = path.join(dir, 'readback.jsonl')
+  const assets = ['release-evidence.json', 'release-image-manifest-evidence.json', 'release-image-smoke-evidence.json', 'umbrel-package-smoke-evidence.json', 'blindspark.s9pk']
+  stub(dir, 'gh', `const fs=require('fs'),a=process.argv.slice(2);fs.appendFileSync(process.env.LOG,JSON.stringify(a)+String.fromCharCode(10));const name=a[a.indexOf('--pattern')+1];if(!${JSON.stringify(assets)}.includes(name)||name===process.env.MISSING)process.exit(7)`)
+  stub(dir, 'npm', "require('fs').appendFileSync(process.env.LOG,JSON.stringify(['verify',...process.argv.slice(2)])+String.fromCharCode(10))")
+  const step = workflow.jobs.sync.steps.find(s => s.name === 'Verify published release evidence assets')
+  for (const version of ['v0.27.0', 'v0.27.0-rc.1']) {
+    for (const gateway of ['true', 'false']) {
+      const script = step.run.replaceAll('$' + '{{ steps.rel.outputs.version }}', version)
+        .replaceAll('$' + '{{ steps.rel.outputs.is_prerelease }}', String(version.includes('-')))
+        .replaceAll('$' + '{{ steps.rel.outputs.public_gateway_enabled }}', gateway)
+      fs.writeFileSync(log, '')
+      const env = { PATH: `${dir}/bin:${process.env.PATH}`, LOG: log, TMPDIR: dir }
+      const result = spawnSync('bash', ['-c', script], { cwd: dir, env, encoding: 'utf8', timeout: 30000 })
+      t.is(result.status, 0, `${version}, gateway=${gateway}: ${result.stderr}`)
+      const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse)
+      t.alike(calls.filter(c => c[0] === 'release').map(c => c[c.indexOf('--pattern') + 1]), assets)
+      t.is(calls.at(-1)[0], 'verify', 'still verifies all required artifact evidence')
+      fs.writeFileSync(log, '')
+      const missing = spawnSync('bash', ['-c', script], { cwd: dir, env: { ...env, MISSING: assets[1] }, encoding: 'utf8', timeout: 30000 })
+      t.is(missing.status, 7, 'missing required artifact still fails closed')
+      t.absent(fs.readFileSync(log, 'utf8').includes('["verify"'), 'does not verify an incomplete bundle')
+    }
+  }
+})
+
 test('artifact workflow resolves actual tag, Release and dispatch scripts without fleet promotion', t => {
   const dir = fixture(t)
   stub(dir, 'node', "console.log('effective_channel=none\\npublic_gateway_enabled=false')")
