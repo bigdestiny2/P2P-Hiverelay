@@ -1,0 +1,10 @@
+{
+  "name": "@hiverelay/blind-intent-store-browser",
+  "version": "0.0.0-i03.1",
+  "private": true,
+  "type": "module",
+  "exports": "./index.js",
+  "files": ["index.js", "README.md"],
+  "scripts": { "test": "node --test test/browser.test.mjs" },
+  "devDependencies": { "playwright": "1.62.1" }
+}
