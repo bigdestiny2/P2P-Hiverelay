@@ -1,3 +1,4 @@
+/* global Backend, indexedDB, location */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -24,7 +25,6 @@ await once(server, 'listening')
 const origin = `http://127.0.0.1:${server.address().port}`
 test.after(() => new Promise(resolve => server.close(resolve)))
 
-
 // Derived from the independent review's F2 reproduction; broadened to every
 // locally qualified browser and coercible/non-string names before storage access.
 for (const [name, engine, options] of [
@@ -42,7 +42,7 @@ for (const [name, engine, options] of [
       const originalOpen = indexedDB.open.bind(indexedDB)
       indexedDB.open = (...args) => { storageCalls++; return originalOpen(...args) }
       const results = []
-      const invalid = [{}, { name: undefined }, { name: null }, { name: false }, { name: 0 }, { name: 123 }, { name: [] }, { name: ['valid'] }, { name: new String('valid') }, { name: { toString () { coercions++; return 'valid' } } }, { name: Symbol('valid') }, { name: '' }]
+      const invalid = [{}, { name: undefined }, { name: null }, { name: false }, { name: 0 }, { name: 123 }, { name: [] }, { name: ['valid'] }, { name: Object('valid') }, { name: { toString () { coercions++; return 'valid' } } }, { name: Symbol('valid') }, { name: '' }]
       for (const input of invalid) {
         let backend; let error
         try { backend = new Backend({ ...options, ...input }); await backend.ready() } catch (e) { error = e.code }

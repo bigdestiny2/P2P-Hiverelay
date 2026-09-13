@@ -174,7 +174,13 @@
       "**/dist/**",
       "packages/blind-client/browser-artifacts/**",
       "**/transports/dht-relay-ws/vendor/**",
-      "packages/blind-daemon/pow-issuance-v1/sandbox-adapter.js"
+      "packages/blind-daemon/pow-issuance-v1/sandbox-adapter.js",
+      "packages/blind-intent-store-bare/runtime.js",
+      "packages/blind-intent-store-bare/native/flags-darwin-arm64.cjs",
+      "packages/blind-intent-store-bare/native/flags-linux-x64.cjs",
+      "packages/blind-intent-pear-consumer/vendor/blind-intent-store-bare/runtime.js",
+      "packages/blind-intent-pear-consumer/vendor/blind-intent-store-bare/native/flags-darwin-arm64.cjs",
+      "packages/blind-intent-pear-consumer/vendor/blind-intent-store-bare/native/flags-linux-x64.cjs"
     ]
   },
   "dependencies": {

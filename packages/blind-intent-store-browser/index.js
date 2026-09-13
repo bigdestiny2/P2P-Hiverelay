@@ -1,3 +1,4 @@
+/* global IDBKeyRange, indexedDB */
 // Private I03 successor. Frozen public client/worker artifacts are not modified.
 const KEY = /^intent:[0-9a-f]{64}$/
 const U64 = (1n << 64n) - 1n

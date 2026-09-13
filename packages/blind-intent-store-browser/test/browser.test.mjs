@@ -1,3 +1,4 @@
+/* global Backend, Intent, backend, commonBackend, commonStore, indexedDB */
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { createServer } from 'node:http'
@@ -67,7 +68,7 @@ for (const [name, engine, options] of [
       try { await new Backend({ ...policy, name: 'missing', mode: 'reopen' }).ready(); return 'unexpected' } catch (error) { return error.code }
     }, policy), 'INTENT_STORE_MISSING')
     assert.equal(await page.evaluate(policy => {
-      try { new Backend({ ...policy, origin: 'https://foreign.example' }); return 'unexpected' } catch (error) { return error.code }
+      try { return new Backend({ ...policy, origin: 'https://foreign.example' }) && 'unexpected' } catch (error) { return error.code }
     }, policy), 'INTENT_STORE_ORIGIN')
     await page.evaluate(async () => {
       for (const n of ['02', '03']) await backend.compareAndSwap('intent:' + n.repeat(32), 0n, new Uint8Array(400))
@@ -121,8 +122,24 @@ for (const [name, engine, options] of [
       window.commonBackend = new Backend(policy)
       window.commonStore = new Intent.EncryptedIntentStore({ backend: commonBackend, sealer: Intent.createAesGcmIntentSealer(Intent.createBrowserCryptoRuntime(), new Uint8Array(32).fill(9)) })
       const b = n => new Uint8Array(32).fill(n)
-      await commonStore.create(Intent.createClientIntent({ runtime: Intent.createBrowserCryptoRuntime(), intentId: b(1), logicalId: b(2), continuityRoot: b(3), storeId: b(4), descriptorHash: b(5), descriptorSequence: 7n,
-        endpointId: 1, transportId: 1, transportSupportBit: 1, privacyProfileBit: 1, familyId: 2, operationId: 1, requestCommitment: b(6), clientNonce: b(7), operationBytes: new TextEncoder().encode('PRIVATE_CAPABILITY_AND_SAME_OPERATION_JOURNAL_V1') }))
+      await commonStore.create(Intent.createClientIntent({
+        runtime: Intent.createBrowserCryptoRuntime(),
+        intentId: b(1),
+        logicalId: b(2),
+        continuityRoot: b(3),
+        storeId: b(4),
+        descriptorHash: b(5),
+        descriptorSequence: 7n,
+        endpointId: 1,
+        transportId: 1,
+        transportSupportBit: 1,
+        privacyProfileBit: 1,
+        familyId: 2,
+        operationId: 1,
+        requestCommitment: b(6),
+        clientNonce: b(7),
+        operationBytes: new TextEncoder().encode('PRIVATE_CAPABILITY_AND_SAME_OPERATION_JOURNAL_V1')
+      }))
       await commonStore.update(b(1), value => ({ ...value, state: Intent.INTENT_STATE.TARGET_PREPARED }))
       await commonStore.update(b(1), value => ({ ...value, state: Intent.INTENT_STATE.SENT, mayHaveCommitted: true, attemptCount: 1 }))
     }, commonPolicy)

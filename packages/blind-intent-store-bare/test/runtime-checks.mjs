@@ -1,3 +1,4 @@
+/* global Bare */
 import fs from 'bare-fs'
 import { join } from 'bare-path'
 import { BareIntentBackend, BARE_INTENT_BACKEND_LIMITS, BARE_INTENT_BACKEND_RUNTIME } from '../index.js'

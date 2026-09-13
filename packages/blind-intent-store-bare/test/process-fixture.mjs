@@ -1,3 +1,4 @@
+/* global Bare */
 import { openSync, constants } from '../runtime.js'
 import FDLock from 'fd-lock'
 import { BareIntentBackend } from '../index.js'
