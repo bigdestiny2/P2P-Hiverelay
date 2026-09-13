@@ -1,0 +1,10 @@
+{
+  "name": "@hiverelay/blind-core-proof-client-node-v1",
+  "version": "0.0.0-c01.1",
+  "private": true,
+  "type": "module",
+  "exports": "./index.js",
+  "description": "Private source-workspace Node composition of actual asynchronous HC11 proof verification",
+  "engines": { "node": ">=22.22.0" },
+  "scripts": { "test": "node --test test/*.test.mjs" }
+}
