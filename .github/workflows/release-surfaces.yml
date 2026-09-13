@@ -470,6 +470,7 @@ jobs:
         run: |
           node scripts/release-stages/publish-npm.mjs \
             --version "${{ steps.rel.outputs.semver }}" \
+            --sha "$HIVERELAY_RELEASE_SHA" \
             --out "$RUNNER_TEMP/release-npm-identities.json" \
             --github-env "$GITHUB_ENV"
 
@@ -648,6 +649,10 @@ jobs:
         working-directory: hiverelay
         run: |
           set -euo pipefail
+          node scripts/release-stages/archive-source.mjs \
+            --sha "$HIVERELAY_RELEASE_SHA" \
+            --destination "$RUNNER_TEMP/release-image-source" \
+            --out "$RUNNER_TEMP/release-image-source.json"
           tags=(--tag "$IMAGE_NAME:${{ steps.rel.outputs.semver }}")
           docker buildx build \
             --platform linux/amd64,linux/arm64 \
@@ -656,7 +661,7 @@ jobs:
             --provenance=mode=max \
             "${tags[@]}" \
             --metadata-file /tmp/hiverelay-image.json \
-            --push .
+            --push "$RUNNER_TEMP/release-image-source/source"
           digest="$(node -e "const m=require('/tmp/hiverelay-image.json'); console.log(m['containerimage.digest'])")"
           if ! printf '%s' "$digest" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
             echo "Could not resolve pushed image digest: $digest" >&2
@@ -891,6 +896,22 @@ jobs:
             hiverelay/release-evidence.json
             hiverelay/release-image-manifest-evidence.json
           if-no-files-found: error
+          retention-days: 90
+
+      # Preserve prepared identities and acknowledged publication even when
+      # registry visibility or a later step fails. These are attempt receipts,
+      # not release acceptance or permission to promote mutable labels.
+      - name: Upload exact source and npm attempt receipts
+        if: ${{ always() && !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
+        with:
+          name: release-source-attempt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/release-npm-identities.json
+            ${{ runner.temp }}/release-npm-identities.json.source.json
+            ${{ runner.temp }}/release-npm-identities.json.progress.jsonl
+            ${{ runner.temp }}/release-image-source.json
+          if-no-files-found: ignore
           retention-days: 90
 
       - name: Upload release evidence artifact
