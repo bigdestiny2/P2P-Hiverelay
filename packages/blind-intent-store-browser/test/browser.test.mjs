@@ -41,6 +41,21 @@ for (const [name, engine, options] of [
     const policy = { name: 'test.' + name, origin, mode: 'create', maxRecords: 3, maxTotalBytes: 1024, maxCiphertextBytes: 512 }
     await page.evaluate(async policy => { window.backend = new Backend(policy); await backend.ready() }, policy)
     await other.evaluate(async policy => { window.backend = new Backend({ ...policy, mode: 'reopen' }); await backend.ready() }, policy)
+    const subclassCopy = await page.evaluate(async policy => {
+      class AliasedBytes extends Uint8Array { slice () { return this.subarray() } }
+      const backend = new Backend({ ...policy, name: 'subclass.' + policy.name })
+      await backend.ready()
+      const key = 'intent:' + '09'.repeat(32)
+      const first = new AliasedBytes([7]); const second = new AliasedBytes([11])
+      const a = backend.compareAndSwap(key, 0n, first)
+      const b = backend.compareAndSwap(key, 1n, second)
+      first[0] = 99; second[0] = 99
+      const changed = await Promise.all([a, b])
+      const stored = [...(await backend.read(key)).ciphertext]
+      await backend.close()
+      return { changed, stored }
+    }, policy)
+    assert.deepEqual(subclassCopy, { changed: [true, true], stored: [11] }, 'queued typed-array subclass inputs must be copied without invoking slice')
     const key = 'intent:' + '01'.repeat(32)
     const sameRevision = await Promise.all([page, other].map(p => p.evaluate(async key => backend.compareAndSwap(key, 0n, new Uint8Array([1, 2, 3])), key)))
     assert.deepEqual(sameRevision.sort(), [false, true], 'two real pages serialize exact CAS')

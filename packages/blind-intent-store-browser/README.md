@@ -6,7 +6,9 @@ qualification, not a published browser API or worker artifact. Existing public
 client exports and v1/v2/v3 artifacts remain byte-exact.
 
 The caller supplies the exact stable secure origin, a bounded database name,
-explicit `create` or `reopen`, and record/byte/ciphertext capacities. Create
+explicit `create` or `reopen`, and record/byte/ciphertext capacities. Database
+names must be primitive strings; missing, null or coercible non-string names
+are rejected before any IndexedDB access. Create
 refuses an existing database; reopen refuses a missing database, including after
 eviction. Neither path substitutes an empty store for missing acknowledged work.
 Reopen also requires the exact persisted policy and format. Ciphertext and
@@ -33,7 +35,8 @@ record count; browser indexes, storage-engine overhead and physical device cache
 need separate operational measurement.
 
 Eight operations are admitted per backend before copying ciphertext. The copy
-is made before yielding, preventing caller mutation from changing admitted
+is made into an owned Uint8Array before yielding, without invoking subclass
+slice methods, preventing caller mutation from changing admitted
 bytes. Transaction deadlines abort/fence unknown work. Unknown aborts fence the
 session and abort its queued transactions. Close drains admitted transactions;
 page/process loss can leave a committed revision whose caller never received an

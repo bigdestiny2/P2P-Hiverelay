@@ -149,3 +149,14 @@ for (const [writer, reader] of [['node', 'bare'], ['bare', 'pear'], ['pear', 'no
     console.log(JSON.stringify({ vector: 'real-live-runtime-SIGKILL-after-SENT', writer, reader, nativePid, runtime: receipt.runtime, embeddedRuntime: receipt.embeddedRuntime, executable: receipt.executable, embeddedExecutable: receipt.embeddedExecutable, embeddedExecutableSha256: receipt.embeddedExecutableSha256, termination, recoveredRevision: recovered.output.record.revision }))
   })
 }
+
+for (const adapter of ['node', 'bare', 'pear']) {
+  test(adapter + ' actual backend owns admitted Buffer and Uint8Array-subclass bytes across queued writes', async t => {
+    const base = await temp(t)
+    const result = run(adapter, 'copy-admission', join(base, 'copy-journal'))
+    assert.equal(result.status, 0)
+    assert.deepEqual(result.output.stored, [7, 11, 13, 17, 19, 23])
+    assert.deepEqual(result.output.changed, Array(6).fill(true))
+    if (adapter !== 'bare') assert.equal(result.output.inputTypes[0], 'Buffer')
+  })
+}

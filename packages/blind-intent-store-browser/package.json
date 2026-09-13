@@ -4,7 +4,14 @@
   "private": true,
   "type": "module",
   "exports": "./index.js",
-  "files": ["index.js", "README.md"],
-  "scripts": { "test": "node --test test/browser.test.mjs" },
-  "devDependencies": { "playwright": "1.62.1" }
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.62.1"
+  }
 }

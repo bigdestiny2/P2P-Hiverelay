@@ -36,7 +36,8 @@ It does not send network requests or issue automatic new logical operations.
 
 The wrapper enforces retained record and byte capacity at every CAS, before a
 native write, with eight admitted operations and ciphertext copied before
-yielding. A native unknown commit fences queued/future operations until close
+yielding, including Node Buffer and Uint8Array subclasses. The copy owns its
+bytes and never dispatches an input slice method. A native unknown commit fences queued/future operations until close
 and recovery. At capacity, reads and shrinking/equal-sized updates still work.
 All records, including terminal records, are retained indefinitely within the
 finite cap. New/growing work fails at capacity; no unresolved operation is

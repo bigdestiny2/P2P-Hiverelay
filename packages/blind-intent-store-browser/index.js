@@ -19,7 +19,7 @@ function bounded (value, max, name) {
 export class BrowserIntentBackend {
   constructor ({ name, origin, mode, maxRecords, maxTotalBytes, maxCiphertextBytes = 8 * 1024 * 1024 + 292 }) {
     if (!globalThis.isSecureContext || origin !== globalThis.location?.origin || origin === 'null') throw fail('INTENT_STORE_ORIGIN', 'Exact secure origin required')
-    if (!/^[a-z][a-z0-9.-]{0,95}$/.test(name) || !['create', 'reopen'].includes(mode)) throw fail('INTENT_STORE_INPUT', 'Explicit database identity and create/reopen mode required')
+    if (typeof name !== 'string' || !/^[a-z][a-z0-9.-]{0,95}$/.test(name) || !['create', 'reopen'].includes(mode)) throw fail('INTENT_STORE_INPUT', 'Explicit database identity and create/reopen mode required')
     this.name = 'hiverelay.private-intent.v1.' + name
     this.mode = mode
     this.policy = Object.freeze({
@@ -99,7 +99,7 @@ export class BrowserIntentBackend {
         !(record.ciphertext instanceof Uint8Array) || record.ciphertext.byteLength < 1 || record.ciphertext.byteLength > this.policy.maxCiphertextBytes) {
       throw fail('INTENT_STORE_CORRUPT', 'Invalid committed record')
     }
-    return { revision: BigInt(record.revision), ciphertext: record.ciphertext.slice() }
+    return { revision: BigInt(record.revision), ciphertext: new Uint8Array(record.ciphertext) }
   }
 
   _transaction (mode, work) {
@@ -160,7 +160,7 @@ export class BrowserIntentBackend {
       validKey(key); revision(expectedRevision)
       if (!(ciphertext instanceof Uint8Array) || ciphertext.byteLength < 1 || ciphertext.byteLength > this.policy.maxCiphertextBytes) throw fail('INTENT_STORE_INPUT', 'Ciphertext outside bound')
       // Copy only after operation admission, before yielding to the caller.
-      const copy = ciphertext.slice()
+      const copy = new Uint8Array(ciphertext)
       return () => this._transaction('readwrite', (tx, done, abort) => {
         const authority = tx.objectStore('authority')
         const records = tx.objectStore('records')

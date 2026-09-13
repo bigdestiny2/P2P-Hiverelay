@@ -1,5 +1,5 @@
 import b4a from 'b4a'
-import { DurableIntentJournal } from '../index.js'
+import { BoundedNativeIntentBackend, DurableIntentJournal } from '../index.js'
 import { INTENT_STATE, createClientIntent, createAesGcmIntentSealer } from '../../blind-client/intent.js'
 
 const isBare = typeof Bare !== 'undefined'
@@ -12,6 +12,23 @@ if (adapter === 'node') backend = new (await import('../../blind-intent-store-no
 else if (adapter === 'bare') backend = new (await import('../../blind-intent-store-bare/index.js')).BareIntentBackend(directory)
 else if (adapter === 'pear') backend = new (await import('../../blind-intent-pear-consumer/index.cjs')).PearIntentBackend(directory)
 else throw Error('Unknown adapter')
+if (mode === 'copy-admission') {
+  const bounded = new BoundedNativeIntentBackend(backend, { maxRecords: 6, maxTotalBytes: 1024 })
+  try {
+    await bounded.ready()
+    class AliasedBytes extends Uint8Array { slice () { return this.subarray() } }
+    const inputs = [b4a.from([7]), new Uint8Array([11]), new AliasedBytes([13]), b4a.from([17]), new Uint8Array([19]), new AliasedBytes([23])]
+    const expected = inputs.map(value => value[0])
+    const keys = inputs.map((value, i) => 'intent:' + (i + 1).toString(16).padStart(64, '0'))
+    const writes = inputs.map((value, i) => bounded.compareAndSwap(keys[i], 0n, value))
+    for (const value of inputs) value[0] = 99
+    const changed = await Promise.all(writes)
+    const stored = []
+    for (const key of keys) stored.push((await bounded.read(key)).ciphertext[0])
+    console.log(JSON.stringify({ adapter, runtime: isBare ? Bare.version : process.version, embeddedRuntime: backend.runtime?.runtime, vector: 'six-admitted-and-queued-owned-copies', inputTypes: inputs.map(value => value.constructor.name), expected, stored, changed }))
+    if (JSON.stringify(stored) !== JSON.stringify(expected) || !changed.every(Boolean)) throw Error('Admitted ciphertext changed')
+  } finally { await bounded.close() }
+} else {
 const id = b4a.alloc(32, 1)
 const key = 'intent:' + b4a.toString(id, 'hex')
 const journal = new DurableIntentJournal({
@@ -46,3 +63,5 @@ try {
   if (isBare) Bare.exitCode = 1
   else process.exitCode = 1
 } finally { await journal.close() }
+
+}

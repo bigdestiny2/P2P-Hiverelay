@@ -82,7 +82,7 @@ export class BoundedNativeIntentBackend {
       validKey(key)
       if (typeof expectedRevision !== 'bigint' || expectedRevision < 0n || expectedRevision >= (1n << 64n) - 1n ||
           !(ciphertext instanceof Uint8Array) || ciphertext.byteLength < 1 || ciphertext.byteLength > this.policy.maxCiphertextBytes) throw fail('INTENT_STORE_INPUT', 'Invalid revision or bounded ciphertext')
-      const copy = ciphertext.slice()
+      const copy = new Uint8Array(ciphertext)
       return async () => {
         const before = this.inventory.get(key)
         if ((before?.revision || 0n) !== expectedRevision) return false
