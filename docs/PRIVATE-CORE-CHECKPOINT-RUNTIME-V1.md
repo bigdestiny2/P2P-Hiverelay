@@ -1,0 +1,11 @@
+# Private CORE checkpoint runtime v1
+
+This explicit private successor preserves the frozen checkpoint-format predecessor. Import `BlindCoreStorageEngine` and `readBlindCoreWalCapture` from `packages/blind-daemon/core-storage-engine-checkpoint-v1.js` only in the private qualification lane. Existing adapters, default imports, package exports, CELL/INBOX engines and the original CORE engine remain unchanged. There is no live runtime switch.
+
+The engine and collector are a mechanical port of corrected component ad1583bb, with only the versioned collector import changed. The successor test imports that engine explicitly. The accompanying provenance JSON binds the exact original files, allowed substitutions, final files, unchanged predecessors and accepted format. Corrected-component acceptance and relocated-runtime acceptance are separate; qualification is rerun at the new paths.
+
+The capture replays a complete validated genesis WAL under a retained native transaction lease, collects original paid/accepted/proof/OPEN history that live maps can retire, and returns a non-serializable process-local token. Reads copy evidence and revalidate retained ownership after asynchronous file checks. Capture minting occurs only after scan/shadow cleanup and final scan/ownership checks. Row and observed-work bounds refuse overflow instead of truncating evidence. A torn tail or prematurely expired original proof refuses capture. Live predecessor recovery semantics remain unchanged.
+
+The result is descriptive evidence. It does not authenticate installation/manifest/descriptor ancestry, validate physical live-body custody, select a runtime, authorize writes, compact or prune a WAL, hydrate a checkpoint, migrate an installation, or qualify production. G01-G05 and R01-R03 still require the actual three-root coordinator and real Hypercore adapter, plus the full runtime/device/recovery matrix. Removing this private successor requires no data rollback because it is not selected by live defaults.
+
+The accepted checkpoint generator must pass unchanged. Full successor CORE tests and retained generation tests, including post-file-check lease release and both scan/shadow cleanup windows, must pass against the new source. Node/macOS controlled-upstream evidence is not Pear 3.4, Linux, power-loss, independent-device, or fleet evidence.
