@@ -1,0 +1,8 @@
+{
+  "name": "@hiverelay/blind-hc11-installation-participant-v1",
+  "version": "0.0.0-c01.1",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.22.0" },
+  "scripts": { "test": "node --test test/participant.test.mjs" }
+}
