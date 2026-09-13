@@ -1,7 +1,7 @@
 import b4a from 'b4a'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { constants as FS_CONSTANTS } from 'node:fs'
-import { link, lstat, open, readdir, realpath, rename, unlink } from 'node:fs/promises'
+import { link, lstat, open, opendir, readdir, realpath, rename, unlink } from 'node:fs/promises'
 import path from 'node:path'
 import { blake2b256 } from '@hiverelay/blind-protocol'
 
@@ -50,6 +50,259 @@ const TRIGGER_KIND = Object.freeze({
 })
 const MAX_SIGNED_AUTHORITY_BYTES = 1024 * 1024
 
+// Local inspection budgets, not a new persistent format or production claim.
+// Callers may lower these ceilings. Larger histories require a separate bounded
+// recovery design; inspection never truncates the chain to fit its budget.
+export const BLIND_GENERATION_INSPECTION_LIMITS = Object.freeze({
+  maxEntries: 4096,
+  maxRecords: 1024,
+  maxFileBytes: MAX_SIGNED_AUTHORITY_BYTES,
+  maxTotalBytes: 16 * 1024 * 1024
+})
+
+/**
+ * Observe the existing installation authority without creating records,
+ * repairing the head, synchronizing storage, or removing temporary files.
+ *
+ * currentStores uses the mutable opener's contract, but is caller-supplied:
+ * this function does not open WALs, take a writer lease, or prove durability.
+ * The deeply frozen result describes on-disk facts and pending recovery only.
+ * G01b must establish ownership and revalidate before any mutable store open;
+ * neither this snapshot nor its actions are a reusable authorization token.
+ * Missing evidence throws BLIND_STORE_GENERATION_MISSING, even for empty roots.
+ * maxTotalBytes counts bytes read from final records/head; orphan temporaries
+ * are metadata-only observations, counted toward maxEntries and never promoted.
+ * Limits apply to each inspection; callers must bound concurrent inspections.
+ */
+export async function inspectBlindStoreGenerationFloor (controlDirectory, options = {}) {
+  if (!options || typeof options !== 'object' || Array.isArray(options)) throw new TypeError('inspection options must be an object')
+  const allowed = new Set([
+    'manifestKey', 'installationIdentity', 'storeIdentity', 'storeRole',
+    'storeEvidence', 'hasIrreversibleState', 'currentStores', 'limits'
+  ])
+  if (Object.keys(options).some(key => !allowed.has(key))) throw new TypeError('unknown generation inspection option')
+  if (typeof controlDirectory !== 'string' || controlDirectory.length === 0) throw new TypeError('controlDirectory must be a non-empty string')
+  const limits = inspectionLimits(options.limits)
+  // Copy the key before the first await; no caller-owned buffer survives into
+  // asynchronous validation or the returned snapshot.
+  const manifestKey = Buffer.from(asBytes(options.manifestKey, 'manifestKey', 32))
+  const installationIdentity = options.installationIdentity == null ? options.storeIdentity : options.installationIdentity
+  const installationIdentityHash = hashHex(asBytes(installationIdentity, 'installationIdentity'))
+  const currentStores = normalizeCurrentStores(options)
+  await assertPrivateControlDirectory(controlDirectory)
+  const directoryState = await lstat(controlDirectory)
+  const names = await inspectionNames(controlDirectory, limits.maxEntries)
+  const states = new Map()
+  const temporaryNames = []
+  const recordNames = []
+  for (const name of names) {
+    validateGenerationName(name)
+    if (TEMP.test(name) || RECORD.test(name) || name === BLIND_STORE_GENERATION.headFile) {
+      const state = await lstat(path.join(controlDirectory, name))
+      states.set(name, state)
+      if (TEMP.test(name)) {
+        validateTemporaryState(name, state)
+        temporaryNames.push(name)
+      }
+      if (RECORD.test(name)) {
+        if (recordNames.length >= limits.maxRecords) inspectionLimit('maxRecords')
+        recordNames.push(name)
+      }
+    }
+  }
+
+  const actions = []
+  const files = []
+  const linkedTemporaries = new Set()
+  let bytesRead = 0
+  const records = []
+  for (let index = 0; index < recordNames.length; index++) {
+    const name = recordNames[index]
+    const sequence = Number(RECORD.exec(name)[1])
+    if (!Number.isSafeInteger(sequence) || sequence !== index) throw new Error('blind store generation record filenames must be contiguous from zero')
+    const body = await readSignedFile(name, 'generation record')
+    if (body.sequence !== sequence) throw new Error('blind store generation record filename does not match its signed sequence')
+    records.push(body)
+  }
+  if (records.length === 0) {
+    if (states.has(BLIND_STORE_GENERATION.headFile)) throw new Error('blind store generation head exists without a valid record chain')
+    const error = new Error('blind store generation evidence is missing')
+    error.code = 'BLIND_STORE_GENERATION_MISSING'
+    throw error
+  }
+  validateChain(records, installationIdentityHash)
+  const latest = records.at(-1)
+  const head = states.has(BLIND_STORE_GENERATION.headFile)
+    ? await readSignedFile(BLIND_STORE_GENERATION.headFile, 'generation head')
+    : null
+  if (head !== null) {
+    validateHead(head, installationIdentityHash)
+    if (head.sequence > latest.sequence || head.recordHash !== recordHash(records[head.sequence])) throw new Error('invalid blind store generation head')
+  }
+  if (head === null || head.sequence < latest.sequence) {
+    actions.push({ kind: 'repair-head', reason: head === null ? 'missing' : 'lagging', sequence: latest.sequence, recordHash: recordHash(latest) })
+  }
+
+  const registrations = registrationMap(records)
+  const proposedRegistrations = new Map(registrations)
+  for (const current of currentStores) {
+    const registered = registrations.get(current.role)
+    if (registered && registered.storeIdentityHash !== current.storeIdentityHash) throw new Error(`blind store generation ${current.role} evidence belongs to another store`)
+    if (!registered) {
+      if (latest.firstIrreversibleWriteAcknowledged) throw new Error('a post-trigger installation cannot add an unregistered store role')
+      const registration = { role: current.role, storeIdentityHash: current.storeIdentityHash, storeEvidence: current.storeEvidence }
+      proposedRegistrations.set(current.role, registration)
+      actions.push({ kind: 'register-store', registration })
+    }
+  }
+  if (latest.firstIrreversibleWriteAcknowledged) {
+    validatePostTriggerStores(latest.trigger, currentStores, registrations)
+  } else {
+    for (const current of currentStores) {
+      assertEvidenceNotRolledBack(proposedRegistrations.get(current.role).storeEvidence, current.storeEvidence, `blind store generation ${current.role} evidence`)
+    }
+    const recovered = currentStores.find(current => current.hasIrreversibleState)
+    if (recovered) {
+      actions.push({
+        kind: 'record-conservative-trigger',
+        trigger: { kind: TRIGGER_KIND[recovered.role], role: recovered.role, storeIdentityHash: recovered.storeIdentityHash, storeEvidence: recovered.storeEvidence, recoveryConservative: true }
+      })
+    } else {
+      const changed = currentStores.filter(current => evidenceCompare(current.storeEvidence, proposedRegistrations.get(current.role).storeEvidence) > 0)
+      if (changed.length > 0) actions.push({ kind: 'advance-registrations', registrations: changed.map(current => ({ role: current.role, storeIdentityHash: current.storeIdentityHash, storeEvidence: current.storeEvidence })) })
+    }
+  }
+
+  // Detect observed namespace/inode changes, while deliberately making no
+  // claim about changes after return. The later owner must revalidate.
+  if (JSON.stringify(names) !== JSON.stringify(await inspectionNames(controlDirectory, limits.maxEntries))) inspectionChanged()
+  for (const [name, state] of states) assertInspectionState(state, await lstat(path.join(controlDirectory, name)))
+  await assertPrivateControlDirectory(controlDirectory)
+  assertInspectionState(directoryState, await lstat(controlDirectory))
+  return freezeInspection({
+    schema: 'hiverelay-blind-generation-inspection-v1',
+    writerAuthority: false,
+    durabilityProven: false,
+    requiresOwnershipRevalidation: true,
+    storeEvidenceSource: 'caller-supplied',
+    installationIdentityHash,
+    observed: {
+      sequence: latest.sequence,
+      recordHash: recordHash(latest),
+      firstIrreversibleWriteAcknowledged: latest.firstIrreversibleWriteAcknowledged,
+      trigger: latest.trigger,
+      registrations: [...registrations.values()].sort(compareStores),
+      head,
+      files,
+      retainedTemporaries: temporaryNames.filter(name => !linkedTemporaries.has(name))
+    },
+    requiredRecoveryActions: actions,
+    usage: { entries: names.length, records: records.length, bytesRead, maxOpenHandles: 1 },
+    limits
+  })
+
+  async function readSignedFile (name, label) {
+    const state = states.get(name)
+    const uid = typeof process.getuid === 'function' ? process.getuid() : null
+    if (!state.isFile() || state.isSymbolicLink() || (state.mode & 0o777) !== 0o600 ||
+        (uid != null && state.uid !== uid) || state.size < 2) throw new Error(`invalid blind store ${label}`)
+    if (state.size > limits.maxFileBytes) inspectionLimit('maxFileBytes')
+    if (bytesRead + state.size > limits.maxTotalBytes) inspectionLimit('maxTotalBytes')
+    if (state.nlink === 2 && RECORD.test(name)) {
+      const matching = temporaryNames.filter(temporary => /^\.blind-store-generation-record\.tmp-[0-9a-f]{32}$/.test(temporary) && states.get(temporary).dev === state.dev && states.get(temporary).ino === state.ino)
+      if (matching.length !== 1) throw new Error(`invalid blind store ${label}`)
+      linkedTemporaries.add(matching[0])
+      actions.push({ kind: 'remove-linked-record-temporary', name: matching[0], record: name })
+    } else if (state.nlink !== 1) throw new Error(`invalid blind store ${label}`)
+    const handle = await open(path.join(controlDirectory, name), FS_CONSTANTS.O_RDONLY | (FS_CONSTANTS.O_NOFOLLOW || 0) | (FS_CONSTANTS.O_NONBLOCK || 0))
+    let raw
+    try {
+      assertInspectionState(state, await handle.stat())
+      raw = Buffer.allocUnsafe(state.size)
+      let offset = 0
+      while (offset < raw.byteLength) {
+        const result = await handle.read(raw, offset, raw.byteLength - offset, offset)
+        if (result.bytesRead === 0) throw new Error(`invalid blind store ${label}`)
+        offset += result.bytesRead
+      }
+      assertInspectionState(state, await handle.stat())
+    } finally {
+      await handle.close()
+    }
+    bytesRead += raw.byteLength
+    const body = decodeSignedAuthority(raw, manifestKey, label)
+    files.push({ name, bytes: raw.byteLength, sha256: createHash('sha256').update(raw).digest('hex') })
+    return body
+  }
+}
+
+function inspectionLimits (input = {}) {
+  if (!input || typeof input !== 'object' || Array.isArray(input) || Object.keys(input).some(key => !Object.hasOwn(BLIND_GENERATION_INSPECTION_LIMITS, key))) throw new TypeError('invalid generation inspection limits')
+  const limits = {}
+  for (const [key, ceiling] of Object.entries(BLIND_GENERATION_INSPECTION_LIMITS)) {
+    const value = input[key] === undefined ? ceiling : input[key]
+    if (!Number.isSafeInteger(value) || value < 1 || value > ceiling) throw new TypeError(`inspection ${key} must be an integer within 1..${ceiling}`)
+    limits[key] = value
+  }
+  return limits
+}
+
+async function inspectionNames (directory, maximum) {
+  const handle = await opendir(directory, { bufferSize: 1 })
+  const names = []
+  try {
+    let entry
+    while ((entry = await handle.read()) !== null) {
+      if (names.length >= maximum) inspectionLimit('maxEntries')
+      names.push(entry.name)
+    }
+  } finally {
+    await handle.close()
+  }
+  return names.sort(codeUnitCompare)
+}
+
+function inspectionLimit (limit) {
+  const error = new Error(`blind store generation inspection exceeds ${limit}`)
+  error.code = 'BLIND_STORE_GENERATION_INSPECTION_LIMIT'
+  throw error
+}
+
+function inspectionChanged () {
+  const error = new Error('blind store generation changed during inspection')
+  error.code = 'BLIND_STORE_GENERATION_INSPECTION_CHANGED'
+  throw error
+}
+
+function assertInspectionState (before, after) {
+  if (['dev', 'ino', 'mode', 'uid', 'gid', 'nlink', 'size', 'mtimeMs', 'ctimeMs'].some(key => before[key] !== after[key])) inspectionChanged()
+}
+
+function freezeInspection (value) {
+  if (value && typeof value === 'object') {
+    for (const child of Object.values(value)) freezeInspection(child)
+    Object.freeze(value)
+  }
+  return value
+}
+
+// The production engines open before the installation floor is assembled.
+// Keep that existing startup boundary explicit while sharing one live writer
+// quarantine once the floor exists. The callback also carries a synchronous
+// guard suitable for the transaction store's final prewrite fence.
+export function createBlindGenerationWriterAcknowledgment (getFloor, role) {
+  if (typeof getFloor !== 'function') throw new TypeError('getFloor must be a function')
+  role = storeRole(role)
+  const acknowledge = evidence => {
+    const floor = getFloor()
+    if (!floor) throw new Error('blind generation floor is not assembled')
+    return floor.acknowledgeWrite({ role, kind: TRIGGER_KIND[role], storeEvidence: evidence })
+  }
+  acknowledge.assertWritable = () => getFloor()?.assertWritable()
+  acknowledge.quarantineReason = () => getFloor()?.writerQuarantineReason || null
+  return acknowledge
+}
+
 export async function openBlindStoreGenerationFloor (controlDirectory, options = {}) {
   if (typeof controlDirectory !== 'string' || controlDirectory.length === 0) {
     throw new TypeError('controlDirectory must be a non-empty string')
@@ -61,6 +314,22 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
   const installationIdentityHash = hashHex(asBytes(
     installationIdentity, 'installationIdentity'))
   const currentStores = normalizeCurrentStores(options)
+  if (Object.prototype.hasOwnProperty.call(options, 'expectedInspection')) {
+    let observed = null
+    try {
+      observed = await inspectBlindStoreGenerationFloor(controlDirectory, {
+        manifestKey, installationIdentity, currentStores: options.currentStores
+      })
+    } catch (error) {
+      if (error.code !== 'BLIND_STORE_GENERATION_MISSING' || options.expectedInspection !== null || options.allowCreate !== true) throw error
+    }
+    if (JSON.stringify(observed) !== JSON.stringify(options.expectedInspection)) {
+      const error = new Error('generation snapshot changed before mutable floor open')
+      error.code = 'BLIND_STORE_GENERATION_CHANGED'
+      throw error
+    }
+  }
+
   await assertPrivateControlDirectory(controlDirectory)
   const initialNames = await readdir(controlDirectory)
   await validateGenerationNames(initialNames)
@@ -76,14 +345,14 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
     await appendRecord(initial)
     records = [initial]
   }
-  validateChain(records)
+  validateChain(records, installationIdentityHash)
   let latest = records.at(-1)
   const headPath = path.join(controlDirectory, BLIND_STORE_GENERATION.headFile)
   const head = await readSignedOptional(headPath, 'generation head')
   if (head === null) {
     await writeHead(latest)
   } else {
-    validateHead(head)
+    validateHead(head, installationIdentityHash)
     if (head.sequence > latest.sequence) throw new Error('invalid blind store generation head')
     if (head.recordHash !== recordHash(records[head.sequence])) {
       throw new Error('invalid blind store generation head')
@@ -163,12 +432,18 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
 
   const pendingAcknowledgments = []
   let acknowledgmentDrain = null
+  let writerQuarantine = null
 
   return {
     get firstBlindOnlyWriteAcknowledged () { return acknowledged },
     get firstIrreversibleWriteAcknowledged () { return acknowledged },
     get trigger () { return trigger == null ? null : publicTrigger(trigger, latest) },
     get capabilities () { return BLIND_STORE_GENERATION_CAPABILITIES },
+    get writerQuarantineReason () { return writerQuarantine?.code || null },
+    assertWritable () {
+      if (writerQuarantine) throw writerQuarantine
+      return true
+    },
     assertReaderMode (mode) {
       if (mode !== BLIND_STORE_READER_MODE.BLIND_ONLY) {
         throw new Error('only blind-only reader mode is implemented; dual-read rollback belongs to a separately verified compatibility target')
@@ -226,7 +501,11 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
   }
 
   function queueAcknowledgment (candidate) {
+    if (writerQuarantine) return Promise.reject(writerQuarantine)
     if (acknowledged) return Promise.resolve(false)
+    // Invalid caller evidence is a precondition rejection, not an uncertain
+    // publication. Only an admitted publication failure quarantines writers.
+    try { validateCandidate(candidate) } catch (error) { return Promise.reject(error) }
     const operation = new Promise((resolve, reject) => {
       pendingAcknowledgments.push({ candidate, resolve, reject })
     })
@@ -236,15 +515,21 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
 
   async function drainAcknowledgments () {
     const batch = pendingAcknowledgments.splice(0)
+    let durableTrigger = acknowledged
     try {
       const diskRecords = await loadRecords()
-      validateChain(diskRecords)
+      validateChain(diskRecords, installationIdentityHash)
       if (diskRecords.at(-1).sequence > latest.sequence) {
+        // Valid records are created by synchronizing the temporary file before
+        // linking it. Synchronize their namespace before adopting a concurrent
+        // publisher's record as this acknowledgment's durable commit point.
+        await syncDirectory()
         latest = diskRecords.at(-1)
         records = diskRecords
         registrations = registrationMap(records)
         acknowledged = latest.firstIrreversibleWriteAcknowledged
         trigger = latest.trigger
+        durableTrigger = acknowledged
         await writeHead(latest)
       }
       if (acknowledged) {
@@ -254,23 +539,33 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       for (const item of batch) validateCandidate(item.candidate)
       const selected = batch.map(item => item.candidate).sort(compareTriggers)[0]
       const next = record(latest.sequence + 1, true, recordHash(latest), selected, [])
-      await writeExclusive(recordPath(next.sequence), signed(next))
-      records.push(next)
-      latest = next
-      acknowledged = true
-      trigger = selected
+      await writeExclusive(recordPath(next.sequence), signed(next), () => {
+        // Commit point: record bytes and its published directory entry have
+        // both synchronized. Temp cleanup and a lagging head are recoverable.
+        records.push(next)
+        latest = next
+        acknowledged = true
+        trigger = selected
+        durableTrigger = true
+      })
       if (options.faultInjector) await options.faultInjector('after-record-sync')
       await writeHead(next)
       for (const item of batch) item.resolve(true)
     } catch (error) {
+      if (!durableTrigger) {
+        writerQuarantine = new Error(`blind generation acknowledgment failed; reopen required: ${error.message}`, { cause: error })
+        writerQuarantine.code = 'BLIND_GENERATION_ACKNOWLEDGMENT_FAILED'
+      }
       for (const item of batch) {
-        if (acknowledged) item.resolve(true)
-        else item.reject(error)
+        if (durableTrigger) item.resolve(true)
+        else item.reject(writerQuarantine)
       }
     } finally {
       acknowledgmentDrain = null
       if (pendingAcknowledgments.length > 0) {
-        if (acknowledged) {
+        if (writerQuarantine) {
+          for (const item of pendingAcknowledgments.splice(0)) item.reject(writerQuarantine)
+        } else if (acknowledged) {
           for (const item of pendingAcknowledgments.splice(0)) item.resolve(false)
         } else {
           acknowledgmentDrain = Promise.resolve().then(drainAcknowledgments)
@@ -333,17 +628,8 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       throw new Error('per-root v1 generation evidence requires a reviewed offline migration to installation-scoped v2')
     }
     for (const name of names) {
-      if (GENERATION_NAMESPACE.test(name) && name !== BLIND_STORE_GENERATION.headFile &&
-          !RECORD.test(name) && !TEMP.test(name)) {
-        throw new Error(`malformed blind store generation namespace entry: ${name}`)
-      }
-      if (!TEMP.test(name)) continue
-      const state = await lstat(path.join(controlDirectory, name))
-      const uid = typeof process.getuid === 'function' ? process.getuid() : null
-      if (!state.isFile() || state.isSymbolicLink() || (state.mode & 0o777) !== 0o600 ||
-          (uid != null && state.uid !== uid)) {
-        throw new Error(`unsafe blind store generation temporary: ${name}`)
-      }
+      validateGenerationName(name)
+      if (TEMP.test(name)) validateTemporaryState(name, await lstat(path.join(controlDirectory, name)))
     }
   }
 
@@ -393,10 +679,8 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
 
   async function readSigned (file, label) {
     let raw
-    let value
     try {
       raw = await readAuthorityFile(file, label)
-      value = JSON.parse(raw.toString('utf8'))
     } catch (error) {
       if (error.code === 'ENOENT') {
         const missing = new Error(`blind store ${label} is missing`)
@@ -405,13 +689,7 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       }
       throw new Error(`invalid blind store ${label}`)
     }
-    if (!validMac(value, manifestKey)) throw new Error(`invalid blind store ${label}`)
-    const body = { ...value }
-    delete body.mac
-    if (!b4a.equals(raw, canonicalBytes(signed(body)))) {
-      throw new Error(`invalid blind store ${label}: signed bytes are not canonical`)
-    }
-    return body
+    return decodeSignedAuthority(raw, manifestKey, label)
   }
 
   async function readSignedOptional (file, label) {
@@ -420,54 +698,6 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
     } catch (error) {
       if (error.code === 'BLIND_STORE_GENERATION_MISSING') return null
       throw error
-    }
-  }
-
-  function validateHead (value) {
-    if (!exactKeys(value, ['installationIdentityHash', 'recordHash', 'schema', 'sequence']) ||
-        value.schema !== BLIND_STORE_GENERATION.headSchema ||
-        value.installationIdentityHash !== installationIdentityHash ||
-        !Number.isSafeInteger(value.sequence) || value.sequence < 0 ||
-        typeof value.recordHash !== 'string' || !/^[0-9a-f]{64}$/.test(value.recordHash)) {
-      throw new Error('invalid blind store generation head')
-    }
-  }
-
-  function validateChain (values) {
-    for (let index = 0; index < values.length; index++) {
-      const value = values[index]
-      if (!exactKeys(value, [
-        'firstIrreversibleWriteAcknowledged',
-        'formatVersion',
-        'installationIdentityHash',
-        'previousRecordHash',
-        'registrationUpdates',
-        'schema',
-        'scope',
-        'sequence',
-        'trigger'
-      ]) || value.schema !== BLIND_STORE_GENERATION.schema ||
-          value.formatVersion !== BLIND_STORE_GENERATION.formatVersion ||
-          value.scope !== BLIND_STORE_GENERATION.scope ||
-          !Number.isSafeInteger(value.sequence) || value.sequence !== index ||
-          value.installationIdentityHash !== installationIdentityHash ||
-          value.previousRecordHash !== (index === 0 ? null : recordHash(values[index - 1])) ||
-          typeof value.firstIrreversibleWriteAcknowledged !== 'boolean' ||
-          !Array.isArray(value.registrationUpdates) ||
-          (index > 0 && values[index - 1].firstIrreversibleWriteAcknowledged &&
-            !value.firstIrreversibleWriteAcknowledged) ||
-          (value.firstIrreversibleWriteAcknowledged !== (value.trigger != null))) {
-        throw new Error('invalid blind store generation evidence chain')
-      }
-      if (new Set(value.registrationUpdates.map(update => update?.role)).size !== value.registrationUpdates.length) {
-        throw new Error('invalid blind store generation evidence chain')
-      }
-      for (const update of value.registrationUpdates) normalizeRegistration(update)
-      if (value.trigger != null) normalizeTrigger(value.trigger)
-      if (value.trigger != null && index > 0 && values[index - 1].firstIrreversibleWriteAcknowledged &&
-          !b4a.equals(canonicalBytes(value.trigger), canonicalBytes(values[index - 1].trigger))) {
-        throw new Error('invalid blind store generation evidence chain')
-      }
     }
   }
 
@@ -486,7 +716,8 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
     await writeAtomic(path.join(controlDirectory, BLIND_STORE_GENERATION.headFile), signed(body))
   }
 
-  async function writeExclusive (file, value) {
+  async function writeExclusive (file, value, onPublished = null) {
+    if (options.faultInjector) await options.faultInjector('before-record-publication', { sequence: value.sequence })
     const temporary = temporaryPath('record')
     const bytes = canonicalBytes(value)
     const handle = await open(temporary, 'wx', 0o600)
@@ -497,6 +728,7 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
         await options.faultInjector('after-record-temp-partial', { sequence: value.sequence })
       }
       await writeAll(handle, bytes.subarray(split))
+      if (options.faultInjector) await options.faultInjector('before-record-file-sync', { sequence: value.sequence })
       await handle.sync()
     } finally {
       await handle.close()
@@ -511,7 +743,9 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
       const existing = await readAuthorityFile(file, 'generation record')
       if (!b4a.equals(existing, bytes)) throw new Error('conflicting blind store generation record already exists')
     }
+    if (options.faultInjector) await options.faultInjector('before-record-directory-sync', { sequence: value.sequence })
     await syncDirectory()
+    if (onPublished) onPublished()
     if (options.faultInjector) {
       await options.faultInjector('after-record-link', { sequence: value.sequence })
     }
@@ -555,6 +789,80 @@ export async function openBlindStoreGenerationFloor (controlDirectory, options =
 
   function signed (body) { return { ...body, mac: mac(body, manifestKey) } }
   function signedRecordHash (value) { return createHash('sha256').update(canonicalBytes(signed(value))).digest('hex') }
+}
+
+function validateHead (value, installationIdentityHash) {
+  if (!exactKeys(value, ['installationIdentityHash', 'recordHash', 'schema', 'sequence']) ||
+      value.schema !== BLIND_STORE_GENERATION.headSchema ||
+      value.installationIdentityHash !== installationIdentityHash ||
+      !Number.isSafeInteger(value.sequence) || value.sequence < 0 ||
+      typeof value.recordHash !== 'string' || !/^[0-9a-f]{64}$/.test(value.recordHash)) {
+    throw new Error('invalid blind store generation head')
+  }
+}
+
+function validateChain (values, installationIdentityHash) {
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index]
+    if (!exactKeys(value, [
+      'firstIrreversibleWriteAcknowledged',
+      'formatVersion',
+      'installationIdentityHash',
+      'previousRecordHash',
+      'registrationUpdates',
+      'schema',
+      'scope',
+      'sequence',
+      'trigger'
+    ]) || value.schema !== BLIND_STORE_GENERATION.schema ||
+        value.formatVersion !== BLIND_STORE_GENERATION.formatVersion ||
+        value.scope !== BLIND_STORE_GENERATION.scope ||
+        !Number.isSafeInteger(value.sequence) || value.sequence !== index ||
+        value.installationIdentityHash !== installationIdentityHash ||
+        value.previousRecordHash !== (index === 0 ? null : recordHash(values[index - 1])) ||
+        typeof value.firstIrreversibleWriteAcknowledged !== 'boolean' ||
+        !Array.isArray(value.registrationUpdates) ||
+        (index > 0 && values[index - 1].firstIrreversibleWriteAcknowledged &&
+          !value.firstIrreversibleWriteAcknowledged) ||
+        (value.firstIrreversibleWriteAcknowledged !== (value.trigger != null))) {
+      throw new Error('invalid blind store generation evidence chain')
+    }
+    if (new Set(value.registrationUpdates.map(update => update?.role)).size !== value.registrationUpdates.length) {
+      throw new Error('invalid blind store generation evidence chain')
+    }
+    for (const update of value.registrationUpdates) normalizeRegistration(update)
+    if (value.trigger != null) normalizeTrigger(value.trigger)
+    if (value.trigger != null && index > 0 && values[index - 1].firstIrreversibleWriteAcknowledged &&
+        !b4a.equals(canonicalBytes(value.trigger), canonicalBytes(values[index - 1].trigger))) {
+      throw new Error('invalid blind store generation evidence chain')
+    }
+  }
+}
+
+function validateGenerationName (name) {
+  if (PREDECESSOR.test(name)) throw new Error('per-root v1 generation evidence requires a reviewed offline migration to installation-scoped v2')
+  if (GENERATION_NAMESPACE.test(name) && name !== BLIND_STORE_GENERATION.headFile && !RECORD.test(name) && !TEMP.test(name)) {
+    throw new Error(`malformed blind store generation namespace entry: ${name}`)
+  }
+}
+
+function validateTemporaryState (name, state) {
+  const uid = typeof process.getuid === 'function' ? process.getuid() : null
+  if (!state.isFile() || state.isSymbolicLink() || (state.mode & 0o777) !== 0o600 || (uid != null && state.uid !== uid)) {
+    throw new Error(`unsafe blind store generation temporary: ${name}`)
+  }
+}
+
+function decodeSignedAuthority (raw, manifestKey, label) {
+  let value
+  try { value = JSON.parse(raw.toString('utf8')) } catch { throw new Error(`invalid blind store ${label}`) }
+  if (!validMac(value, manifestKey)) throw new Error(`invalid blind store ${label}`)
+  const body = { ...value }
+  delete body.mac
+  if (!b4a.equals(raw, canonicalBytes({ ...body, mac: mac(body, manifestKey) }))) {
+    throw new Error(`invalid blind store ${label}: signed bytes are not canonical`)
+  }
+  return body
 }
 
 function assertCreationProof (value, currentStores) {

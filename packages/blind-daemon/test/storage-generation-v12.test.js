@@ -344,7 +344,14 @@ test('record publication resumes after partial, fsynced-temp, and link-before-he
         if (seen === phase && context.sequence === 2) throw new Error(`injected ${phase}`)
       }
     })
-    await t.exception.all(() => floor.acknowledgeBlindOnlyWrite(second), new RegExp(`injected ${phase}`))
+    if (phase === 'after-record-link') {
+      t.is(await floor.acknowledgeBlindOnlyWrite(second), true, 'synchronized published record is committed despite lagging head')
+      t.is(floor.writerQuarantineReason, null)
+    } else {
+      await t.exception.all(() => floor.acknowledgeBlindOnlyWrite(second), new RegExp(`injected ${phase}`))
+      t.is(floor.writerQuarantineReason, 'BLIND_GENERATION_ACKNOWLEDGMENT_FAILED')
+      await t.exception.all(() => floor.acknowledgeBlindOnlyWrite(third), /reopen required/)
+    }
     const temporaries = (await readdir(root)).filter(name => name.startsWith('.blind-store-generation-record.tmp-'))
     t.is(temporaries.length, 1, `${phase} leaves one operation-owned random temp`)
     t.is((await stat(path.join(root, temporaries[0]))).mode & 0o777, 0o600)

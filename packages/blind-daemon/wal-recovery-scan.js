@@ -223,6 +223,16 @@ export async function verifyBlindWalRecoveryScanResult (result, expectedRoot, le
       throw new BlindWalRecoveryResultError('WAL changed after its recovery result was minted')
     }
   }
+  const names = []
+  let count = 0
+  const directory = await fs.opendir(path.dirname(state.walPath))
+  for await (const entry of directory) {
+    if (++count > state.maximumControlEntries) throw new BlindWalRecoveryResultError('WAL namespace exceeds bound')
+    if (entry.name.startsWith('wal-')) names.push(entry.name)
+  }
+  if (JSON.stringify(names.sort()) !== JSON.stringify(state.segmentNames)) {
+    throw new BlindWalRecoveryResultError('WAL segment namespace changed after recovery validation')
+  }
   for (const segment of state.segmentFileStates) {
     const linked = await fs.lstat(segment.path)
     assertPrivateFile(linked, 'WAL recovery result segment file')
@@ -233,7 +243,15 @@ export async function verifyBlindWalRecoveryScanResult (result, expectedRoot, le
   return true
 }
 
+export async function scanBlindWalV2FromGenesis (options = {}) {
+  return scanWal({ ...options, checkpoint: { sequence: 0n, hash: ZERO32 } }, true)
+}
+
 export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
+  return scanWal(options, false)
+}
+
+async function scanWal (options, fromGenesis) {
   if (!options || typeof options !== 'object' || Array.isArray(options)) {
     throw new TypeError('WAL recovery options must be an object')
   }
@@ -243,8 +261,8 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
   if (!checkpoint || typeof checkpoint !== 'object' || Array.isArray(checkpoint)) {
     throw new TypeError('checkpoint must be an object')
   }
-  const checkpointSequence = asU64(checkpoint.sequence, 'checkpoint.sequence', true)
-  const checkpointHash = asBytes(checkpoint.hash, 32, 'checkpoint.hash', true)
+  const checkpointSequence = asU64(checkpoint.sequence, 'checkpoint.sequence', !fromGenesis)
+  const checkpointHash = asBytes(checkpoint.hash, 32, 'checkpoint.hash', !fromGenesis)
   const mapGeneration = asU64(options.mapGeneration, 'mapGeneration', true)
   const writerFenceTokenHash = asBytes(options.writerFenceTokenHash, 32, 'writerFenceTokenHash', true)
   const durabilityContinuityHash = asBytes(options.durabilityContinuityHash, 32, 'durabilityContinuityHash', true)
@@ -279,9 +297,13 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
   // equal the anchor hash) or the anchor frame itself must still be retained
   // and hash to the anchor value. Torn tails are tolerated only in the live
   // segment and are never truncated here (mutation-free scan).
+  const maximumWalSegments = boundedInteger(options.maximumWalSegments == null ? 64 : options.maximumWalSegments, 1, 1024, 'maximumWalSegments')
+  const maximumControlEntries = boundedInteger(options.maximumControlEntries == null ? 4096 : options.maximumControlEntries, 1, 100000, 'maximumControlEntries')
   const segments = []
+  let entryCount = 0
   const controlEntries = await fs.opendir(controlDirectory)
   for await (const entry of controlEntries) {
+    if (++entryCount > maximumControlEntries) throw new BlindStoreBoundsError('WAL control entries exceed bound')
     if (!entry.name.startsWith('wal-')) continue
     const match = WAL_SEALED_SEGMENT_NAME.exec(entry.name)
     if (!match || !entry.isFile()) {
@@ -292,6 +314,7 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
     if (firstSequence === 0n || lastSequence < firstSequence) {
       throw new BlindWalIntegrityError(`WAL segment entry ${entry.name} carries an invalid sequence range`)
     }
+    if (segments.length >= maximumWalSegments) throw new BlindStoreBoundsError('WAL segments exceed bound')
     segments.push({ name: entry.name, firstSequence, lastSequence })
   }
   segments.sort((left, right) => (left.firstSequence < right.firstSequence ? -1 : 1))
@@ -309,7 +332,7 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
       const segmentPath = path.join(controlDirectory, segment.name)
       const linkedBefore = await fs.lstat(segmentPath)
       assertPrivateFile(linkedBefore, 'WAL recovery segment file')
-      const handle = await fs.open(segmentPath, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW)
+      const handle = await fs.open(segmentPath, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW | (FS_CONSTANTS.O_NONBLOCK || 0))
       handles.push(handle)
       const openedBefore = await handle.stat()
       assertPrivateFile(openedBefore, 'opened WAL recovery segment file')
@@ -326,6 +349,7 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
         before: openedBefore
       })
       observedWalBytes += openedBefore.size
+      if (!Number.isSafeInteger(observedWalBytes) || observedWalBytes > maximumWalBytes) throw new BlindStoreBoundsError('WAL byte length exceeds maximumWalBytes')
     }
     let liveState = null
     {
@@ -333,14 +357,14 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
       try {
         linkedBefore = await fs.lstat(walPath)
       } catch (error) {
-        if (!error || error.code !== 'ENOENT' || segments.length === 0) throw error
+        if (!error || error.code !== 'ENOENT' || (!fromGenesis && segments.length === 0)) throw error
         // A crash between seal and live-segment creation leaves no live
         // segment; the scan treats it as empty and the writer recreates it
         // only after this result verifies.
       }
       if (linkedBefore !== null) {
         assertPrivateFile(linkedBefore, 'WAL recovery file')
-        const handle = await fs.open(walPath, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW)
+        const handle = await fs.open(walPath, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW | (FS_CONSTANTS.O_NONBLOCK || 0))
         handles.push(handle)
         const openedBefore = await handle.stat()
         assertPrivateFile(openedBefore, 'opened WAL recovery file')
@@ -387,6 +411,7 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
 
     let expectedSequence = firstRetainedSequence
     let expectedPreviousWalHash = firstRetainedSequence === 1n ? b4a.from(ZERO32) : null
+    let requiredAnchorFound = options.requiredAnchor == null
     let completeFrameCount = 0
     let replayedFrameCount = 0
     let checkpointEndOffset = null
@@ -464,6 +489,10 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
           throw new BlindWalIntegrityError('WAL bucket-map generation or writer fence does not match recovery authority')
         }
 
+        if (options.requiredAnchor && frame.sequence === options.requiredAnchor.sequence) {
+          if (!b4a.equals(frame.walHash, options.requiredAnchor.hash)) throw new BlindWalIntegrityError('snapshot anchor disagrees with full WAL')
+          requiredAnchorFound = true
+        }
         completeFrameCount++
         const nextOffset = offset + frame.frameBytes
         headSequence = frame.sequence
@@ -491,6 +520,7 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
       }
     }
 
+    if (!requiredAnchorFound) throw new BlindWalIntegrityError('full WAL does not contain snapshot anchor')
     if (!checkpointFound) {
       throw new BlindWalIntegrityError('WAL did not contain the exact complete checkpoint anchor')
     }
@@ -514,6 +544,8 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
       root,
       walPath,
       lease,
+      maximumControlEntries,
+      segmentNames: Object.freeze(segments.map(segment => segment.name).sort()),
       sealedSegmentCount: segments.length,
       checkpointSequence,
       checkpointHash,
@@ -530,7 +562,11 @@ export async function scanBlindWalV2ForAnchoredRecovery (options = {}) {
       segmentFileStates: Object.freeze(segmentFileStates)
     }))
   } finally {
-    for (const handle of handles) await handle.close().catch(() => {})
+    let failure = null
+    for (const handle of handles) {
+      try { await handle.close() } catch (error) { failure ||= error }
+    }
+    if (failure) await Promise.reject(failure)
   }
 }
 

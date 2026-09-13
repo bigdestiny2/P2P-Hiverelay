@@ -749,7 +749,7 @@ export class BlindLocalCheckpointStore {
     }
   }
 
-  _assertCurrentBindings (manifest, header, headerHash) {
+  _assertCurrentBindings (manifest, header, headerHash, allowDescriptorFloorAdvance = false) {
     if (manifest.checkpointWalSequence === 0n || manifest.mapGeneration === 0n || manifest.writerEpoch === 0n ||
         isZero(manifest.checkpointHash)) {
       throw new BlindLocalCheckpointIntegrityError('manifest checkpoint, map generation, and writer epoch must be nonzero')
@@ -759,9 +759,15 @@ export class BlindLocalCheckpointStore {
     if (manifest.checkpointWalSequence !== header.coveredWalSequence || !b4a.equals(manifest.checkpointHash, headerHash)) {
       throw new BlindLocalCheckpointIntegrityError('manifest checkpoint anchor does not match the checkpoint header')
     }
-    if (manifest.epochFloor !== header.epochFloor ||
-        manifest.descriptorSequenceFloor !== header.descriptorSequenceFloor ||
-        !b4a.equals(manifest.descriptorHashFloor, header.descriptorHashFloor)) {
+    const descriptorFloorMatches = manifest.descriptorSequenceFloor === header.descriptorSequenceFloor &&
+      b4a.equals(manifest.descriptorHashFloor, header.descriptorHashFloor)
+    // Startup authenticates the activated descriptor against the manifest
+    // floor separately. A normal descriptor refresh can advance that floor
+    // without publishing a new checkpoint; only this validation-only caller
+    // may accept a strictly newer floor. Equal-sequence forks still reject.
+    const advancedDescriptorFloor = this.validationOnly && allowDescriptorFloorAdvance &&
+      manifest.descriptorSequenceFloor > header.descriptorSequenceFloor
+    if (manifest.epochFloor !== header.epochFloor || (!descriptorFloorMatches && !advancedDescriptorFloor)) {
       throw new BlindLocalCheckpointIntegrityError('manifest floors do not match the checkpoint header')
     }
   }
@@ -878,7 +884,7 @@ export class BlindLocalCheckpointStore {
       const publicManifestSnapshot = options.manifestSnapshot
       const manifestSnapshot = requireManifestSnapshot(publicManifestSnapshot, this.controlDirectory)
       const current = await this._readHeader(manifestSnapshot.manifest.checkpointHash)
-      this._assertCurrentBindings(manifestSnapshot.manifest, current.header, current.hash)
+      this._assertCurrentBindings(manifestSnapshot.manifest, current.header, current.hash, options.allowDescriptorFloorAdvance === true)
       const predecessors = await this._validatePredecessors(current)
       const snapshot = await this._validateSnapshot(current.header)
       const [checkpointLinked, snapshotLinked] = await Promise.all([

@@ -398,6 +398,32 @@ function sourceOf (value) {
 }
 
 export class BlindCoreStorageEngine {
+  // Validated paid transitions remain historical facts after lifecycle expiry.
+  #hasIrreversibleHistory = false
+
+  static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
+    const shadow = new BlindCoreStorageEngine({ ...options, autoClock: false })
+    const { scanBlindWalV2FromGenesis } = await import('./wal-recovery-scan.js')
+    try {
+      const wal = await scanBlindWalV2FromGenesis({
+        ...limits,
+        requiredAnchor,
+        root: shadow.transactionStore.root,
+        lease,
+        mapGeneration: shadow.transactionStore.mapGeneration,
+        writerFenceTokenHash: shadow.transactionStore.ownerFenceTokenHash,
+        durabilityContinuityHash: shadow.transactionStore.durabilityContinuityHash,
+        maximumWalBytes: limits.maximumWalBytes ?? 256 * 1024 * 1024,
+        maximumWalFrames: limits.maximumWalFrames ?? 262144,
+        maximumWalPayloadBytes: shadow.transactionStore.maximumWalPayloadBytes,
+        applyShadowFrame: frame => shadow.#applyFrame(frame, true)
+      })
+      return { wal, hasIrreversibleState: shadow.#hasIrreversibleHistory }
+    } finally {
+      await shadow.transactionStore.close()
+    }
+  }
+
   constructor (options = {}) {
     if (options.transactionStore != null) {
       throw new TypeError('CORE uses a dedicated transaction store until all-family object GC is composed')
@@ -430,8 +456,12 @@ export class BlindCoreStorageEngine {
       maximumWalPayloadBytes: Math.max(1024 * 1024, options.maximumWalPayloadBytes || 1024 * 1024),
       maximumOpaqueBodyBytes: this.maximumCorpusBytes,
       maximumChunkBytes: Math.min(this.maximumCorpusBytes, options.maximumChunkBytes || 256 * 1024),
+      generationStartupHandoff: options.generationStartupHandoff,
+      storeSessionContext: options.storeSessionContext,
+      beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector
     })
+    this.generationAcknowledgmentFailure = null
     this.onBlindWriteAcknowledged = options.onBlindWriteAcknowledged || null
     if (this.onBlindWriteAcknowledged != null && typeof this.onBlindWriteAcknowledged !== 'function') {
       throw new TypeError('onBlindWriteAcknowledged must be a function')
@@ -503,6 +533,7 @@ export class BlindCoreStorageEngine {
   status () {
     return Object.freeze({
       ...BLIND_CORE_STORAGE_STATUS,
+      writerQuarantineReason: this.#writerQuarantineReason(),
       accounting: Object.freeze({ ...this.accounting })
     })
   }
@@ -514,8 +545,7 @@ export class BlindCoreStorageEngine {
         walSequence: this.transactionStore.walSequence,
         walHash: b4a.from(this.transactionStore.walHash)
       }),
-      hasIrreversibleState: this.mirrorAttempts.size > 0 || this.activeCores.size > 0 ||
-        this.proofPins.size > 0 || this.spends.size > 0
+      hasIrreversibleState: this.#hasIrreversibleHistory
     })
   }
 
@@ -615,6 +645,7 @@ export class BlindCoreStorageEngine {
   }
 
   async mirrorState (input) {
+    this.#assertGenerationWritable()
     const request = canonical(coreMirrorRequestV1, input.request, 'Core mirror request').value
     const requestCommitment = coreMirrorRequestCommitment({
       ...request,
@@ -636,6 +667,7 @@ export class BlindCoreStorageEngine {
   }
 
   async acceptMirror (input) {
+    this.#assertGenerationWritable()
     const requestAuthority = canonical(coreMirrorRequestV1, input.request, 'Core mirror request')
     const request = requestAuthority.value
     const commitment = coreMirrorRequestCommitment({ ...request, relayPublicKey: this.relayPublicKey })
@@ -721,6 +753,7 @@ export class BlindCoreStorageEngine {
   }
 
   async completeMirror (spendTag, activation, options = {}) {
+    this.#assertGenerationWritable()
     spendTag = b4a.from(bytes(spendTag, 32, 'spendTag', { nonzero: true }))
     const spendKey = hex(spendTag)
     const attempt = this.mirrorAttempts.get(spendKey)
@@ -738,6 +771,7 @@ export class BlindCoreStorageEngine {
         same(activeAtStart.signedHeadHash, attempt.request.signedHeadHash) &&
         activation.reuseActive === true) {
       return this.transactionStore.withLocks([`core:${coreKey}`, `spend:${spendKey}`], async () => {
+        this.#assertGenerationWritable()
         const currentAttempt = this.mirrorAttempts.get(spendKey)
         const active = this.activeCores.get(coreKey)
         if (!currentAttempt || (currentAttempt.state !== 'ACCEPTED' &&
@@ -807,10 +841,12 @@ export class BlindCoreStorageEngine {
         : this.#retryMirrorAttempt(attempt, MIRROR_RETRY_REASON.STORAGE_INTERRUPTED)
     }
     return this.transactionStore.withLocks([`core:${coreKey}`, `spend:${spendKey}`], async () => {
+      this.#assertGenerationWritable()
       const currentAttempt = this.mirrorAttempts.get(spendKey)
       if (!currentAttempt || (currentAttempt.state !== 'ACCEPTED' &&
           currentAttempt.state !== 'RETRY_PENDING')) {
         await this.transactionStore.removeOpaque(published)
+        this.#assertGenerationWritable()
         return mirrorAttemptView(currentAttempt, true)
       }
       const active = this.activeCores.get(coreKey)
@@ -850,11 +886,13 @@ export class BlindCoreStorageEngine {
       if (active && !this.#corpusPinned(active.corpus)) {
         await this.transactionStore.removeOpaque(active.corpus)
       }
+      this.#assertGenerationWritable()
       return mirrorAttemptView(this.mirrorAttempts.get(spendKey))
     })
   }
 
   async serveProof (input) {
+    this.#assertGenerationWritable()
     const requestAuthority = canonical(coreServeChallengeV1, input.request, 'Core prove request')
     const request = requestAuthority.value
     const commitment = coreServeRequestCommitment({ ...request, relayPublicKey: this.relayPublicKey })
@@ -888,6 +926,7 @@ export class BlindCoreStorageEngine {
     this.#validateAck(ack.value, request, commitment, active.leaseEpoch,
       observedAtEpoch, CORE_ACK_RESULT.RECENTLY_SERVED)
     const completeResult = proofResult(ack.bytes, proofBytes)
+    this.#assertGenerationWritable()
     if (!admission) return Object.freeze({ body: completeResult, replay: false })
 
     const spendKey = hex(admission.value.spendTag)
@@ -933,6 +972,7 @@ export class BlindCoreStorageEngine {
   }
 
   async proveState (input) {
+    this.#assertGenerationWritable()
     const request = canonical(coreServeChallengeV1, input.request, 'Core prove request').value
     const commitment = coreServeRequestCommitment({ ...request, relayPublicKey: this.relayPublicKey })
     if (!same(commitment, input.requestCommitment)) fail('INTERNAL', 'Core prove request commitment mismatch')
@@ -1076,6 +1116,7 @@ export class BlindCoreStorageEngine {
   async #terminalMirrorAttempt (attempt, reason) {
     const spendKey = hex(attempt.spendTag)
     return this.transactionStore.withLocks([`spend:${spendKey}`], async () => {
+      this.#assertGenerationWritable()
       const current = this.mirrorAttempts.get(spendKey)
       if (!current || current.state !== 'ACCEPTED') return mirrorAttemptView(current, true)
       await this.#appendMirrorTerminalLocked(current, reason)
@@ -1086,6 +1127,7 @@ export class BlindCoreStorageEngine {
   async #retryMirrorAttempt (attempt, reason) {
     const spendKey = hex(attempt.spendTag)
     return this.transactionStore.withLocks([`spend:${spendKey}`], async () => {
+      this.#assertGenerationWritable()
       const current = this.mirrorAttempts.get(spendKey)
       if (!current || (current.state !== 'ACCEPTED' && current.state !== 'RETRY_PENDING')) {
         return mirrorAttemptView(current, true)
@@ -1294,20 +1336,39 @@ export class BlindCoreStorageEngine {
   }
 
   async #appendAndApply (type, transactionId, virtualBucket, value) {
+    this.#assertGenerationWritable()
     const codec = WAL_CODECS.get(type)
     if (!codec) throw new TypeError('unknown Core WAL type')
     const payload = encodeCanonical(codec, value)
     const frame = await this.transactionStore.appendAndApply({ type, transactionId, virtualBucket, payload },
-      frame => this.#applyFrame(frame, false))
+      frame => this.#applyFrame(frame, false), { prewriteFence: () => this.#assertGenerationWritable() })
     if ([
       BLIND_CORE_WAL_TYPE.MIRROR_ACCEPTED,
       BLIND_CORE_WAL_TYPE.MIRROR_ACTIVATED,
       BLIND_CORE_WAL_TYPE.PROVE_PINNED
     ].includes(type)) await this.#acknowledgeBlindWrite({ walSequence: frame.sequence, walHash: frame.walHash })
+    this.#assertGenerationWritable()
     return frame
   }
 
+  #assertGenerationWritable () {
+    if (this.generationAcknowledgmentFailure) throw this.generationAcknowledgmentFailure
+    try {
+      this.onBlindWriteAcknowledged?.assertWritable?.()
+    } catch (error) {
+      this.generationAcknowledgmentFailure = error
+      throw error
+    }
+  }
+
+  #writerQuarantineReason () {
+    return this.generationAcknowledgmentFailure
+      ? 'BLIND_GENERATION_ACKNOWLEDGMENT_FAILED'
+      : this.onBlindWriteAcknowledged?.quarantineReason?.() || null
+  }
+
   async #acknowledgeBlindWrite (storeEvidence = null) {
+    this.#assertGenerationWritable()
     if (!this.onBlindWriteAcknowledged) return false
     if (storeEvidence == null) {
       storeEvidence = {
@@ -1315,7 +1376,14 @@ export class BlindCoreStorageEngine {
         walHash: this.transactionStore.walHash
       }
     }
-    return this.onBlindWriteAcknowledged(storeEvidence)
+    try {
+      const acknowledged = await this.onBlindWriteAcknowledged(storeEvidence)
+      this.#assertGenerationWritable()
+      return acknowledged
+    } catch (error) {
+      this.generationAcknowledgmentFailure = this.generationAcknowledgmentFailure || error
+      throw error
+    }
   }
 
   #applyFrame (frame, recovering) {
@@ -1343,6 +1411,12 @@ export class BlindCoreStorageEngine {
     if (recovering && this.accounting.controlBytes > Number.MAX_SAFE_INTEGER) {
       throw new BlindWalIntegrityError('Core control accounting exceeds the runtime bound')
     }
+    if ([
+      BLIND_CORE_WAL_TYPE.MIRROR_ACCEPTED,
+      BLIND_CORE_WAL_TYPE.MIRROR_ACTIVATED,
+      BLIND_CORE_WAL_TYPE.PROVE_PINNED,
+      BLIND_CORE_WAL_TYPE.OPEN_STATE
+    ].includes(frame.type)) this.#hasIrreversibleHistory = true
   }
 
   #applyMirrorAccepted (frame, value) {
