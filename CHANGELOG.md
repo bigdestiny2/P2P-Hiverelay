@@ -11,6 +11,12 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+- Verify arbitration bandwidth receipts through the declared public core
+  package, so installed services can validate authentic signatures.
+- Classify `testnet` as source-workspace development tooling. Installed core
+  reports checkout guidance; source `--no-client` avoids loading the sibling
+  client. This does not add published testnet support or production dependencies.
+
 ## [0.26.0-rc.8] — 2026-08-28
 
 StartOS 0.4 package-provenance repair candidate. RC7 built and signed the

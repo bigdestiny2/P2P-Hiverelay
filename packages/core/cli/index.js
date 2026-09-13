@@ -16,6 +16,7 @@
 
 import minimist from 'minimist'
 import gracedown from 'pear-gracedown'
+import { loadTestnetDependencies } from './testnet-workspace.js'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
@@ -792,8 +793,8 @@ async function start () {
 // ─── testnet ────────────────────────────────────────────────────────
 
 async function startTestnet () {
-  const createTestnet = (await import('@hyperswarm/testnet')).default
-  const { HiveRelayClient } = await import('../../client/index.js')
+  const runClient = args.client !== false
+  const { createTestnet, HiveRelayClient } = await loadTestnetDependencies({ runClient })
   const Hyperswarm = (await import('hyperswarm')).default
   const { mkdirSync, rmSync } = await import('fs')
   const { tmpdir } = await import('os')
@@ -801,7 +802,6 @@ async function startTestnet () {
 
   const nodeCount = parseInt(args.nodes) || 3
   const basePort = parseInt(args.port) || 19100
-  const runClient = args.client !== false
   const testId = randomBytes(4).toString('hex')
   const baseDir = join(tmpdir(), `hiverelay-testnet-${testId}`)
   mkdirSync(baseDir, { recursive: true })
@@ -1653,7 +1653,7 @@ Usage:
   p2p-hiverelay manage [options]    Live management console (same as tui)
   p2p-hiverelay init [options]      Initialize config + install agent skills
   p2p-hiverelay start [options]     Start a relay node
-  p2p-hiverelay testnet [options]   Spin up a local testnet (DHT + relays + client)
+  p2p-hiverelay testnet [options]   Source-workspace development testnet
   p2p-hiverelay seed <key>          Seed a key on a relay (optional registry publish)
   p2p-hiverelay ghostdrive ...      Ghost Drive pin/publish/discover workflows
   p2p-hiverelay catalog ...         Operator catalog control (mode/allowlist/approve/reject/remove/pending)
@@ -1793,7 +1793,7 @@ Examples:
   p2p-hiverelay start --region NA --max-storage 100GB   # Start relay
   p2p-hiverelay tui                                     # Live management TUI
   p2p-hiverelay tui --port 9200 --api-key $HIVERELAY_API_KEY
-  p2p-hiverelay testnet                                 # Local testnet (3 relays + client)
+  node packages/core/cli/index.js testnet               # Source checkout: 3 relays + client
   p2p-hiverelay seed <key> --publish --replicas 3       # Seed + publish registry request
   p2p-hiverelay ghostdrive pin <driveKey>               # Pin Ghost Drive key on relay
   p2p-hiverelay ghostdrive publish <driveKey>           # Pin + registry publish
@@ -1903,6 +1903,10 @@ function hasPersistedOutboxlogNamespace () {
 }
 
 main().catch((err) => {
+  if (err.code === 'HIVERELAY_TESTNET_SOURCE_ONLY') {
+    console.error(err.message)
+    process.exit(1)
+  }
   log.fatal({ err }, 'fatal startup error')
   process.exit(1)
 })
