@@ -5,7 +5,8 @@ import { run, digest } from './io.mjs'
 
 const blobHash = bytes => crypto.createHash('sha1').update(`blob ${bytes.byteLength}\0`).update(bytes).digest('hex')
 function safePath (file) {
-  if (!file || /[\x00-\x1f\x7f\\]/.test(file) || path.posix.isAbsolute(file) || path.posix.normalize(file) !== file || file.split('/').includes('..')) throw new Error('Unsafe source artifact path')
+  if (!file || file.includes('\\') || path.posix.isAbsolute(file) || path.posix.normalize(file) !== file || file.split('/').includes('..')) throw new Error('Unsafe source artifact path')
+  for (const char of file) if (char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127) throw new Error('Unsafe source artifact path')
   return file
 }
 function filesBelow (root, prefix = '') {
