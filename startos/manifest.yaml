@@ -13,10 +13,10 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.26.0-rc.9
+version: 0.27.0-rc.1
 release-notes: |
-  Blindspark v0.26.0-rc.9: synchronized HiveRelay release metadata for Docker,
-  Umbrel, StartOS, TrueNAS, Unraid, ZimaOS/CasaOS, Runtipi, and HexOS.
+  Local 0.27 candidate integrating generation authority and Pear 3.4; full
+  production qualification remains pending.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"

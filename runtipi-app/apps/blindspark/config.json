@@ -10,8 +10,8 @@
     "network"
   ],
   "description": "Blindspark runs HiveRelay as a home-server appliance for the Pear and Holepunch peer-to-peer ecosystem. It stores and serves encrypted Hyperdrive data that the relay can verify but cannot read.",
-  "tipi_version": 9,
-  "version": "0.26.0-rc.9",
+  "tipi_version": 10,
+  "version": "0.27.0-rc.1",
   "source": "https://github.com/bigdestiny2/P2P-Hiverelay",
   "website": "https://hiverelay.com",
   "form_fields": [
@@ -30,6 +30,6 @@
     "amd64"
   ],
   "created_at": 1784246400000,
-  "updated_at": 1788369696795,
+  "updated_at": 1789319941983,
   "min_tipi_version": "4.7.0"
 }
