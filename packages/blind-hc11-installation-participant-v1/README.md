@@ -55,6 +55,18 @@ lock uses macOS flock/Linux OFD locks; only macOS is tested here. Kernel/native
 lock behavior, not an existence-only lock file, enforces cross-process custody.
 The native database owns its separate Corestore/RocksDB lifetime too.
 
+The native `db` directory itself is pinned by canonical path, device/inode,
+owner and mode, in addition to its IDENTITY file. Existing db parents are pinned
+before raw native open; an absent db parent is exclusively created with the
+native0755 mode (subject to umask), synced and pinned before native initialization
+yields. This prevents adopting a replacement inserted during native ready. The
+legitimate existing native0755 directory
+remains unchanged under private0700 ancestors; group/world write is refused.
+Native directory mtime/ctime may change and is not an identity pin. Source-owned
+fences at the existing guard's native/sentinel/publication boundaries plus every
+explicit native await/token reread reject symlinked or replacement parents even
+when a hardlink preserves the original IDENTITY inode and bytes.
+
 The owned store runs the unchanged `prepareCorestoreGenerationOpen` and
 `guardCorestoreGenerationReady` flow. The existing guard performs actual native
 ready, one sentinel append/read, and authenticated original trigger publication.

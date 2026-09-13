@@ -41,9 +41,9 @@ const timeout = value => {
   return value
 }
 const identity = st => [st.dev, st.ino, st.uid, st.mode].join(':')
-function privateDirectory (file) {
+function privateDirectory (file, nativeDatabase = false) {
   const st = fs.lstatSync(file)
-  if (!st.isDirectory() || st.isSymbolicLink() || (st.mode & 0o077) !== 0 || (process.getuid && st.uid !== process.getuid()) || fs.realpathSync(file) !== file) fail('HC11_PARTICIPANT_IDENTITY', 'Unsafe or rebound directory')
+  if (!st.isDirectory() || st.isSymbolicLink() || (st.mode & (nativeDatabase ? 0o022 : 0o077)) !== 0 || (process.getuid && st.uid !== process.getuid()) || fs.realpathSync(file) !== file) fail('HC11_PARTICIPANT_IDENTITY', 'Unsafe or rebound directory')
   return identity(st)
 }
 function readFile (file, maximum = MAX_FILE, privateMode = false) {
@@ -109,6 +109,7 @@ export class Hc11InstallationParticipantV1 {
   #lock = null
   #fd = null
   #paths = null
+  #databasePath = null
   #files = null
   #activationPins = null
   #evidence = null
@@ -145,8 +146,29 @@ export class Hc11InstallationParticipantV1 {
       this.#lock = new FDLock(this.#fd)
       await this.#lock.ready()
       check(); this.#verifyCustody()
+      this.#databasePath = path.join(p.generationRoot, 'db')
+      // Pin before native open, including a fresh empty database directory.
+      // Waiting for native ready to create/pin it could adopt a replacement
+      // inserted during that await. Preserve existing native0755 permissions.
+      try { this.#paths.set(this.#databasePath, privateDirectory(this.#databasePath, true)) } catch (error) {
+        if (error.code !== 'ENOENT') throw error
+        fs.mkdirSync(this.#databasePath, { mode: 0o755 }) // Exclusive; never chmod or reuse a raced creation.
+        this.#paths.set(this.#databasePath, privateDirectory(this.#databasePath, true))
+        for (const directory of [this.#databasePath, p.generationRoot]) {
+          const fd = fs.openSync(directory, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW)
+          try { fs.fsyncSync(fd) } finally { fs.closeSync(fd) }
+        }
+      }
+      this.#verifyCustody()
       this.#store = new Corestore(this.#prepared.storage)
-      guardCorestoreGenerationReady(this.#store, this.#prepared)
+      await this.#store.ready()
+      check(); this.#verifyCustody()
+      // Source-owned fences at the frozen guard's native/sentinel/publication
+      // boundaries. No caller callback can supply a semantic success verdict.
+      guardCorestoreGenerationReady(this.#store, {
+        ...this.#prepared,
+        options: { ...this.#prepared.options, faultInjector: () => { check(); this.#verifyCustody() } }
+      })
       await this.#store.ready()
       check(); this.#verifyCustody()
       const observed = await this.#observe(check)
@@ -164,7 +186,7 @@ export class Hc11InstallationParticipantV1 {
 
   #verifyCustody () {
     if (!this.#reserved || OWNERS.get(this.#options.root) !== this || !this.#lock?.locked || this.#closed) fail('HC11_PARTICIPANT_CUSTODY', 'Native installation custody is unavailable')
-    for (const [file, expected] of this.#paths) if (privateDirectory(file) !== expected) fail('HC11_PARTICIPANT_IDENTITY', 'Installation directory was rebound')
+    for (const [file, expected] of this.#paths) if (privateDirectory(file, file === this.#databasePath) !== expected) fail('HC11_PARTICIPANT_IDENTITY', 'Installation directory was rebound')
     for (const [file, expected] of this.#files) {
       const actual = readFile(file, expected.bytes.length, true)
       if (actual.identity !== expected.identity || !same(actual.bytes, expected.bytes)) fail('HC11_PARTICIPANT_IDENTITY', 'Installation authority file changed')
@@ -189,7 +211,7 @@ export class Hc11InstallationParticipantV1 {
     try {
       await core.ready(); check(); this.#verifyCustody()
       if (core.length !== 1 || core.fork !== 0) fail('HC11_PARTICIPANT_SENTINEL', 'Activation sentinel must have exact length1/fork0')
-      const block = Buffer.from(await core.get(0)); check()
+      const block = Buffer.from(await core.get(0)); check(); this.#verifyCustody()
       const expected = canonical({ schema: CORESTORE_GENERATION_ENVELOPE.activationSchema, installationId: binding.installationId, manifestSha256: binding.manifestSha256, generation: CORESTORE_GENERATION_ENVELOPE.generation, participant: this.#options.envelope.participant, migrationTooling: CORESTORE_GENERATION_MIGRATION_BINDING })
       const sentinel = trigger.activationSentinel
       if (!same(block, expected) || !sentinel || sentinel.key !== Buffer.from(core.key).toString('hex') || sentinel.length !== 1 || sentinel.fork !== 0 || sentinel.blockSha256 !== tagged(block) || sentinel.participant !== this.#options.envelope.participant) fail('HC11_PARTICIPANT_SENTINEL', 'Original activation sentinel does not match actual native state')
