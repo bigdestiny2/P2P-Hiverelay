@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "kind": "PRIVATE_CELL_INBOX_FULL_WAL_CAPTURE_V1",
+  "base_commit": "74e03dea3791e63947bc7ad08ad4fbb7c8e1e45e",
+  "source_bindings_sha256": "f05b31254f79644013568a59a8330c6e40a57bf14dd7296f371043026cccf11c",
+  "frozen_format_hash": "f996b12e330ca5b7157fc9a22c490c16c1feb0d70527f26bbf7587d96f52dda8",
+  "original_paths_preserved": [
+    "packages/blind-daemon/storage-engine.js",
+    "packages/blind-daemon/inbox-storage-engine.js",
+    "packages/blind-daemon/cell-control-snapshot.js",
+    "packages/blind-daemon/inbox-control-snapshot.js"
+  ],
+  "new_source": [
+    {
+      "path": "packages/blind-daemon/storage-engine-checkpoint-v1.js",
+      "sha256": "4b712840c8bc7d1945d3d1be360fb4248655df2ac09094562bd27acd704d805f"
+    },
+    {
+      "path": "packages/blind-daemon/inbox-storage-engine-checkpoint-v1.js",
+      "sha256": "6d7e6f58858d5b47b6f17f2aec1b0dd36c0902a82fe1d450bbb9e6f5ce8780c6"
+    },
+    {
+      "path": "packages/blind-daemon/family-wal-capture-checkpoint-v1.js",
+      "sha256": "4f07ced721d6b921bf403767c448585fecb4bb5e2a6fb55f52ace9c2bded5d0a"
+    },
+    {
+      "path": "packages/blind-daemon/test/storage-engine-checkpoint-v1.test.js",
+      "sha256": "ffc5b5279223433aa5a6c9d99c867d5fce88dd49769a5dc548254ce8e669580b"
+    },
+    {
+      "path": "packages/blind-daemon/test/inbox-storage-engine-checkpoint-v1.test.js",
+      "sha256": "ab0336dabd50b4eb7177a6e2e52a3ffc364bc97042fb62133c09e55d0523151c"
+    }
+  ],
+  "semantic_contract": "Existing family entry producers plus reconstruction validators; no byte or format changes",
+  "capability_limit": "Private original object allows copied evidence reads under the retained native lease only; no production/mutation/body/publication/prune authority"
+}
