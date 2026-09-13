@@ -125,7 +125,7 @@ export class RealCoreUpstreamV1 {
     let closing
     const close = () => { closing ||= store.close(); return closing }
     // Store removal only after its actual native handle closes.
-    scope.own(() => {}, async () => { await close(); await fs.rm(root, { recursive: true, force: true }) })
+    scope.own(() => { close().catch(() => {}) }, async () => { await close(); await fs.rm(root, { recursive: true, force: true }) })
     await scope.wait(store.ready()); scope.check()
     return store
   }
