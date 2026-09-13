@@ -137,9 +137,11 @@ export class BlindCorePaidProofRuntimeV1 extends BlindCoreRuntimeAdapter {
     const retained = await this.storage.inspectPreparedProofRetry(input)
     checkSignal(input.signal)
     if (retained) {
-      const reserved = input.authenticatedState?.coreProofBytes
-      if (reserved != null && reserved !== retained.coreProofBytes) {
-        fail('INTERNAL', 'reserved CORE proof bytes disagree with the committed retry')
+      for (const field of ['coreProofBytes', 'canonicalResultBytes', 'predictedResultBodyBytes']) {
+        const reserved = input.authenticatedState?.[field]
+        if (reserved != null && reserved !== retained[field]) {
+          fail('INTERNAL', 'reserved CORE proof size disagrees with the committed retry: ' + field)
+        }
       }
       input.authenticatedState = { ...input.authenticatedState, ...retained }
     } else {
@@ -147,6 +149,8 @@ export class BlindCorePaidProofRuntimeV1 extends BlindCoreRuntimeAdapter {
     }
     // Retain the original committed-result WeakSet and storage-owned replay.
     // Fresh requests keep the original active-source and exact-size checks.
-    return super.execute(input)
+    const result = await super.execute(input)
+    checkSignal(input.signal)
+    return result
   }
 }
