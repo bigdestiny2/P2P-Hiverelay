@@ -113,7 +113,31 @@ export function lifecycleSuccessors () {
   advanced.core.admissions.push(clone(newer.admissions[2])); advanced.core.mirrors.push(mirror); advanced.core.generations.push(nextGeneration)
   advanced.core.floors = [{ key: nextGeneration.key, active: 1, expiredAtEpoch: null, expiryWal: null }]
   Object.assign(advanced.core.counts, { admissions: 2, mirrors: 2, generations: 2, activeCores: 1, liveCorpusBytes: 100n, controlBytes: 1024n })
-  return [['mirror-accepted-to-pending', accepted, pending], ['mirror-pending-retry-increment', pending, retried], ['mirror-pending-to-terminal', retried, terminal], ['mirror-pending-to-active', retried, active], ['floor-active-to-expired', active, expired], ['floor-expired-to-new-activation', expired, advanced]]
+  return [['mirror-accepted-to-pending', accepted, pending], ['mirror-pending-retry-increment', pending, retried], ['mirror-pending-to-terminal', retried, terminal], ['mirror-pending-to-active', retried, active], ['floor-active-to-expired', active, expired], ['floor-expired-to-new-activation', expired, advanced], ...continuitySuccessors()]
+}
+
+export function continuitySuccessors () {
+  const cases = []
+  for (const [from, to] of [[1, 2], [1, 3], [2, 3]]) {
+    for (const clearResult of (to === 3 ? [false, true] : [false])) {
+      const previous = paidOpen(from); const next = successor(previous)
+      const row = next.core.opens[0]
+      row.value.lifecycleState = to; row.lifecycleWal = next.coveredWal
+      if (to === 3) row.value.terminalReason = b4a.from('restart-terminal')
+      if (clearResult) row.value.resultBytes = null
+      cases.push([`open-${from}-to-${to}-${clearResult ? 'null' : 'retained'}-result`, previous, next])
+    }
+  }
+  const previous = coreWithProof(); const next = successor(previous)
+  expireProof(next, next.coveredWal)
+  cases.push(['proof-expires-at-successor-anchor', previous, next])
+  return cases
+}
+
+export function expireProof (snapshot, expiryWal) {
+  const proof = snapshot.core.proofs[0]
+  proof.expiryWal = clone(expiryWal); proof.expiredAtUnixMillis = proof.expiresAtUnixMillis
+  Object.assign(snapshot.core.counts, { liveProofPins: 0, liveCorpusBytes: 0n, proofPinBytes: 0n, tombstoneBytes: 256n })
 }
 
 export function mirrorLifecycle (state) {

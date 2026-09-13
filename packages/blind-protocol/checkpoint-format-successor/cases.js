@@ -1,5 +1,5 @@
 import b4a from 'b4a'
-import { positives, clone, H, family, paidOpen, coreWithProof, successor, mirrorLifecycle, lifecycleSuccessors, populatedFamily } from './fixtures.js'
+import { positives, clone, H, wal, family, paidOpen, coreWithProof, successor, mirrorLifecycle, lifecycleSuccessors, populatedFamily, continuitySuccessors, expireProof } from './fixtures.js'
 import { encode, participantHash } from './codec.js'
 
 export function negatives () {
@@ -81,6 +81,48 @@ export function negatives () {
   const progress = lifecycleSuccessors().find(([id]) => id === 'mirror-pending-retry-increment')
   const early = clone(progress[2]); early.core.mirrors[0].lifecycleWal = progress[1].coveredWal
   cases.push({ id: 'mirror-progress-outside-suffix', mode: 'snapshot-successor', previous: progress[1], input: early, pattern: 'MIRROR lifecycle' })
+  const retainedRelation = (id, make, mutate, pattern, standaloneValid = true) => {
+    const previous = make(); const input = successor(previous); mutate(input, previous)
+    cases.push({ id, mode: 'snapshot-successor', previous, input, pattern, standaloneValid })
+  }
+  for (const state of [1, 2, 3]) {
+    const make = () => paidOpen(state)
+    retainedRelation(`open-${state}-parent-replaced`, make, s => { s.core.opens[0].value.parentSessionId = H(88) }, 'OPEN identity')
+    retainedRelation(`open-${state}-same-state-wal-rewind`, make, s => { s.core.opens[0].lifecycleWal = wal(1) }, 'OPEN lifecycle')
+    retainedRelation(`open-${state}-same-state-wal-hash-replaced`, make, s => { s.core.opens[0].lifecycleWal.hash = H(88) }, 'OPEN lifecycle')
+    retainedRelation(`open-${state}-same-state-wal-advanced`, make, s => { s.core.opens[0].lifecycleWal = s.coveredWal }, 'OPEN lifecycle')
+    if (state !== 3) retainedRelation(`open-${state}-same-state-result-replaced`, make, s => { s.core.opens[0].value.resultBytes[s.core.opens[0].value.resultBytes.length - 1] ^= 1 }, 'OPEN lifecycle')
+  }
+  const openTransitions = continuitySuccessors().filter(([id]) => id.startsWith('open-'))
+  for (const [id, previous, next] of openTransitions) {
+    for (const [label, anchor, standaloneValid] of [['below', previous.coveredWal.sequence - 1n, true], ['equal', previous.coveredWal.sequence, true], ['above-next', next.coveredWal.sequence + 1n, false]]) {
+      const input = clone(next); input.core.opens[0].lifecycleWal = wal(anchor)
+      cases.push({ id: `${id}-wal-${label}`, mode: 'snapshot-successor', previous, input, pattern: 'OPEN lifecycle|OPEN identity/request/capture', standaloneValid })
+    }
+    if (next.core.opens[0].value.resultBytes) {
+      const input = clone(next); const result = input.core.opens[0].value.resultBytes; result[result.length - 1] ^= 1
+      cases.push({ id: `${id}-result-replaced`, mode: 'snapshot-successor', previous, input, pattern: 'OPEN retained result', standaloneValid: true })
+    }
+  }
+  retainedRelation('open-live-to-reserved', () => paidOpen(2), s => { s.core.opens[0].value.lifecycleState = 1; s.core.opens[0].lifecycleWal = s.coveredWal }, 'OPEN lifecycle')
+  retainedRelation('open-terminal-reason-replaced', paidOpen, s => { s.core.opens[0].value.terminalReason = b4a.from('new-reason') }, 'OPEN lifecycle')
+  const terminalWithResult = () => clone(openTransitions.find(([id]) => id === 'open-2-to-3-retained-result')[2])
+  retainedRelation('open-terminal-result-cleared', terminalWithResult, s => { s.core.opens[0].value.resultBytes = null }, 'OPEN lifecycle')
+  retainedRelation('open-terminal-resurrected', terminalWithResult, s => { const o = s.core.opens[0]; o.value.lifecycleState = 2; o.value.terminalReason = null; o.lifecycleWal = s.coveredWal }, 'OPEN lifecycle')
+  for (const [label, delta, standaloneValid] of [['below', -1n, true], ['equal', 0n, true], ['above-next', 2n, false]]) {
+    retainedRelation(`proof-new-expiry-wal-${label}`, coreWithProof, (s, p) => expireProof(s, wal(p.coveredWal.sequence + delta)), 'proof expiry|proof capture', standaloneValid)
+  }
+  for (const [label, mutate] of [
+    ['original-pin-hash', p => { p.pinWal.hash = H(88) }],
+    ['original-pin-time', p => { p.pinnedAtUnixMillis++ }],
+    ['original-deadline', p => { p.expiresAtUnixMillis-- }],
+    ['original-proof-hash', p => { p.proofHash = H(88) }]
+  ]) retainedRelation(`proof-expiry-rewrites-${label}`, coreWithProof, s => { expireProof(s, s.coveredWal); mutate(s.core.proofs[0]) }, 'proof evidence')
+  retainedRelation('proof-expired-wal-hash-replaced', () => coreWithProof(true), s => { s.core.proofs[0].expiryWal.hash = H(88) }, 'proof evidence')
+  retainedRelation('proof-expired-time-replaced', () => coreWithProof(true), s => { s.core.proofs[0].expiredAtUnixMillis++ }, 'proof evidence')
+  retainedRelation('proof-expired-reactivated', () => coreWithProof(true), s => { Object.assign(s.core.proofs[0], { expiryWal: null, expiredAtUnixMillis: null }); Object.assign(s.core.counts, { liveProofPins: 1, liveCorpusBytes: 100n, proofPinBytes: 1024n, tombstoneBytes: 0n }) }, 'proof evidence')
+  retainedRelation('proof-expiry-before-pin-wal', coreWithProof, s => expireProof(s, s.core.proofs[0].pinWal), 'expiry evidence', false)
+  retainedRelation('proof-expiry-before-deadline', coreWithProof, s => { expireProof(s, s.coveredWal); s.core.proofs[0].expiredAtUnixMillis-- }, 'bounds/lifecycle', false)
   const participants = positives().find(([id]) => id === 'typed-four-participants')[2]
   const participant = (id, mutate, pattern) => { const input = clone(participants); mutate(input); cases.push({ id, mode: 'encode', type: 'Participants', input, pattern }) }
   participant('hc11-is-not-blind-wal', s => { s.hc11.wal = s.blind[0].wal }, 'exact fields')

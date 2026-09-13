@@ -1,7 +1,7 @@
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { createHash } from 'node:crypto'
-import { artifactBytes, canonicalJSON, encode, formatHash, snapshotHash, participantHash } from './codec.js'
+import { artifactBytes, canonicalJSON, encode, formatHash, snapshotHash, participantHash, validatorSha256 } from './codec.js'
 import { positives } from './fixtures.js'
 import { negatives } from './cases.js'
 const args = process.argv.slice(2)
@@ -16,6 +16,19 @@ function output (name, bytes) {
   artifacts.push({ path: name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') })
 }
 output('format-authority-v2.json', artifactBytes())
+const bindings = JSON.parse(readFileSync(new URL('../../../contracts/hiverelay/027-checkpoint-format/source-bindings.json', import.meta.url)))
+for (const entry of bindings.source) {
+  const bytes = readFileSync(new URL('../../../' + entry.path, import.meta.url))
+  if (bytes.length !== entry.bytes || createHash('sha256').update(bytes).digest('hex') !== entry.sha256) throw new Error(`protected source drift: ${entry.path}`)
+}
+bindings.successor_predecessor_commit = '699154da16a0be40b92134335bc0b113eb5c30a9'
+bindings.format_hash = formatHash().toString('hex')
+bindings.validator_sha256 = validatorSha256
+bindings.private_source = readdirSync(new URL('./', import.meta.url), { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name).sort().map(name => {
+  const bytes = readFileSync(new URL('./' + name, import.meta.url))
+  return { path: 'packages/blind-protocol/checkpoint-format-successor/' + name, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex') }
+})
+output('source-bindings.json', Buffer.from(JSON.stringify(bindings, null, 2) + '\n'))
 const vectors = []
 for (const [id, type, value] of positives()) {
   const bytes = encode(type, value)

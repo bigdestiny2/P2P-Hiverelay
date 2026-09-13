@@ -206,5 +206,14 @@
     "C": "Actual shared blind/HC11 authority, runtime append ordering, restore and G05 qualification."
   },
   "acceptance_gate": "027-CHECKPOINT-FORMAT-INDEPENDENT-REVIEW",
-  "self_accepted": false
+  "self_accepted": false,
+  "continuity_correction": {
+    "predecessor_commit": "699154da16a0be40b92134335bc0b113eb5c30a9",
+    "findings": [
+      "F4: retained OPEN identity, same-state exactness, legal transitions with suffix WAL and terminal finality",
+      "F5: newly expired PROVE suffix WAL with original evidence and expiry finality"
+    ],
+    "qualification": "Positive and individually valid negative relationships, frozen codec/hash/source binding regeneration, independent Python byte/hash roundtrip, actual predecessor family reconstruction and indexed capacity guards; exact target evidence in successor handoff.",
+    "authority": "Private format correction only; capture/hydration/publication/pruning and G04/G05 remain required."
+  }
 }

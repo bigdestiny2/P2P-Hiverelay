@@ -1,241 +1,311 @@
 {
-  "schema": "hiverelay.checkpoint-source-bindings.v1",
   "base_commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
+  "format_hash": "f996b12e330ca5b7157fc9a22c490c16c1feb0d70527f26bbf7587d96f52dda8",
+  "private_source": [
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/capacity.mjs",
+      "bytes": 5272,
+      "sha256": "da02b9d035458ca601e665ba2d6bcf1fc44ee639e85d881f6b32ed0ec41b4279"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/cases.js",
+      "bytes": 15212,
+      "sha256": "ed900a0ea093501bb15a5d7663ad04c43c4356ac3aba6ea846f356f05b5e4859"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/catalog.js",
+      "bytes": 17745,
+      "sha256": "e14b75a50247206a35f273146428e67b982d8ea4987a3c402406caa38b9c09f3"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/cell-predecessor-fixture.js",
+      "bytes": 9782,
+      "sha256": "bae2e5232258fdc7dd8e55a4b81d01a505c1712a605f81bd11d6486d0cf144a4"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/check-vectors.py",
+      "bytes": 7052,
+      "sha256": "7397ab352d93f61eaf56738926a0a91f4e1e915314f6bdb5862ff26d82e19a8b"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/codec.js",
+      "bytes": 30223,
+      "sha256": "654104b3d85ed9adde902d66a6b0b214eb459a4da29456c2a2e5e55032c0590b"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/fixtures.js",
+      "bytes": 16521,
+      "sha256": "b068ca9d6595e84f82be87297ca10f0b32cba3ba7850a1bbc1e2c13ef139452c"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/generate-family-fixtures.mjs",
+      "bytes": 3707,
+      "sha256": "9b495ee00d1efd4b6ae46b89e01f444d5218d35aeef204a14ffb8a0eaa704ebd"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/generate.mjs",
+      "bytes": 3343,
+      "sha256": "0c7789cdbfc2e2d065a493d22975de05bc5b31d00861ac28daa97fa8a174b3c9"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/inbox-predecessor-fixture.js",
+      "bytes": 13463,
+      "sha256": "3456c3813d006efcde37a02bf897615ccfccc50d225fefe5e8e2be9182e76fcd"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts",
+      "bytes": 3933,
+      "sha256": "6daa4343c54bd082375460fce8a9b31c14e0f9916c1533b1527b13be89d027d8"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/populated-family-fixtures.json",
+      "bytes": 19547,
+      "sha256": "085bf5965b5675e9fc822fd77d4e4748bd2a3b2bde9aa5c5a5f67298f4519f3f"
+    },
+    {
+      "path": "packages/blind-protocol/checkpoint-format-successor/test.mjs",
+      "bytes": 4263,
+      "sha256": "cc1af484c6b0302a240b56eac39e619b88d1d2282591910a94ae9aeabcc5cb51"
+    }
+  ],
   "production_contract_commit": "63373bc7bb96689e879b487fa92eeb6810c72a91",
+  "schema": "hiverelay.checkpoint-source-bindings.v1",
   "source": [
     {
+      "bytes": 157790,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/storage-engine.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "ed35804f31ddd8e29a4321059022e946a132331a770cb487d99840ce33eeb6bc",
-      "bytes": 157790
+      "sha256": "ed35804f31ddd8e29a4321059022e946a132331a770cb487d99840ce33eeb6bc"
     },
     {
+      "bytes": 108533,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/inbox-storage-engine.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "a63dc9aa2a562a3c8e6db949cc19cdecf8cbb72905c43a04a3c3959d728b7c3e",
-      "bytes": 108533
+      "sha256": "a63dc9aa2a562a3c8e6db949cc19cdecf8cbb72905c43a04a3c3959d728b7c3e"
     },
     {
+      "bytes": 79671,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/core-storage-engine.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "5f91d4aad9f5eb5d679c6040c734ec9659b8ffdf73f929af07fc6d31a55ec57e",
-      "bytes": 79671
+      "sha256": "5f91d4aad9f5eb5d679c6040c734ec9659b8ffdf73f929af07fc6d31a55ec57e"
     },
     {
+      "bytes": 7630,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/generation-store-evidence.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "0cdafdac364580bdf81d717f30ccfb6b5eb010e820adfe18407cbd98c4d4a55a",
-      "bytes": 7630
+      "sha256": "0cdafdac364580bdf81d717f30ccfb6b5eb010e820adfe18407cbd98c4d4a55a"
     },
     {
+      "bytes": 7012,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/generation-startup.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "f813872249cf4a349b40a98747595cd84dcc9154c84f7030051aa2df6ee63221",
-      "bytes": 7012
+      "sha256": "f813872249cf4a349b40a98747595cd84dcc9154c84f7030051aa2df6ee63221"
     },
     {
+      "bytes": 48610,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/storage-generation-v12.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "9d17c821449f261fc700441f68dce119f1a2c04415156875e6d14ac6ccf7faa3",
-      "bytes": 48610
+      "sha256": "9d17c821449f261fc700441f68dce119f1a2c04415156875e6d14ac6ccf7faa3"
     },
     {
+      "bytes": 61275,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/local-checkpoint-store.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "dfdc16de3b0f093dc2abf90768b8c3ce596171ee759e639ef445512fd7d52484",
-      "bytes": 61275
+      "sha256": "dfdc16de3b0f093dc2abf90768b8c3ce596171ee759e639ef445512fd7d52484"
     },
     {
+      "bytes": 23603,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/manifest-store.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "006a8dba14e262bfe9cf860ada1ec2ef24a2a8ee8963e382248a3cb200cc5433",
-      "bytes": 23603
+      "sha256": "006a8dba14e262bfe9cf860ada1ec2ef24a2a8ee8963e382248a3cb200cc5433"
     },
     {
+      "bytes": 26376,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/wal-recovery-scan.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "faba92c29edf108ff9e8943fe7866c623c261b757662a3132b2315527718cd8b",
-      "bytes": 26376
+      "sha256": "faba92c29edf108ff9e8943fe7866c623c261b757662a3132b2315527718cd8b"
     },
     {
+      "bytes": 83659,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/transaction-store.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "77113a36d799cf8949b7673822b971d714069f58ec7d462271654ee8229a5f2e",
-      "bytes": 83659
+      "sha256": "77113a36d799cf8949b7673822b971d714069f58ec7d462271654ee8229a5f2e"
     },
     {
+      "bytes": 40430,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/store-session.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "2f90f5c62182f80c0c2dcbd6480d475b014e4d3918232a07a1bb65249d3a8441",
-      "bytes": 40430
+      "sha256": "2f90f5c62182f80c0c2dcbd6480d475b014e4d3918232a07a1bb65249d3a8441"
     },
     {
+      "bytes": 12628,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/recovery-validation-authority.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "883811db25f43fe801e498f4c86a3a3ec564f2eb8752aad27f950d0c4eb72701",
-      "bytes": 12628
+      "sha256": "883811db25f43fe801e498f4c86a3a3ec564f2eb8752aad27f950d0c4eb72701"
     },
     {
+      "bytes": 16260,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/control-snapshot-stream.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "af5cf4869f541907ff5497f3fcd3e100b5697135cee200466323f767e754b952",
-      "bytes": 16260
+      "sha256": "af5cf4869f541907ff5497f3fcd3e100b5697135cee200466323f767e754b952"
     },
     {
+      "bytes": 71719,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/cell-control-snapshot.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "0d2afadb5fd36f6e5b764879e65f5e2dcb182bfcd18f5b3be0c2c0fa4c511ca7",
-      "bytes": 71719
+      "sha256": "0d2afadb5fd36f6e5b764879e65f5e2dcb182bfcd18f5b3be0c2c0fa4c511ca7"
     },
     {
+      "bytes": 71146,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/inbox-control-snapshot.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "879e9b11320a210075c69d49868cfd5c9d55e9dc75e3b1ea5934e28643bca487",
-      "bytes": 71146
+      "sha256": "879e9b11320a210075c69d49868cfd5c9d55e9dc75e3b1ea5934e28643bca487"
     },
     {
+      "bytes": 29209,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/core-control-snapshot.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "4744e6d1f4052cccb92b30f8b83f22dc30cedaaa34b0c28ec25fdb815536ec13",
-      "bytes": 29209
+      "sha256": "4744e6d1f4052cccb92b30f8b83f22dc30cedaaa34b0c28ec25fdb815536ec13"
     },
     {
+      "bytes": 13698,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/cell-inbox-control-snapshot.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "3efbb96d68e0493adfab20a025571236ce01703db096b9c2e96f8585bba9f14c",
-      "bytes": 13698
+      "sha256": "3efbb96d68e0493adfab20a025571236ce01703db096b9c2e96f8585bba9f14c"
     },
     {
+      "bytes": 16495,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/cell-inbox-core-control-snapshot.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "7dd7c91c439f76af6677b475148a4097a0821e409678b87276c3cd22788efae0",
-      "bytes": 16495
+      "sha256": "7dd7c91c439f76af6677b475148a4097a0821e409678b87276c3cd22788efae0"
     },
     {
+      "bytes": 106155,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/production-runtime.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "816f322462afcf9ca00d112473ee188234fa824e1bde58541fbb6ece15e6fa16",
-      "bytes": 106155
+      "sha256": "816f322462afcf9ca00d112473ee188234fa824e1bde58541fbb6ece15e6fa16"
     },
     {
+      "bytes": 12888,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/storage-engine-wal-pruning.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "043ab27a76e684d661d05f52fdd50541e8bf9329644c55ba26ffcc7fdd6d0c4c",
-      "bytes": 12888
+      "sha256": "043ab27a76e684d661d05f52fdd50541e8bf9329644c55ba26ffcc7fdd6d0c4c"
     },
     {
+      "bytes": 10124,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/generation-history.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "9d64c3cf2578942d83b3beb483960cdcdab5213e38a165f11d180e1611fcf608",
-      "bytes": 10124
+      "sha256": "9d64c3cf2578942d83b3beb483960cdcdab5213e38a165f11d180e1611fcf608"
     },
     {
+      "bytes": 7270,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/generation-history-fixture.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "4940a2de6111579e90950546269dba84c83281b3285966293690614992c6b0a7",
-      "bytes": 7270
+      "sha256": "4940a2de6111579e90950546269dba84c83281b3285966293690614992c6b0a7"
     },
     {
+      "bytes": 44010,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/core-runtime-adapter.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "887f60570dcd9125b5d3cb53f8f8d0be6e68884930aa59c1f2e896df66a73e79",
-      "bytes": 44010
+      "sha256": "887f60570dcd9125b5d3cb53f8f8d0be6e68884930aa59c1f2e896df66a73e79"
     },
     {
+      "bytes": 35970,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/inbox-storage-engine.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "5b15fd0c4822d4a219c6ca8d21eacb019e9e83ce614a6361fa99cdc8d6dda068",
-      "bytes": 35970
+      "sha256": "5b15fd0c4822d4a219c6ca8d21eacb019e9e83ce614a6361fa99cdc8d6dda068"
     },
     {
+      "bytes": 23216,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/local-checkpoint-store.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "1d9083f4153e89d25ae280adee15d3c0065eb48f032aeec4c3218961fa3bf6ee",
-      "bytes": 23216
+      "sha256": "1d9083f4153e89d25ae280adee15d3c0065eb48f032aeec4c3218961fa3bf6ee"
     },
     {
+      "bytes": 27993,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/storage-generation-v12.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "db486f97a44db0933f812a670b06ee99f9a59102ca41d90ffac8e09daafb72d1",
-      "bytes": 27993
+      "sha256": "db486f97a44db0933f812a670b06ee99f9a59102ca41d90ffac8e09daafb72d1"
     },
     {
+      "bytes": 49200,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-protocol/client-internal-schemas.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "86b0f0f292ca73dbec006cb3cb741d9cf900dd4ef1145d8f2cffe5ad7542d46c",
-      "bytes": 49200
+      "sha256": "86b0f0f292ca73dbec006cb3cb741d9cf900dd4ef1145d8f2cffe5ad7542d46c"
     },
     {
+      "bytes": 28263,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-protocol/store-format-authority.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "4db89c81853ed231b5209b6bc435059d1863fe25e351659ba531c57799a27b27",
-      "bytes": 28263
+      "sha256": "4db89c81853ed231b5209b6bc435059d1863fe25e351659ba531c57799a27b27"
     },
     {
+      "bytes": 28954,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-protocol/hiverelay-blind-store-schema-catalog-v1.draft.cenc",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "949784a76b425fe823199f4b6076811e943e2d8f33a9ad54956f5dfa3a278f8b",
-      "bytes": 28954
+      "sha256": "949784a76b425fe823199f4b6076811e943e2d8f33a9ad54956f5dfa3a278f8b"
     },
     {
+      "bytes": 46634,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-protocol/hiverelay-blind-store-format-authority-v1.draft.cenc",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "49d92b16e61d1d2555032914066185083f38e9b9ad81c944caff8b6c6a0aa145",
-      "bytes": 46634
+      "sha256": "49d92b16e61d1d2555032914066185083f38e9b9ad81c944caff8b6c6a0aa145"
     },
     {
+      "bytes": 80917,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/core/core/persistence/corestore-generation-envelope.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "cc3e895066d97130eb51c9c5c8367a152a11a37ada303b47d66ffdb3e0e53bdb",
-      "bytes": 80917
+      "sha256": "cc3e895066d97130eb51c9c5c8367a152a11a37ada303b47d66ffdb3e0e53bdb"
     },
     {
+      "bytes": 4138,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/core/core/persistence/storage-root-restore.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "ddec3abd36f6274b39d8977ba2af3b58516bb446ba71dd0eede6424965f7d184",
-      "bytes": 4138
+      "sha256": "ddec3abd36f6274b39d8977ba2af3b58516bb446ba71dd0eede6424965f7d184"
     },
     {
+      "bytes": 13729,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/core/core/persistence/storage-generation-receipt.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "7b505a165d6926062eb8418f5120f0531cdf50ba26a7f3d722a9c2f645b9cdf2",
-      "bytes": 13729
+      "sha256": "7b505a165d6926062eb8418f5120f0531cdf50ba26a7f3d722a9c2f645b9cdf2"
     },
     {
+      "bytes": 7445,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/core/core/persistence/store.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "e81b50d7bb84c149c136789897ff5a27b409814d94d54bd04a59ed9bed79869e",
-      "bytes": 7445
+      "sha256": "e81b50d7bb84c149c136789897ff5a27b409814d94d54bd04a59ed9bed79869e"
     },
     {
+      "bytes": 1247,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "docs/protocol/HIVERELAY-BLIND-OWNER-DECISIONS-V1.json",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "bcf113fb1e1c0ac76a2254848b672e27f639e9a18c5a9d36ccf40ab5dd50fd9f",
-      "bytes": 1247
+      "sha256": "bcf113fb1e1c0ac76a2254848b672e27f639e9a18c5a9d36ccf40ab5dd50fd9f"
     },
     {
+      "bytes": 3923,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "docs/vnext/owner-decisions-2026-07-13.json",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "592fa68f32de0944477ac2cf868265e3a0b1ea41957ef7a9ff0abf51fc8d9135",
-      "bytes": 3923
+      "sha256": "592fa68f32de0944477ac2cf868265e3a0b1ea41957ef7a9ff0abf51fc8d9135"
     },
     {
+      "bytes": 18620,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/cell-control-snapshot.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "9f6866e1b04873bb659a9504bf51a94d0452ab07d0a286c44fdd0e034973aff7",
-      "bytes": 18620
+      "sha256": "9f6866e1b04873bb659a9504bf51a94d0452ab07d0a286c44fdd0e034973aff7"
     },
     {
+      "bytes": 25907,
+      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
       "path": "packages/blind-daemon/test/inbox-control-snapshot.test.js",
-      "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "104f766ca3ea25542455725f90e3ca7c5ec2a255291e483109a8e28703791bc1",
-      "bytes": 25907
+      "sha256": "104f766ca3ea25542455725f90e3ca7c5ec2a255291e483109a8e28703791bc1"
     },
     {
-      "path": "packages/blind-daemon/virtual-bucket.js",
+      "bytes": 1101,
       "commit": "758013f6d5755f042c9d648517706ab7c9cdc259",
-      "sha256": "a048c6d09bf15f64a2e26aa14c34d944191e4bf4724affd8228b8c4209ec667d",
-      "bytes": 1101
+      "path": "packages/blind-daemon/virtual-bucket.js",
+      "sha256": "a048c6d09bf15f64a2e26aa14c34d944191e4bf4724affd8228b8c4209ec667d"
     }
-  ]
+  ],
+  "successor_predecessor_commit": "699154da16a0be40b92134335bc0b113eb5c30a9",
+  "validator_sha256": "654104b3d85ed9adde902d66a6b0b214eb459a4da29456c2a2e5e55032c0590b"
 }

@@ -5,7 +5,7 @@ const bytes = max => ({ bytes: [1, max] })
 const legacy = name => ({ legacy: name })
 const fields = (...pairs) => pairs
 
-export const validatorSha256 = 'e08abbb4dfe5ca3489f877a2f95ee9f6b7538b495b1d3209a50dba5dc8b46f4f'
+export const validatorSha256 = '654104b3d85ed9adde902d66a6b0b214eb459a4da29456c2a2e5e55032c0590b'
 
 export const predecessorPins = {
   'codec.js': '4102aac14a1cc3192d76b7c8d351ffc7e9fd7b7e5023b8f599e6424923d17e83',
@@ -77,6 +77,8 @@ export const rules = {
   completeCore: 'Each paid admission owns exactly one MIRROR, PROVE or OPEN row. PROVE including expired spends retains original admission/pin evidence; lane B must reconstruct missing map evidence from authenticated full WAL before any prune.',
   generationRetention: 'Retain historical activation records required by mirror attempts, floors and live/expired proof receipts. Only active floors or live proof pins own corpus bodies. An old ACTIVE mirror is historical; candidateRevision is not activation revision.',
   mirrorSuccessor: 'Retain exact immutable MIRROR acceptance fields. ACCEPTED may advance to RETRY_PENDING, ACTIVE or TERMINAL; RETRY_PENDING may increment its retry count or advance to ACTIVE/TERMINAL. Counts never decrease; unchanged counts retain their reason. ACTIVE/TERMINAL rows are final. Changed lifecycle WAL must lie in the new suffix.',
+  openSuccessor: 'Retain every OPEN identity field exactly. Unchanged lifecycle states retain the entire row including WAL and result bytes. Only RESERVED to LIVE/TERMINAL and LIVE to TERMINAL are legal; their lifecycle WAL is strictly above the previous anchor and at or below the next anchor. A non-null result remains byte-identical; TERMINAL permits the frozen null-result shape. Terminal rows are final.',
+  proofSuccessor: 'Retain all original PROVE evidence including pin WAL, original pin time and expiry deadline. Newly expired PROVE requires expiry WAL strictly above the previous checkpoint anchor and at or below the next; expiry follows its pin and reaches the original deadline. Already-expired rows and their exact expiry evidence are final.',
   floorSuccessor: 'Latest generation never regresses or disappears. At the same generation, an active floor may expire with new suffix evidence; an inactive floor and its exact expiry evidence are immutable. A new generation requires a later suffix activation, preserving all prior generation records.',
   relationshipWork: 'CORE joins use one canonical identity index per retained group, then bounded passes over rows/bytes. Sorted unique identities are validated before constructing indexes. The finite capacity regression measures 128, 512 and 2048 retained records per group; it does not qualify the 65536-row refusal ceiling as deployment capacity.',
   lifecycle: 'No transient CELL/INBOX reservations/provisional work in checkpoint. Persisted CORE reserved/live OPEN is retained but actual recovery terminalizes it before serving; no upstream ticket or child resurrection.',

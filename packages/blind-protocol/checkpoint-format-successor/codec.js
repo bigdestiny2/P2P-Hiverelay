@@ -318,10 +318,21 @@ export function assertSnapshotSuccessor (previous, next) {
     for (const p of previous.core.proofs) {
       const n = proofs.get(hex(p.spendTag))
       if (!n || canonicalJSON({ ...p, expiryWal: null, expiredAtUnixMillis: null }) !== canonicalJSON({ ...n, expiryWal: null, expiredAtUnixMillis: null }) || (p.expiredAtUnixMillis !== null && canonicalJSON(n) !== canonicalJSON(p))) fail('CORE proof evidence changed/retired')
+      if (p.expiryWal === null && n.expiryWal !== null && n.expiryWal.sequence <= previous.coveredWal.sequence) fail('CORE proof expiry outside successor suffix')
+    }
+    const openIdentity = row => {
+      const { lifecycleState, resultBytes, terminalReason, ...identity } = row.value
+      return canonicalJSON(identity)
     }
     for (const o of previous.core.opens) {
       const n = opens.get(hex(o.value.logicalRetryKey))
-      if (!n || n.value.lifecycleState < o.value.lifecycleState || (o.value.lifecycleState === 3 && canonicalJSON(o) !== canonicalJSON(n))) fail('CORE OPEN lifecycle regressed/retired')
+      if (!n || openIdentity(o) !== openIdentity(n)) fail('CORE OPEN identity changed/retired')
+      if (canonicalJSON(o) === canonicalJSON(n)) continue
+      const from = o.value.lifecycleState; const to = n.value.lifecycleState
+      if (!((from === 1 && (to === 2 || to === 3)) || (from === 2 && to === 3)) || n.lifecycleWal.sequence <= previous.coveredWal.sequence) fail('CORE OPEN lifecycle changed outside legal successor suffix')
+      // Frozen terminal snapshots may have no result. Any retained result must
+      // remain the exact original bytes; recovery never authorizes a replacement.
+      if (n.value.resultBytes !== null && !same(o.value.resultBytes, n.value.resultBytes)) fail('CORE OPEN retained result changed')
     }
   }
   return true // A data-level relationship, never a verified-WAL or lease capability.

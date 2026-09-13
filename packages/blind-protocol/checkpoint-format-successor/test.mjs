@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { readFileSync } from 'node:fs'
 import { encode, decode, canonicalJSON, formatHash, artifactBytes, assertSnapshotSuccessor, assertParticipantsSuccessor, participantHash, compatibility, predecessorPins, validatorSha256 } from './codec.js'
-import { positives, successor, clone, H, lifecycleSuccessors } from './fixtures.js'
+import { positives, successor, clone, H, wal, lifecycleSuccessors, continuitySuccessors } from './fixtures.js'
 import { negatives } from './cases.js'
 const checks = []
 const check = (name, fn) => { fn(); checks.push(name); console.log(`ok ${checks.length} - ${name}`) }
@@ -12,6 +12,7 @@ for (const [id, type, input] of positives()) {
   if (type === 'Snapshot' && id !== 'u64-high-checkpoint') check(`${id} successor`, () => assert.equal(assertSnapshotSuccessor(input, successor(input)), true))
 }
 for (const c of negatives()) {
+  if (c.standaloneValid) check(`${c.id} has individually valid snapshots`, () => { encode('Snapshot', c.previous); encode('Snapshot', c.input) })
   check(c.id, () => assert.throws(() => {
     if (c.mode === 'encode') encode(c.type, c.input)
     if (c.mode === 'decode') decode(c.type, c.input)
@@ -20,6 +21,12 @@ for (const c of negatives()) {
   }, new RegExp(c.pattern)))
 }
 for (const [id, previous, next] of lifecycleSuccessors()) check(`${id} relation`, () => assert.equal(assertSnapshotSuccessor(previous, next), true))
+for (const [id, previous, next] of continuitySuccessors()) {
+  check(`${id} inside multi-frame suffix`, () => {
+    const later = clone(next); later.coveredWal = wal(next.coveredWal.sequence + 2n)
+    assert.equal(assertSnapshotSuccessor(previous, later), true)
+  })
+}
 check('authority byte export cannot mutate format hash', () => { const before = formatHash(); artifactBytes().fill(0); assert.deepEqual(formatHash(), before) })
 check('participant unchanged coverage successor', () => {
   const previous = positives().find(([id]) => id === 'typed-four-participants')[2]; const next = clone(previous)

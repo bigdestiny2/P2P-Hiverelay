@@ -4,7 +4,10 @@
     "major": 2,
     "minor": 0,
     "runtime_enabled": false,
-    "package_exported": false
+    "package_exported": false,
+    "supersedes_private_candidate_commit": "699154da16a0be40b92134335bc0b113eb5c30a9",
+    "prior_candidate_hash": "826d83261c7eadd6f30f3246ea3e9f9234be914a80ebe621e58f8093d3934746",
+    "prior_candidate_selection": "refuse unknown hash; old private vectors remain in sealed predecessor commit/run"
   },
   "matrix": [
     {
