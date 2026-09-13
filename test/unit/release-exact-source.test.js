@@ -30,6 +30,13 @@ function fixture (t) {
   return { root, repoRoot, pkg, commit, sha: commit() }
 }
 
+test('source path validation refuses control bytes and backslashes before archive I/O', t => {
+  for (const code of [...Array(32).keys(), 127, 92]) {
+    const packageDirectory = `packages/co${String.fromCharCode(code)}re`
+    t.exception(() => verifyPackedReleaseSource({ packageDirectory }), /Unsafe source artifact path/)
+  }
+})
+
 test('exact source uses admitted Git bytes and modes despite dirty and untracked checkout files', t => {
   const f = fixture(t)
   fs.writeFileSync(path.join(f.pkg, 'index.js'), 'dirty tracked bytes\n')
