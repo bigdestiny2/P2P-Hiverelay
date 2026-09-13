@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "kind": "PRIVATE_CORE_CHECKPOINT_RUNTIME_PORT_V1",
+  "integration_base": "79325cad4b74ed0543cca52d939140607a1a8f03",
+  "semantic_format_commit": "9296f01576f546cca25a437a5e36bfb878f9983e",
+  "semantic_format_hash": "f996b12e330ca5b7157fc9a22c490c16c1feb0d70527f26bbf7587d96f52dda8",
+  "source_bindings_sha256": "f05b31254f79644013568a59a8330c6e40a57bf14dd7296f371043026cccf11c",
+  "corrected_component_commit": "ad1583bb5c0edd18514d174f8a2b7fd05346ca80",
+  "corrected_component_handoff_sha256": "274627d2081557250e738c831c8e553a709fbf16637f848b99940c9d975ea276",
+  "mappings": [
+    {
+      "source_path": "packages/blind-daemon/core-storage-engine.js",
+      "source_sha256": "56131e2db2f97ccbc6a38074abed7e38542536aab49a8869b3dbbf6979cd2cf7",
+      "successor_path": "packages/blind-daemon/core-storage-engine-checkpoint-v1.js",
+      "successor_sha256": "a0096e25e73d04f5d8d39fc145b065d257b7647968ce3b33e65a023545367408",
+      "substitutions": [
+        {
+          "before": "'./core-wal-capture.js'",
+          "after": "'./core-wal-capture-checkpoint-v1.js'",
+          "occurrences": 1
+        }
+      ]
+    },
+    {
+      "source_path": "packages/blind-daemon/core-wal-capture.js",
+      "source_sha256": "93596e7f78755a346efeac93ac0d0b869d1bfceb6dd5100411c68616f5ced19c",
+      "successor_path": "packages/blind-daemon/core-wal-capture-checkpoint-v1.js",
+      "successor_sha256": "93596e7f78755a346efeac93ac0d0b869d1bfceb6dd5100411c68616f5ced19c",
+      "substitutions": []
+    },
+    {
+      "source_path": "packages/blind-daemon/test/core-runtime-adapter.test.js",
+      "source_sha256": "58abd280b3b086946c828e2e2f8a846fa22d947ab85279677ec276844036e158",
+      "successor_path": "packages/blind-daemon/test/core-runtime-checkpoint-v1.test.js",
+      "successor_sha256": "5c427ffaf7232f1e584e74338ed5d439c468eb33ea45b3ec0571b3ec33e69414",
+      "substitutions": [
+        {
+          "before": "'../core-storage-engine.js'",
+          "after": "'../core-storage-engine-checkpoint-v1.js'",
+          "occurrences": 1
+        }
+      ]
+    }
+  ],
+  "unchanged_predecessors": [
+    {
+      "path": "packages/blind-daemon/core-storage-engine.js",
+      "sha256": "5f91d4aad9f5eb5d679c6040c734ec9659b8ffdf73f929af07fc6d31a55ec57e"
+    },
+    {
+      "path": "packages/blind-daemon/core-runtime-adapter.js",
+      "sha256": "093133293b238558f8e970e38bc20f952a66567c62a08d65ed73f3b6b2e426b6"
+    },
+    {
+      "path": "packages/blind-daemon/storage-engine.js",
+      "sha256": "ed35804f31ddd8e29a4321059022e946a132331a770cb487d99840ce33eeb6bc"
+    },
+    {
+      "path": "packages/blind-daemon/inbox-storage-engine.js",
+      "sha256": "a63dc9aa2a562a3c8e6db949cc19cdecf8cbb72905c43a04a3c3959d728b7c3e"
+    },
+    {
+      "path": "packages/blind-daemon/test/core-runtime-adapter.test.js",
+      "sha256": "887f60570dcd9125b5d3cb53f8f8d0be6e68884930aa59c1f2e896df66a73e79"
+    }
+  ],
+  "authority": "private read-only capture evidence only; no runtime selection, mutable recovery, publication, pruning or hydration authority",
+  "qualification_transfer": false
+}
