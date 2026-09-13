@@ -445,6 +445,14 @@ async function start () {
     }
   }
 
+  // Pear 3.4's native UDX hole-punch fallback. This exposes no HiveRelay
+  // storage surface and remains off unless the operator explicitly enables it.
+  if (args['pear-blind-relay'] === true || process.env.HIVERELAY_PEAR_BLIND_RELAY === '1' ||
+      process.env.HIVERELAY_PEAR_BLIND_RELAY === 'true') {
+    if (!cliOverrides.transports) cliOverrides.transports = {}
+    cliOverrides.transports.pearBlindRelay = true
+  }
+
   // ─── Reverse-proxy / self-hosting-platform UI auth ─────────────────
   // HIVERELAY_UI_EXPOSE_TOKEN=1 embeds the management token into the
   // served dashboard/wizard HTML so the browser UI can authenticate when
@@ -631,6 +639,11 @@ async function start () {
   node.on('holesail-ready', ({ connectionKey }) => {
     log.info({ connectionKey }, 'holesail tunnel active')
     console.log(`  Holesail:   ${connectionKey}`)
+  })
+
+  node.on('pear-blind-relay-ready', ({ publicKey }) => {
+    log.info({ publicKey }, 'Pear 3.4 blind relay active')
+    console.log(`  Pear relay: ${publicKey}`)
   })
 
   node.on('nat-check', ({ publicIp, reachable, action }) => {
@@ -1697,6 +1710,7 @@ Start Options:
   --tor-socks-port <n>           Tor SOCKS5 port (default: 9050)
   --tor-control-port <n>         Tor control port (default: 9051)
   --holesail                     Enable Holesail API tunnel (NAT traversal)
+  --pear-blind-relay             Enable Pear 3.4 native UDX relay fallback
   --quiet                       Suppress periodic status output
 
 Manage Options:

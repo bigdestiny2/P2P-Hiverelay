@@ -77,6 +77,10 @@ test('detects transports from runtime state', async (t) => {
       discovery: { dht: true, mdns: true }
     },
     dhtRelayWs: { running: true },
+    pearBlindRelay: {
+      running: true,
+      getStats: () => ({ publicKey: 'ybndrfg8ejkmcpqxot1uwisza345h769ybndrfg8ejkmcpqxot1u', maxSessions: 64 })
+    },
     torTransport: { running: true },
     holesailTransport: {}
   }
@@ -84,8 +88,14 @@ test('detects transports from runtime state', async (t) => {
   t.ok(doc.supported_transports.includes('hyperswarm'))
   t.ok(doc.supported_transports.includes('mdns'))
   t.ok(doc.supported_transports.includes('dht-relay-ws'))
+  t.ok(doc.supported_transports.includes('pear-blind-relay'))
   t.ok(doc.supported_transports.includes('tor'))
   t.ok(doc.supported_transports.includes('holesail'))
+  t.ok(doc.features.includes('pear-blind-relay-v1'))
+  t.is(doc.pear_blind_relay.protocol, 'blind-relay/1')
+  t.is(doc.pear_blind_relay.framed, true)
+  t.is(doc.pear_blind_relay.persistent_storage, false)
+  t.is(doc.pear_blind_relay.max_sessions, 64)
 })
 
 test('features list is sorted and reflects wired subsystems', async (t) => {

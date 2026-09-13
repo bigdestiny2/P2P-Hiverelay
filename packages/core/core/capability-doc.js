@@ -168,6 +168,7 @@ export function buildCapabilityDoc (opts = {}) {
   if (config.discovery && config.discovery.dht !== false) transports.push('hyperswarm')
   if (config.discovery && config.discovery.mdns) transports.push('mdns')
   if (relay && relay.dhtRelayWs && relay.dhtRelayWs.running) transports.push('dht-relay-ws')
+  if (relay && relay.pearBlindRelay && relay.pearBlindRelay.running) transports.push('pear-blind-relay')
   if (relay && relay.torTransport && relay.torTransport.running) transports.push('tor')
   if (relay && relay.holesailTransport) transports.push('holesail')
 
@@ -207,6 +208,7 @@ export function buildCapabilityDoc (opts = {}) {
   if (relay && relay._checkDelegation) features.push('delegation-certs')
   if (relay && relay._revokedCertSignatures) features.push('delegation-revocation')
   if (relay && relay.dhtRelayWs) features.push('dht-relay-ws')
+  if (relay && relay.pearBlindRelay && relay.pearBlindRelay.running) features.push('pear-blind-relay-v1')
   if (relay && relay.seedingRegistry) features.push('seeding-registry')
   if (relay && relay.alertManager) features.push('alerts')
   if (relay && relay.selfHeal) features.push('self-heal')
@@ -301,6 +303,10 @@ export function buildCapabilityDoc (opts = {}) {
   const indexRoom = (relay && typeof relay.indexRoom === 'string' && relay.indexRoom) ||
     (typeof opts.indexRoom === 'string' && opts.indexRoom) || null
   const catalogPublic = !!(relay && relay.appRegistry && config.enableAPI !== false)
+  const pearBlindRelay = relay && relay.pearBlindRelay && relay.pearBlindRelay.running &&
+      typeof relay.pearBlindRelay.getStats === 'function'
+    ? relay.pearBlindRelay.getStats()
+    : null
 
   const doc = {
     schemaVersion: SCHEMA_VERSION,
@@ -316,6 +322,17 @@ export function buildCapabilityDoc (opts = {}) {
     terms_of_service: opts.termsOfService || config.termsOfService || null,
     supported_transports: transports,
     features: features.sort(),
+    ...(pearBlindRelay
+      ? {
+          pear_blind_relay: {
+            protocol: 'blind-relay/1',
+            public_key: pearBlindRelay.publicKey,
+            framed: true,
+            persistent_storage: false,
+            max_sessions: pearBlindRelay.maxSessions
+          }
+        }
+      : {}),
     protocol_profile: buildProtocolProfile({
       config,
       relayKernelProfile,

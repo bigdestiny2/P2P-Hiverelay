@@ -184,7 +184,8 @@
   },
   "overrides": {
     "js-yaml": "^4.2.0",
-    "protobufjs": "^7.6.5"
+    "protobufjs": "^7.6.5",
+    "hyperdht": "6.33.2"
   },
   "optionalDependencies": {
     "bare-runtime-linux-x64": "1.28.7"

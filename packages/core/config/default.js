@@ -347,9 +347,17 @@ export default {
     tor: false,
     i2p: false,
     websocket: false,
-    holesail: false
+    holesail: false,
+    // Pear 3.4 native UDX fallback. Additive and operator-gated: this is a
+    // connection pipe, not storage admission or a native blind-peer server.
+    pearBlindRelay: false
   },
   wsPort: 8765,
+
+  pearBlindRelay: {
+    maxSessions: 1024,
+    keepAliveMs: 5000
+  },
 
   // Holesail API tunnel (for relays behind NAT)
   holesail: {

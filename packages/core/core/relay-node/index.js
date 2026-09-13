@@ -16,6 +16,7 @@ import { RelayAPI } from './api.js'
 import { DistributedDriveBridge } from './distributed-drive-bridge.js'
 import { WebSocketTransport } from '../../transports/websocket/index.js'
 import { DHTRelayWS } from '../../transports/dht-relay-ws/index.js'
+import { PearBlindRelayTransport } from '../../transports/pear-blind-relay/index.js'
 import { TorTransport } from '../../transports/tor/index.js'
 import { OnionPeerListener } from '../../transports/tor/peer-listener.js'
 import { completeOnionEnrollment } from '../../transports/tor/enrollment.js'
@@ -108,6 +109,7 @@ import { ResourceDiagnostics } from './resource-diagnostics.js'
 import { AppCatalogController } from './app-catalog-controller.js'
 import { AppCatalogDiskStageFactory } from './app-catalog-paged-stage.js'
 import { catalogRowToLegacyApp } from './app-catalog-source.js'
+import HyperDHT from 'hyperdht'
 
 // z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
 // Used to validate the index-room pointer published by the sidecar.
@@ -846,6 +848,7 @@ export class RelayNode extends EventEmitter {
     this.gatewayServer = null
     this.wsTransport = null
     this.dhtRelayWs = null
+    this.pearBlindRelay = null
     this.torTransport = null
     this.paymentManager = null
     this.settlementInterval = null
@@ -1930,6 +1933,32 @@ export class RelayNode extends EventEmitter {
         await this.dhtRelayWs.start()
       }
 
+      // Pear 3.4 native blind-relay protocol. This is an opt-in, in-memory
+      // UDX fallback only: it never bypasses HiveRelay storage admission.
+      if (this.config.transports && this.config.transports.pearBlindRelay) {
+        const relayCfg = this.config.pearBlindRelay || {}
+        const relaySeed = b4a.alloc(32)
+        sodium.crypto_generichash(relaySeed, b4a.concat([
+          this.swarm.keyPair.secretKey,
+          b4a.from('hiverelay/pear-3.4-blind-relay')
+        ]))
+        const relayKeyPair = HyperDHT.keyPair(relaySeed)
+        relaySeed.fill(0)
+        this.pearBlindRelay = new PearBlindRelayTransport({
+          dht: this.swarm.dht,
+          keyPair: relayKeyPair,
+          maxSessions: relayCfg.maxSessions,
+          keepAliveMs: relayCfg.keepAliveMs
+        })
+        this.pearBlindRelay.on('started', ({ publicKey }) => {
+          this.emit('pear-blind-relay-ready', { publicKey })
+        })
+        this.pearBlindRelay.on('refused', ({ reason }) => {
+          this.emit('pear-blind-relay-refused', { reason })
+        })
+        await this.pearBlindRelay.start()
+      }
+
       if (this.config.transports && this.config.transports.tor) {
         const torOpts = this.config.tor || {}
         // Peer protocol plane (docs/TOR-ONION-TRANSPORT.md §2): loopback
@@ -2685,6 +2714,7 @@ export class RelayNode extends EventEmitter {
       await stopRollbackOwner('torTransport', 'stop')
       await stopRollbackOwner('wsTransport', 'stop')
       await stopRollbackOwner('dhtRelayWs', 'stop')
+      await stopRollbackOwner('pearBlindRelay', 'stop')
       await stopRollbackOwner('gatewayServer', 'stop')
       await stopRollbackOwner('api', 'stop')
       await stopRollbackOwner('distributedDriveBridge', 'stop')
@@ -2803,6 +2833,7 @@ export class RelayNode extends EventEmitter {
       if (this.torTransport) { try { await this.torTransport.stop() } catch (_) {} this.torTransport = null }
       if (this.wsTransport) { try { await this.wsTransport.stop() } catch (_) {} this.wsTransport = null }
       if (this.dhtRelayWs) { try { await this.dhtRelayWs.stop() } catch (_) {} this.dhtRelayWs = null }
+      if (this.pearBlindRelay) { try { await this.pearBlindRelay.stop() } catch (_) {} this.pearBlindRelay = null }
       if (this.gatewayServer) { try { await this.gatewayServer.stop() } catch (_) {} this.gatewayServer = null }
       if (this.api) { try { await this.api.stop() } catch (_) {} this.api = null }
       if (this.metrics) { this.metrics.stop(); this.metrics = null }
@@ -3042,6 +3073,7 @@ export class RelayNode extends EventEmitter {
       tor: this.torTransport ? this.torTransport.getInfo() : null,
       holesail: this.holesailTransport ? this.holesailTransport.getInfo() : null,
       dhtRelayWs: this.dhtRelayWs ? this.dhtRelayWs.getStats() : null,
+      pearBlindRelay: this.pearBlindRelay ? this.pearBlindRelay.getStats() : null,
       reputation: {
         trackedRelays: this.reputation ? Object.keys(this.reputation.export()).length : 0
       },
@@ -5953,6 +5985,7 @@ export class RelayNode extends EventEmitter {
     await stopAsync('torTransport', 'torTransport.stop')
     await stopAsync('wsTransport', 'wsTransport.stop')
     await stopAsync('dhtRelayWs', 'dhtRelayWs.stop')
+    await stopAsync('pearBlindRelay', 'pearBlindRelay.stop')
     await stopAsync('gatewayServer', 'gatewayServer.stop')
     await stopAsync('api', 'api.stop')
     await stopAsync('appCatalogController', 'appCatalogController.stop')
@@ -6299,6 +6332,10 @@ export class RelayNode extends EventEmitter {
     if (this.dhtRelayWs) {
       try { await withTimeout(this.dhtRelayWs.stop(), timeout, 'dhtRelayWs.stop') } catch (_) {}
       this.dhtRelayWs = null
+    }
+    if (this.pearBlindRelay) {
+      try { await withTimeout(this.pearBlindRelay.stop(), timeout, 'pearBlindRelay.stop') } catch (_) {}
+      this.pearBlindRelay = null
     }
     if (this.gatewayServer) {
       try { await withTimeout(this.gatewayServer.stop(), timeout, 'gatewayServer.stop') } catch (_) {}
