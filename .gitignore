@@ -24,3 +24,4 @@ tmp-test-relay2/
 # orphan never trips the fleet updater's dirty-tree guard.
 packages/core/dashboard
 .t/
+.npm-cache/

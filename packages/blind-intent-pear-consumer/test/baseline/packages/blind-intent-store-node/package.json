@@ -1,0 +1,11 @@
+{
+  "name": "@hiverelay/blind-intent-store-node",
+  "version": "0.0.0-i01",
+  "description": "Private Node durable opaque ciphertext CAS backend for encrypted client intents",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.js" },
+  "files": ["index.js", "README.md"],
+  "engines": { "node": ">=22" },
+  "dependencies": { "fd-lock": "2.2.0" }
+}
