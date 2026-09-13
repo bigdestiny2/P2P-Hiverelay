@@ -299,7 +299,6 @@ test('Pear relay cancellation releases token expiry before reuse', async t => {
   t.is(f.transport.getStats().expired.pending, 1)
 })
 
-
 test('Pear relay shutdown deadline also bounds a pending listen', async t => {
   const f = await fixture(t, { stopTimeoutMs: 30 })
   await f.transport.stop()
