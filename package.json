@@ -196,7 +196,7 @@
     "socks": "^2.8.9"
   },
   "overrides": {
-    "js-yaml": "^4.2.0",
+    "js-yaml": "4.3.2",
     "protobufjs": "^7.6.5",
     "hyperdht": "6.34.0",
     "hypercore-storage": "3.3.1",
