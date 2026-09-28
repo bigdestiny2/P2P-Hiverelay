@@ -108,6 +108,7 @@ jobs:
       # the pinned dep keeps the runtime version reproducible — no global install.
       - run: echo "$GITHUB_WORKSPACE/node_modules/bare/bin" >> "$GITHUB_PATH"
       - run: npm run test:bare
+      - run: npm run test:autobee:bare
 
   audit:
     runs-on: ubuntu-latest

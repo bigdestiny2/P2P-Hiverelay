@@ -46,7 +46,7 @@ try {
 
   const installedPackage = readJson(join(installRoot, 'node_modules', 'p2p-hiverelay', 'package.json'))
   const installedDependency = readJson(join(installRoot, 'node_modules', 'hypercore-storage', 'package.json'))
-  const installedPatch = join(installRoot, 'node_modules', 'p2p-hiverelay', 'patches', 'hypercore-storage+3.2.0.patch')
+  const installedPatch = join(installRoot, 'node_modules', 'p2p-hiverelay', 'patches', 'hypercore-storage+3.3.1.patch')
   const installedSource = join(installRoot, 'node_modules', 'hypercore-storage', 'migrations', '0', 'index.js')
   const installedPatchSha256 = sha256(regularBytes(installedPatch, 'installed tracked patch'))
   const installedSourceSha256 = sha256(regularBytes(installedSource, 'installed migration source'))
@@ -54,8 +54,8 @@ try {
   if (installedPackage.scripts?.postinstall !== 'node platform/apply-hypercore-storage-migration-patch.js') {
     fatal('packed package lost the fail-closed postinstall contract')
   }
-  if (installedPackage.dependencies?.['hypercore-storage'] !== '3.2.0' || installedDependency.version !== '3.2.0') {
-    fatal('packed consumer did not install exact hypercore-storage 3.2.0')
+  if (installedPackage.dependencies?.['hypercore-storage'] !== '3.3.1' || installedDependency.version !== '3.3.1') {
+    fatal('packed consumer did not install exact hypercore-storage 3.3.1')
   }
   if (installedPatchSha256 !== PATCH_SHA256) fatal('packed tracked patch digest is incorrect')
   if (installedSourceSha256 !== PATCHED_SOURCE_SHA256) fatal('packed install did not produce the exact patched migration source')

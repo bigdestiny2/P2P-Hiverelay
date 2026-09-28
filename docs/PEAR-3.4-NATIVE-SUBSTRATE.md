@@ -30,7 +30,7 @@ socket ceiling plus pending-pair and active-link budgets, uses framed raw
 streams exactly like Pear 3.4, and advertises
 itself only while listening.
 
-The candidate also pins HyperDHT to `6.33.2` across the workspace, matching the
+The candidate also pins HyperDHT to `6.34.0` across the workspace, compatible with the
 Pear 3.4 release. That upstream line fixes relayed keepalive/direct-upgrade
 handoff, stale relay-socket cleanup, and LAN-shortcut fallback behavior.
 
@@ -85,7 +85,8 @@ A shutdown deadline rejects while retaining ownership and telemetry for a retry.
 Counters remain visible after stop, and socket/stream gauges track actual owners.
 
 The admission adapter uses the private message callbacks and pairing/link maps of
-exact `blind-relay@1.6.1` and `protomux@3.11.0`. The lock is unchanged. Startup
+exact `blind-relay@1.6.1` and `protomux@3.12.1`. The current dependency candidate is recorded in
+[the 2026-09-28 cohort](PEAR-COHORT-2026-09-28.md). Startup
 checks their structural contract, and the real-library regression test binds both
 resolved source files by SHA-256. Dependency changes require review of callback
 ordering, pre-allocation behavior and cleanup, plus the same wire-level tests;

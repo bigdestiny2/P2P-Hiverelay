@@ -5,11 +5,11 @@ import { lstatSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join } from 'path'
 import { fileURLToPath } from 'url'
 
-const VERSION = '3.2.0'
+const VERSION = '3.3.1'
 const PATCH_SHA256 = 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53'
 const ORIGINAL_SOURCE_SHA256 = 'f3ff8483854e93fd30e1db9e2228ac535bf29b057a978b1d157955cfd8bb4d7c'
 const PATCHED_SOURCE_SHA256 = '04153bfa8de76c0dc2a802936cbbeea6c22f20a1a79035cd65ed1957cc8ff2d5'
-const PATCH_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'patches', 'hypercore-storage+3.2.0.patch')
+const PATCH_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'patches', 'hypercore-storage+3.3.1.patch')
 
 const resolved = import.meta.resolve('hypercore-storage/migrations/0/index.js')
 if (!resolved.startsWith('file://')) fatal('hypercore-storage migration source did not resolve to a file')

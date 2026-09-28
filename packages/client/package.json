@@ -51,16 +51,16 @@
   "dependencies": {
     "@noble/hashes": "^2.2.0",
     "@noble/secp256k1": "^3.1.0",
-    "b4a": "^1.8.1",
-    "bare-crypto": "^1.15.3",
-    "bare-events": "^2.9.1",
-    "bare-fs": "^4.7.2",
-    "bare-path": "^3.0.1",
-    "corestore": "^7.11.0",
-    "hyperdrive": "^13.3.2",
-    "hyperswarm": "^4.17.0",
+    "b4a": "1.9.0",
+    "bare-crypto": "1.15.3",
+    "bare-events": "2.9.2",
+    "bare-fs": "4.8.2",
+    "bare-path": "3.1.2",
+    "corestore": "7.12.6",
+    "hyperdrive": "13.3.4",
+    "hyperswarm": "4.17.2",
     "p2p-hiverelay": "0.27.0-rc.1",
-    "sodium-universal": "^5.0.1"
+    "sodium-universal": "5.0.1"
   },
   "engines": {
     "node": ">=20.0.0"
