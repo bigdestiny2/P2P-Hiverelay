@@ -53,6 +53,22 @@ The two existing pointer fixes still produce
 The packaged Core postinstall verifies both version and hashes before patching;
 root postinstall calls that same verifier directly. The 3.2.0 root patch remains
 byte-exact frozen evidence, while the current installer targets 3.3.1 explicitly.
+The installer resolves the package directory and checks each lexical migration
+path component, rejecting symlinked directories or source files before patching.
+
+**Storage authority transition is a fleet rollout blocker.** Existing receipts
+and envelopes bound to `hypercore-storage@3.2.0` are refused by the 3.3.1
+candidate, even though their migration source and patch hashes are unchanged
+and the envelope still has version 1. A predecessor receipt fails with
+`CORESTORE_GENERATION_RECEIPT_INVALID`; re-ratification of its existing envelope
+fails with `CORESTORE_GENERATION_INVALID` and leaves its bytes unchanged.
+This is a deliberate fail-closed authority discontinuity, not transparent
+upgrade compatibility. Before any existing fleet root can use this candidate,
+a separately reviewed, versioned authority-transition procedure must bind the
+prior envelope/receipt and backup to the new dependency authority and prove
+restore/rollback behavior. No such procedure or fleet approval is supplied by
+this dependency lane. Do not edit old receipts, regenerate envelopes in place,
+broaden the validator, or remove old-writer fences to bypass this hold.
 
 Protomux 3.12.1 changes rejection handling for already closed channels and caps
 batched message boundaries. The private blind-relay admission adapter retains
@@ -74,6 +90,9 @@ writers, a fresh reader and cold reopen; they never open a HiveRelay data root.
 - `blind-core-upstream-hc11-v1` keeps its exact private HC11 cohort: dependency
   versions are part of `PROFILE_DIGEST`, hence corpus/proof bytes. Updating that
   cohort requires a versioned format authority and independent approval.
+  The preserved vectors and real proof/storage tests were exercised using the
+  **current root dependency cohort** only. They provide additive format
+  compatibility evidence, not standalone private-lock/runtime qualification.
 - Private intent Bare and Pear consumer cohorts retain their explicit native
   flag/runtime allowlists (Bare 1.31.0 and sidecar 0.5.2's Bare 1.29.4).
   New helper or sidecar versions do not establish ABI qualification.

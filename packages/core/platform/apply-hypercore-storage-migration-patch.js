@@ -2,7 +2,7 @@
 
 import { createHash } from 'crypto'
 import { lstatSync, readFileSync, writeFileSync } from 'fs'
-import { dirname, join } from 'path'
+import { dirname, join, relative, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 
 const VERSION = '3.3.1'
@@ -11,10 +11,21 @@ const ORIGINAL_SOURCE_SHA256 = 'f3ff8483854e93fd30e1db9e2228ac535bf29b057a978b1d
 const PATCHED_SOURCE_SHA256 = '04153bfa8de76c0dc2a802936cbbeea6c22f20a1a79035cd65ed1957cc8ff2d5'
 const PATCH_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'patches', 'hypercore-storage+3.3.1.patch')
 
-const resolved = import.meta.resolve('hypercore-storage/migrations/0/index.js')
-if (!resolved.startsWith('file://')) fatal('hypercore-storage migration source did not resolve to a file')
-const sourceFile = fileURLToPath(resolved)
-const packageFile = fileURLToPath(new URL('../../package.json', resolved))
+// Resolve the package directory, never the source file: Node canonicalizes a
+// source symlink before lstat could reject it. Inspect each lexical child first.
+const resolved = import.meta.resolve('hypercore-storage/')
+if (!resolved.startsWith('file://')) fatal('hypercore-storage package did not resolve to a file directory')
+const packageRoot = resolve(fileURLToPath(resolved))
+const packageFile = join(packageRoot, 'package.json')
+const sourceFile = join(packageRoot, 'migrations', '0', 'index.js')
+for (const directory of [packageRoot, join(packageRoot, 'migrations'), dirname(sourceFile)]) {
+  const stat = lstatSync(directory)
+  if (stat.isSymbolicLink() || !stat.isDirectory()) fatal('hypercore-storage migration path must use non-symlink directories')
+}
+const sourceRelative = relative(packageRoot, sourceFile)
+if (sourceRelative.startsWith(`..${sep}`) || sourceRelative === '..' || resolve(packageRoot, sourceRelative) !== sourceFile) {
+  fatal('hypercore-storage migration source must remain inside its package directory')
+}
 
 const patchBytes = regularBytes(PATCH_FILE, 'tracked hypercore-storage patch')
 if (sha256(patchBytes) !== PATCH_SHA256) fatal('packed hypercore-storage patch bytes do not match the accepted patch binding')
@@ -25,6 +36,7 @@ try {
 } catch (error) {
   fatal(`hypercore-storage package manifest is invalid: ${error?.message || String(error)}`)
 }
+if (dependencyManifest.name !== 'hypercore-storage') fatal('hypercore-storage package name does not match the accepted dependency')
 if (dependencyManifest.version !== VERSION) {
   fatal(`hypercore-storage must be exactly ${VERSION}; installed ${dependencyManifest.version || '<missing>'}`)
 }
