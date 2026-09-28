@@ -1195,7 +1195,9 @@ export class BlindCoreStorageEngine {
     return this.transactionStore.withLocks([`spend:${spendKey}`], async () => {
       this.#assertGenerationWritable()
       const current = this.mirrorAttempts.get(spendKey)
-      if (!current || current.state !== 'ACCEPTED') return mirrorAttemptView(current, true)
+      if (!current || (current.state !== 'ACCEPTED' && current.state !== 'RETRY_PENDING')) {
+        return mirrorAttemptView(current, true)
+      }
       await this.#appendMirrorTerminalLocked(current, reason)
       return mirrorAttemptView(this.mirrorAttempts.get(spendKey))
     })

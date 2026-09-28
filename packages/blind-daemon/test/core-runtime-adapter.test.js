@@ -1059,3 +1059,74 @@ test('CORE child stream applies real backpressure, abort cleanup, and the exact 
   await capped.service.close()
   await capped.plane.close()
 })
+
+for (const [scenario, activation, expectedState, terminalReason, options] of [
+  ['invalid head', () => ({ verified: false }), 'TERMINAL', 1],
+  ['invalid corpus size', () => ({ ...retryCorpus(), corpusByteLength: 0 }), 'TERMINAL', 4],
+  ['invalid corpus hash', () => ({ ...retryCorpus(), corpusHash: b4a.alloc(32) }), 'TERMINAL', 4],
+  ['corpus length mismatch', () => ({ ...retryCorpus(), corpusByteLength: 65 }), 'TERMINAL', 4],
+  ['corpus hash mismatch', () => ({ ...retryCorpus(), corpusHash: b4a.alloc(32, 0x55) }), 'TERMINAL', 4],
+  ['expired staging deadline', retryCorpus, 'TERMINAL', 4, { expired: true }],
+  ['cancelled staging', retryCorpus, 'RETRY_PENDING', null, { aborted: true }],
+  ['upstream unavailable', () => ({ verified: false, unavailable: true }), 'RETRY_PENDING', null]
+]) {
+  test(`CORE pending mirror handles ${scenario} durably without changing its signed acceptance`, async t => {
+    const root = await temporaryRoot(t, 'blind-core-terminal-retry')
+    const time = clock()
+    const keys = signingAuthority()
+    const descriptor = descriptorAuthority(keys.publicKey)
+    const upstream = upstreamAuthority()
+    upstream.setUnavailableAttempts(1)
+    let storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey))
+    t.teardown(async () => storage.close())
+    await storage.open()
+    let adapter = adapterHarness(storage, keys, descriptor, upstream)
+    const mirror = mirrorRequest(keys.publicKey)
+    const input = executionInput(OPERATION.CORE.MIRROR, mirror.request, mirror.requestCommitment,
+      admission(mirror.requestCommitment, 0xf3, 1))
+    const spendTag = input.preparedAdmission.spendTag
+    const accepted = await adapter.execute(input)
+    t.is(storage.inspectMirrorSpend(spendTag).state, 'RETRY_PENDING')
+    const before = storage.status().accounting.walSequence
+    const controller = new AbortController()
+    if (options?.aborted) controller.abort()
+    await storage.completeMirror(spendTag, activation(), {
+      signal: controller.signal,
+      ...(options?.expired ? { deadlineUnixMillis: time.millis - 1n } : {})
+    })
+    const observed = storage.inspectMirrorSpend(spendTag)
+    t.is(observed.state, expectedState)
+    if (terminalReason !== null) t.is(observed.terminalReason, terminalReason)
+    t.is(observed.retryCount, expectedState === 'TERMINAL' ? 1 : 2)
+    t.is(storage.status().accounting.walSequence, before + 1n, 'one durable transition')
+    t.is(storage.inspectCore(mirror.request.corePublicKey), null)
+    t.is(await blobCount(root), 0)
+    t.alike(await fs.readdir(path.join(root, 'staging')), [])
+    await storage.close()
+    storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey))
+    await storage.open()
+    t.is(storage.inspectMirrorSpend(spendTag).state, expectedState, 'restart retains the outcome')
+    adapter = adapterHarness(storage, keys, descriptor, upstream)
+    if (expectedState === 'TERMINAL') {
+      const replay = await adapter.execute(input)
+      t.alike(replay.body, accepted.body, 'replay retains the original signed acceptance')
+      t.is(upstream.activations(), 1, 'terminal retry never reaches upstream')
+      t.is(storage.status().accounting.walSequence, before + 1n, 'terminal replay is read-only')
+    } else {
+      upstream.setUnavailableAttempts(2)
+      const retry = await adapter.execute(input)
+      t.alike(retry.body, accepted.body)
+      t.is(storage.inspectMirrorSpend(spendTag).retryCount, 3)
+      const exhausted = await adapter.execute(input)
+      t.alike(exhausted.body, accepted.body)
+      t.is(storage.inspectMirrorSpend(spendTag).state, 'TERMINAL')
+      t.is(storage.inspectMirrorSpend(spendTag).terminalReason, 2, 'unavailability retains its retry bound')
+    }
+    await storage.close()
+  })
+}
+
+function retryCorpus () {
+  const corpus = b4a.alloc(64, 0x4f)
+  return { verified: true, corpus, corpusByteLength: corpus.byteLength, corpusHash: blake2b256(corpus) }
+}
