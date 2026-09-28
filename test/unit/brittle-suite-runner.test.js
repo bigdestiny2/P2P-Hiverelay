@@ -45,6 +45,9 @@ function harnessFixture (t) {
     writeFileSync(target, contents)
   }
   write('package.json', '{"type":"module"}')
+  // These subprocesses contain mock executables, not private native binaries.
+  // Exercise dispatch on every unit-test host without qualifying that host.
+  write('fixture-host.mjs', "Object.defineProperty(process, 'platform', { value: 'linux' }); Object.defineProperty(process, 'arch', { value: 'x64' })\n")
   for (const name of ['run-brittle-suite.mjs', 'integration-test-profiles.mjs']) {
     mkdirSync(path.join(directory, 'scripts'), { recursive: true })
     copyFileSync(path.resolve('scripts', name), path.join(directory, 'scripts', name))
@@ -81,7 +84,7 @@ function harnessFixture (t) {
     files,
     run (suite = 'integration', environment = {}, args = []) {
       writeFileSync(log, '')
-      const result = spawnSync(process.execPath, ['scripts/run-brittle-suite.mjs', suite, ...args], {
+      const result = spawnSync(process.execPath, ['--import', './fixture-host.mjs', 'scripts/run-brittle-suite.mjs', suite, ...args], {
         cwd: directory, encoding: 'utf8', env: { ...process.env, DISPATCH_LOG: log, ...environment }
       })
       return { ...result, dispatch: readFileSync(log, 'utf8').trim().split('\n').filter(Boolean).map(line => JSON.parse(line)) }
