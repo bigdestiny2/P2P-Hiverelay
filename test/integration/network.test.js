@@ -1,6 +1,7 @@
 import test from 'brittle'
 import createTestnet from '@hyperswarm/testnet'
 import Hyperdrive from 'hyperdrive'
+import hypercoreCrypto from 'hypercore-crypto'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import b4a from 'b4a'
 import path from 'path'
@@ -195,11 +196,14 @@ test('integration: seeding registry requests replicate across relays', async (t)
   await nodeA.swarm.flush()
   await nodeB.swarm.flush()
 
-  const appKey = randomBytes(32)
-  const appKeyHex = appKey.toString('hex')
+  const appKeyHex = await authorLocalDrive(nodeA, {
+    '/registry.txt': b4a.from('registry replication fixture')
+  })
+  const appKey = b4a.from(appKeyHex, 'hex')
+  const discoveryKey = hypercoreCrypto.discoveryKey(appKey)
   await nodeA.seedingRegistry.publishRequest({
     appKey,
-    discoveryKeys: [randomBytes(32)],
+    discoveryKeys: [discoveryKey],
     replicationFactor: 1,
     geoPreference: [],
     maxStorageBytes: TEST_MAX_STORAGE_BYTES,
@@ -217,6 +221,7 @@ test('integration: seeding registry requests replicate across relays', async (t)
   }, 20000, 250)
 
   t.is(replicated, true, 'node B indexed node A registry request')
+  t.alike(replicatedEntry?.discoveryKeys, [b4a.toString(discoveryKey, 'hex')], 'the actual app discovery key replicates exactly')
   t.is(replicatedEntry?.maxStorageBytes, TEST_MAX_STORAGE_BYTES, 'finite storage bound replicates exactly')
 })
 
