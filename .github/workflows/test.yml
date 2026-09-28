@@ -82,6 +82,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Private intent profiles retain their independent locks and Bare 1.31.0.
+      - run: npm run test:integration:prepare
       - run: npm run test:integration
         # Integration tests spin up real Hyperswarm testnets + Hypercore
         # replication. The previous 5-minute cap killed the suite mid-run

@@ -2,10 +2,10 @@
 
 import { readdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
-import { spawn } from 'node:child_process'
 import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
+import { npmCommand, partitionIntegrationTests, privateIntegrationRuntime, runTestChild } from './integration-test-profiles.mjs'
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const suite = process.argv[2]
@@ -35,22 +35,23 @@ if (!Object.hasOwn(suites, suite)) {
       .map((candidate) => path.join(root, candidate))
       .find((candidate) => existsSync(candidate))
     if (!runner) throw new Error('brittle node runner not found (brittle 4: brittle-node.js at package root; brittle 3: bin/node.js)')
-    const relativeFiles = files.map(relativeTestPath)
-    const child = spawn(process.execPath, [runner, '--timeout', '120000', ...relativeFiles], {
-      cwd: root,
-      stdio: 'inherit',
-      windowsHide: true
-    })
-    const result = await new Promise((resolve, reject) => {
-      child.once('error', reject)
-      child.once('exit', (code, signal) => resolve({ code, signal }))
-    })
-    if (result.signal) {
-      process.stderr.write(`brittle ${suite} suite terminated by ${result.signal}\n`)
-      process.exitCode = 1
-    } else {
-      process.exitCode = result.code ?? 1
+    const { privateProfiles, ordinary } = partitionIntegrationTests(files.map(relativeTestPath))
+    const executable = privateProfiles.length ? privateIntegrationRuntime(root) : null
+    let code = 0
+    // Each private test is executed exactly once by its existing own-lock harness.
+    // Separate processes keep Node test and private Brittle out of root Brittle.
+    for (const profile of privateProfiles) {
+      process.stdout.write(`running private integration profile: ${profile.file}\n`)
+      const command = npmCommand(['test', '--prefix', path.join(root, profile.directory), '--workspaces=false'])
+      code = await runTestChild(command.executable, command.args, {
+        cwd: root, env: { ...process.env, BARE_EXECUTABLE: executable }
+      })
+      if (code !== 0) break
     }
+    if (code === 0 && ordinary.length) {
+      code = await runTestChild(process.execPath, [runner, '--timeout', '120000', ...ordinary], { cwd: root })
+    }
+    process.exitCode = code
   }
 }
 

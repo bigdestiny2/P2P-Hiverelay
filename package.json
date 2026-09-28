@@ -120,6 +120,7 @@
     "verify:blind-ecosystem-migration": "node scripts/verify-blind-ecosystem-migration.mjs --json",
     "verify:blind-ecosystem-migration:strict-cutovers": "node scripts/verify-blind-ecosystem-migration.mjs --json --require-cutovers",
     "verify:blind-ecosystem-migration:strict-removals": "node scripts/verify-blind-ecosystem-migration.mjs --json --require-removals",
+    "test:integration:prepare": "node scripts/prepare-integration-tests.mjs",
     "test:integration": "node scripts/run-brittle-suite.mjs integration",
     "test:public-hive-gateway:live": "brittle-node test/integration/public-hive-gateway-live.test.js",
     "test:public-hive-gateway:soak": "HIVERELAY_PUBLIC_GATEWAY_SOAK_REQUESTS=1000 brittle test/integration/public-hive-gateway-live.test.js",
