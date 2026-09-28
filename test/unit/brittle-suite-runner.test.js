@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, copyFileSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import process from 'node:process'
@@ -36,9 +36,8 @@ function compareNames (left, right) {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
-
 function harnessFixture (t) {
-  const directory = mkdtempSync(path.join(tmpdir(), 'hiverelay-suite-runner-'))
+  const directory = realpathSync(mkdtempSync(path.join(tmpdir(), 'hiverelay-suite-runner-')))
   t.teardown(() => rmSync(directory, { recursive: true, force: true }))
   const write = (name, contents) => {
     const target = path.join(directory, name)
@@ -72,12 +71,14 @@ function harnessFixture (t) {
   for (const [name, label] of [['blind-intent-store-bare', 'bare'], ['blind-intent-pear-consumer', 'pear']]) {
     write(`packages/${name}/package.json`, JSON.stringify({ private: true, scripts: { test: 'node test/run.mjs' } }))
     write(`packages/${name}/package-lock.json`, '{}')
-    write(`packages/${name}/test/run.mjs`, `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.DISPATCH_LOG, JSON.stringify({ profile: '${label}', executable: process.env.BARE_EXECUTABLE }) + '\\n'); process.exit(process.env.FAIL_PROFILE === '${label}' ? 7 : 0)\n`)
+    write(`packages/${name}/test/run.mjs`, `import { appendFileSync } from 'node:fs'; appendFileSync(process.env.DISPATCH_LOG, JSON.stringify({ profile: '${label}', executable: process.env.BARE_EXECUTABLE, consumer: process.env.PEAR_CONSUMER_PACKAGE }) + '\\n'); process.exit(process.env.FAIL_PROFILE === '${label}' ? 7 : 0)\n`)
   }
-  write('node_modules/brittle/brittle-node.js', `const fs = require('node:fs'); fs.appendFileSync(process.env.DISPATCH_LOG, JSON.stringify({ profile: 'ordinary', files: process.argv.slice(4) }) + '\\n'); if (process.env.ORDINARY_SIGNAL) process.kill(process.pid, 'SIGTERM'); else process.exit(Number(process.env.ORDINARY_EXIT || 0))\n`)
+  write('node_modules/brittle/brittle-node.js', 'const fs = require(\'node:fs\'); fs.appendFileSync(process.env.DISPATCH_LOG, JSON.stringify({ profile: \'ordinary\', files: process.argv.slice(4) }) + \'\\n\'); if (process.env.ORDINARY_SIGNAL) process.kill(process.pid, \'SIGTERM\'); else process.exit(Number(process.env.ORDINARY_EXIT || 0))\n')
   const log = path.join(directory, 'dispatch.jsonl')
   return {
-    directory, executable, files,
+    directory,
+    executable,
+    files,
     run (suite = 'integration', environment = {}, args = []) {
       writeFileSync(log, '')
       const result = spawnSync(process.execPath, ['scripts/run-brittle-suite.mjs', suite, ...args], {
@@ -90,12 +91,13 @@ function harnessFixture (t) {
 
 test('suite dispatch executes every discovered file once through its owning harness', t => {
   const fixture = harnessFixture(t)
-  const result = fixture.run()
+  const result = fixture.run('integration', { BARE_EXECUTABLE: '/ambient/bare', PEAR_CONSUMER_PACKAGE: '/ambient/pear' })
   t.is(result.status, 0, result.stderr)
   t.alike(result.dispatch.map(item => item.profile), ['bare', 'pear', 'ordinary'])
   t.alike(result.dispatch.at(-1).files, ['test/integration/alpha.test.js', 'test/integration/zz-finalize.test.js'])
   t.is(result.dispatch[0].executable, fixture.executable, 'uses dedicated qualified executable')
   t.is(result.dispatch[1].executable, fixture.executable)
+  t.is(result.dispatch[1].consumer, path.join(fixture.directory, 'packages/blind-intent-pear-consumer'), 'pins candidate consumer instead of ambient override')
   const listed = fixture.run('integration', {}, ['--list'])
   t.is(listed.status, 0)
   t.alike(listed.stdout.trim().split('\n'), fixture.files.filter(file => file.startsWith('test/integration/')))

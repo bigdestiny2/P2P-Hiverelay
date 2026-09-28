@@ -44,7 +44,12 @@ if (!Object.hasOwn(suites, suite)) {
       process.stdout.write(`running private integration profile: ${profile.file}\n`)
       const command = npmCommand(['test', '--prefix', path.join(root, profile.directory), '--workspaces=false'])
       code = await runTestChild(command.executable, command.args, {
-        cwd: root, env: { ...process.env, BARE_EXECUTABLE: executable }
+        cwd: root,
+        env: {
+          ...process.env,
+          BARE_EXECUTABLE: executable,
+          PEAR_CONSUMER_PACKAGE: path.join(root, 'packages/blind-intent-pear-consumer')
+        }
       })
       if (code !== 0) break
     }
