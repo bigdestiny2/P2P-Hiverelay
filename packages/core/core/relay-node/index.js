@@ -1873,6 +1873,9 @@ export class RelayNode extends EventEmitter {
       let reseedEntries = []
       try {
         reseedEntries = await this.appLifecycle.loadRegistry()
+        // Boot-path tombstone gate: before anything replays the registry
+        // (and before the registry scan can see the row as "held").
+        reseedEntries = await this._dropTombstonedEntries(reseedEntries)
       } catch (err) {
         if (!isAbortError(err)) this.emit('reseed-error', { error: err })
       }
@@ -2904,6 +2907,54 @@ export class RelayNode extends EventEmitter {
     if (this._tombstoneSkipLog.size >= TOMBSTONE_SKIP_LOG_MAX) this._tombstoneSkipLog.clear()
     this._tombstoneSkipLog.set(logKey, now)
     this.emit('tombstone-skipped', { appKey: appKeyHex, kind, source })
+  }
+
+  /**
+   * Boot-path tombstone gate (v0.24.7). A registry row that also carries a
+   * tombstone is an app this relay removed that a ≤0.24.6 acceptance path
+   * re-adopted without clearing the tombstone (open-mode replay, catalog
+   * sync, an approval) — or one an offline removal left behind. Replaying
+   * it would re-seed a removed app in every accept mode, review included,
+   * so the removal wins: the row is forgotten instead of re-seeded and its
+   * cores are purged (tracked, in the background), finishing what the
+   * tombstone recorded. Sacred rows (archive tier, custody-bound, live paid
+   * lease) keep seeding: durability promises outrank a stale tombstone.
+   *
+   * @param {Array} entries  rows from appLifecycle.loadRegistry()
+   * @returns {Promise<Array>} the rows still to re-seed
+   */
+  async _dropTombstonedEntries (entries) {
+    if (!Array.isArray(entries) || !this.appRegistry) return entries
+    const keep = []
+    for (const row of entries) {
+      const appKey = row && row.appKey
+      const tomb = appKey ? this._tombstoneOf(appKey) : null
+      if (!tomb) {
+        keep.push(row)
+        continue
+      }
+      try {
+        assertPurgable(this.appRegistry.get(appKey) || row)
+      } catch {
+        keep.push(row)
+        continue
+      }
+      this.appRegistry.delete(appKey, { persist: false })
+      try {
+        await this.appRegistry.persistDelete(appKey, { throwOnError: true })
+      } catch (err) {
+        // The tombstone still stands and the row is not replayed; the next
+        // boot retries the durable drop.
+        this.emit('reseed-error', { appKey, error: err })
+      }
+      this._noteTombstoneSkip(appKey, tomb.kind, 'boot-reseed')
+      if (this.store) {
+        this._trackFireAndForget(purgeDriveCores(this.store, appKey).catch((err) => {
+          this.emit('eviction-failed', { appKey, error: err.code || err.message })
+        }))
+      }
+    }
+    return keep
   }
 
   /**

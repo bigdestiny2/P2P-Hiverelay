@@ -41,6 +41,15 @@ The packages are versioned in lockstep.
   `RelayNode.seedApp` also refuses a tombstoned app with `TOMBSTONED` as a
   backstop. A refused app is logged as `skipped tombstoned app`, at most once
   per app per source each hour.
+- **Boot no longer replays a registry row that carries a tombstone, in any
+  accept mode.** A ≤0.24.6 path could re-adopt a removed app without clearing
+  its tombstone, leaving it both held and tombstoned. On the next boot the
+  local-registry reseed brought it back with no accept-mode check: in review
+  mode the app was queued as pending, then seeded about 18 s later anyway. Now
+  boot honors the tombstone: it forgets the row instead of re-seeding it and
+  purges its cores in the background (logged as `skipped tombstoned app`,
+  source `boot-reseed`). Rows the sacred guard protects (archive tier,
+  custody-bound, live paid lease) keep seeding.
 
 ### Changed
 - **Tombstones have a kind.**
@@ -67,6 +76,11 @@ The packages are versioned in lockstep.
   entries load as eviction tombstones, and eviction tombstones are still
   written in that form. Operator tombstones are written as
   `{ appKey: { at, kind: "operator" } }`.
+- **On first boot, v0.24.7 drops and purges every held app that also carries a
+  tombstone.** That includes the apps re-adopted after the 2026-10-27
+  removal. If you deliberately re-seeded or approved a previously removed app
+  on v0.24.6 (which did not lift its tombstone), `POST /seed` it again after
+  upgrading.
 - Existing tombstones (including those from the 2026-10-27 removal) load as
   eviction tombstones. That still blocks open-mode re-adoption, but under-floor
   repair can lift them. To make a removal sticky, re-run

@@ -342,3 +342,61 @@ test('repair: an eviction tombstone at or above the floor is kept', async (t) =>
   t.is(sent.seeded.length, 0, 'not seeded')
   t.ok(node.appRegistry.isEvicted(shed), 'tombstone kept')
 })
+
+// ─── Boot replay of the local registry ──────────────────────────────
+
+function bootStore (purged) {
+  return {
+    session () { throw new Error('no drive session in this test') },
+    get (key) {
+      return {
+        ready: async () => {},
+        purge: async () => { purged.push(b4a.toString(key, 'hex')) },
+        close: async () => {}
+      }
+    }
+  }
+}
+
+test('boot: a held row that also carries a tombstone is dropped and purged, not re-seeded (any accept mode)', async (t) => {
+  const { node, sent } = makeNode(t, { acceptMode: 'review' })
+  const purged = []
+  node.store = bootStore(purged)
+  const readopted = hexKey() // removed, then re-adopted by a ≤0.24.6 path
+  const kept = hexKey()
+  for (const k of [readopted, kept]) node.appRegistry.apps.set(k, { appKey: k, durability: 0 })
+  node.appRegistry.markEvicted(readopted, 1000) // legacy row from the v0.24.6 removal
+
+  const entries = await node._dropTombstonedEntries([{ appKey: readopted }, { appKey: kept }])
+  await new Promise(resolve => setImmediate(resolve))
+
+  t.alike(entries.map(e => e.appKey), [kept], 'only the untombstoned row is replayed')
+  t.absent(node.appRegistry.has(readopted), 'tombstoned row forgotten')
+  t.ok(node.appRegistry.has(kept), 'other rows untouched')
+  t.ok(node.appRegistry.isEvicted(readopted), 'tombstone still stands')
+  t.alike(purged, [readopted], 'its cores are purged')
+  t.alike(sent.skipped.map(s => [s.appKey, s.source]), [[readopted, 'boot-reseed']], 'skip logged')
+
+  // Now unheld, the registry scan's gates apply: no pending, no seed.
+  node.seedingRegistry = fakeSeedingRegistry([registryRequest(readopted)], { myPubkeyHex: hexKey() })
+  await node._scanRegistry()
+  t.is(node._pendingRequests.size, 0, 'not queued for approval')
+  t.is(sent.seeded.length, 0, 'not seeded')
+})
+
+test('boot: sacred rows keep seeding even with a stale tombstone', async (t) => {
+  const { node } = makeNode(t)
+  const purged = []
+  node.store = bootStore(purged)
+  const archive = hexKey()
+  const custody = hexKey()
+  node.appRegistry.apps.set(archive, { appKey: archive, durability: 1 })
+  node.appRegistry.apps.set(custody, { appKey: custody, durability: 0, custodyIntentId: 'intent-1' })
+  node.appRegistry.markEvicted(archive, 1000)
+  node.appRegistry.markEvicted(custody, 1000, { kind: TOMBSTONE_OPERATOR })
+
+  const entries = await node._dropTombstonedEntries([{ appKey: archive }, { appKey: custody }])
+  t.is(entries.length, 2, 'both replayed')
+  t.ok(node.appRegistry.has(archive) && node.appRegistry.has(custody), 'rows kept')
+  t.is(purged.length, 0, 'nothing purged')
+})
