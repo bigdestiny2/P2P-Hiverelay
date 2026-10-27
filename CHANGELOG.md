@@ -6,6 +6,53 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.24.6] — 2026-10-27
+
+### Fixed
+- **The 0.24 line can pass canary rollout evidence and be promoted to
+  stable.** The fleet's rollout checker counts a canary relay as healthy only
+  when its updater control plane can deliver the next channel change:
+  - the installed `/usr/local/bin/hiverelay-updater` matches the release's
+    `fleet/updater-launcher.sh`;
+  - the installed systemd units match the release;
+  - `/etc/hiverelay-updater.conf` binds the channel, relay name and repo;
+  - the timer is enabled.
+
+  No 0.24.x release shipped that launcher, so no 0.24.x release could be
+  promoted to stable. v0.24.5 ran healthy on its canary but stayed red. v0.24.6
+  ships the launcher unchanged from main, and `fleet/install-updater.sh` now
+  installs it instead of a frozen copy of `updater.sh`.
+
+  On every tick the launcher proves the checkout's `fleet/updater.sh` is the
+  blob at `HEAD` and that `HEAD` carries a trusted, signed, annotated release
+  tag, and only then runs that updater. A dirty checkout or an unsigned branch
+  can no longer replace the updater that runs as root, and the updater code now
+  advances with each signed release.
+
+### Changed
+- **`install-updater.sh` takes `<channel> <relay-name>`.** It writes `CHANNEL`,
+  `RELAY_NAME` and `REPO_DIR` to `/etc/hiverelay-updater.conf`.
+- **It also creates the root-only `/etc/hiverelay/hiverelay-updater.env`**
+  (directory `0700`, file `0600`), which the launcher requires. A safe existing
+  file is preserved; an unsafe file or a symlink is quarantined. The installer
+  supports `DESTDIR` installs and requires Node.js ≥ 20.
+- **Two parts of main's installer are left out:** the public-gateway quarantine
+  helper and the identity check against the tracked `fleet/relays.json`. The
+  0.24 line has no public-gateway cohort and no current tracked inventory.
+- `updater.sh` and the systemd units are unchanged from v0.24.5.
+
+### Upgrade notes
+- Updating to v0.24.6 through the updater does **not** replace
+  `/usr/local/bin/hiverelay-updater`. A box keeps its old updater copy until an
+  operator runs `sudo bash fleet/install-updater.sh <channel> <relay-name>` from
+  the v0.24.6 checkout.
+- Canary boxes need that re-run, with their timer enabled, before canary rollout
+  evidence can pass.
+- The launcher runs with a fixed `PATH` (`/usr/sbin:/usr/bin:/sbin:/bin`), so
+  `node`, `npm`, `git`, `ssh-keygen` and `python3` must live in those
+  directories.
+- Includes all of v0.24.5.
+
 ## [0.24.5] — 2026-10-27
 
 ### Fixed

@@ -31,8 +31,9 @@ fleet/channels.json   ──(raw.githubusercontent)──▶  each box's updater
 | `channels.json` | **The control plane.** Target tag per channel. Edit + commit to release. |
 | `relays.json` | Inventory: the boxes, their channel, SSH key, tailnet name. |
 | `updater.sh` | The agent. Resolve target → checkout → restart → health-gate → rollback. |
+| `updater-launcher.sh` | Installed as `/usr/local/bin/hiverelay-updater`. Proves the checkout's `updater.sh` is the blob at `HEAD` and that `HEAD` carries a trusted signed release tag, then runs it. |
 | `hiverelay-updater.{service,timer}` | systemd units (every 15 min, 5 min jitter). |
-| `install-updater.sh` | Install the agent on a box, set its channel. |
+| `install-updater.sh` | Install the launcher and units on a box; bind its channel, relay name and repo; provision the root-only `/etc/hiverelay/hiverelay-updater.env`. |
 | `tailscale-enroll.sh` | Put a box on the tailnet (break-glass plane). |
 | `fleet-status.sh` | One-shot health table from your workstation. |
 | `scripts/check-fleet-rollout.mjs` | Retry until a channel has checked out the release tag SHA and `/health` is green. |
@@ -137,9 +138,9 @@ name automatically.
 ```bash
 # On each box (repo already cloned at ~/hiverelay):
 sudo bash fleet/tailscale-enroll.sh
-sudo bash fleet/install-updater.sh canary   # utah
-sudo bash fleet/install-updater.sh stable   # the other four
-hiverelay-updater --dry-run                  # confirm the decision, no changes
+sudo bash fleet/install-updater.sh canary <relay-name>   # canary boxes
+sudo bash fleet/install-updater.sh stable <relay-name>   # every other box
+systemctl start hiverelay-updater.service                # one run through the launcher
 ```
 
 `channels.json` ships with `stable: v0.20.1` and `canary: v0.20.1`, so
