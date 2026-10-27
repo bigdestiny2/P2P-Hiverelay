@@ -628,6 +628,18 @@ export class BareRelay extends EventEmitter {
       }
     }
 
+    // Tombstoned (evicted or operator-removed) — refused in every mode,
+    // same contract as the Node RelayNode handler.
+    const tomb = this.appRegistry && !this.appRegistry.has(appKeyHex) && typeof this.appRegistry.getTombstone === 'function'
+      ? this.appRegistry.getTombstone(appKeyHex)
+      : null
+    if (tomb) {
+      log.warn('  seed rejected (tombstoned:' + tomb.kind + '):', appKeyHex.slice(0, 16))
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'tombstoned:' + tomb.kind })
+      deny('tombstoned:' + tomb.kind, 'this app was removed from this relay')
+      return
+    }
+
     if (availableBytes < (msg.maxStorageBytes || 0)) {
       log.warn('  seed rejected (insufficient storage):', appKeyHex.slice(0, 16))
       this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })

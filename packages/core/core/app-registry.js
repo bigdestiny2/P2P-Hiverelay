@@ -28,6 +28,15 @@ const BEE_CORE_NAME = 'app-registry-v1'
 const EVICTED_FILE = 'evicted.json'
 const MAX_TOMBSTONES = 5000
 
+// Tombstone kinds (v0.24.7). An eviction tombstone records a drive this relay
+// shed on its own (disk-pressure sweep, superseded-version reclaim): the
+// replication-repair gate may clear it once the network falls under the
+// replica floor. An operator tombstone records a deliberate operator removal
+// (manual purge): it is sticky — only an explicit operator action clears it,
+// never the under-floor rule (a fleet-wide removal is always under the floor).
+export const TOMBSTONE_EVICTION = 'eviction'
+export const TOMBSTONE_OPERATOR = 'operator'
+
 /**
  * Collapse already-built catalog rows: for `app`-type rows sharing an appId,
  * keep only the highest version. The same latest-version-wins rule catalog()
@@ -95,13 +104,14 @@ export class AppRegistry extends EventEmitter {
     this._saveIdleWaiters = []
     this._saveDebounceTimer = null
 
-    // Eviction tombstones (Phase A, 2026-06-11): appKey hex -> evictedAt.
+    // Eviction tombstones (Phase A, 2026-06-11): appKey hex -> { at, kind }.
     // Lives in a JSON sidecar (atomic tmp+rename), deliberately OUTSIDE
     // the bee — the bee's rows hydrate as apps on load, and a tombstone
-    // must do the opposite: prevent boot-replay and replication-repair
-    // from resurrecting an entry this relay deliberately shed, unless the
-    // network later falls under the replica floor (the repair gate calls
-    // clearEvicted then).
+    // must do the opposite: stop every acceptance path (boot replay,
+    // seed requests, catalog sync, replication repair) from resurrecting
+    // an entry this relay deliberately shed. Eviction tombstones yield
+    // when the network later falls under the replica floor (the repair
+    // gate calls clearEvicted then); operator tombstones never do.
     this.evicted = new Map()
     this._evictedPath = storagePath ? join(storagePath, EVICTED_FILE) : null
     this._evictedPersistTail = Promise.resolve()
@@ -109,24 +119,58 @@ export class AppRegistry extends EventEmitter {
 
   // ─── Eviction tombstones ──────────────────────────────────────────
 
-  markEvicted (appKeyHex, at = Date.now()) {
-    this.evicted.set(appKeyHex, at)
-    // Bound the set: oldest tombstones fall off — by then the entry is
-    // either long gone network-wide or legitimately re-adoptable.
+  /**
+   * @param {string} appKeyHex
+   * @param {number} [at]
+   * @param {object} [opts]
+   * @param {string} [opts.kind] TOMBSTONE_EVICTION (default) | TOMBSTONE_OPERATOR
+   */
+  markEvicted (appKeyHex, at = Date.now(), opts = {}) {
+    let kind = opts.kind === TOMBSTONE_OPERATOR ? TOMBSTONE_OPERATOR : TOMBSTONE_EVICTION
+    // An operator removal is never downgraded by a later automatic shed.
+    const prev = this.evicted.get(appKeyHex)
+    if (prev && prev.kind === TOMBSTONE_OPERATOR) kind = TOMBSTONE_OPERATOR
+    this.evicted.set(appKeyHex, { at, kind })
+    // Bound the set: oldest eviction tombstones fall off — by then the entry
+    // is either long gone network-wide or legitimately re-adoptable.
+    // Operator tombstones are exempt: only the operator lifts a removal.
     if (this.evicted.size > MAX_TOMBSTONES) {
-      const oldest = [...this.evicted.entries()].sort((a, b) => a[1] - b[1])
-      for (let i = 0; i < oldest.length - MAX_TOMBSTONES; i++) this.evicted.delete(oldest[i][0])
+      const oldest = [...this.evicted.entries()]
+        .filter(([, t]) => t.kind === TOMBSTONE_EVICTION)
+        .sort((a, b) => a[1].at - b[1].at)
+      const excess = Math.min(oldest.length, this.evicted.size - MAX_TOMBSTONES)
+      for (let i = 0; i < excess; i++) this.evicted.delete(oldest[i][0])
     }
     this._persistEvicted()
+  }
+
+  /** Operator removal tombstone (sticky; see TOMBSTONE_OPERATOR). */
+  markRemoved (appKeyHex, at = Date.now()) {
+    this.markEvicted(appKeyHex, at, { kind: TOMBSTONE_OPERATOR })
   }
 
   isEvicted (appKeyHex) {
     return this.evicted.has(appKeyHex)
   }
 
-  clearEvicted (appKeyHex) {
-    if (!this.evicted.delete(appKeyHex)) return
+  /** @returns {{at: number, kind: string}|null} */
+  getTombstone (appKeyHex) {
+    const t = this.evicted.get(appKeyHex)
+    return t ? { at: t.at, kind: t.kind } : null
+  }
+
+  /**
+   * Lift a tombstone. Eviction tombstones clear freely (the under-floor
+   * repair rule); an operator tombstone clears only with `{ operator: true }`
+   * — an explicit operator action. Returns true when a tombstone was removed.
+   */
+  clearEvicted (appKeyHex, opts = {}) {
+    const t = this.evicted.get(appKeyHex)
+    if (!t) return false
+    if (t.kind === TOMBSTONE_OPERATOR && opts.operator !== true) return false
+    this.evicted.delete(appKeyHex)
     this._persistEvicted()
+    return true
   }
 
   _persistEvicted () {
@@ -139,8 +183,15 @@ export class AppRegistry extends EventEmitter {
 
   async _writeEvicted () {
     const tmp = this._evictedPath + '.tmp'
+    // Sidecar format: { appKey: value }. An eviction tombstone keeps the
+    // pre-0.24.7 value (a bare evictedAt timestamp), so a downgraded relay
+    // still honors it; an operator tombstone is { at, kind: 'operator' }.
+    const out = {}
+    for (const [k, t] of this.evicted) {
+      out[k] = t.kind === TOMBSTONE_EVICTION ? t.at : { at: t.at, kind: t.kind }
+    }
     try {
-      await writeFile(tmp, JSON.stringify(Object.fromEntries(this.evicted)))
+      await writeFile(tmp, JSON.stringify(out))
       await rename(tmp, this._evictedPath)
     } catch (err) {
       try { await unlink(tmp) } catch {}
@@ -153,7 +204,13 @@ export class AppRegistry extends EventEmitter {
     try {
       const data = JSON.parse(await readFile(this._evictedPath, 'utf8'))
       for (const [k, v] of Object.entries(data)) {
-        if (typeof v === 'number') this.evicted.set(k, v)
+        if (typeof v === 'number') {
+          // Legacy (≤0.24.6) entry: every tombstone was an eviction.
+          this.evicted.set(k, { at: v, kind: TOMBSTONE_EVICTION })
+        } else if (v && typeof v === 'object' && typeof v.at === 'number') {
+          const kind = v.kind === TOMBSTONE_OPERATOR ? TOMBSTONE_OPERATOR : TOMBSTONE_EVICTION
+          this.evicted.set(k, { at: v.at, kind })
+        }
       }
     } catch {
       // Missing/corrupt sidecar -> no tombstones. Worst case the relay
