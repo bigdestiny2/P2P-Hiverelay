@@ -526,8 +526,22 @@ async function start () {
     log.info({ appKey: (appKey || '').slice(0, 12), freedBytes: bytes, remainingReplicas, target, diskUsedPct: usedPct }, 'evicted over-replicated app')
   })
 
-  node.on('eviction-failed', ({ appKey, error }) => {
-    log.warn({ appKey: (appKey || '').slice(0, 12), error }, 'eviction failed')
+  node.on('eviction-failed', ({ appKey, coreKey, error }) => {
+    log.warn({ appKey: (appKey || '').slice(0, 12), coreKey: coreKey ? coreKey.slice(0, 12) : undefined, error }, 'eviction failed')
+  })
+
+  // Bare-core pins (v0.24.5): LRU shedding under disk pressure, and pins
+  // dropped + purged for outgrowing their seed-request budget.
+  node.on('core-eviction', ({ coreKey, freedBytes, lastServedAt, pinnedAt, usedPct }) => {
+    log.info({ coreKey: (coreKey || '').slice(0, 12), freedBytes, lastServedAt, pinnedAt, diskUsedPct: usedPct }, 'evicted least-recently-served bare core')
+  })
+
+  node.on('seed-core-bound-exceeded', ({ publicKeyHex, group, reason, byteLength, maxStorageBytes, groupBytes, freedBytes }) => {
+    log.warn({ coreKey: (publicKeyHex || '').slice(0, 12), appKey: group ? group.slice(0, 12) : undefined, reason, byteLength, maxStorageBytes, groupBytes, freedBytes }, 'bare core exceeded its storage bound — unseeded and purged')
+  })
+
+  node.on('seed-core-purge-error', ({ publicKeyHex, error }) => {
+    log.warn({ coreKey: (publicKeyHex || '').slice(0, 12), error }, 'bare core purge failed')
   })
 
   node.on('acceptance-reconciled', ({ backfilled }) => {

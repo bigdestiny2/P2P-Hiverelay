@@ -258,8 +258,19 @@ export class AppLifecycle extends EventEmitter {
       // else: placeholder entry from load() — fall through.
     }
 
-    // Evict oldest app if storage capacity would be exceeded
-    if (node.config.enableEviction !== false && node.seeder.totalBytesStored >= node.config.maxStorageBytes && this.seededApps.size > 0) {
+    // Evict oldest app if storage capacity would be exceeded.
+    //
+    // v0.24.5: this legacy guard must not read seeder.totalBytesStored any
+    // more. That counter is now the real, restart-safe size of BARE-core pins
+    // (it restarted at ~0 before, which is why this path never fired at
+    // boot). Evicting an app frees none of those bytes, so on a pin-heavy
+    // relay over its cap every seedApp — boot replay included — would evict
+    // another app without ever getting under the cap. Pins are bounded at
+    // admission (RelayNode._onSeedRequest) and shed by EvictionManager's
+    // bare-core pass; the only seeder bytes this guard could ever relieve are
+    // non-pin bytes, of which there are none.
+    const seederBytesAppEvictionFrees = 0
+    if (node.config.enableEviction !== false && seederBytesAppEvictionFrees >= node.config.maxStorageBytes && this.seededApps.size > 0) {
       const TWENTY_FOUR_HOURS = 24 * 60 * 60 * 1000
       let oldestKey = null
       let oldestTime = Infinity
