@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-monorepo",
-  "version": "0.24.4",
+  "version": "0.24.5",
   "description": "Monorepo root for HiveRelay (Core + Services + Client)",
   "private": true,
   "type": "module",
@@ -101,7 +101,7 @@
     ]
   },
   "dependencies": {
-    "ip-address": "^10.3.1",
+    "ip-address": "^10.7.4",
     "socks": "^2.8.9"
   },
   "overrides": {

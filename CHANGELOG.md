@@ -6,6 +6,80 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.24.5] — 2026-10-27
+
+### Fixed
+- **Bare-core pins from seed requests are bounded, counted, purged and
+  evictable.** v0.24.4 pinned every core a seed request lists in
+  `discoveryKeys` (for example per-video blob cores) and handled those pins badly:
+  - no byte bound or capacity check;
+  - bytes counted only through in-process `download` events, so the count
+    dropped to about 0 after a restart and the cap never bound;
+  - files never deleted on unseed;
+  - pins never considered by disk-pressure eviction.
+
+  Relays reported a fraction of what they held, and disks filled to 100%
+  (ENOSPC crash loops). Now:
+  - **Admission.** The request's `maxStorageBytes` is one budget for the app
+    and all its extra cores, reserved once against the relay's real free
+    capacity: the cap minus stored and reserved bytes, and free disk minus a
+    reserve. A request that doesn't fit is denied with the existing
+    `insufficient-storage` wire reason, so the publisher can move on to another
+    relay. Extra cores in a request with no declared budget get the SDK's
+    1 GiB default. The core that pushes a request past its budget is dropped
+    and purged.
+  - **Accounting.** Each pinned core's bytes are measured from storage on
+    `ready()` (`core.info({ storage: true })`), grow with downloads and are
+    re-measured each announce tick. `_storageUsedBytes()` includes pins and
+    outstanding reservations, so the cap binds after a restart.
+  - **Unseed purges.** Unseeding a core deletes its files (`core.purge()`).
+    Writable cores and node-protected cores (the catalog bee, live app drives)
+    are never purged.
+  - **Eviction** (opt-in, same `eviction` config). After the app pass, bare
+    pins are shed least-recently-served first. Never shed: pins younger than
+    `minAgeMs`, the catalog bee, the relay's own writable cores, operator
+    (`/seed-core`) pins and empty pins. Each eviction is logged with
+    `freedBytes`.
+
+### Changed
+- New config `seedDiskReserveBytes`: free disk that seed admission always keeps
+  in reserve. Defaults to `(100 − diskCriticalThreshold)%` of the volume, 5%
+  with the current defaults.
+- The app's own key and discovery key, which the standard SDK lists in
+  `discoveryKeys`, are no longer pinned as empty bare cores.
+- A relay with no capacity left now denies app-only requests that declare no
+  budget.
+- The legacy "evict the oldest app when seeder bytes ≥ cap" check is gone:
+  seeder bytes now hold real pin bytes, which evicting apps cannot free.
+
+### Security
+- **Production dependency advisories cleared so the release gate runs.** Both
+  were published after the v0.24.4 gate ran, and `npm audit --omit=dev` (the
+  gate's first step) exited non-zero because of them. It now reports zero
+  vulnerabilities.
+  - `ip-address` `^10.3.1` → `^10.7.4` (resolves 10.7.5) closes five moderate
+    SSRF / trust-boundary and input-length DoS issues: GHSA-rpw4-54j3-4h4q,
+    GHSA-2vr4-cq9g-pvrc, GHSA-j6r3-76f7-8jcv, GHSA-h3mg-xc3c-68pw,
+    GHSA-rxp7-6hxx-x8q5.
+  - `@grpc/grpc-js` `^1.14.4` → `^1.14.5` in `p2p-hiverelay` (resolves 1.14.6)
+    closes two high-severity issues, GHSA-m9gg-hp2v-232j and
+    GHSA-f596-whhp-79r4.
+
+### Upgrade notes
+- `seeded-cores.json` stays at `schemaVersion: 1`. `cores` keeps plain key
+  strings, so rolling back to v0.24.3/v0.24.4 restores every pin. A new
+  parallel `pins` array carries the bounds.
+- Entries written before v0.24.5 load as `legacy` pins: they are bounded by the
+  relay cap and count as old for eviction. A legacy pin larger than the cap is
+  dropped and purged at first boot.
+- A reservation for a core whose size never becomes known (publisher offline)
+  is held until the core is unseeded; there is no expiry yet.
+- Operators who switched relays to `acceptMode: review` and
+  `replicationRepairEnabled: false` to contain unbounded pins can restore their
+  previous settings after upgrading.
+- `fleet/channels.json` is untouched: `stable` and `hold` stay on `v0.24.3`
+  until a separate, independently authorized promotion.
+
 ## [0.24.4] — 2026-08-06
 
 ### Fixed
