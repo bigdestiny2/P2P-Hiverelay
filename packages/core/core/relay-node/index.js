@@ -65,7 +65,7 @@ import { ServiceRegistry, ServiceProtocol } from '../services/index.js'
 // Core no longer hardcodes Services constructors.
 import { PluginLoader, expandServiceDeps } from '../plugin-loader.js'
 import { Router } from '../router/index.js'
-import { AppRegistry } from '../app-registry.js'
+import { AppRegistry, TOMBSTONE_EVICTION, TOMBSTONE_OPERATOR } from '../app-registry.js'
 import {
   RELAY_DISCOVERY_TOPIC,
   FOUNDATION_TOPIC,
@@ -101,6 +101,12 @@ import { buildCapacityStatus } from './capacity-status.js'
 // z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
 // Used to validate the index-room pointer published by the sidecar.
 const Z32_KEY_RE = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/
+
+// 'tombstone-skipped' fires at most once per app per acceptance source in
+// this window: the registry scan (60s) and peer catalogs (30s/peer) keep
+// re-offering removed apps, and a fleet-wide removal is hundreds of keys.
+const TOMBSTONE_SKIP_LOG_INTERVAL_MS = 60 * 60 * 1000
+const TOMBSTONE_SKIP_LOG_MAX = 10_000
 
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
@@ -2004,6 +2010,9 @@ export class RelayNode extends EventEmitter {
               }
 
               if (this.appRegistry.has(appKey)) continue
+              // Tombstoned: skip on every branch below (mirror and
+              // follow-anchored included) without spending the cap.
+              if (this._tombstoneGate(appKey, 'remote-catalog')) continue
               const appBound = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
               if (appBound === null) {
                 this.emit('catalog-sync-rejected', { appKey, source: 'remote-catalog', reason: 'storage-bound-invalid' })
@@ -2196,6 +2205,11 @@ export class RelayNode extends EventEmitter {
               })
               if (!built.ok) {
                 return { ok: false, error: built.error }
+              }
+              // Refuse a tombstoned app before the lease gate can take payment.
+              const tomb = this._isHeld(built.appKey) ? null : this._tombstoneGate(built.appKey, 'publish-channel')
+              if (tomb) {
+                return { ok: false, error: 'TOMBSTONED: app was removed from this relay (' + tomb.kind + ' tombstone)' }
               }
               // Paid pin-lease gate — SAME shared module as the HTTP route, so
               // this publisher-signed transport can't be a free back door.
@@ -2824,6 +2838,20 @@ export class RelayNode extends EventEmitter {
   }
 
   async seedApp (appKeyHex, opts = {}) {
+    // Tombstone backstop (v0.24.7 port). The automatic acceptance paths check
+    // _tombstoneGate first and refuse with their own reason; this catches
+    // any caller that doesn't (HTTPS /api/v1/seed, auto-heal). Operator seed
+    // paths call clearTombstone() before this.
+    if (!this._isHeld(appKeyHex)) {
+      const tomb = this._tombstoneGate(appKeyHex, 'seed-app')
+      if (tomb) {
+        const err = new Error('TOMBSTONED: app was removed from this relay (' + tomb.kind +
+          ' tombstone); only an explicit operator seed re-adopts it')
+        err.code = 'TOMBSTONED'
+        err.tombstone = tomb.kind
+        throw err
+      }
+    }
     return this.appLifecycle.seedApp(appKeyHex, opts)
   }
 
@@ -3595,6 +3623,64 @@ export class RelayNode extends EventEmitter {
   }
 
   /**
+   * Tombstone gate (v0.24.7 port), checked by every automatic acceptance
+   * path BEFORE the accept-mode decision: an app this relay shed (eviction)
+   * or the operator removed (manual purge) is never re-adopted from a seed
+   * request, the persistent seed-request log, a peer catalog, federation or
+   * cold-start priming — in any accept mode. Before, only the repair gate
+   * looked, so open mode re-seeded removed apps within seconds.
+   *
+   * Returns the tombstone ({ at, kind }) or null. Emits 'tombstone-skipped'
+   * { appKey, kind, source }, rate-limited per app + source.
+   */
+  _tombstoneGate (appKeyHex, source) {
+    const tomb = this._tombstoneOf(appKeyHex)
+    if (tomb) this._noteTombstoneSkip(appKeyHex, tomb.kind, source)
+    return tomb
+  }
+
+  _tombstoneOf (appKeyHex) {
+    const reg = this.appRegistry
+    if (!reg || typeof appKeyHex !== 'string') return null
+    if (typeof reg.getTombstone === 'function') return reg.getTombstone(appKeyHex)
+    if (typeof reg.isEvicted === 'function' && reg.isEvicted(appKeyHex)) {
+      return { at: null, kind: TOMBSTONE_EVICTION }
+    }
+    return null
+  }
+
+  _noteTombstoneSkip (appKeyHex, kind, source) {
+    if (!this._tombstoneSkipLog) this._tombstoneSkipLog = new Map()
+    const logKey = source + ':' + appKeyHex.toLowerCase()
+    const now = Date.now()
+    const last = this._tombstoneSkipLog.get(logKey)
+    if (last !== undefined && now - last < TOMBSTONE_SKIP_LOG_INTERVAL_MS) return
+    if (this._tombstoneSkipLog.size >= TOMBSTONE_SKIP_LOG_MAX) this._tombstoneSkipLog.clear()
+    this._tombstoneSkipLog.set(logKey, now)
+    this.emit('tombstone-skipped', { appKey: appKeyHex, kind, source })
+  }
+
+  _isHeld (appKeyHex) {
+    return typeof appKeyHex === 'string' && this.seededApps.has(appKeyHex.toLowerCase())
+  }
+
+  /**
+   * Explicit operator action: lift any tombstone on this app, an operator
+   * removal included. Called by the operator seed paths (POST /seed,
+   * approveRequest, CLI --seed) — never by an automatic path. Resolves the
+   * lifted tombstone's kind, or null when there was none.
+   */
+  async clearTombstone (appKeyHex) {
+    const reg = this.appRegistry
+    if (!reg || typeof reg.clearEvicted !== 'function') return null
+    const tomb = this._tombstoneOf(appKeyHex)
+    if (!tomb) return null
+    if (!(await reg.clearEvicted(appKeyHex, { operator: true }))) return null
+    this.emit('tombstone-cleared', { appKey: appKeyHex, kind: tomb.kind })
+    return tomb.kind
+  }
+
+  /**
    * Verify a delegation cert attached to a registry seed request.
    *
    * Checks (all four must pass):
@@ -3791,6 +3877,13 @@ export class RelayNode extends EventEmitter {
       // Skip if we already seed this app
       if (this.seededApps.has(req.appKey)) continue
 
+      // Tombstoned (evicted or operator-removed): never replay it from the
+      // persistent log — neither the "accepted before, re-seed after
+      // restart" branch below (unseed leaves our acceptance record in the
+      // log) nor a fresh accept/queue. Under-floor re-adoption of eviction
+      // tombstones is the repair monitor's call alone.
+      if (this._tombstoneGate(req.appKey, 'registry-scan')) continue
+
       // Check if we already accepted this one
       const relays = await this.seedingRegistry.getRelaysForApp(req.appKey)
       const alreadyAccepted = relays.some(r => r.relayPubkey === myPubkey)
@@ -3929,6 +4022,8 @@ export class RelayNode extends EventEmitter {
     const requestBound = positiveStorageBound(req.maxStorageBytes)
     if (requestBound === null) throw new Error('Pending request has no valid maxStorageBytes bound')
 
+    // Approving is an explicit operator action: it lifts any tombstone.
+    await this.clearTombstone(appKeyHex)
     await this.seedApp(appKeyHex, {
       publisherPubkey: typeof req.publisherPubkey === 'string' ? req.publisherPubkey : null,
       type: req.contentType || req.type || 'app',
@@ -3983,6 +4078,19 @@ export class RelayNode extends EventEmitter {
       if (channel && this._seedProtocol) {
         this._seedProtocol.denySeedRequest(channel, msg.appKey, reasonCode, detail)
       }
+    }
+
+    // Tombstone gate before admission and accept-mode: a removed app is
+    // refused in every mode (open used to re-seed it at once).
+    const tomb = this.appRegistry && !this.appRegistry.has(appKeyHex)
+      ? this._tombstoneGate(appKeyHex, 'seed-request')
+      : null
+    if (tomb) {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'tombstoned:' + tomb.kind })
+      deny('tombstoned:' + tomb.kind, tomb.kind === TOMBSTONE_OPERATOR
+        ? 'the operator removed this app from this relay'
+        : 'this relay evicted this app; it re-adopts only if the network falls under its replica floor')
+      return
     }
 
     const maxStorageBytes = positiveStorageBound(msg.maxStorageBytes)
@@ -4223,16 +4331,27 @@ export class RelayNode extends EventEmitter {
   async manualPurge (appKeyHex) {
     if (!this.appRegistry) throw new Error('registry not ready')
     const entry = this.appRegistry.get(appKeyHex)
+    if (!entry) {
+      // Not held: nothing to unseed or purge, but the removal still stands.
+      // Record the operator tombstone so no acceptance path adopts the key
+      // later — how an operator makes a pre-0.24.7 tombstone (which loads as
+      // an eviction tombstone) sticky, or blocks a key before it arrives.
+      const key = appKeyHex.toLowerCase()
+      await this.appRegistry.markEvicted(key, Date.now(), { kind: TOMBSTONE_OPERATOR })
+      this.emit('eviction', { appKey: key, bytes: 0, manual: true, method: 'tombstone-only' })
+      return { appKey: key, bytes: 0, method: 'tombstone-only' }
+    }
     assertPurgable(entry)
     let bytes = this.storageAccounting ? this.storageAccounting.getBytes(appKeyHex) : null
     if (bytes == null && this.storageAccounting) {
       try { bytes = await this.storageAccounting.measure(appKeyHex) } catch { bytes = null }
     }
     const evictedAt = Date.now()
-    await this.unseedApp(appKeyHex, { evictedAt })
+    await this.unseedApp(appKeyHex, { evictedAt, evictionKind: TOMBSTONE_OPERATOR })
     // Tombstone before purging — even if the purge fails on a corrupt
-    // core, repair must not re-adopt what the operator just removed.
-    await this.appRegistry.markEvicted(appKeyHex, evictedAt)
+    // core, nothing may re-adopt what the operator just removed. An
+    // operator tombstone: sticky, even when the network is under floor.
+    await this.appRegistry.markEvicted(appKeyHex, evictedAt, { kind: TOMBSTONE_OPERATOR })
     const method = await purgeDriveCores(this.store, appKeyHex)
     this.emit('eviction', { appKey: appKeyHex, bytes: bytes || 0, manual: true, method })
     return { appKey: appKeyHex, bytes: bytes || 0, method }
@@ -4987,6 +5106,7 @@ export class RelayNode extends EventEmitter {
           if (e.anchored !== true) { skipped++; continue }
           const appKey = e.appKey || e.driveKey
           if (!appKey || this.appRegistry.has(appKey)) { skipped++; continue }
+          if (this._tombstoneGate(appKey, 'cold-start')) { skipped++; continue }
           const appBound = positiveStorageBound(e.maxStorageBytes ?? e.maxStorage)
           if (appBound === null) { skipped++; continue }
           try {
@@ -5167,6 +5287,28 @@ export class RelayNode extends EventEmitter {
       effectivePublisher = delegationCheck.primaryPubkey
     }
 
+    // Tombstone gate, ahead of the accept-mode decision so review mode
+    // doesn't re-queue a shed entry either.
+    //  - Eviction tombstone (Phase A): re-adopted only when the network has
+    //    actually fallen under the replica floor — otherwise every sweep
+    //    would be undone by the next repair pass and the fleet re-converges
+    //    on union-of-catalogs.
+    //  - Operator tombstone (v0.24.7): sticky. A fleet-wide operator removal
+    //    leaves no replicas, so it is always under the floor; the floor rule
+    //    must never undo it. Only an explicit operator seed lifts it.
+    const floor = Math.max(1, Number(this.config.targetReplicaFloor) || 1)
+    const alreadySeeding = this.seededApps.has(request.appKey)
+    const tomb = alreadySeeding ? null : this._tombstoneOf(request.appKey)
+    if (tomb) {
+      if (tomb.kind === TOMBSTONE_OPERATOR) {
+        this._noteTombstoneSkip(request.appKey, tomb.kind, 'replication-repair')
+        return false
+      }
+      if (status.current >= floor) return false
+      // Genuinely under floor — we're needed again. Lifted just before the
+      // re-adopt below (seedApp refuses tombstoned apps).
+    }
+
     const decision = this._decideAcceptance({
       ...request,
       publisherPubkey: effectivePublisher
@@ -5186,18 +5328,7 @@ export class RelayNode extends EventEmitter {
 
     const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
     const alreadyAccepted = status.relays.some(r => r.relayPubkey === myPubkey)
-    const alreadySeeding = this.seededApps.has(request.appKey)
     if (alreadyAccepted && alreadySeeding) return false
-
-    // Eviction tombstone gate (Phase A): an entry this relay deliberately
-    // shed is only re-adopted when the network has actually fallen under
-    // the replica floor — otherwise every sweep would be undone by the
-    // next repair pass and the fleet re-converges on union-of-catalogs.
-    const floor = Math.max(1, Number(this.config.targetReplicaFloor) || 1)
-    if (this.appRegistry && typeof this.appRegistry.isEvicted === 'function' && this.appRegistry.isEvicted(request.appKey)) {
-      if (status.current >= floor) return false
-      await this.appRegistry.clearEvicted(request.appKey) // genuinely under floor — we're needed again
-    }
 
     // Storage guard on REAL bytes (Phase 0), via _storageUsedBytes() — the
     // measured on-disk corestore footprint. seeder.totalBytesStored only counts
@@ -5224,6 +5355,7 @@ export class RelayNode extends EventEmitter {
       return false
     }
 
+    if (tomb) await this.appRegistry.clearEvicted(request.appKey)
     try {
       await this.seedApp(request.appKey, {
         publisherPubkey: effectivePublisher,

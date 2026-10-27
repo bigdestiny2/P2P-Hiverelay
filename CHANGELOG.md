@@ -11,6 +11,62 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+### Fixed
+- **A relay in open accept mode no longer re-adopts apps the operator
+  removed.** This ports the v0.24.7 fix. After a fleet-wide manual purge
+  (unseed + purge + tombstone), switching back to open mode re-seeded the
+  removed apps within minutes. Every acceptance path except one ignored the
+  tombstone:
+  - the registry scan, which replays the persistent seed-request log. Unseeding
+    leaves this relay's acceptance record in the log, so the "accepted before"
+    branch re-seeded the app in every accept mode;
+  - live seed requests;
+  - remote catalog sync.
+
+  The one path that did check, replication repair, cleared the tombstone
+  whenever the network was under `targetReplicaFloor`. A fleet-wide removal is
+  always under the floor.
+
+  Now every automatic path refuses a tombstoned app before the accept-mode
+  decision, in every accept mode:
+  - registry scan;
+  - live seed requests, which get a new terminal wire deny,
+    `tombstoned:<kind>`;
+  - remote catalog sync;
+  - federation follow;
+  - cold-start priming;
+  - auto-heal;
+  - replication repair;
+  - the publish channel and HTTPS `/api/v1/seed`. The HTTPS route returns 409
+    before the lease gate;
+  - the Bare relay.
+
+  `RelayNode.seedApp` also refuses a tombstoned app with `TOMBSTONED` as a
+  backstop. Refusals are logged as `skipped tombstoned app`, rate-limited per
+  app and source.
+
+### Changed
+- **Tombstones have a kind.**
+  - **Operator** tombstones are written by `manualPurge` and by an executed
+    superseded-version reclaim. They are sticky: the under-floor repair rule
+    never clears them, and the tombstone bound never drops them.
+  - **Eviction** tombstones are written by the disk-pressure sweep. They keep
+    the under-floor re-adoption.
+- **Only an explicit operator action lifts an operator tombstone:** an
+  authenticated `POST /seed`, approving a pending request, or `--seed`.
+- **`manualPurge` accepts a key this relay does not hold.** It writes an
+  operator tombstone (`method: "tombstone-only"`) instead of failing with
+  `NOT_FOUND`.
+- **Bee journal:** an operator tombstone is a `storageDeleted` row with
+  `evictionKind: "operator"`. Rows without that field are eviction tombstones,
+  as before.
+- **`evicted.json` sidecar:** the parser accepts the v0.24.7 format. That is
+  a bare timestamp for an eviction row (legacy and current) or
+  `{ at, kind: "operator" }` for an operator row. Both the strict loader and
+  the sidecar → Bee migration accept it, so a v0.24.7 relay with operator
+  tombstones can upgrade to this line without failing with
+  `evicted-row-invalid` / `evicted-migration-row-invalid`.
+
 ## [0.26.0-rc.8] — 2026-08-28
 
 StartOS 0.4 package-provenance repair candidate. RC7 built and signed the

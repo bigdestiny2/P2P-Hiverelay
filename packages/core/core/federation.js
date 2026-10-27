@@ -469,6 +469,8 @@ export class Federation extends EventEmitter {
       if (this.node?.seededApps?.has?.(appKey)) continue
       if (this.node?.appRegistry?.has?.(appKey)) continue
       if (this.node?._pendingRequests?.has?.(appKey)) continue
+      // Tombstoned (evicted or operator-removed) apps are never re-followed.
+      if (this.node?._tombstoneGate?.(appKey, 'federation')) continue
 
       // Funnel through the same accept-mode used for registry seed requests.
       const synthRequest = {

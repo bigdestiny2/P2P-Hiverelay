@@ -11,6 +11,7 @@ import { isAbortError } from './lifecycle-scope.js'
 import { verifyShareBundleForRelay } from '../pvss.js'
 import { positiveStorageBound } from '../../config/storage-cap.js'
 import { STORAGE_SHARE_BUNDLE_MAX_BYTES } from '../../config/storage-admission-authority.js'
+import { TOMBSTONE_OPERATOR } from '../app-registry.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -281,14 +282,15 @@ export class AppLifecycle extends EventEmitter {
         if (typeof node.appRegistry.persistDelete === 'function') {
           await node.appRegistry.persistDelete(owner.appKey, {
             throwOnError: true,
-            evictedAt: owner.evictedAt
+            evictedAt: owner.evictedAt,
+            evictionKind: owner.evictionKind
           })
         } else {
           await node.appRegistry.flush({ throwOnError: true })
         }
         if (Number.isSafeInteger(owner.evictedAt) && owner.evictedAt > 0 &&
             typeof node.appRegistry.markEvicted === 'function') {
-          await node.appRegistry.markEvicted(owner.appKey, owner.evictedAt)
+          await node.appRegistry.markEvicted(owner.appKey, owner.evictedAt, { kind: owner.evictionKind })
         }
       } catch (err) {
         if (!node.appRegistry.has(owner.appKey)) {
@@ -2624,6 +2626,7 @@ export class AppLifecycle extends EventEmitter {
         rejected: false,
         forget,
         evictedAt: opts.evictedAt,
+        evictionKind: opts.evictionKind,
         bridgeRegistered: !!node.distributedDriveBridge
       }
       this._retiringDrives.set(appKeyHex, owner)
@@ -2634,6 +2637,8 @@ export class AppLifecycle extends EventEmitter {
           ? Math.max(owner.evictedAt, opts.evictedAt)
           : opts.evictedAt
       }
+      // An operator removal joining an in-flight retirement wins the kind.
+      if (opts.evictionKind === TOMBSTONE_OPERATOR) owner.evictionKind = TOMBSTONE_OPERATOR
     }
     await this._settleRetiringDrive(owner)
   }

@@ -463,6 +463,8 @@ export const seedAcceptEncoding = {
  *   'bad-signature'                         — signature present but invalid
  *   'insufficient-storage'                  — relay capacity exhausted
  *   'accept-mode:<mode>'                    — relay policy refused (allowlist/closed)
+ *   'tombstoned:<kind>'                     — app was removed from this relay
+ *                                             (kind 'operator' or 'eviction')
  *   'delegation:<reason>'                   — delegation cert chain failed
  *   'queued-for-review'                     — NOT terminal: pending operator approval
  *

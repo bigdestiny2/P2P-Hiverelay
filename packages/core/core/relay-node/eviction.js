@@ -38,6 +38,7 @@ import Hyperdrive from 'hyperdrive'
 import { raceTimeout } from './storage-accounting.js'
 import { buildDedupReport } from './dedup-report.js'
 import { compareVersions } from '../constants.js'
+import { TOMBSTONE_OPERATOR } from '../app-registry.js'
 
 const DEFAULTS = {
   enabled: false,
@@ -305,7 +306,7 @@ export class EvictionManager extends EventEmitter {
         // forever) — same guard the sweep uses. Bail BEFORE markEvicted/purge
         // so the tombstone-before-purge ordering is preserved.
         const unseeded = await raceTimeout(
-          Promise.resolve().then(() => this.deps.unseed(s.appKey, { evictedAt: now })).then(() => true),
+          Promise.resolve().then(() => this.deps.unseed(s.appKey, { evictedAt: now, evictionKind: TOMBSTONE_OPERATOR })).then(() => true),
           this.config.unseedTimeoutMs,
           TIMEOUT
         )
@@ -314,7 +315,11 @@ export class EvictionManager extends EventEmitter {
           continue
         }
         try {
-          await this.deps.appRegistry.markEvicted(s.appKey, now)
+          // Operator tombstone: an executed reclaim is an explicit operator
+          // removal. A fleet-wide reclaim leaves the stale version under the
+          // replica floor everywhere, so an eviction tombstone would let
+          // repair resurrect it.
+          await this.deps.appRegistry.markEvicted(s.appKey, now, { kind: TOMBSTONE_OPERATOR })
           await this._purgeDrive(s.appKey)
           reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
           freedBytes += (s.bytes || 0)
