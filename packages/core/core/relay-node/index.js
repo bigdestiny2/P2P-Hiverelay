@@ -87,6 +87,19 @@ import { hashHex } from '../custody-signing.js'
 // Used to validate the index-room pointer published by the sidecar.
 const Z32_KEY_RE = /^[ybndrfg8ejkmcpqxot1uwisza345h769]{52}$/
 
+// Seed-request budget assumed when a request carrying extra bare cores
+// declares maxStorageBytes 0 — the client SDK's own fallback default (1 GiB),
+// so an undeclared budget can never mean an unbounded pin.
+const DEFAULT_SEED_REQUEST_BUDGET_BYTES = 1024 * 1024 * 1024
+const HYPERCORE_DISCOVERY_NS = b4a.from('hypercore')
+
+// hypercore-crypto's discoveryKey(): keyed BLAKE2b of the public key.
+function discoveryKeyHex (publicKey) {
+  const out = b4a.alloc(32)
+  sodium.crypto_generichash(out, HYPERCORE_DISCOVERY_NS, publicKey)
+  return b4a.toString(out, 'hex')
+}
+
 const DEFAULT_CONFIG = {
   productProfile: 'relay-core',
   storage: './storage',
@@ -213,6 +226,11 @@ const DEFAULT_CONFIG = {
   dhtFlushTimeoutMs: 1000,
   shutdownTimeoutMs: 10_000,
   enableEviction: true,
+  // Physical-disk headroom seed admission never books into (v0.24.5). null =
+  // derive from the disk monitor's critical threshold: (100 - criticalPct)% of
+  // the volume, i.e. 5% by default — never accept a pin that projects the
+  // disk into 'critical'. Set bytes to override.
+  seedDiskReserveBytes: null,
   // Bound the in-memory pending-approval queue. With `acceptMode: 'review'` an
   // attacker (or a misconfigured peer) could otherwise pile up unbounded entries
   // in `_pendingRequests` until the operator approves/rejects them. When the cap
@@ -1039,8 +1057,16 @@ export class RelayNode extends EventEmitter {
           announceInterval: this.config.announceInterval,
           // Persist bare-core pins (catalog bees + any /seed-core) so they
           // survive a restart. Null storage (tests) -> persistence is a no-op.
-          storagePath: this.config.storage ? join(this.config.storage, 'seeded-cores.json') : null
+          storagePath: this.config.storage ? join(this.config.storage, 'seeded-cores.json') : null,
+          // v0.24.5 bounded pins: capacity is relay-wide (cap + disk reserve),
+          // a seed request's budget also covers its app drive, and the catalog
+          // bee / live app-drive cores are never purged or evicted.
+          getAvailableBytes: () => this._availableStorageBytes(),
+          groupBaseBytes: (appKeyHex) => (this.storageAccounting && this.storageAccounting.getBytes(appKeyHex)) || 0,
+          isProtectedCore: (keyHex) => this._isProtectedBareCore(keyHex)
         })
+        this.seeder.on('core-bound-exceeded', (e) => this.emit('seed-core-bound-exceeded', e))
+        this.seeder.on('purge-error', (e) => this.emit('seed-core-purge-error', e))
         startups.push(this.seeder.start())
 
         if (this.config.enableDistributedDriveBridge !== false) {
@@ -1967,6 +1993,11 @@ export class RelayNode extends EventEmitter {
       // An 'error' emit with no listener crashes the process — route to
       // a logged event instead (v0.15.6).
       this.storageAccounting.on('error', (err) => this.emit('accounting-error', { error: err && err.message }))
+      // Bare-core pins (v0.24.5): the seeder's byte count is measured from
+      // storage and tracks downloads live, so it covers pinned video the
+      // per-entry drive walk never sees and growth between du walks.
+      // getSummary() takes max(du, entries + sources) — no double count.
+      this.storageAccounting.registerExternalSource('seeder-pins', () => (this.seeder && this.seeder.totalBytesStored) || 0)
       this.storageAccounting.start()
 
       // Over-replication eviction (Phase A). Off by default — sheds
@@ -2627,9 +2658,19 @@ export class RelayNode extends EventEmitter {
       myPubkeyHex: b4a.toString(this.swarm.keyPair.publicKey, 'hex'),
       unseed: (appKeyHex) => this.unseedApp(appKeyHex),
       getStorageCap: () => this.config.maxStorageBytes || 0,
-      store: this.store
+      store: this.store,
+      // Bare-core pins (v0.24.5): the app pass above never sees them, so a
+      // disk full of pinned video shed nothing. LRU pass over seeder pins.
+      bareCores: {
+        list: () => (this.seeder && typeof this.seeder.listPins === 'function' ? this.seeder.listPins() : []),
+        evict: (keyHex) => (this.seeder && typeof this.seeder.evictCore === 'function'
+          ? this.seeder.evictCore(keyHex)
+          : { evicted: false, skipped: 'no-seeder', freedBytes: 0 })
+      },
+      getCatalogBeeKey: () => this.catalogBeeKey || null
     }, { targetFloor: Math.max(1, Number(this.config.targetReplicaFloor) || 1), ...this.config.eviction })
     this.eviction.on('evicted', (e) => this.emit('eviction', e))
+    this.eviction.on('evicted-core', (e) => this.emit('core-eviction', e))
     this.eviction.on('evict-failed', (e) => this.emit('eviction-failed', e))
     this.eviction.on('error', (err) => this.emit('eviction-error', { error: err && err.message }))
     // Drive the shard-store's own disk-pressure eviction on the SAME periodic
@@ -2896,7 +2937,78 @@ export class RelayNode extends EventEmitter {
    */
   _storageUsedBytes () {
     const measured = this.storageAccounting ? this.storageAccounting.getSummary().totalBytes : 0
-    return measured > 0 ? measured : ((this.seeder && this.seeder.totalBytesStored) || 0)
+    const used = measured > 0 ? measured : ((this.seeder && this.seeder.totalBytesStored) || 0)
+    // v0.24.5: plus capacity already promised to admitted bare-core pins that
+    // are still downloading — otherwise a burst of video pins each sees the
+    // same free space and the cap never binds.
+    return used + this._seederPendingBytes()
+  }
+
+  _seederPendingBytes () {
+    if (!this.seeder || typeof this.seeder.pendingBytes !== 'function') return 0
+    try {
+      const n = Number(this.seeder.pendingBytes())
+      return Number.isFinite(n) && n > 0 ? n : 0
+    } catch (_) {
+      return 0
+    }
+  }
+
+  /**
+   * Physical-disk headroom seed admission must leave free. Explicit
+   * config.seedDiskReserveBytes wins; otherwise (100 - criticalThreshold)% of
+   * the volume (5% at the default 95), so an admitted pin can never project
+   * the disk into the monitor's 'critical' band.
+   */
+  _diskReserveBytes (disk) {
+    const configured = this.config.seedDiskReserveBytes
+    if (typeof configured === 'number' && Number.isFinite(configured) && configured >= 0) return configured
+    const criticalPct = this.diskMonitor && Number.isFinite(this.diskMonitor.criticalThreshold)
+      ? this.diskMonitor.criticalThreshold
+      : 95
+    return Math.ceil(disk.totalBytes * Math.max(0, 100 - criticalPct) / 100)
+  }
+
+  /**
+   * Room left for new seeds (v0.24.5): the lesser of the operator cap minus
+   * everything stored or promised, and the physical disk's free bytes minus
+   * promised-but-not-yet-written pin bytes and the disk reserve. The cap
+   * alone is not enough — a 50 GB cap on a smaller or shared volume let
+   * pinned video drive disks to 100% (ENOSPC crash loops, 2026-10-26).
+   * Before the first df sample only the cap applies.
+   */
+  _availableStorageBytes () {
+    let available = this.config.maxStorageBytes - this._storageUsedBytes()
+    const disk = this.diskMonitor ? this.diskMonitor.getInfo() : null
+    if (disk && Number.isFinite(disk.freeBytes) && Number.isFinite(disk.totalBytes) && disk.totalBytes > 0) {
+      available = Math.min(available, disk.freeBytes - this._seederPendingBytes() - this._diskReserveBytes(disk))
+    }
+    return available
+  }
+
+  /**
+   * Bare cores the seeder must never purge or evict: the advertised catalog
+   * bee, and any core an app-registry entry owns (an app key pinned bare, or
+   * a live drive's meta/blobs core — purge would close the drive's sessions
+   * out from under it).
+   */
+  _isProtectedBareCore (keyHex) {
+    if (!keyHex) return false
+    const key = keyHex.toLowerCase()
+    if (this.catalogBeeKey && key === this.catalogBeeKey) return true
+    const reg = this.appRegistry
+    if (!reg) return false
+    if (typeof reg.get === 'function' && reg.get(key)) return true
+    if (typeof reg.entries !== 'function') return false
+    for (const [, entry] of reg.entries()) {
+      const drive = entry && entry.drive
+      if (!drive) continue
+      const meta = drive.core && drive.core.key
+      const blobs = drive.blobs && drive.blobs.core && drive.blobs.core.key
+      if (meta && b4a.toString(meta, 'hex') === key) return true
+      if (blobs && b4a.toString(blobs, 'hex') === key) return true
+    }
+    return false
   }
 
   async _scanRegistry () {
@@ -3123,11 +3235,30 @@ export class RelayNode extends EventEmitter {
     })
   }
 
+  /**
+   * Bare cores a seed request asks us to pin besides its app (e.g. PearTube's
+   * per-video blob cores in `discoveryKeys`). Deduped, and without the app key
+   * itself or the app's discovery key: the standard SDK lists the latter, but
+   * it is a DHT topic, not a core — pinning it opened a bogus empty core keyed
+   * by a hash on every request.
+   */
+  _extraSeedCores (msg, appKeyHex) {
+    let appDiscoveryHex = null
+    try { appDiscoveryHex = discoveryKeyHex(b4a.from(appKeyHex, 'hex')) } catch (_) {}
+    const out = []
+    for (const dk of (msg.discoveryKeys || [])) {
+      const keyHex = (typeof dk === 'string' ? dk : b4a.toString(dk, 'hex')).toLowerCase()
+      if (!/^[0-9a-f]{64}$/.test(keyHex)) continue
+      if (keyHex === appKeyHex || keyHex === appDiscoveryHex || out.includes(keyHex)) continue
+      out.push(keyHex)
+    }
+    return out
+  }
+
   _onSeedRequest (msg, channel = null) {
     if (!this.seeder) return
 
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
-    const availableBytes = this.config.maxStorageBytes - this._storageUsedBytes()
 
     // Reply with a wire-level deny so the publisher sees WHY instead of
     // timing out. Best-effort: channel may be null for in-process callers.
@@ -3137,10 +3268,35 @@ export class RelayNode extends EventEmitter {
       }
     }
 
-    // Check capacity
-    if (availableBytes < msg.maxStorageBytes) {
-      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
-      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + msg.maxStorageBytes)
+    // Bounded admission (v0.24.5). msg.maxStorageBytes is the publisher's
+    // AGGREGATE budget for the whole request: the app drive and every extra
+    // bare core share it. We do not split it per core — video sizes vary by
+    // orders of magnitude and the request doesn't carry them, so an even
+    // split would purge the one large video in a request that fits overall.
+    // Instead the full budget is reserved once at admission (it must fit the
+    // relay's real free capacity: cap AND physical-disk reserve), each extra
+    // core is pinned with that budget as its bound in a budget group keyed by
+    // the app, and the seeder drops+purges whichever core pushes the group
+    // (its cores plus the app drive's measured bytes) past the budget. A
+    // request with extra cores but no declared budget gets the SDK's 1 GiB
+    // default — an undeclared budget never means an unbounded pin.
+    const extraCores = this._extraSeedCores(msg, appKeyHex)
+    const declared = Number(msg.maxStorageBytes) || 0
+    const requestBudget = extraCores.length > 0 && declared <= 0 ? DEFAULT_SEED_REQUEST_BUDGET_BYTES : declared
+    const availableBytes = this._availableStorageBytes()
+    // A pure re-affirmation (app already held, every extra core already
+    // pinned) stores nothing new. Its own reservation already sits in
+    // availableBytes, so re-checking would deny a request we are serving.
+    const addsNothing = this.seededApps.has(appKeyHex) &&
+      extraCores.every((k) => this.seeder.cores instanceof Map && this.seeder.cores.has(k))
+
+    // Check capacity. Deny over the existing wire reason so the publisher
+    // moves on to another relay; a relay with no room at all (cap exhausted
+    // or disk inside its reserve) refuses even budget-less requests.
+    if (!addsNothing && (availableBytes < requestBudget || availableBytes <= 0)) {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage', availableBytes, requestedBytes: requestBudget, extraCores: extraCores.length })
+      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + requestBudget +
+        (extraCores.length ? ' (app + ' + extraCores.length + ' core' + (extraCores.length === 1 ? '' : 's') + ')' : ''))
       return
     }
 
@@ -3278,14 +3434,18 @@ export class RelayNode extends EventEmitter {
       this.emit('seed-error', { appKey: appKeyHex, error: err })
     })
 
-    // Also seed any additional discovery keys
-    for (const dk of (msg.discoveryKeys || [])) {
-      const keyHex = b4a.toString(dk, 'hex')
-      if (keyHex !== appKeyHex) {
-        this.seeder.seedCore(keyHex).catch((err) => {
-          this.emit('seed-error', { appKey: appKeyHex, core: keyHex, error: err })
-        })
-      }
+    // Also pin the request's extra bare cores, each bounded by the request
+    // budget in the app's budget group (see admission above). seedCore runs
+    // its admission synchronously, so the group's reservation is booked
+    // before this handler returns.
+    for (const keyHex of extraCores) {
+      this.seeder.seedCore(keyHex, {
+        maxStorageBytes: requestBudget,
+        group: appKeyHex,
+        source: 'seed-request'
+      }).catch((err) => {
+        this.emit('seed-error', { appKey: appKeyHex, core: keyHex, error: err })
+      })
     }
 
     this.emit('seed-accepted', { appKey: appKeyHex })

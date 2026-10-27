@@ -31,6 +31,21 @@
 //
 // Every eviction emits an audit event the node logs — operators can see
 // exactly what was shed and why.
+//
+// Bare-core pins (v0.24.5). Seed requests can pin plain Hypercores beside
+// their app (PearTube's per-video blob cores); those never appear in the
+// app registry, so the pass above could evict hundreds of tiny apps while
+// freeing 0 bytes of the pinned video that filled the disk. When the node
+// wires `bareCores`, the same sweep (same gate, same resumePct/cap stop
+// condition, same minAgeMs, its own maxEvictionsPerSweep budget) then sheds
+// bare pins least-recently-served first. A pin is a candidate ONLY if:
+//   · it is not the advertised catalog bee
+//   · it is not writable by us   (our own data — maybe the only copy)
+//   · it is not an operator/internal pin (source 'local' — sacred, like
+//     archive tier; legacy pre-v0.24.5 entries are evictable)
+//   · it is older than minAgeMs  (legacy pins have no pin time → old)
+//   · it holds bytes             (shedding an empty pin frees nothing)
+// Eviction = unseed + purge (the seeder refuses protected cores).
 
 import { EventEmitter } from 'events'
 import b4a from 'b4a'
@@ -180,6 +195,10 @@ export class EvictionManager extends EventEmitter {
    *   exceeds it, the sweep runs even below whole-disk pressure, so an operator
    *   who designates "give HiveRelay N GB of this box" gets shed down to N GB
    *   without needing the physical disk to be near-full.
+   * @param {object} [deps.bareCores]            bare-core pins (v0.24.5):
+   *   list() -> [{ key, bytesStored, pinnedAt, lastServedAt, source, writable }],
+   *   evict(keyHex) -> Promise<{ evicted, freedBytes, purged, skipped? }>
+   * @param {function} [deps.getCatalogBeeKey]   () -> hex|null — never evicted
    * @param {object} [config]                    eviction config block
    */
   constructor (deps, config = {}) {
@@ -189,11 +208,13 @@ export class EvictionManager extends EventEmitter {
     }
     this.deps = deps
     this._getStorageCap = typeof deps.getStorageCap === 'function' ? deps.getStorageCap : () => 0
+    this._getCatalogBeeKey = typeof deps.getCatalogBeeKey === 'function' ? deps.getCatalogBeeKey : () => null
     this.config = { ...DEFAULTS, ...config }
 
     this._interval = null
     this._sweeping = false
     this._evictedTotal = 0
+    this._evictedCoresTotal = 0
     this._freedBytesTotal = 0
     this._lastSweep = null // { at, scanned, candidates, evicted, freedBytes, skipped }
   }
@@ -454,15 +475,18 @@ export class EvictionManager extends EventEmitter {
       const evicted = []
       let freedBytes = 0
       const volTotal = disk.totalBytes || null
-      for (const cand of candidates) {
-        if (evicted.length >= this.config.maxEvictionsPerSweep) break
-        // Keep shedding while EITHER reason to sweep still holds: we're still
-        // over the operator-designated cap, OR the physical disk is still
-        // pressured. Stop once both are satisfied. (Pre-cap behaviour — stop at
-        // resumePct — is preserved when no cap is set.)
+      // Keep shedding while EITHER reason to sweep still holds: we're still
+      // over the operator-designated cap, OR the physical disk is still
+      // pressured. Stop once both are satisfied. (Pre-cap behaviour — stop at
+      // resumePct — is preserved when no cap is set.)
+      const stillNeeded = () => {
         const stillOverCap = cap > 0 && (usedBytes - freedBytes) > cap
         const stillPressured = volTotal ? (disk.usedPct - (freedBytes / volTotal) * 100) > this.config.resumePct : true
-        if (!stillOverCap && !stillPressured) break
+        return stillOverCap || stillPressured
+      }
+      for (const cand of candidates) {
+        if (evicted.length >= this.config.maxEvictionsPerSweep) break
+        if (!stillNeeded()) break
         try {
           const unseeded = await raceTimeout(
             Promise.resolve().then(() => this.deps.unseed(cand.appKey)).then(() => true),
@@ -494,10 +518,90 @@ export class EvictionManager extends EventEmitter {
         }
       }
 
-      return this._finish({ at: now, usedPct: disk.usedPct, scanned, candidates: candidates.length, skips, evicted, freedBytes })
+      const summary = { at: now, usedPct: disk.usedPct, scanned, candidates: candidates.length, skips, evicted, freedBytes }
+      if (this.deps.bareCores) {
+        // Bare pins after the census-checked app pass, continuing its
+        // projection (freedBytes) and stop condition.
+        const bare = await this._shedBareCores({ now, disk, stillNeeded, onFreed: (n) => { freedBytes += n } })
+        summary.freedBytes = freedBytes
+        summary.coreCandidates = bare.candidates
+        summary.coreSkips = bare.skips
+        summary.evictedCores = bare.evicted
+      }
+      return this._finish(summary)
     } finally {
       this._sweeping = false
     }
+  }
+
+  // Bare-core candidates, least-recently-served first. Never-served pins
+  // (lastServedAt 0) lead; ties go biggest-first (most bytes per exit), then
+  // by key so the order is deterministic.
+  _bareCoreCandidates (now) {
+    const skips = { catalogBee: 0, writable: 0, local: 0, young: 0, empty: 0 }
+    const catalogBee = (this._getCatalogBeeKey() || '').toLowerCase()
+    let pins = []
+    try { pins = this.deps.bareCores.list() || [] } catch (_) { pins = [] }
+    const out = []
+    for (const pin of pins) {
+      if (!pin || typeof pin.key !== 'string') continue
+      if (catalogBee && pin.key.toLowerCase() === catalogBee) { skips.catalogBee++; continue }
+      if (pin.writable) { skips.writable++; continue }
+      if (pin.source === 'local') { skips.local++; continue }
+      const pinnedAt = Number(pin.pinnedAt) || 0
+      if (pinnedAt > 0 && now - pinnedAt < this.config.minAgeMs) { skips.young++; continue }
+      const bytes = Number(pin.bytesStored) || 0
+      if (bytes <= 0) { skips.empty++; continue }
+      out.push({ key: pin.key, bytes, pinnedAt, lastServedAt: Number(pin.lastServedAt) || 0 })
+    }
+    out.sort((a, b) => (a.lastServedAt - b.lastServedAt) || (b.bytes - a.bytes) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+    return { candidates: out, skips }
+  }
+
+  async _shedBareCores ({ now, disk, stillNeeded, onFreed }) {
+    const { candidates, skips } = this._bareCoreCandidates(now)
+    const evicted = []
+    for (const cand of candidates) {
+      if (evicted.length >= this.config.maxEvictionsPerSweep) break
+      if (!stillNeeded()) break
+      // Unseed + purge in one seeder call; bounded like the app path's
+      // unseed + purge. Errors are reported, not collapsed into a timeout.
+      const res = await raceTimeout(
+        Promise.resolve()
+          .then(() => this.deps.bareCores.evict(cand.key))
+          .then((r) => r, (err) => ({ evicted: false, error: (err && (err.code || err.message)) || 'evict failed' })),
+        this.config.unseedTimeoutMs + this.config.purgeTimeoutMs,
+        TIMEOUT
+      )
+      if (res === TIMEOUT) {
+        this.emit('evict-failed', { coreKey: cand.key, error: 'evict timeout' })
+        continue
+      }
+      if (!res || res.evicted !== true) {
+        if (res && res.skipped) {
+          skips[res.skipped] = (skips[res.skipped] || 0) + 1
+        } else {
+          this.emit('evict-failed', { coreKey: cand.key, error: (res && res.error) || 'evict refused' })
+        }
+        continue
+      }
+      // Projection uses what the purge actually returned (measured just
+      // before unlinking); a pin released without purge freed nothing.
+      const freedBytes = res.purged ? (Number(res.freedBytes) || cand.bytes) : 0
+      onFreed(freedBytes)
+      this._evictedCoresTotal++
+      this._freedBytesTotal += freedBytes
+      evicted.push(cand.key)
+      this.emit('evicted-core', {
+        coreKey: cand.key,
+        freedBytes,
+        purged: res.purged === true,
+        lastServedAt: cand.lastServedAt || null,
+        pinnedAt: cand.pinnedAt || null,
+        usedPct: disk.usedPct
+      })
+    }
+    return { candidates: candidates.length, skips, evicted }
   }
 
   _finish (summary) {
@@ -510,6 +614,7 @@ export class EvictionManager extends EventEmitter {
     return {
       enabled: true,
       evictedTotal: this._evictedTotal,
+      evictedCoresTotal: this._evictedCoresTotal,
       freedBytesTotal: this._freedBytesTotal,
       lastSweep: this._lastSweep
     }
