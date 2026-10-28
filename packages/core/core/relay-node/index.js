@@ -2841,18 +2841,26 @@ export class RelayNode extends EventEmitter {
     // Tombstone backstop (v0.24.7 port). The automatic acceptance paths check
     // _tombstoneGate first and refuse with their own reason; this catches
     // any caller that doesn't (HTTPS /api/v1/seed, auto-heal). Operator seed
-    // paths call clearTombstone() before this.
-    if (!this._isHeld(appKeyHex)) {
-      const tomb = this._tombstoneGate(appKeyHex, 'seed-app')
-      if (tomb) {
-        const err = new Error('TOMBSTONED: app was removed from this relay (' + tomb.kind +
-          ' tombstone); only an explicit operator seed re-adopts it')
-        err.code = 'TOMBSTONED'
-        err.tombstone = tomb.kind
-        throw err
-      }
-    }
+    // paths call clearTombstone() before this. appLifecycle.seedApp
+    // re-checks once its queued admission runs.
+    this._refuseTombstoned(appKeyHex)
     return this.appLifecycle.seedApp(appKeyHex, opts)
+  }
+
+  /**
+   * Throw TOMBSTONED when an app this relay does not hold carries a
+   * tombstone. Held rows pass: a boot placeholder is a row the registry
+   * still holds and must reseed.
+   */
+  _refuseTombstoned (appKeyHex) {
+    if (this._isHeld(appKeyHex)) return
+    const tomb = this._tombstoneGate(appKeyHex, 'seed-app')
+    if (!tomb) return
+    const err = new Error('TOMBSTONED: app was removed from this relay (' + tomb.kind +
+      ' tombstone); only an explicit operator seed re-adopts it')
+    err.code = 'TOMBSTONED'
+    err.tombstone = tomb.kind
+    throw err
   }
 
   async unseedApp (appKeyHex, opts = {}) {

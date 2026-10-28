@@ -44,6 +44,15 @@ The npm packages are versioned in lockstep. The blind-* workspaces
   `RelayNode.seedApp` also refuses a tombstoned app with `TOMBSTONED` as a
   backstop. Refusals are logged as `skipped tombstoned app`, rate-limited per
   app and source.
+- **A removal made after boot stays removed while the boot reseed is still
+  running.** The boot reseed works through a list captured at boot, one app at
+  a time behind the seed admission lane, and called the seeder directly, so the
+  `seedApp` backstop never ran. A seed whose drive open never settles holds the
+  lane, and the reseed waits behind it. When an eviction purge released it, the
+  reseed re-seeded apps removed or evicted since boot. Now:
+  - the reseed skips any row that has left the registry since boot;
+  - every seed re-checks the tombstone once it holds the lane, because a
+    caller's own gate ran before it queued.
 
 ### Changed
 - **Tombstones have a kind.**

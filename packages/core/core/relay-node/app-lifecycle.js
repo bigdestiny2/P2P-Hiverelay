@@ -422,8 +422,17 @@ export class AppLifecycle extends EventEmitter {
    */
   async reseedDrives (entries) {
     if (!Array.isArray(entries) || !entries.length) return
+    const node = this.node
     for (const entry of entries) {
       if (!entry.appKey) continue
+      // The list is a boot-time snapshot, and this sequential loop can
+      // reach a row long after boot (each seedApp queues for the seed
+      // admission lane). A row removed since — operator purge or unseed,
+      // an eviction — stays removed (v0.24.7 port).
+      if (node.appRegistry && typeof node.appRegistry.has === 'function' && !node.appRegistry.has(entry.appKey)) {
+        if (typeof node._tombstoneGate === 'function') node._tombstoneGate(entry.appKey, 'boot-reseed')
+        continue
+      }
       try {
         await this.seedApp(entry.appKey, {
           [STORAGE_RECOVERY_INGRESS]: true,
@@ -646,8 +655,13 @@ export class AppLifecycle extends EventEmitter {
     // or time out before it acquires the lane; its cancelled closure remains in
     // the tail only as a no-op barrier, so later seeds never overtake the live
     // owner or execute after their caller has already failed.
-    return this._queueSeedAdmission(() =>
-      this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier))
+    return this._queueSeedAdmission(() => {
+      // Tombstone re-check once the lane is ours (v0.24.7 port): the app
+      // may have been removed (operator purge, eviction) while this seed
+      // waited, and the caller's own gate ran before the wait.
+      if (typeof node._refuseTombstoned === 'function') node._refuseTombstoned(appKeyHex)
+      return this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier)
+    })
   }
 
   _queueSeedAdmission (run) {

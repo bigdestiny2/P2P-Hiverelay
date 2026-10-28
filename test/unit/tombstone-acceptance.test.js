@@ -33,6 +33,7 @@ import { openCorestore } from '../../packages/core/core/persistence/storage-root
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import { AppRegistry, TOMBSTONE_EVICTION, TOMBSTONE_OPERATOR } from 'p2p-hiverelay/core/app-registry.js'
 import { runOperatorSeedAction } from 'p2p-hiverelay/core/relay-node/api-seed-publish.js'
+import { EvictionManager } from 'p2p-hiverelay/core/relay-node/eviction.js'
 
 const BOUND = 1024 * 1024
 
@@ -371,4 +372,105 @@ test('repair: an eviction tombstone at or above the floor is kept', async (t) =>
   t.is(await node._attemptReplicationRepair(repairRequest(shed), atFloor), false, 'not repaired')
   t.is(sent.seeded.length, 0, 'not seeded')
   t.ok(node.appRegistry.isEvicted(shed), 'tombstone kept')
+})
+
+// ─── Live: the boot replay resuming long after boot ─────────────────
+
+test('live: an eviction that unwedges the seed lane lets nothing removed since boot re-seed', async (t) => {
+  // Production sequence (v0.24.6, review mode, no restart): one reseed is
+  // stuck in _seedAppInner holding the seed admission lane (a drive open
+  // that never settles), so the boot replay loop waits behind it. An
+  // eviction sweep evicts that app, its purge fails the stuck open, and the
+  // loop and any seed still queued for the lane run in the same tick,
+  // including apps removed or evicted since boot. On main a queued seed
+  // gives up after seedAdmissionTimeoutMs, so only the replay loop waits
+  // for hours; a seed queued inside that window still needs the re-check.
+  const { node, sent, myPubkeyHex } = makeNode(t, { acceptMode: 'review' })
+  const lc = node.appLifecycle
+  delete lc.seedApp // the real AppLifecycle.seedApp: admission lane + re-check
+  node._storageIngressReady = true // start() opens seed ingress after recovery
+  const OLD = Date.now() - 10 * 24 * 60 * 60 * 1000
+  const wedged = hexKey() // its drive open never settles
+  const removed = hexKey() // operator-purged after boot
+  const evicted = hexKey() // shed by the same sweep
+  const live = hexKey() // a live seed that passed its gate, then queued
+  const kept = hexKey()
+
+  let unwedge
+  const stuck = new Promise(resolve => { unwedge = resolve })
+  const opened = []
+  lc._seedAppInner = async (appKey) => {
+    if (appKey === wedged) {
+      await stuck
+      throw new Error('DRIVE_READY_TIMEOUT after 8000ms')
+    }
+    opened.push(appKey)
+    node.appRegistry.apps.set(appKey, { appKey, durability: 0, discoveryKey: 'dk', startedAt: Date.now() })
+    return { discoveryKey: 'dk' }
+  }
+
+  // load() hydrates a placeholder (no drive yet) for every persisted row.
+  for (const k of [wedged, removed, evicted, kept]) {
+    node.appRegistry.apps.set(k, { appKey: k, durability: 0, startedAt: OLD })
+  }
+  const reseeded = []
+  lc.on('reseeded', ({ appKey }) => reseeded.push(appKey))
+  const replay = lc.reseedDrives([wedged, removed, evicted, kept].map(appKey => ({ appKey })))
+  const liveSeed = node.seedApp(live, { maxStorage: BOUND }).then(() => null, (err) => err)
+  await new Promise(resolve => setTimeout(resolve, 150))
+  t.alike(opened, [], 'everything waits behind the wedged seed')
+
+  // Operator removals while the seeds wait: a boot row, and the app the
+  // live seed is queued for (not held: a tombstone-only removal).
+  node.appRegistry.delete(removed, { persist: false })
+  await node.appRegistry.markEvicted(removed, Date.now(), { kind: TOMBSTONE_OPERATOR })
+  await node.manualPurge(live)
+
+  // The sweep sheds `evicted`, then the wedged app; that purge unwedges.
+  const surplus = { current: 4, target: 2 }
+  const health = new Map([[wedged, surplus], [evicted, surplus]])
+  const holders = [myPubkeyHex, hexKey(), hexKey(), hexKey()].map(relayPubkey => ({ relayPubkey }))
+  const ev = new EvictionManager({
+    appRegistry: node.appRegistry,
+    seedingRegistry: { getRelaysForApp: async (k) => (health.has(k) ? holders : []) },
+    storageAccounting: { getBytes: (k) => (k === evicted ? 5000 : 0), measure: async () => 0, getSummary: () => ({ totalBytes: 5000 }) },
+    diskMonitor: { getInfo: () => ({ usedPct: 95, totalBytes: 20e9 }) },
+    getReplicationHealth: () => health,
+    myPubkeyHex,
+    unseed: async (k) => { node.appRegistry.delete(k, { persist: false }) },
+    purgeDrive: async (k) => { if (k === wedged) unwedge() }
+  }, { enabled: true, minAgeMs: 0 })
+  const res = await ev.sweep()
+  t.alike(res.evicted, [evicted, wedged], 'the sweep evicted both')
+
+  await replay
+  const liveErr = await liveSeed
+  t.alike(opened, [kept], 'only the untouched row re-seeds')
+  t.alike(reseeded, [kept], 'the replay re-seeded nothing removed since boot')
+  t.is(liveErr && liveErr.code, 'TOMBSTONED', 'the queued live seed is refused once it holds the lane')
+  for (const k of [wedged, removed, evicted, live]) {
+    t.absent(node.appRegistry.has(k), 'not re-adopted')
+    t.ok(node.appRegistry.isEvicted(k), 'tombstone stands')
+  }
+  t.ok(sent.skipped.some(s => s.appKey === removed && s.source === 'boot-reseed'), 'replay skip logged')
+  t.ok(sent.skipped.some(s => s.appKey === live && s.source === 'seed-app'), 'lane re-check logged')
+})
+
+test('live: the seed-lane re-check lets a held boot row (sacred, tombstoned) and an operator-lifted seed through', async (t) => {
+  const { node } = makeNode(t)
+  const lc = node.appLifecycle
+  delete lc.seedApp
+  node._storageIngressReady = true
+  const opened = []
+  lc._seedAppInner = async (appKey) => { opened.push(appKey); return { discoveryKey: 'dk' } }
+  const archive = hexKey()
+  const lifted = hexKey()
+  node.appRegistry.apps.set(archive, { appKey: archive, durability: 1 }) // placeholder still held
+  await node.appRegistry.markEvicted(archive, 1000, { kind: TOMBSTONE_OPERATOR })
+  await node.appRegistry.markEvicted(lifted, 1000, { kind: TOMBSTONE_OPERATOR })
+  await node.clearTombstone(lifted) // POST /seed, approveRequest, CLI --seed
+
+  await lc.reseedDrives([{ appKey: archive }])
+  await node.seedApp(lifted, { maxStorage: BOUND })
+  t.alike(opened, [archive, lifted], 'both seeded')
 })
