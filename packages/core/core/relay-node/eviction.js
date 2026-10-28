@@ -53,6 +53,7 @@ import Hyperdrive from 'hyperdrive'
 import { raceTimeout } from './storage-accounting.js'
 import { buildDedupReport } from './dedup-report.js'
 import { compareVersions } from '../constants.js'
+import { TOMBSTONE_OPERATOR } from '../app-registry.js'
 
 const DEFAULTS = {
   enabled: false,
@@ -335,7 +336,11 @@ export class EvictionManager extends EventEmitter {
           continue
         }
         try {
-          this.deps.appRegistry.markEvicted(s.appKey, now)
+          // Operator tombstone: an executed reclaim is an explicit operator
+          // removal. A fleet-wide reclaim leaves the stale version under the
+          // replica floor everywhere, so an eviction tombstone would let
+          // repair resurrect it.
+          this.deps.appRegistry.markEvicted(s.appKey, now, { kind: TOMBSTONE_OPERATOR })
           await this._purgeDrive(s.appKey)
           reclaimed.push({ appKey: s.appKey, bytes: s.bytes, appId: group.appId })
           freedBytes += (s.bytes || 0)

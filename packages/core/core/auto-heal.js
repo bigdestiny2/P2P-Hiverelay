@@ -665,6 +665,8 @@ export class AutoHeal extends EventEmitter {
   }
 
   _canAccept (appKey) {
+    // Never recruit a drive this relay shed or the operator removed.
+    if (typeof this.node._tombstoneGate === 'function' && this.node._tombstoneGate(appKey, 'auto-heal')) return false
     if (typeof this.node._resolveAcceptMode !== 'function') return true
     if (typeof this.node._decideAcceptance !== 'function') return true
     const mode = this.node._resolveAcceptMode()

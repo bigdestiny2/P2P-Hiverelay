@@ -6,6 +6,103 @@ documented here. Dates in YYYY-MM-DD.
 
 The packages are versioned in lockstep.
 
+## [0.24.7] — 2026-10-27
+
+### Fixed
+- **A relay in open accept mode no longer re-adopts apps the operator
+  removed.** After a fleet-wide manual purge (unseed + purge + tombstone),
+  switching back to open mode re-seeded the removed apps within minutes. Every
+  acceptance path except one ignored the tombstone in `evicted.json`:
+  - the registry scan, which replays the persistent seed-request log at boot
+    and every minute. Unseeding leaves this relay's acceptance record in the
+    log, so the "accepted before, re-seed after restart" branch re-seeded the
+    app in every accept mode;
+  - live seed requests;
+  - remote catalog sync, including the mirror and follow-anchored branches.
+
+  The one path that did check, replication repair, cleared the tombstone
+  whenever the network was under `targetReplicaFloor`. A fleet-wide removal
+  leaves no replicas, so it is always under the floor.
+
+  Now every automatic path refuses a tombstoned app before the accept-mode
+  decision, in every accept mode:
+  - registry scan (both branches);
+  - live seed requests, which get a new terminal wire deny,
+    `tombstoned:<kind>`;
+  - remote catalog sync;
+  - federation follow;
+  - cold-start priming;
+  - auto-heal recruitment;
+  - replication repair;
+  - the publish channel and HTTPS `/api/v1/seed`. The HTTPS route returns 409
+    before the lease gate can quote or take payment;
+  - the Bare relay's seed-request handler.
+
+  `RelayNode.seedApp` also refuses a tombstoned app with `TOMBSTONED` as a
+  backstop. A refused app is logged as `skipped tombstoned app`, at most once
+  per app per source each hour.
+- **Boot no longer replays a registry row that carries a tombstone, in any
+  accept mode.** A ≤0.24.6 path could re-adopt a removed app without clearing
+  its tombstone, leaving it both held and tombstoned. On the next boot the
+  local-registry reseed brought it back with no accept-mode check: in review
+  mode the app was queued as pending, then seeded about 18 s later anyway. Now
+  boot honors the tombstone: it forgets the row instead of re-seeding it and
+  purges its cores in the background (logged as `skipped tombstoned app`,
+  source `boot-reseed`). Rows the sacred guard protects (archive tier,
+  custody-bound, live paid lease) keep seeding.
+- **A removal made after boot stays removed while the boot reseed is still
+  running.** The boot reseed works through a list captured at boot, one app at
+  a time behind the seed mutex, and called the seeder directly, so the
+  `seedApp` backstop never ran. One seed whose drive open never settles holds
+  that mutex for hours. When an eviction purge released it, the reseed and
+  every seed queued behind the mutex ran in the same moment. That re-seeded
+  apps removed or evicted since boot, with no restart, in review mode too.
+  Now:
+  - the reseed skips any row that has left the registry since boot (operator
+    purge or unseed, eviction);
+  - every seed re-checks the tombstone once it holds the mutex, because a
+    caller's own gate ran before the wait.
+
+### Changed
+- **Tombstones have a kind.**
+  - **Operator** tombstones are written by `manualPurge`
+    (`POST /api/eviction/purge`) and by an executed superseded-version reclaim
+    (`POST /api/dedup/reclaim { execute: true }`). They are sticky: the
+    under-floor repair rule never clears them, and the 5000-entry tombstone
+    bound never drops them.
+  - **Eviction** tombstones are written by the disk-pressure sweep. They keep
+    the Phase A rule: replication repair re-adopts the app only once the
+    network falls under the replica floor.
+- **`manualPurge` accepts a key this relay does not hold.** It writes an
+  operator tombstone without unseeding or purging anything, and reports
+  `method: "tombstone-only"`. Before, it failed with `NOT_FOUND`.
+- **Only an explicit operator action lifts an operator tombstone:** an
+  authenticated `POST /seed`, approving a pending request, or `--seed` on the
+  CLI. Each of these also lifts an eviction tombstone, and logs
+  `tombstone lifted by operator action`.
+- Review mode no longer re-queues tombstoned apps for approval from the
+  registry scan or replication repair.
+
+### Upgrade notes
+- `evicted.json` stays backward compatible. Legacy `{ appKey: timestampMs }`
+  entries load as eviction tombstones, and eviction tombstones are still
+  written in that form. Operator tombstones are written as
+  `{ appKey: { at, kind: "operator" } }`.
+- **On first boot, v0.24.7 drops and purges every held app that also carries a
+  tombstone.** That includes the apps re-adopted after the 2026-10-27
+  removal. If you deliberately re-seeded or approved a previously removed app
+  on v0.24.6 (which did not lift its tombstone), `POST /seed` it again after
+  upgrading.
+- Existing tombstones (including those from the 2026-10-27 removal) load as
+  eviction tombstones. That still blocks open-mode re-adoption, but under-floor
+  repair can lift them. To make a removal sticky, re-run
+  `POST /api/eviction/purge` with the removed keys on each relay after
+  upgrading. Keys the relay still holds (or re-seeded) are purged again; the
+  rest get an operator tombstone.
+- Downgrading to v0.24.6 or earlier keeps eviction tombstones but drops
+  operator tombstones on load.
+- Includes all of v0.24.6.
+
 ## [0.24.6] — 2026-10-27
 
 ### Fixed
