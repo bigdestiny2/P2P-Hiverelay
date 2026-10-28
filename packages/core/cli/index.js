@@ -628,7 +628,11 @@ async function start () {
 
   // Eviction audit trail (Phase A): every shed entry is operator-visible
   // with the replica math that justified it.
-  node.on('eviction', ({ appKey, bytes, remainingReplicas, target, usedPct }) => {
+  node.on('eviction', ({ appKey, bytes, remainingReplicas, target, usedPct, manual, method }) => {
+    if (manual) {
+      log.info({ appKey: (appKey || '').slice(0, 12), freedBytes: bytes, method }, 'operator removed app (manual purge, sticky tombstone)')
+      return
+    }
     log.info({ appKey: (appKey || '').slice(0, 12), freedBytes: bytes, remainingReplicas, target, diskUsedPct: usedPct }, 'evicted over-replicated app')
   })
 
@@ -687,6 +691,14 @@ async function start () {
     log.warn({ err: details.error || details }, 'registry error')
   })
 
+  node.on('tombstone-skipped', ({ appKey, kind, source }) => {
+    log.info({ appKey: appKey.slice(0, 12), kind, source }, 'skipped tombstoned app (removed from this relay; not re-adopting)')
+  })
+
+  node.on('tombstone-cleared', ({ appKey, kind }) => {
+    log.info({ appKey: appKey.slice(0, 12), kind }, 'tombstone lifted by operator action')
+  })
+
   node.on('reseeded', ({ appKey, source }) => {
     log.info({ appKey: appKey.slice(0, 12), source: source || 'log' }, 'reseeded app from persistent log')
   })
@@ -715,6 +727,8 @@ async function start () {
     ? parseBytesOrExit(args['seed-max-storage'], '--seed-max-storage')
     : null
   for (const key of seedKeys) {
+    // --seed is an explicit operator action: it lifts any tombstone.
+    await node.clearTombstone(key)
     await node.seedApp(key, { maxStorage: seedMaxStorage })
   }
 

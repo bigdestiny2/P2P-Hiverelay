@@ -11,6 +11,7 @@ import { isAbortError } from './lifecycle-scope.js'
 import { verifyShareBundleForRelay } from '../pvss.js'
 import { positiveStorageBound } from '../../config/storage-cap.js'
 import { STORAGE_SHARE_BUNDLE_MAX_BYTES } from '../../config/storage-admission-authority.js'
+import { TOMBSTONE_OPERATOR } from '../app-registry.js'
 import {
   isValidHexKey,
   normalizeAvailabilityClass,
@@ -281,14 +282,15 @@ export class AppLifecycle extends EventEmitter {
         if (typeof node.appRegistry.persistDelete === 'function') {
           await node.appRegistry.persistDelete(owner.appKey, {
             throwOnError: true,
-            evictedAt: owner.evictedAt
+            evictedAt: owner.evictedAt,
+            evictionKind: owner.evictionKind
           })
         } else {
           await node.appRegistry.flush({ throwOnError: true })
         }
         if (Number.isSafeInteger(owner.evictedAt) && owner.evictedAt > 0 &&
             typeof node.appRegistry.markEvicted === 'function') {
-          await node.appRegistry.markEvicted(owner.appKey, owner.evictedAt)
+          await node.appRegistry.markEvicted(owner.appKey, owner.evictedAt, { kind: owner.evictionKind })
         }
       } catch (err) {
         if (!node.appRegistry.has(owner.appKey)) {
@@ -420,8 +422,17 @@ export class AppLifecycle extends EventEmitter {
    */
   async reseedDrives (entries) {
     if (!Array.isArray(entries) || !entries.length) return
+    const node = this.node
     for (const entry of entries) {
       if (!entry.appKey) continue
+      // The list is a boot-time snapshot, and this sequential loop can
+      // reach a row long after boot (each seedApp queues for the seed
+      // admission lane). A row removed since — operator purge or unseed,
+      // an eviction — stays removed (v0.24.7 port).
+      if (node.appRegistry && typeof node.appRegistry.has === 'function' && !node.appRegistry.has(entry.appKey)) {
+        if (typeof node._tombstoneGate === 'function') node._tombstoneGate(entry.appKey, 'boot-reseed')
+        continue
+      }
       try {
         await this.seedApp(entry.appKey, {
           [STORAGE_RECOVERY_INGRESS]: true,
@@ -644,8 +655,13 @@ export class AppLifecycle extends EventEmitter {
     // or time out before it acquires the lane; its cancelled closure remains in
     // the tail only as a no-op barrier, so later seeds never overtake the live
     // owner or execute after their caller has already failed.
-    return this._queueSeedAdmission(() =>
-      this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier))
+    return this._queueSeedAdmission(() => {
+      // Tombstone re-check once the lane is ours (v0.24.7 port): the app
+      // may have been removed (operator purge, eviction) while this seed
+      // waited, and the caller's own gate ran before the wait.
+      if (typeof node._refuseTombstoned === 'function') node._refuseTombstoned(appKeyHex)
+      return this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier)
+    })
   }
 
   _queueSeedAdmission (run) {
@@ -2624,6 +2640,7 @@ export class AppLifecycle extends EventEmitter {
         rejected: false,
         forget,
         evictedAt: opts.evictedAt,
+        evictionKind: opts.evictionKind,
         bridgeRegistered: !!node.distributedDriveBridge
       }
       this._retiringDrives.set(appKeyHex, owner)
@@ -2634,6 +2651,8 @@ export class AppLifecycle extends EventEmitter {
           ? Math.max(owner.evictedAt, opts.evictedAt)
           : opts.evictedAt
       }
+      // An operator removal joining an in-flight retirement wins the kind.
+      if (opts.evictionKind === TOMBSTONE_OPERATOR) owner.evictionKind = TOMBSTONE_OPERATOR
     }
     await this._settleRetiringDrive(owner)
   }

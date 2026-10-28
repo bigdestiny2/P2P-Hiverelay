@@ -151,6 +151,31 @@ function validatePersistedStorageProof (entry) {
 const EVICTED_FILE = 'evicted.json'
 const MAX_TOMBSTONES = 5000
 
+// Tombstone kinds (v0.24.7 / v0.26). An eviction tombstone records a drive
+// this relay shed on its own (disk-pressure sweep): the replication-repair
+// gate may clear it once the network falls under the replica floor. An
+// operator tombstone records a deliberate operator removal (manual purge,
+// executed superseded-version reclaim): it is sticky — only an explicit
+// operator action clears it, never the under-floor rule (a fleet-wide
+// removal is always under the floor).
+export const TOMBSTONE_EVICTION = 'eviction'
+export const TOMBSTONE_OPERATOR = 'operator'
+
+/**
+ * One evicted.json value -> { at, kind } or null. A bare timestamp is the
+ * legacy (≤0.24.6) eviction row and is still how eviction rows are written,
+ * so a downgraded relay keeps honoring them; an operator row is
+ * { at, kind: 'operator' } (0.24.7+).
+ */
+function parseEvictedRow (value) {
+  if (Number.isSafeInteger(value) && value > 0) return { at: value, kind: TOMBSTONE_EVICTION }
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  if (!Number.isSafeInteger(value.at) || value.at <= 0) return null
+  if (value.kind !== TOMBSTONE_EVICTION && value.kind !== TOMBSTONE_OPERATOR) return null
+  if (Object.keys(value).some(k => k !== 'at' && k !== 'kind')) return null
+  return { at: value.at, kind: value.kind }
+}
+
 /**
  * Collapse already-built catalog rows: for `app`-type rows sharing an appId,
  * keep only the highest version. The same latest-version-wins rule catalog()
@@ -233,7 +258,11 @@ export class AppRegistry extends EventEmitter {
     // Bee mode persists these as measured storageDeleted rows in the same
     // append-only registry journal. The JSON sidecar remains only for the
     // legacy no-Corestore mode and is migrated on the first Bee startup.
+    // _operatorRemoved holds the keys whose tombstone is an operator
+    // removal (bee rows carry evictionKind: 'operator'); it moves in lock
+    // step with `evicted`.
     this.evicted = new Map()
+    this._operatorRemoved = new Set()
     this._evictedPath = storagePath ? join(storagePath, EVICTED_FILE) : null
     this._evictedPersistTail = Promise.resolve()
   }
@@ -300,28 +329,46 @@ export class AppRegistry extends EventEmitter {
 
   // ─── Eviction tombstones ──────────────────────────────────────────
 
-  markEvicted (appKeyHex, at = Date.now()) {
+  /**
+   * @param {string} appKeyHex
+   * @param {number} [at]
+   * @param {object} [opts]
+   * @param {string} [opts.kind] TOMBSTONE_EVICTION (default) | TOMBSTONE_OPERATOR
+   */
+  markEvicted (appKeyHex, at = Date.now(), opts = {}) {
     appKeyHex = canonicalRuntimeAppKey(appKeyHex)
     if (appKeyHex === null) throw new Error('Invalid app key: must be 64 hex characters')
     if (!Number.isSafeInteger(at) || at <= 0) throw new Error('Invalid eviction timestamp')
+    // An operator removal is never downgraded by a later automatic shed.
+    const kind = opts.kind === TOMBSTONE_OPERATOR || this._operatorRemoved.has(appKeyHex)
+      ? TOMBSTONE_OPERATOR
+      : TOMBSTONE_EVICTION
     this._assertPhysicalWritesAvailable()
     if (this._beeReady) {
       if (this.apps.has(appKeyHex)) {
         return Promise.reject(new Error('APP_REGISTRY_EVICTION_REQUIRES_DURABLE_DELETE'))
       }
       const current = this._metadataTombstoneEntries.get(appKeyHex)
-      if (current?.evictedAt === at) {
+      const currentKind = current?.evictionKind === TOMBSTONE_OPERATOR ? TOMBSTONE_OPERATOR : TOMBSTONE_EVICTION
+      if (current?.evictedAt === at && currentKind === kind) {
         this.evicted.set(appKeyHex, at)
+        if (kind === TOMBSTONE_OPERATOR) this._operatorRemoved.add(appKeyHex)
         return Promise.resolve(true)
       }
-      return this._deleteEntryFromBee(appKeyHex, { strict: true, evictedAt: at }).then(() => true)
+      return this._deleteEntryFromBee(appKeyHex, { strict: true, evictedAt: at, evictionKind: kind }).then(() => true)
     }
     this.evicted.set(appKeyHex, at)
-    // Bound the set: oldest tombstones fall off — by then the entry is
-    // either long gone network-wide or legitimately re-adoptable.
+    if (kind === TOMBSTONE_OPERATOR) this._operatorRemoved.add(appKeyHex)
+    else this._operatorRemoved.delete(appKeyHex)
+    // Bound the set: oldest eviction tombstones fall off — by then the entry
+    // is either long gone network-wide or legitimately re-adoptable.
+    // Operator tombstones are exempt: only the operator lifts a removal.
     if (this.evicted.size > MAX_TOMBSTONES) {
-      const oldest = [...this.evicted.entries()].sort((a, b) => a[1] - b[1])
-      for (let i = 0; i < oldest.length - MAX_TOMBSTONES; i++) this.evicted.delete(oldest[i][0])
+      const oldest = [...this.evicted.entries()]
+        .filter(([k]) => !this._operatorRemoved.has(k))
+        .sort((a, b) => a[1] - b[1])
+      const excess = Math.min(oldest.length, this.evicted.size - MAX_TOMBSTONES)
+      for (let i = 0; i < excess; i++) this.evicted.delete(oldest[i][0])
     }
     return this._persistEvicted()
   }
@@ -332,15 +379,32 @@ export class AppRegistry extends EventEmitter {
     return this.evicted.has(appKeyHex)
   }
 
-  clearEvicted (appKeyHex) {
+  /** @returns {{at: number, kind: string}|null} */
+  getTombstone (appKeyHex) {
+    appKeyHex = canonicalRuntimeAppKey(appKeyHex)
+    if (appKeyHex === null || !this.evicted.has(appKeyHex)) return null
+    return {
+      at: this.evicted.get(appKeyHex),
+      kind: this._operatorRemoved.has(appKeyHex) ? TOMBSTONE_OPERATOR : TOMBSTONE_EVICTION
+    }
+  }
+
+  /**
+   * Lift a tombstone. Eviction tombstones clear freely (the under-floor
+   * repair rule); an operator tombstone clears only with `{ operator: true }`
+   * — an explicit operator action. Resolves true when a tombstone was removed.
+   */
+  clearEvicted (appKeyHex, opts = {}) {
     appKeyHex = canonicalRuntimeAppKey(appKeyHex)
     if (appKeyHex === null) return Promise.resolve(false)
     if (!this.evicted.has(appKeyHex)) return Promise.resolve(false)
+    if (this._operatorRemoved.has(appKeyHex) && opts.operator !== true) return Promise.resolve(false)
     this._assertPhysicalWritesAvailable()
     if (this._beeReady) {
       return this._deleteEntryFromBee(appKeyHex, { strict: true, evictedAt: null }).then(() => true)
     }
     this.evicted.delete(appKeyHex)
+    this._operatorRemoved.delete(appKeyHex)
     return Promise.resolve(this._persistEvicted()).then(() => true)
   }
 
@@ -357,7 +421,13 @@ export class AppRegistry extends EventEmitter {
     const tmp = this._evictedPath + '.tmp'
     try {
       await this._runPhysicalWrite('app-registry-evicted-json', 'runtime', async () => {
-        await writeFile(tmp, JSON.stringify(Object.fromEntries(this.evicted)))
+        // Eviction rows keep the pre-0.24.7 value (a bare evictedAt) so a
+        // downgraded relay still honors them; operator rows carry their kind.
+        const out = {}
+        for (const [k, at] of this.evicted) {
+          out[k] = this._operatorRemoved.has(k) ? { at, kind: TOMBSTONE_OPERATOR } : at
+        }
+        await writeFile(tmp, JSON.stringify(out))
         await rename(tmp, this._evictedPath)
       })
     } catch (err) {
@@ -376,10 +446,12 @@ export class AppRegistry extends EventEmitter {
     } catch (err) {
       if (err?.code === 'ENOENT') {
         this.evicted.clear()
+        this._operatorRemoved.clear()
         return
       }
       if (strict) throw registryInventoryError('evicted-read-failed', err)
       this.evicted.clear()
+      this._operatorRemoved.clear()
       return
     }
     let data
@@ -388,27 +460,41 @@ export class AppRegistry extends EventEmitter {
     } catch (err) {
       if (strict) throw registryInventoryError('evicted-json-corrupt', err)
       this.evicted.clear()
+      this._operatorRemoved.clear()
       return
     }
-    if (!data || typeof data !== 'object' || Array.isArray(data) ||
-        Object.keys(data).length > MAX_TOMBSTONES) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
       if (strict) throw registryInventoryError('evicted-shape-invalid')
       this.evicted.clear()
+      this._operatorRemoved.clear()
       return
     }
     const validated = new Map()
     for (const [key, value] of Object.entries(data)) {
-      if (!CANONICAL_APP_KEY.test(key) || !Number.isSafeInteger(value) || value <= 0) {
+      const row = CANONICAL_APP_KEY.test(key) ? parseEvictedRow(value) : null
+      if (!row) {
         if (strict) throw registryInventoryError('evicted-row-invalid')
         continue
       }
-      validated.set(key, value)
+      validated.set(key, row)
     }
     if (strict && validated.size !== Object.keys(data).length) {
       throw registryInventoryError('evicted-row-invalid')
     }
+    // Only eviction rows count toward the bound; operator rows are exempt.
+    const evictionRows = [...validated.values()].filter(row => row.kind === TOMBSTONE_EVICTION).length
+    if (evictionRows > MAX_TOMBSTONES) {
+      if (strict) throw registryInventoryError('evicted-shape-invalid')
+      this.evicted.clear()
+      this._operatorRemoved.clear()
+      return
+    }
     this.evicted.clear()
-    for (const [key, value] of validated) this.evicted.set(key, value)
+    this._operatorRemoved.clear()
+    for (const [key, row] of validated) {
+      this.evicted.set(key, row.at)
+      if (row.kind === TOMBSTONE_OPERATOR) this._operatorRemoved.add(key)
+    }
   }
 
   /**
@@ -510,6 +596,7 @@ export class AppRegistry extends EventEmitter {
       apps: new Map(this.apps),
       byAppId: new Map(this.byAppId),
       evicted: new Map(this.evicted),
+      operatorRemoved: new Set(this._operatorRemoved),
       metadataBudgets: new Map(this._metadataBudgets),
       metadataTombstones: new Set(this._metadataTombstones),
       metadataTombstoneEntries: new Map(this._metadataTombstoneEntries),
@@ -522,6 +609,7 @@ export class AppRegistry extends EventEmitter {
     this.apps.clear()
     this.byAppId.clear()
     this.evicted.clear()
+    this._operatorRemoved.clear()
     this._metadataBudgets.clear()
     this._metadataTombstones.clear()
     this._metadataTombstoneEntries.clear()
@@ -530,6 +618,7 @@ export class AppRegistry extends EventEmitter {
     for (const [key, value] of snapshot.apps || []) this.apps.set(key, value)
     for (const [key, value] of snapshot.byAppId || []) this.byAppId.set(key, value)
     for (const [key, value] of snapshot.evicted || []) this.evicted.set(key, value)
+    for (const key of snapshot.operatorRemoved || []) this._operatorRemoved.add(key)
     for (const [key, value] of snapshot.metadataBudgets || []) this._metadataBudgets.set(key, value)
     for (const key of snapshot.metadataTombstones || []) this._metadataTombstones.add(key)
     for (const [key, value] of snapshot.metadataTombstoneEntries || []) this._metadataTombstoneEntries.set(key, value)
@@ -1199,6 +1288,7 @@ export class AppRegistry extends EventEmitter {
     this._metadataTombstones.clear()
     this._metadataTombstoneEntries.clear()
     this.evicted.clear()
+    this._operatorRemoved.clear()
     let chargedBytes = 0
     for (const row of inventory) {
       if (!Number.isSafeInteger(chargedBytes + row.metadataBudget.bytes)) {
@@ -1211,6 +1301,7 @@ export class AppRegistry extends EventEmitter {
         this._metadataTombstoneEntries.set(row.appKey, row.entry)
         if (Number.isSafeInteger(row.entry.evictedAt) && row.entry.evictedAt > 0) {
           this.evicted.set(row.appKey, row.entry.evictedAt)
+          if (row.entry.evictionKind === TOMBSTONE_OPERATOR) this._operatorRemoved.add(row.appKey)
         }
       }
     }
@@ -1269,23 +1360,30 @@ export class AppRegistry extends EventEmitter {
       throw registryInventoryError('evicted-migration-shape-invalid')
     }
     const entries = Object.entries(parsed)
-    if (entries.length > MAX_TOMBSTONES) {
+    const rows = []
+    for (const [appKey, value] of entries) {
+      const row = CANONICAL_APP_KEY.test(appKey) ? parseEvictedRow(value) : null
+      if (!row) throw registryInventoryError('evicted-migration-row-invalid')
+      rows.push({ appKey, evictedAt: row.at, kind: row.kind })
+    }
+    // Operator rows (0.24.7+) are exempt from the tombstone bound.
+    if (rows.filter(row => row.kind === TOMBSTONE_EVICTION).length > MAX_TOMBSTONES) {
       throw registryInventoryError('evicted-migration-count-invalid')
     }
 
     const items = []
-    for (const [appKey, evictedAt] of entries) {
-      if (!CANONICAL_APP_KEY.test(appKey) || !Number.isSafeInteger(evictedAt) || evictedAt <= 0) {
-        throw registryInventoryError('evicted-migration-row-invalid')
-      }
+    for (const { appKey, evictedAt, kind } of rows) {
       const current = inventoryByKey.get(appKey)
       if (current && !current.tombstone) {
         throw registryInventoryError('evicted-migration-active-row-conflict')
       }
-      if (current?.entry?.evictedAt === evictedAt) continue
+      const currentKind = current?.entry?.evictionKind === TOMBSTONE_OPERATOR ? TOMBSTONE_OPERATOR : TOMBSTONE_EVICTION
+      if (current?.entry?.evictedAt === evictedAt && currentKind === kind) continue
       items.push({
         appKey,
-        shape: { appKey, evictedAt },
+        shape: kind === TOMBSTONE_OPERATOR
+          ? { appKey, evictedAt, evictionKind: TOMBSTONE_OPERATOR }
+          : { appKey, evictedAt },
         priorBudget: this._metadataBudgets.get(appKey) || { bytes: 0, revision: 0 },
         tombstone: true
       })
@@ -1925,13 +2023,17 @@ export class AppRegistry extends EventEmitter {
           this._metadataTombstoneEntries.set(items[i].appKey, shapes[i])
           if (Number.isSafeInteger(shapes[i].evictedAt) && shapes[i].evictedAt > 0) {
             this.evicted.set(items[i].appKey, shapes[i].evictedAt)
+            if (shapes[i].evictionKind === TOMBSTONE_OPERATOR) this._operatorRemoved.add(items[i].appKey)
+            else this._operatorRemoved.delete(items[i].appKey)
           } else {
             this.evicted.delete(items[i].appKey)
+            this._operatorRemoved.delete(items[i].appKey)
           }
         } else {
           this._metadataTombstones.delete(items[i].appKey)
           this._metadataTombstoneEntries.delete(items[i].appKey)
           this.evicted.delete(items[i].appKey)
+          this._operatorRemoved.delete(items[i].appKey)
         }
       }
 
@@ -2140,9 +2242,12 @@ export class AppRegistry extends EventEmitter {
         const evictedAt = Number.isSafeInteger(opts.evictedAt) && opts.evictedAt > 0
           ? opts.evictedAt
           : null
+        const shape = evictedAt !== null && opts.evictionKind === TOMBSTONE_OPERATOR
+          ? { appKey, evictedAt, evictionKind: TOMBSTONE_OPERATOR }
+          : { appKey, evictedAt }
         await this._appendMeasuredBeeShapes([{
           appKey,
-          shape: { appKey, evictedAt },
+          shape,
           priorBudget,
           tombstone: true
         }])
@@ -2186,7 +2291,8 @@ export class AppRegistry extends EventEmitter {
       if (this._persistenceMode === 'bee') {
         await this._deleteEntryFromBee(appKey, {
           strict: true,
-          evictedAt: opts.evictedAt
+          evictedAt: opts.evictedAt,
+          evictionKind: opts.evictionKind
         })
         return
       }

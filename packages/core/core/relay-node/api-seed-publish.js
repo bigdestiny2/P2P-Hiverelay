@@ -364,6 +364,9 @@ export async function runOperatorSeedAction ({
   if (!built.ok) return built.result
 
   try {
+    // An authenticated operator seed is the explicit action that lifts a
+    // tombstone — an operator removal included.
+    if (typeof node.clearTombstone === 'function') await node.clearTombstone(appKey)
     const result = await node.seedApp(appKey, built.seedOpts)
     return { ok: true, payload: { ok: true, ...result } }
   } catch (err) {
@@ -404,6 +407,21 @@ export async function runPublisherSeedAction ({
   })
   if (!built.ok) {
     return { ok: false, kind: 'bad-request', status: built.status || 400, payload: errorPayload(built.error) }
+  }
+
+  // A publisher request never overrides a tombstone (operator removal or
+  // eviction). Refuse before the lease gate can quote or take payment.
+  const held = typeof node._isHeld === 'function' && node._isHeld(built.appKey)
+  const tomb = typeof node._tombstoneGate === 'function' && !held
+    ? node._tombstoneGate(built.appKey, 'publisher-seed')
+    : null
+  if (tomb) {
+    return {
+      ok: false,
+      kind: 'tombstoned',
+      status: 409,
+      payload: { error: 'TOMBSTONED: app was removed from this relay (' + tomb.kind + ' tombstone)', tombstone: tomb.kind }
+    }
   }
 
   const gate = await evaluateSeedLease({
