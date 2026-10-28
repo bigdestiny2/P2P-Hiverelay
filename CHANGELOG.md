@@ -50,6 +50,18 @@ The packages are versioned in lockstep.
   purges its cores in the background (logged as `skipped tombstoned app`,
   source `boot-reseed`). Rows the sacred guard protects (archive tier,
   custody-bound, live paid lease) keep seeding.
+- **A removal made after boot stays removed while the boot reseed is still
+  running.** The boot reseed works through a list captured at boot, one app at
+  a time behind the seed mutex, and called the seeder directly, so the
+  `seedApp` backstop never ran. One seed whose drive open never settles holds
+  that mutex for hours. When an eviction purge released it, the reseed and
+  every seed queued behind the mutex ran in the same moment. That re-seeded
+  apps removed or evicted since boot, with no restart, in review mode too.
+  Now:
+  - the reseed skips any row that has left the registry since boot (operator
+    purge or unseed, eviction);
+  - every seed re-checks the tombstone once it holds the mutex, because a
+    caller's own gate ran before the wait.
 
 ### Changed
 - **Tombstones have a kind.**

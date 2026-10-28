@@ -28,6 +28,7 @@ import { mkdtemp, readFile, writeFile } from 'fs/promises'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import { AppRegistry, TOMBSTONE_EVICTION, TOMBSTONE_OPERATOR } from 'p2p-hiverelay/core/app-registry.js'
 import { runOperatorSeedAction } from 'p2p-hiverelay/core/relay-node/api-seed-publish.js'
+import { EvictionManager } from 'p2p-hiverelay/core/relay-node/eviction.js'
 
 const GiB = 1024 * 1024 * 1024
 
@@ -399,4 +400,109 @@ test('boot: sacred rows keep seeding even with a stale tombstone', async (t) => 
   t.is(entries.length, 2, 'both replayed')
   t.ok(node.appRegistry.has(archive) && node.appRegistry.has(custody), 'rows kept')
   t.is(purged.length, 0, 'nothing purged')
+})
+
+// ─── Live: the boot replay resuming long after boot ─────────────────
+
+test('live: an eviction that unwedges the seed mutex lets nothing removed since boot re-seed', async (t) => {
+  // Production sequence (v0.24.6, review mode, no restart): one reseed is
+  // stuck in _seedAppInner holding the seed mutex (a drive open that never
+  // settles, and the close in its catch awaits that same open), so the boot
+  // replay loop and every other seedApp wait behind it for hours. An
+  // eviction sweep evicts that app, its purge closes the core, the stuck
+  // seed fails, and in the same tick everything queued behind the mutex
+  // runs, including apps removed or evicted since boot.
+  const { node, sent, myPubkeyHex } = makeNode(t, { acceptMode: 'review' })
+  const lc = node.appLifecycle
+  delete lc.seedApp // the real AppLifecycle.seedApp: seed mutex + re-check
+  const OLD = Date.now() - 10 * 24 * 60 * 60 * 1000
+  const wedged = hexKey() // its drive open never settles
+  const removed = hexKey() // operator-purged after boot
+  const evicted = hexKey() // shed by the same sweep
+  const live = hexKey() // a live seed that passed its gate, then waited
+  const kept = hexKey()
+
+  let unwedge
+  const stuck = new Promise(resolve => { unwedge = resolve })
+  const opened = []
+  lc._seedAppInner = async (appKey) => {
+    if (appKey === wedged) {
+      await stuck
+      throw new Error('DRIVE_READY_TIMEOUT after 8000ms')
+    }
+    opened.push(appKey)
+    node.appRegistry.apps.set(appKey, { appKey, durability: 0, discoveryKey: 'dk', startedAt: Date.now() })
+    return { discoveryKey: 'dk' }
+  }
+  node.store = {
+    session () { throw new Error('no drive session in this test') },
+    get: (key) => ({
+      ready: async () => {},
+      purge: async () => { if (b4a.toString(key, 'hex') === wedged) unwedge() },
+      close: async () => {}
+    })
+  }
+
+  // load() hydrates a placeholder (no drive yet) for every persisted row.
+  for (const k of [wedged, removed, evicted, kept]) {
+    node.appRegistry.apps.set(k, { appKey: k, durability: 0, startedAt: OLD })
+  }
+  const reseeded = []
+  lc.on('reseeded', ({ appKey }) => reseeded.push(appKey))
+  const replay = lc.reseedDrives([wedged, removed, evicted, kept].map(appKey => ({ appKey })))
+  const liveSeed = node.seedApp(live, {}).then(() => null, (err) => err)
+  await new Promise(resolve => setTimeout(resolve, 150))
+  t.alike(opened, [], 'everything waits behind the wedged seed')
+
+  // Operator removals while the seeds wait: a held boot row, and the app
+  // the live seed is waiting for (not held: a tombstone-only removal).
+  await node.manualPurge(removed)
+  await node.manualPurge(live)
+
+  // The sweep sheds `evicted`, then the wedged app; that purge unwedges.
+  const surplus = { current: 4, target: 2 }
+  const health = new Map([[wedged, surplus], [evicted, surplus]])
+  const holders = [myPubkeyHex, hexKey(), hexKey(), hexKey()].map(relayPubkey => ({ relayPubkey }))
+  const ev = new EvictionManager({
+    appRegistry: node.appRegistry,
+    seedingRegistry: { getRelaysForApp: async (k) => (health.has(k) ? holders : []) },
+    storageAccounting: { getBytes: (k) => (k === evicted ? 5000 : 0), measure: async () => 0, getSummary: () => ({ totalBytes: 5000 }) },
+    diskMonitor: { getInfo: () => ({ usedPct: 95, totalBytes: 20e9 }) },
+    getReplicationHealth: () => health,
+    myPubkeyHex,
+    unseed: (k) => node.unseedApp(k),
+    store: node.store
+  }, { enabled: true, minAgeMs: 0 })
+  const res = await ev.sweep()
+  t.alike(res.evicted, [evicted, wedged], 'the sweep evicted both')
+
+  await replay
+  const liveErr = await liveSeed
+  t.alike(opened, [kept], 'only the untouched row re-seeds')
+  t.alike(reseeded, [kept], 'the replay re-seeded nothing removed since boot')
+  t.is(liveErr && liveErr.code, 'TOMBSTONED', 'the waiting live seed is refused once it holds the mutex')
+  for (const k of [wedged, removed, evicted, live]) {
+    t.absent(node.appRegistry.has(k), 'not re-adopted')
+    t.ok(node.appRegistry.isEvicted(k), 'tombstone stands')
+  }
+  t.ok(sent.skipped.some(s => s.appKey === removed && s.source === 'boot-reseed'), 'replay skip logged')
+  t.ok(sent.skipped.some(s => s.appKey === live && s.source === 'seed-app'), 'mutex re-check logged')
+})
+
+test('live: the seed-mutex re-check lets a held boot row (sacred, tombstoned) and an operator-lifted seed through', async (t) => {
+  const { node } = makeNode(t)
+  const lc = node.appLifecycle
+  delete lc.seedApp
+  const opened = []
+  lc._seedAppInner = async (appKey) => { opened.push(appKey); return { discoveryKey: 'dk' } }
+  const archive = hexKey()
+  const lifted = hexKey()
+  node.appRegistry.apps.set(archive, { appKey: archive, durability: 1 }) // placeholder kept at boot
+  node.appRegistry.markEvicted(archive, 1000, { kind: TOMBSTONE_OPERATOR })
+  node.appRegistry.markEvicted(lifted, 1000, { kind: TOMBSTONE_OPERATOR })
+  node.clearTombstone(lifted) // POST /seed, approveRequest, CLI --seed
+
+  await lc.reseedDrives([{ appKey: archive }])
+  await node.seedApp(lifted, {})
+  t.alike(opened, [archive, lifted], 'both seeded')
 })

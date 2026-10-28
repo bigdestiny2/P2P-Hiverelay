@@ -67,8 +67,17 @@ export class AppLifecycle extends EventEmitter {
    */
   async reseedDrives (entries) {
     if (!Array.isArray(entries) || !entries.length) return
+    const node = this.node
     for (const entry of entries) {
       if (!entry.appKey) continue
+      // The list is a boot-time snapshot, and this sequential loop can
+      // reach a row long after boot (each seedApp waits on the seed
+      // mutex). A row removed since — operator purge or unseed, an
+      // eviction — stays removed (v0.24.7).
+      if (node.appRegistry && typeof node.appRegistry.has === 'function' && !node.appRegistry.has(entry.appKey)) {
+        if (typeof node._tombstoneGate === 'function') node._tombstoneGate(entry.appKey, 'boot-reseed')
+        continue
+      }
       try {
         await this.seedApp(entry.appKey, {
           appId: entry.appId || null,
@@ -233,6 +242,11 @@ export class AppLifecycle extends EventEmitter {
     }
     this._seedMutex = true
     try {
+      // Tombstone re-check under the mutex (v0.24.7). A caller can wait
+      // here for hours behind a wedged seed, and the app may be removed
+      // (operator purge, eviction) in the meantime; its own gate ran
+      // before the wait.
+      if (typeof node._refuseTombstoned === 'function') node._refuseTombstoned(appKeyHex)
       return await this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier)
     } finally {
       this._seedMutex = false
