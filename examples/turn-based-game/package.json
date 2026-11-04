@@ -1,0 +1,18 @@
+{
+  "name": "hiverelay-turn-based-game-example",
+  "version": "1.0.0",
+  "description": "Async two-player turn-based commit-reveal game reference adapter for the hiverelay-blind/1 substrate",
+  "type": "module",
+  "private": true,
+  "main": "example.js",
+  "scripts": {
+    "start": "node example.js",
+    "test": "node --test test/"
+  },
+  "dependencies": {
+    "@hiverelay/blind-client": "file:../../packages/blind-client",
+    "@hiverelay/blind-protocol": "file:../../packages/blind-protocol",
+    "b4a": "^1.6.6"
+  },
+  "keywords": ["hiverelay", "blind-substrate", "example", "game", "p2p", "commit-reveal"]
+}
