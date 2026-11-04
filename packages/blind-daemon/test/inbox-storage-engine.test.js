@@ -335,6 +335,38 @@ test('Inbox engine persists CREATE/APPEND and recovers exact immutable frame/rep
   await engine.close()
 })
 
+test('Inbox CREATE replay re-establishes the generation floor after callback failure and restart', async t => {
+  const root = await temporaryRoot(t)
+  const time = clock()
+  const created = createFixture({ spendByte: 0xd8 })
+  let failedCallbacks = 0
+  let engine = new BlindInboxStorageEngine(engineOptions(root, time, {
+    async onBlindWriteAcknowledged () {
+      failedCallbacks++
+      throw new Error('generation floor append failed before durability')
+    }
+  }))
+  await engine.open()
+  await t.exception(engine.createInbox({ ...created, resultBinding: binding() }), /generation floor append failed/)
+  t.is(failedCallbacks, 1)
+  t.is(engine.status().inboxCount, 1, 'the committed WAL state survived the refused response')
+  await engine.close()
+
+  const replayEvidence = []
+  engine = new BlindInboxStorageEngine(engineOptions(root, time, {
+    onBlindWriteAcknowledged (evidence) {
+      replayEvidence.push({ walSequence: evidence.walSequence, walHash: b4a.from(evidence.walHash) })
+    }
+  }))
+  await engine.open()
+  const replay = await engine.createInbox({ ...created, resultBinding: binding(2n) })
+  t.is(replay.inbox.stateRevision, 0n)
+  t.is(replayEvidence.length, 1, 'the externally returned replay proves the floor again')
+  t.is(replayEvidence[0].walSequence, engine.transactionStore.walSequence)
+  t.alike(replayEvidence[0].walHash, engine.transactionStore.walHash)
+  await engine.close()
+})
+
 test('Inbox engine serializes concurrent APPEND revisions and enforces management CAS', async t => {
   const root = await temporaryRoot(t)
   const time = clock()

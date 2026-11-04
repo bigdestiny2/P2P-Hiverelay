@@ -16,7 +16,13 @@ test('npm package pack checker accepts clean workspace pack metadata', (t) => {
   writePackage(root, 'packages/core', {
     name: 'p2p-hiverelay',
     version: '0.20.2',
-    files: ['README.md', 'LICENSE', 'index.js']
+    files: ['README.md', 'LICENSE', 'index.js', 'patches/', 'platform/'],
+    scripts: {
+      postinstall: 'node platform/apply-hypercore-storage-migration-patch.js'
+    },
+    dependencies: {
+      'hypercore-storage': '3.2.0'
+    }
   })
 
   const result = checkNpmPackagePack({
@@ -33,7 +39,9 @@ test('npm package pack checker accepts clean workspace pack metadata', (t) => {
         files: [
           { path: 'README.md' },
           { path: 'LICENSE' },
-          { path: 'index.js' }
+          { path: 'index.js' },
+          { path: 'patches/hypercore-storage+3.2.0.patch' },
+          { path: 'platform/apply-hypercore-storage-migration-patch.js' }
         ]
       }])
     })

@@ -71,6 +71,9 @@ export function buildHealthResponse ({ node, version }) {
   const diskSummary = diskHealthSummary(disk)
   const uptime = node && node.metrics ? node.metrics.getSummary().uptime : null
   const running = node ? node.running : false
+  const storageGeneration = node && typeof node.getStorageGenerationStatus === 'function'
+    ? node.getStorageGenerationStatus()
+    : null
   const storageFatal = node && node.storageAdmission ? node.storageAdmission.fatalReason : null
 
   // A fail-closed storage authority is a terminal state that used to be
@@ -91,7 +94,8 @@ export function buildHealthResponse ({ node, version }) {
         version,
         uptime,
         running,
-        disk: diskSummary
+        disk: diskSummary,
+        storageGeneration
       }
     }
   }
@@ -110,7 +114,8 @@ export function buildHealthResponse ({ node, version }) {
         version,
         uptime,
         running,
-        disk: diskSummary
+        disk: diskSummary,
+        storageGeneration
       }
     }
   }
@@ -122,7 +127,8 @@ export function buildHealthResponse ({ node, version }) {
       version,
       uptime,
       running,
-      disk: diskSummary
+      disk: diskSummary,
+      storageGeneration
     }
   }
 }

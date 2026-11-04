@@ -105,19 +105,13 @@ async function ceremonyFixture (t) {
 
   const mapGeneration = 1n
   const manifestKey = b4a.alloc(32, 0x91)
-  // The documented deterministic derivation: both consistency tokens are
-  // derived from the sealed identity so re-running is byte-identical.
+  // The public bucket-map consistency token is derived from the sealed
+  // identity so re-running is byte-identical. D6 has no partition secret.
   const bucketMapHash = blake2b256(b4a.concat([
     b4a.from('hiverelay.blind.bucket-map.v1', 'ascii'),
     storeId,
     u64beBytes(mapGeneration)
   ]))
-  const partitionKey = blake2b256(b4a.concat([
-    b4a.from('hiverelay.blind.partition-key.v1', 'ascii'),
-    storeId,
-    manifestKey
-  ]))
-
   return {
     root,
     storeRoot: path.join(root, 'store'),
@@ -129,7 +123,6 @@ async function ceremonyFixture (t) {
     args: {
       manifestKey,
       ownerFenceTokenHash: b4a.alloc(32, 0x72),
-      partitionKey,
       bucketMapHash,
       mapGeneration
     }
@@ -322,7 +315,7 @@ test('ceremony validates every input and fails closed before touching the store 
   const cases = []
   cases.push(['zero manifest key', { manifestKey: b4a.alloc(32) }, /manifestKey must be nonzero/])
   cases.push(['short manifest key', { manifestKey: b4a.alloc(16, 0x91) }, /manifestKey must be exactly 32 bytes/])
-  cases.push(['zero partition key', { partitionKey: b4a.alloc(32) }, /partitionKey must be nonzero/])
+  cases.push(['retired partition key', { partitionKey: b4a.alloc(32, 0x51) }, /partitionKey is retired by D6/])
   cases.push(['zero bucket-map hash', { bucketMapHash: b4a.alloc(32) }, /bucketMapHash must be nonzero/])
   cases.push(['zero owner fence token hash', { ownerFenceTokenHash: b4a.alloc(32) }, /ownerFenceTokenHash must be nonzero/])
   cases.push(['zero map generation', { mapGeneration: 0n }, /mapGeneration is outside its u64 bound/])

@@ -31,6 +31,9 @@
 {% do c1.environment.add_env("HIVERELAY_ACCEPT_MODE", values.blindspark.accept_mode) %}
 {% do c1.environment.add_env("HIVERELAY_MAX_STORAGE", "%dGB" | format(values.blindspark.max_storage_gb)) %}
 {% do c1.environment.add_env("HIVERELAY_LOG_LEVEL", values.blindspark.log_level) %}
+{% do c1.environment.add_env("HIVERELAY_REQUIRE_GENERATION_RECEIPT", "1") %}
+{% do c1.environment.add_env("HIVERELAY_GENERATION_RECEIPT", "/config/storage-generation-receipt.v1.json") %}
+{% do c1.environment.add_env("HIVERELAY_GENERATION_RECEIPT_SHA256_FILE", "/config/storage-generation-receipt.v1.sha256") %}
 {% do c1.environment.add_env("HIVERELAY_UI_SIMPLE", values.blindspark.simple_dashboard) %}
 {% do c1.environment.add_env("HIVERELAY_UI_EXPOSE_TOKEN", values.blindspark.expose_token) %}
 {% do c1.environment.add_user_envs(values.blindspark.additional_envs) %}
@@ -40,6 +43,7 @@
 {% endif %}
 
 {% do c1.add_storage("/data", values.storage.data) %}
+{% do c1.add_storage("/config", values.storage.generation) %}
 {% do perm_container.add_or_skip_action("data", values.storage.data, perms_config) %}
 
 {% if perm_container.has_actions() %}

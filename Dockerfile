@@ -31,6 +31,8 @@
 #   HIVERELAY_API_KEY=...         (secures management endpoints)
 #   HIVERELAY_API_PORT=9100       (API port inside container)
 #   HIVERELAY_HOLESAIL=1          (enable Holesail for NAT traversal)
+#   HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+#   HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
 #   LNBITS_URL=http://...         (LNbits payment provider; auto-detected on Umbrel)
 #   LNBITS_ADMIN_KEY=...          (LNbits admin key for invoice creation)
 
@@ -70,6 +72,8 @@ COPY packages/blind-peercred/binding.gyp packages/blind-peercred/peercred.cc pac
 COPY packages/blind-edge/package.json packages/blind-edge/
 COPY packages/blind-daemon/package.json packages/blind-daemon/
 COPY packages/core/package.json packages/core/
+COPY packages/core/platform/apply-hypercore-storage-migration-patch.js packages/core/platform/
+COPY packages/core/patches packages/core/patches/
 COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
 COPY packages/verifier/package.json packages/verifier/
@@ -161,6 +165,9 @@ EXPOSE 9100
 ENV NODE_ENV=production \
     HIVERELAY_STORAGE=/data \
     HIVERELAY_CONFIG_DIR=/config \
+    HIVERELAY_REQUIRE_GENERATION_RECEIPT=1 \
+    HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json \
+    HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256 \
     HIVERELAY_LOG_LEVEL=info \
     HIVERELAY_API_PORT=9100 \
     HIVERELAY_API_HOST=0.0.0.0

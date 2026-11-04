@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-monorepo",
-  "version": "0.26.0-rc.8",
+  "version": "0.26.0-rc.9",
   "description": "Monorepo root for HiveRelay (Core + Services + Client)",
   "private": true,
   "type": "module",
@@ -58,6 +58,8 @@
     "release:check-blockers": "node scripts/check-release-blockers.mjs",
     "release:check-npm-latest": "node scripts/check-npm-latest.mjs",
     "release:check-npm-packages": "node scripts/check-npm-package-pack.mjs",
+    "release:verify-packed-corestore-patch": "node scripts/verify-packed-corestore-migration-patch.mjs",
+    "release:adapt-pear-migrate-hc11": "node scripts/adapt-pear-migrate-hc11-trigger.mjs",
     "release:check-official-umbrel-pr": "node scripts/check-official-umbrel-pr.mjs",
     "release:check-distribution-env": "node scripts/check-release-distribution-env.mjs",
     "release:resolve-public-gateway": "node scripts/resolve-public-hive-gateway-release.mjs",

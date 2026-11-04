@@ -1,4 +1,4 @@
-app_version: 0.26.0-rc.8
+app_version: 0.26.0-rc.9
 capabilities: []
 categories:
 - networking
@@ -33,4 +33,4 @@ sources:
 - https://github.com/bigdestiny2/P2P-Hiverelay
 title: Blindspark by HiveRelay
 train: community
-version: 1.0.7
+version: 1.0.8

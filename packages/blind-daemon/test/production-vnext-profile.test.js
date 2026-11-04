@@ -54,8 +54,7 @@ import {
   bindStoreIdentity,
   bootstrapVnextStoreGenerationFloor,
   encodeRuntimeBinding,
-  loadProductionRuntimeConfig,
-  productionReleaseGateFor
+  loadProductionRuntimeConfig
 } from '../production-runtime.js'
 import {
   deriveVnextBucketMapHash,
@@ -100,11 +99,17 @@ async function gateError (environment) {
   return error
 }
 
-test('vNext gate genuinely assembles the complete baseline with zero exclusions', async t => {
+async function localVnextAssemblyGate (environment) {
+  const error = await gateError(environment)
+  if (error == null || error.code !== 'BLIND_STORAGE_GENERATION_UNSAFE') throw error
+}
+
+test('vNext production gate validates the baseline then enforces the RC9 generation-safety blocker', async t => {
   const fixture = await vnextSealedFixture()
   t.teardown(() => cleanup(fixture.directory))
   const error = await gateError(fixture.environment)
-  t.is(error, null, 'the genuine production release gate passes with zero baseline exclusions')
+  t.is(error && error.code, 'BLIND_STORAGE_GENERATION_UNSAFE')
+  t.ok(error.message.includes('pre-floor open may mutate or erase evidence'))
 
   // Every baseline item is TRUE-assembled by a real code path (the static
   // binding verification, the entrypoint CELL/INBOX/CORE line, the sealed
@@ -178,20 +183,21 @@ test('completeness scope is frozen: baseline never evaluates profile-2 items, ev
   t.absent(BASELINE_COMPLETENESS_EXCLUSIONS.includes(PROFILE2_WITNESS))
   t.alike([...PROFILE2_COMPLETENESS_EXCLUSIONS], [FORWARD_EXEC, PROFILE2_WITNESS])
 
-  // With no FORWARD material the baseline gate passes: the baseline set is
-  // genuinely assembled and profile-2 items are never evaluated under it.
+  // With no FORWARD material the baseline reaches the same generation-safety
+  // blocker: profile-2 items are never evaluated under it.
   const without = await vnextSealedFixture()
   t.teardown(() => cleanup(without.directory))
   t.is(loadVnextForwardConfig(without.environment), null, 'absent FORWARD material parses as unconfigured')
-  t.is(await gateError(without.environment), null, 'baseline gate passes with no FORWARD material')
+  t.is((await gateError(without.environment)).code, 'BLIND_STORAGE_GENERATION_UNSAFE')
 
   // Even with a complete FORWARD storage identity configured, the baseline
-  // gate still does not evaluate profile-2 items; it passes unchanged.
+  // gate still does not evaluate profile-2 items; the same generation blocker
+  // remains non-overridable.
   const withForward = await vnextSealedFixture({ forward: true })
   t.teardown(() => cleanup(withForward.directory))
   t.ok(loadVnextForwardConfig(withForward.environment), 'complete FORWARD storage identity parses')
-  t.is(await gateError(withForward.environment), null,
-    'baseline gate passes; FORWARD and the profile-2 witness are never baseline items')
+  t.is((await gateError(withForward.environment)).code, 'BLIND_STORAGE_GENERATION_UNSAFE',
+    'baseline reaches the generation blocker; FORWARD and the profile-2 witness are never baseline items')
 })
 
 test('the profile-2 acceptance profile stays fail-closed (static gate, FORWARD bits zero)', async t => {
@@ -331,8 +337,6 @@ async function orchestrateVnextServingStore (fixture) {
       descriptorCanonicalBytes,
       manifestKey,
       ownerFenceTokenHash,
-      partitionKey: blake2b256(b4a.concat([
-        b4a.from('hiverelay.blind.partition-key.v1', 'ascii'), descriptor.storeId, manifestKey])),
       bucketMapHash: deriveVnextBucketMapHash(descriptor.storeId, mapGeneration),
       mapGeneration
     })
@@ -366,11 +370,9 @@ async function orchestrateVnextServingStore (fixture) {
   }
 }
 
-// Assemble the production runtime exactly as cli.js does for the vNext
-// profile: the genuine production release gate bound to the signed
-// environment, the sealed admission redemption adapter loaded through the
-// production VM bridge, strict admission capture, and the manifest floor
-// required. No test seams.
+// Exercise the complete vNext assembly below the deliberately closed RC9
+// public gate. The local gate consumes only the final generation-safety error;
+// every earlier binding/completeness failure remains fatal.
 async function assembleVnextRuntime (fixture, environment = fixture.environment) {
   const bootstrap = loadDaemonBootstrapConfig(environment)
   const entrypointConfig = loadProductionEntrypointConfig(environment)
@@ -378,7 +380,7 @@ async function assembleVnextRuntime (fixture, environment = fixture.environment)
   return assembleProductionBlindDaemon({
     bootstrap,
     runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
-    releaseGate: productionReleaseGateFor(environment),
+    releaseGate: () => localVnextAssemblyGate(environment),
     enableCellRuntime: true,
     enableInboxRuntime: true,
     enableCoreRuntime: true,

@@ -30,7 +30,10 @@
 
 import Hyperswarm from 'hyperswarm'
 import Corestore from 'corestore'
-import { openCorestore } from 'p2p-hiverelay/core/persistence/storage-root-restore.js'
+import {
+  corestoreGenerationParticipantOptions,
+  openCorestore
+} from 'p2p-hiverelay/core/persistence/storage-root-restore.js'
 import Hyperdrive from 'hyperdrive'
 import b4a from 'b4a'
 import Protomux from 'protomux'
@@ -204,6 +207,10 @@ export class HiveRelayClient extends EventEmitter {
     this._ownsStore = !config.store
     this._keyPairExplicit = !!config.keyPair
     this._storagePath = config.storage || null
+    this._hiverelayGeneration = config.hiverelayGeneration ?? null
+    if (!this._ownsStore && this._hiverelayGeneration != null) {
+      throw new TypeError('hiverelayGeneration cannot be supplied with an externally owned Corestore')
+    }
 
     this.store = config.store || null
     this.swarm = config.swarm || null
@@ -768,7 +775,8 @@ export class HiveRelayClient extends EventEmitter {
       // so an upgrading client would silently forget its fork evidence,
       // seed retry queue, app→drive map and cached peers. See
       // storage-root-restore.js.
-      this.store = openCorestore(this._storagePath)
+      this.store = openCorestore(this._storagePath,
+        corestoreGenerationParticipantOptions(this._hiverelayGeneration, 'client-sdk'))
     }
     if (this._ownsStore && this.store) {
       await this._awaitOwnerOperation('owned-store-ready', this.store, () => this.store.ready())

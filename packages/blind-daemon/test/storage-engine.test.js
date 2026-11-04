@@ -900,6 +900,41 @@ test('cell PUT is durable, first-write-wins, opaque on disk, and exact retry sur
   await engine.close()
 })
 
+test('cell acknowledged replay re-establishes the generation floor after callback failure and restart', async t => {
+  const root = await temporaryRoot(t, 'blind-cell-generation-retry')
+  const time = clock()
+  const fixture = putFixture({ spendByte: 0xd8, blobByte: 0xd8 })
+  let failedCallbacks = 0
+  let engine = new BlindCellStorageEngine(options(root, time, {
+    async onBlindWriteAcknowledged () {
+      failedCallbacks++
+      throw new Error('generation floor append failed before durability')
+    }
+  }))
+  await engine.open()
+  await t.exception(engine.putCell(fixture), /generation floor append failed/)
+  t.is(failedCallbacks, 1, 'the WAL commit attempted the floor before returning')
+  t.is(engine.status().accounting.cellRecords, 1, 'the committed WAL state survived the refused response')
+  await engine.close()
+
+  const replayEvidence = []
+  engine = new BlindCellStorageEngine(options(root, time, {
+    onBlindWriteAcknowledged (evidence) {
+      replayEvidence.push({ walSequence: evidence.walSequence, walHash: b4a.from(evidence.walHash) })
+    }
+  }))
+  await engine.open()
+  const replay = await engine.putCell({
+    ...fixture,
+    source: (async function * () { throw new Error('committed replay must not read the body') })()
+  })
+  t.is(replay.replay, true)
+  t.is(replayEvidence.length, 1, 'the externally returned replay proves the floor again')
+  t.is(replayEvidence[0].walSequence, engine.transactionStore.walSequence)
+  t.alike(replayEvidence[0].walHash, engine.transactionStore.walHash)
+  await engine.close()
+})
+
 test('daemon pins the private IPC atomic record kind to WAL type 17 and the generated store authority', async t => {
   const recordKind = PRIVATE_IPC_V2_STAGED_CELL_PUT_POLICY.atomicCommitRecordKind
   const recordType = BLIND_CELL_WAL_TYPE[recordKind]

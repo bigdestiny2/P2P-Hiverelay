@@ -21,7 +21,6 @@ import {
   blindHealthChallengeV1,
   blindHealthResultV1,
   blindServiceDescriptorV1,
-  blake2b256,
   decodeCanonical,
   decodeDispatchFrame,
   encodeCanonical,
@@ -189,8 +188,6 @@ async function orchestrateVnextServingStore (fixture, headDescriptorFile = fixtu
       descriptorCanonicalBytes,
       manifestKey,
       ownerFenceTokenHash,
-      partitionKey: blake2b256(b4a.concat([
-        b4a.from('hiverelay.blind.partition-key.v1', 'ascii'), descriptor.storeId, manifestKey])),
       bucketMapHash: deriveVnextBucketMapHash(descriptor.storeId, mapGeneration),
       mapGeneration
     })
@@ -204,11 +201,19 @@ async function orchestrateVnextServingStore (fixture, headDescriptorFile = fixtu
   }
 }
 
-// Assemble the production runtime exactly as cli.js does for the vNext
-// profile: the genuine production release gate bound to the signed
-// environment, the sealed admission redemption adapter loaded through the
-// production VM bridge, strict admission capture, and the manifest floor
-// required. No test seams.
+async function localVnextAssemblyGate (environment) {
+  try {
+    await productionReleaseGateFor(environment)()
+  } catch (error) {
+    if (error && error.code === 'BLIND_STORAGE_GENERATION_UNSAFE') return
+    throw error
+  }
+  throw new Error('expected the RC9 blind generation-safety blocker')
+}
+
+// Exercise the complete vNext assembly below the deliberately closed RC9
+// public gate. The local gate consumes only the final generation-safety error;
+// every earlier binding/completeness failure remains fatal.
 async function assembleVnextRuntime (fixture, environment = fixture.environment) {
   const bootstrap = loadDaemonBootstrapConfig(environment)
   const entrypointConfig = loadProductionEntrypointConfig(environment)
@@ -216,7 +221,7 @@ async function assembleVnextRuntime (fixture, environment = fixture.environment)
   return assembleProductionBlindDaemon({
     bootstrap,
     runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
-    releaseGate: productionReleaseGateFor(environment),
+    releaseGate: () => localVnextAssemblyGate(environment),
     enableCellRuntime: true,
     enableInboxRuntime: true,
     enableCoreRuntime: true,

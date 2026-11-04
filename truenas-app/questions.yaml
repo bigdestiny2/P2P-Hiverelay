@@ -337,6 +337,47 @@ questions:
                         show_if: [["acl_enable", "=", false]]
                         required: true
 
+        - variable: generation
+          label: Storage Generation Receipt Directory
+          description: |
+            A pre-provisioned directory containing the canonical offline
+            storage-generation-receipt.v1.json and its separately generated
+            storage-generation-receipt.v1.sha256 pin. It is mounted read-only;
+            startup fails closed if either exact file is missing.
+          schema:
+            type: dict
+            attrs:
+              - variable: type
+                label: Type
+                schema:
+                  type: string
+                  required: true
+                  default: host_path
+                  enum:
+                    - value: host_path
+                      description: Pre-provisioned Host Path
+              - variable: read_only
+                label: Read Only
+                schema:
+                  type: boolean
+                  default: true
+                  hidden: true
+              - variable: host_path_config
+                label: Host Path Configuration
+                schema:
+                  type: dict
+                  attrs:
+                    - variable: acl_enable
+                      label: Enable ACL
+                      schema:
+                        type: boolean
+                        default: false
+                    - variable: path
+                      label: Receipt Directory
+                      schema:
+                        type: hostpath
+                        required: true
+
   - variable: labels
     label: ""
     group: Labels Configuration

@@ -32,5 +32,11 @@ storage:
     ix_volume_config:
       dataset_name: data
       create_host_path: true
+  generation:
+    type: host_path
+    read_only: true
+    host_path_config:
+      path: /opt/tests/mnt/blindspark/storage-generation
+      acl_enable: false
 
 labels: []

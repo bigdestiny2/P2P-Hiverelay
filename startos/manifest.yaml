@@ -13,14 +13,10 @@
 
 id: blindspark
 title: "Blindspark"
-version: 0.26.0-rc.8
+version: 0.26.0-rc.9
 release-notes: |
-  Blindspark v0.26.0-rc.8 adds phase-correct StartOS 0.4 package provenance: the
-  digest-bound authoring manifest is verified before signing, the exact
-  JavaScript bundle is hash-bound through Start CLI packing, and the packed
-  manifest is verified separately. Both observations are bound into
-  release-closure evidence. Fleet channels and the public gateway remain
-  unchanged pending complete closure and the isolated Utah soak.
+  Blindspark v0.26.0-rc.9: synchronized HiveRelay release metadata for Docker,
+  Umbrel, StartOS, TrueNAS, Unraid, ZimaOS/CasaOS, Runtipi, and HexOS.
 license: apache-2.0
 wrapper-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
 upstream-repo: "https://github.com/bigdestiny2/P2P-Hiverelay"
@@ -67,6 +63,7 @@ main:
   args: []
   mounts:
     main: /data
+    generation: /config
   gpu-acceleration: false
 
 hardware-requirements:
@@ -90,6 +87,10 @@ properties: ~
 
 volumes:
   main:
+    type: data
+  # Populated only by the reviewed offline storage-generation ceremony.
+  # The runtime never creates or repairs these receipt/pin bytes.
+  generation:
     type: data
 
 interfaces:

@@ -37,7 +37,11 @@
  */
 
 import Hyperswarm from 'hyperswarm'
-import { openCorestore } from '../persistence/storage-root-restore.js'
+import {
+  corestoreGenerationHealth,
+  corestoreGenerationParticipantOptions,
+  openCorestore
+} from '../persistence/storage-root-restore.js'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 // Use Node-shaped names. Under Bare/Pear they get remapped via the
@@ -136,6 +140,7 @@ const log = {
 
 const DEFAULT_CONFIG = {
   storage: './storage',
+  hiverelayGeneration: null,
   enableRelay: true,
   enableSeeding: true,
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
@@ -301,6 +306,10 @@ export class BareRelay extends EventEmitter {
 
   get publicKey () { return this.swarm ? this.swarm.keyPair.publicKey : null }
   get seededApps () { return this.appRegistry ? this.appRegistry.apps : new Map() }
+  getStorageGenerationStatus () {
+    return corestoreGenerationHealth(this.config.hiverelayGeneration, this.store)
+  }
+
   seedApp (appKey, opts) { return this.appLifecycle.seedApp(appKey, opts) }
   unseedApp (appKey, opts) { return this.appLifecycle.unseedApp(appKey, opts) }
 
@@ -371,7 +380,10 @@ export class BareRelay extends EventEmitter {
       // unrecognised top-level entry of a pre-7 root into db/ *inside its
       // constructor*, which would strand app-registry.json and evicted.json
       // before load() below can migrate them. See storage-root-restore.js.
-      this.store = openCorestore(this.config.storage)
+      this.store = openCorestore(
+        this.config.storage,
+        corestoreGenerationParticipantOptions(this.config.hiverelayGeneration, 'bare-relay')
+      )
       await this.store.ready()
 
       // 2. App registry — tracks what we're seeding.

@@ -21,6 +21,15 @@ const REQUIRED_PACK_FILES = [
   'LICENSE'
 ]
 
+const CORE_MIGRATION_PATCH_CONTRACT = Object.freeze({
+  dependency: '3.2.0',
+  postinstall: 'node platform/apply-hypercore-storage-migration-patch.js',
+  files: Object.freeze([
+    'patches/hypercore-storage+3.2.0.patch',
+    'platform/apply-hypercore-storage-migration-patch.js'
+  ])
+})
+
 const UNSAFE_PACK_PATH_PATTERNS = [
   [/(^|\/)node_modules(\/|$)/, 'nested dependency directory'],
   [/(^|\/)(?:test|tests|__tests__)(\/|$)/, 'test directory'],
@@ -121,6 +130,10 @@ export function inspectPack ({ workspace, manifest, pack }) {
     errors.push(`${workspace}: packed tarball is missing export target ${issue.target} for ${issue.subpath}`)
   }
 
+  if (manifest.name === 'p2p-hiverelay') {
+    errors.push(...inspectCoreMigrationPatchContract({ workspace, manifest, paths }))
+  }
+
   if (Number.isFinite(pack.entryCount) && pack.entryCount !== paths.length) {
     warnings.push(`${workspace}: npm reported entryCount ${pack.entryCount} but listed ${paths.length} files`)
   }
@@ -141,6 +154,20 @@ export function inspectPack ({ workspace, manifest, pack }) {
     errors,
     warnings
   }
+}
+
+export function inspectCoreMigrationPatchContract ({ workspace, manifest, paths }) {
+  const errors = []
+  if (manifest.dependencies?.['hypercore-storage'] !== CORE_MIGRATION_PATCH_CONTRACT.dependency) {
+    errors.push(`${workspace}: core package must depend on exact hypercore-storage ${CORE_MIGRATION_PATCH_CONTRACT.dependency}`)
+  }
+  if (manifest.scripts?.postinstall !== CORE_MIGRATION_PATCH_CONTRACT.postinstall) {
+    errors.push(`${workspace}: core package postinstall must be the exact fail-closed migration patch verifier`)
+  }
+  for (const file of CORE_MIGRATION_PATCH_CONTRACT.files) {
+    if (!paths.includes(file)) errors.push(`${workspace}: packed core tarball is missing migration patch closure file ${file}`)
+  }
+  return errors
 }
 
 export function findMissingExportTargets (exportsField, paths) {

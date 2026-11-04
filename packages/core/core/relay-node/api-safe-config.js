@@ -1,10 +1,14 @@
 import { copyStorageCapProvenance } from '../../config/storage-cap.js'
+import { corestoreGenerationPublicConfig } from '../persistence/corestore-generation-envelope.js'
 
 export function buildSafeConfigPayload (node) {
   const c = node && node.config ? node.config : {}
   const payload = {
     name: c.name,
     storage: c.storage,
+    // Public digests/identifier only. The envelope authority key bytes never
+    // enter runtime configuration or API persistence.
+    hiverelayGeneration: corestoreGenerationPublicConfig(c.hiverelayGeneration),
     capacityProfile: c.capacityProfile == null ? null : c.capacityProfile,
     acceptMode: c.acceptMode,
     acceptAllowlist: Array.isArray(c.acceptAllowlist) ? c.acceptAllowlist : [],

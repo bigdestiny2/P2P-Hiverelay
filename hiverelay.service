@@ -16,6 +16,13 @@ WorkingDirectory=/opt/hiverelay
 # Environment
 Environment=NODE_ENV=production
 Environment=HIVERELAY_LOG_LEVEL=info
+Environment=HIVERELAY_REQUIRE_GENERATION_RECEIPT=1
+Environment=HIVERELAY_GENERATION_RECEIPT=/etc/hiverelay/storage-generation-receipt.v1.json
+Environment=HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/etc/hiverelay/storage-generation-receipt.v1.sha256
+# Both files are offline ceremony outputs. The service fails before Corestore
+# opens if either file is absent, mutable-root-local, non-canonical, or changed.
+ReadOnlyPaths=/etc/hiverelay/storage-generation-receipt.v1.json
+ReadOnlyPaths=/etc/hiverelay/storage-generation-receipt.v1.sha256
 # Optional operator-declared planning label; choose from the documented
 # bounded-capacity profiles only after measuring this host.
 # Environment=HIVERELAY_CAPACITY_PROFILE=seeder-standard
