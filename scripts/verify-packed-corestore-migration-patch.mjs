@@ -21,12 +21,13 @@ const PATCHED_SOURCE_SHA256 = 'sha256:04153bfa8de76c0dc2a802936cbbeea6c22f20a1a7
 
 const args = parseArgs(process.argv.slice(2))
 const scratch = mkdtempSync(join(tmpdir(), 'hiverelay-packed-core-patch-'))
+const cache = args.cache ? resolve(args.cache) : join(scratch, 'npm-cache')
 
 try {
   const pack = run('npm', [
     'pack', '--json', '--workspace', 'packages/core', '--pack-destination', scratch
   ], repoRoot, 120_000, {
-    npm_config_cache: join(scratch, 'npm-cache')
+    npm_config_cache: cache
   })
   const metadata = parsePack(pack.stdout)
   const tarball = join(scratch, metadata.filename)
@@ -41,12 +42,12 @@ try {
   const install = run('npm', [
     'install', tarball, '--omit=dev', '--no-audit', '--no-fund', '--foreground-scripts'
   ], installRoot, 300_000, {
-    npm_config_cache: join(scratch, 'npm-cache')
+    npm_config_cache: cache
   })
 
   const installedPackage = readJson(join(installRoot, 'node_modules', 'p2p-hiverelay', 'package.json'))
   const installedDependency = readJson(join(installRoot, 'node_modules', 'hypercore-storage', 'package.json'))
-  const installedPatch = join(installRoot, 'node_modules', 'p2p-hiverelay', 'patches', 'hypercore-storage+3.3.1.patch')
+  const installedPatch = join(installRoot, 'node_modules', 'p2p-hiverelay', 'patches', 'hypercore-storage+3.4.0.patch')
   const installedSource = join(installRoot, 'node_modules', 'hypercore-storage', 'migrations', '0', 'index.js')
   const installedPatchSha256 = sha256(regularBytes(installedPatch, 'installed tracked patch'))
   const installedSourceSha256 = sha256(regularBytes(installedSource, 'installed migration source'))
@@ -54,8 +55,8 @@ try {
   if (installedPackage.scripts?.postinstall !== 'node platform/apply-hypercore-storage-migration-patch.js') {
     fatal('packed package lost the fail-closed postinstall contract')
   }
-  if (installedPackage.dependencies?.['hypercore-storage'] !== '3.3.1' || installedDependency.version !== '3.3.1') {
-    fatal('packed consumer did not install exact hypercore-storage 3.3.1')
+  if (installedPackage.dependencies?.['hypercore-storage'] !== '3.4.0' || installedDependency.version !== '3.4.0') {
+    fatal('packed consumer did not install exact hypercore-storage 3.4.0')
   }
   if (installedPatchSha256 !== PATCH_SHA256) fatal('packed tracked patch digest is incorrect')
   if (installedSourceSha256 !== PATCHED_SOURCE_SHA256) fatal('packed install did not produce the exact patched migration source')
@@ -138,16 +139,18 @@ function writeEvidence (file, bytes) {
 }
 
 function parseArgs (argv) {
-  const out = { out: null, keep: false }
+  const out = { out: null, cache: null, keep: false }
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--out') out.out = argv[++i]
+    else if (argv[i] === '--cache') out.cache = argv[++i]
     else if (argv[i] === '--keep') out.keep = true
     else if (argv[i] === '--help' || argv[i] === '-h') {
-      process.stdout.write('Usage: node scripts/verify-packed-corestore-migration-patch.mjs [--out <evidence.json>] [--keep]\n')
+      process.stdout.write('Usage: node scripts/verify-packed-corestore-migration-patch.mjs [--out <evidence.json>] [--cache <path>] [--keep]\n')
       process.exit(0)
     } else fatal(`unknown argument: ${argv[i]}`)
   }
   if (out.out === undefined) fatal('--out requires a path')
+  if (out.cache === undefined) fatal('--cache requires a path')
   return out
 }
 

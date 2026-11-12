@@ -775,8 +775,15 @@ export class AppLifecycle extends EventEmitter {
    */
   async reseedDrives (entries) {
     if (!Array.isArray(entries) || !entries.length) return
+    const registry = this.node.appRegistry
     for (const entry of entries) {
       if (!entry.appKey) continue
+      // This is a boot-time snapshot. Earlier seeds can wait long enough for
+      // an operator or eviction pass to remove a later row from the registry.
+      if (typeof registry?.has === 'function' && !registry.has(entry.appKey)) {
+        this._emitSafely('reseed-skipped', { appKey: entry.appKey, reason: 'registry-entry-removed' })
+        continue
+      }
       try {
         await this.seedApp(entry.appKey, {
           [STORAGE_RECOVERY_INGRESS]: true,
@@ -806,7 +813,11 @@ export class AppLifecycle extends EventEmitter {
         })
         this._emitSafely('reseeded', { appKey: entry.appKey })
       } catch (err) {
-        this._emitSafely('reseed-error', { appKey: entry.appKey, error: err })
+        if (err.code === 'STORAGE_RECOVERY_ENTRY_REMOVED') {
+          this._emitSafely('reseed-skipped', { appKey: entry.appKey, reason: 'registry-entry-removed' })
+        } else {
+          this._emitSafely('reseed-error', { appKey: entry.appKey, error: err })
+        }
       }
     }
   }
@@ -1003,8 +1014,14 @@ export class AppLifecycle extends EventEmitter {
     // or time out before it acquires the lane; its cancelled closure remains in
     // the tail only as a no-op barrier, so later seeds never overtake the live
     // owner or execute after their caller has already failed.
-    return this._queueSeedAdmission(() =>
-      this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier))
+    return this._queueSeedAdmission(() => {
+      // Recovery may reopen a held row, but cannot turn a removed boot row
+      // into a new admission after waiting behind another seed.
+      if (normalizedOpts[STORAGE_RECOVERY_INGRESS] === true && !node.appRegistry.has(appKeyHex)) {
+        throw lifecycleError('STORAGE_RECOVERY_ENTRY_REMOVED', 'boot recovery entry was removed before admission')
+      }
+      return this._seedAppInner(appKeyHex, normalizedOpts, contentType, parentKey, mountPath, privacyTier)
+    })
   }
 
   _queueSeedAdmission (run) {

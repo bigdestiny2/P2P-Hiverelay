@@ -49,7 +49,7 @@ export const CORESTORE_GENERATION_MIGRATION_BINDING = Object.freeze({
   profileAcceptedSourceCommit: '1cebfaad0eaccb9d58571238f5c865ac88b3dfc4',
   implementationBaseCommit: 'd40bd5dfbedad36886407a8f495c858103b2fb7a',
   accountingAmendmentSha256: 'sha256:88503728c096d068c18e3d76f88a788e64cbd7620115c458f359442d426b7af5',
-  hypercoreStorageVersion: '3.3.1',
+  hypercoreStorageVersion: '3.4.0',
   hypercoreStoragePatchGitBlob: 'e14a5d1be3e0029ae84a5b71fee6aec717e99177',
   hypercoreStoragePatchSha256: 'sha256:fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53',
   patchedMigrationSourceSha256: 'sha256:04153bfa8de76c0dc2a802936cbbeea6c22f20a1a79035cd65ed1957cc8ff2d5'
@@ -668,17 +668,26 @@ async function rebindRestoredCorestoreDeviceLocked ({
 
 export function assertPatchedHypercoreStorageMigration () {
   let file
+  let manifestFile
   try {
     const resolved = import.meta.resolve('hypercore-storage/migrations/0/index.js')
+    const manifest = import.meta.resolve('hypercore-storage/package.json')
     if (!resolved.startsWith('file://')) throw new Error('installed migration did not resolve to a file')
+    if (!manifest.startsWith('file://')) throw new Error('installed dependency manifest did not resolve to a file')
     file = decodeURIComponent(new URL(resolved).pathname)
+    manifestFile = decodeURIComponent(new URL(manifest).pathname)
   } catch {
     fail('the installed hypercore-storage migration source is unavailable; npm-only package installs must explicitly apply the tracked patch',
       'CORESTORE_GENERATION_MIGRATION_PATCH_MISSING')
   }
+  const manifest = JSON.parse(readRegularFile(manifestFile, 'installed hypercore-storage manifest'))
+  if (manifest.name !== 'hypercore-storage' || manifest.version !== CORESTORE_GENERATION_MIGRATION_BINDING.hypercoreStorageVersion) {
+    fail('the installed hypercore-storage version does not match the migration binding',
+      'CORESTORE_GENERATION_MIGRATION_PATCH_MISSING')
+  }
   const actual = digest(readRegularFile(file, 'installed hypercore-storage migration source'))
   if (actual !== CORESTORE_GENERATION_MIGRATION_BINDING.patchedMigrationSourceSha256) {
-    fail('the installed hypercore-storage 3.3.1 migration is not the exact tracked patched source',
+    fail('the installed hypercore-storage 3.4.0 migration is not the exact tracked patched source',
       'CORESTORE_GENERATION_MIGRATION_PATCH_MISSING')
   }
   return Object.freeze({

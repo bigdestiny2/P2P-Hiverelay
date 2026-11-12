@@ -5,11 +5,11 @@ import { lstatSync, readFileSync, writeFileSync } from 'fs'
 import { dirname, join, relative, resolve, sep } from 'path'
 import { fileURLToPath } from 'url'
 
-const VERSION = '3.3.1'
+const VERSION = '3.4.0'
 const PATCH_SHA256 = 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53'
 const ORIGINAL_SOURCE_SHA256 = 'f3ff8483854e93fd30e1db9e2228ac535bf29b057a978b1d157955cfd8bb4d7c'
 const PATCHED_SOURCE_SHA256 = '04153bfa8de76c0dc2a802936cbbeea6c22f20a1a79035cd65ed1957cc8ff2d5'
-const PATCH_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'patches', 'hypercore-storage+3.3.1.patch')
+const PATCH_FILE = join(dirname(fileURLToPath(import.meta.url)), '..', 'patches', 'hypercore-storage+3.4.0.patch')
 
 // Resolve the package directory, never the source file: Node canonicalizes a
 // source symlink before lstat could reject it. Inspect each lexical child first.

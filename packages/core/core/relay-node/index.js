@@ -3351,7 +3351,7 @@ export class RelayNode extends EventEmitter {
     if (!publicIp) {
       try {
         const data = await new Promise((resolve, reject) => {
-          const req = http.get('http://ifconfig.me/ip', { timeout: 5000 }, (res) => {
+          const req = http.get('http://ifconfig.me/ip', { timeout: 5000, signal: scope?.signal }, (res) => {
             let body = ''
             res.on('data', (c) => { body += c })
             res.on('end', () => resolve(body.trim()))
@@ -3368,7 +3368,7 @@ export class RelayNode extends EventEmitter {
     // Try to reach our own API from the public IP
     const apiPort = this.config.apiPort || 9100
     const reachable = await new Promise((resolve) => {
-      const req = http.get(`http://${publicIp}:${apiPort}/health`, { timeout: 5000 }, (res) => {
+      const req = http.get(`http://${publicIp}:${apiPort}/health`, { timeout: 5000, signal: scope?.signal }, (res) => {
         let body = ''
         res.on('data', (c) => { body += c })
         res.on('end', () => {
@@ -3382,13 +3382,13 @@ export class RelayNode extends EventEmitter {
       req.on('timeout', () => { req.destroy(); resolve(false) })
     })
 
+    if (this.config.enableHolesail === false || this._stopRequested || scope?.aborted ||
+        !this.running || this.holesailTransport) return
+
     if (reachable) {
       this.emit('nat-check', { publicIp, reachable: true })
       return // API is publicly reachable, no need for holesail
     }
-
-    if (this.config.enableHolesail === false || this._stopRequested || scope?.aborted ||
-        !this.running || this.holesailTransport) return
 
     // API is behind NAT — auto-enable holesail
     this.emit('nat-check', { publicIp, reachable: false, action: 'enabling holesail' })

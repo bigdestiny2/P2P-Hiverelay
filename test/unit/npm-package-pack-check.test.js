@@ -21,7 +21,7 @@ test('npm package pack checker accepts clean workspace pack metadata', (t) => {
       postinstall: 'node platform/apply-hypercore-storage-migration-patch.js'
     },
     dependencies: {
-      'hypercore-storage': '3.3.1'
+      'hypercore-storage': '3.4.0'
     }
   })
 
@@ -40,7 +40,7 @@ test('npm package pack checker accepts clean workspace pack metadata', (t) => {
           { path: 'README.md' },
           { path: 'LICENSE' },
           { path: 'index.js' },
-          { path: 'patches/hypercore-storage+3.3.1.patch' },
+          { path: 'patches/hypercore-storage+3.4.0.patch' },
           { path: 'platform/apply-hypercore-storage-migration-patch.js' }
         ]
       }])

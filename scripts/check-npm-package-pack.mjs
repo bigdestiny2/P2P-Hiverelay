@@ -22,10 +22,10 @@ const REQUIRED_PACK_FILES = [
 ]
 
 const CORE_MIGRATION_PATCH_CONTRACT = Object.freeze({
-  dependency: '3.3.1',
+  dependency: '3.4.0',
   postinstall: 'node platform/apply-hypercore-storage-migration-patch.js',
   files: Object.freeze([
-    'patches/hypercore-storage+3.3.1.patch',
+    'patches/hypercore-storage+3.4.0.patch',
     'platform/apply-hypercore-storage-migration-patch.js'
   ])
 })

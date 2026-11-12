@@ -226,6 +226,34 @@ test('public gateway ops - contract rejects role drift, unsafe DNS, and implicit
   })), /1 or 2 addresses/)
 })
 
+test('public gateway ops - operator addresses exclude private translation and the full link-local range', (t) => {
+  for (const address of [
+    'fe80::1',
+    'fe90::1',
+    'febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+    'fc00::1',
+    'fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff',
+    '64:ff9b:1::',
+    '64:ff9b:1::1',
+    '64:ff9b:1:ffff:ffff:ffff:ffff:ffff',
+    '64:ff9b::a00:1',
+    '64:ff9b::6440:1',
+    '64:ff9b::c000:201',
+    'fec0::1',
+    '100::1'
+  ]) {
+    t.exception(() => normalizePublicHiveGatewayOpsContract(contractFixture({
+      expectedAddresses: [IPV4, address]
+    })), /globally routable/, `${address} cannot be a public operator address`)
+  }
+  for (const address of [IPV6, '64:ff9b::808:808']) {
+    const contract = normalizePublicHiveGatewayOpsContract(contractFixture({
+      expectedAddresses: [IPV4, address]
+    }))
+    t.alike(contract.expectedAddresses, [IPV4, address], 'public IPv6 and public translation remain supported')
+  }
+})
+
 test('public gateway ops - DNS snapshot proves exact wildcard A/AAAA set and bounded TTL', (t) => {
   const contract = normalizePublicHiveGatewayOpsContract(contractFixture())
   const result = inspectPublicHiveGatewayDnsSnapshot(dnsSnapshotFixture(contract), contract, { now: NOW })

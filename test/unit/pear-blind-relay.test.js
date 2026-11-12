@@ -98,7 +98,7 @@ function pair (peer, n, initiator = true) {
 test('Pear relay private admission adapter binds the reviewed dependency source', t => {
   for (const [name, version, digest] of [
     ['blind-relay', '1.6.1', '3ec1ffbe6599f12cef96c5100785ae699e4c67d33a3dc9ed33a90d7418d6a863'],
-    ['protomux', '3.12.1', '320abfe32f73e8389b9a5e7e8d15741ff1ff132d58b705e67a8c5e2b9b796fc2']
+    ['protomux', '3.13.1', 'e542b3398ad9a86e2de8fd4a4140bc1d990ce3e45175551e18abb1cce54c7bcb']
   ]) {
     t.is(require(`${name}/package.json`).version, version)
     t.is(createHash('sha256').update(readFileSync(require.resolve(name))).digest('hex'), digest)

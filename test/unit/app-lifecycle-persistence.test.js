@@ -422,6 +422,78 @@ test('AppLifecycle: queued seed admission times out or aborts without later exec
   }
 })
 
+test('AppLifecycle: boot replay skips removed rows and keeps retained recovery entries', async (t) => {
+  const removed = '1'.repeat(64)
+  const kept = '2'.repeat(64)
+  const registry = new AppRegistry(null)
+  const entries = [removed, kept].map(appKey => ({ appKey, maxStorage: 4096 }))
+  for (const entry of entries) registry.set(entry.appKey, entry, { persist: false })
+  registry.delete(removed, { persist: false })
+  await registry.markEvicted(removed)
+  const lifecycle = new AppLifecycle({ appRegistry: registry })
+  const opened = []
+  const reseeded = []
+  const skipped = []
+  lifecycle.seedApp = async (appKey) => { opened.push(appKey) }
+  lifecycle.on('reseeded', event => reseeded.push(event.appKey))
+  lifecycle.on('reseed-skipped', () => { throw new Error('observer failure') })
+  lifecycle.on('reseed-skipped', event => skipped.push(event))
+
+  await lifecycle.reseedDrives(entries)
+
+  t.alike(opened, [kept], 'a stale boot row does not enter seed admission')
+  t.alike(reseeded, [kept], 'only a retained row reports recovery success')
+  t.alike(skipped, [{ appKey: removed, reason: 'registry-entry-removed' }])
+  t.ok(registry.isEvicted(removed), 'recovery preserves the removal tombstone')
+  t.absent(registry.has(removed), 'recovery does not recreate the removed row')
+})
+
+test('AppLifecycle: boot replay rechecks removal after waiting for seed admission', async (t) => {
+  const removed = '3'.repeat(64)
+  const kept = '4'.repeat(64)
+  const fresh = '5'.repeat(64)
+  const registry = new AppRegistry(null)
+  const entries = [removed, kept].map(appKey => ({ appKey, maxStorage: 4096 }))
+  for (const entry of entries) registry.set(entry.appKey, entry, { persist: false })
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    seeder: {},
+    config: { strictSeedingPrivacy: true }
+  })
+  const opened = []
+  const reseeded = []
+  const skipped = []
+  const errors = []
+  lifecycle._seedAppInner = async (appKey) => {
+    opened.push(appKey)
+    registry.set(appKey, { maxStorage: 4096 }, { persist: false })
+  }
+  lifecycle.on('reseeded', event => reseeded.push(event.appKey))
+  lifecycle.on('reseed-skipped', event => skipped.push(event))
+  lifecycle.on('reseed-error', event => errors.push(event))
+
+  let releaseAdmission
+  const gate = new Promise(resolve => { releaseAdmission = resolve })
+  const owner = lifecycle._queueSeedAdmission(() => gate)
+  t.teardown(() => releaseAdmission())
+  await Promise.resolve()
+  const replay = lifecycle.reseedDrives(entries)
+  registry.delete(removed, { persist: false })
+  await registry.markEvicted(removed)
+  releaseAdmission()
+  await Promise.all([owner, replay])
+
+  t.alike(opened, [kept], 'a row removed while queued is never opened or downloaded')
+  t.alike(reseeded, [kept], 'replay continues to the retained row')
+  t.alike(skipped, [{ appKey: removed, reason: 'registry-entry-removed' }])
+  t.alike(errors, [], 'operator removal is an intentional recovery skip')
+  t.absent(registry.has(removed), 'queued recovery cannot recreate a removed registry entry')
+  t.ok(registry.isEvicted(removed), 'queued recovery preserves the removal tombstone')
+
+  await lifecycle.seedApp(fresh, { maxStorage: 4096 })
+  t.alike(opened, [kept, fresh], 'ordinary explicit seeding can still admit a new key')
+})
+
 test('AppLifecycle: forget drains repair before entering the durable key lane', async (t) => {
   const appKey = 'e'.repeat(64)
   const events = []

@@ -35,7 +35,7 @@ async function bounded (promise, label, milliseconds = 15000) {
   }
 }
 
-test('Autobee 2.12.1: multiwriter convergence, fresh reader and cold reopen', async t => {
+test('Autobee 2.13.4: multiwriter convergence, fresh reader and cold reopen', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'hiverelay-autobee-compat-'))
   const peers = new Set()
   const streams = new Set()

@@ -71,8 +71,13 @@ export class X402ServiceFacade {
     if (payment.type === 'no-payment-required') return { handled: false }
     if (payment.type === 'payment-error') return instructionResult(payment.response)
 
-    const paymentHeader = adapter.getHeader(PAYMENT_SIGNATURE_HEADER)
-    const claim = this.claims.claim(paymentHeader, `${req.method} ${path}`)
+    let claim
+    try {
+      claim = this.claims.claim(payment.paymentPayload, payment.paymentRequirements, `${req.method} ${path}`)
+    } catch (err) {
+      await cancelVerifiedPayment(payment, 'after_verify_aborted', err, 402)
+      return this._challenge(server, context, 'invalid payment authorization')
+    }
     if (!claim.ok) {
       await cancelVerifiedPayment(payment, 'after_verify_aborted', new Error('payment replay rejected'), 402)
       const reason = claim.full ? 'payment claim capacity reached' : 'payment authorization already claimed'
@@ -81,8 +86,8 @@ export class X402ServiceFacade {
 
     const idempotencyKey = headerValue(req, IDEMPOTENCY_HEADER)
     if (route.requireIdempotencyKey && !validIdempotencyKey(idempotencyKey)) {
-      this.claims.release(claim.id)
       await cancelVerifiedPayment(payment, 'handler_failed', new Error('idempotency key required'), 400)
+      this.claims.release(claim.claim)
       return jsonResult(400, {
         error: `valid ${IDEMPOTENCY_HEADER} header required`,
         errorCode: 'x402-idempotency-key-required'
@@ -93,8 +98,8 @@ export class X402ServiceFacade {
     try {
       body = req.method === 'GET' ? queryParamsObject(url) : await readBody()
     } catch {
-      this.claims.release(claim.id)
       await cancelVerifiedPayment(payment, 'handler_failed', new Error('invalid request body'), 400)
+      this.claims.release(claim.claim)
       return jsonResult(400, { error: 'invalid body', errorCode: 'invalid-body' })
     }
 
@@ -112,8 +117,8 @@ export class X402ServiceFacade {
         }
       })
     } catch (err) {
-      this.claims.release(claim.id)
       await cancelVerifiedPayment(payment, 'handler_threw', err, 400)
+      this.claims.retain(claim.claim)
       return jsonResult(400, {
         error: safeServiceError(err),
         errorCode: 'x402-service-call-failed'
@@ -134,6 +139,7 @@ export class X402ServiceFacade {
         }
       )
     } catch (err) {
+      this.claims.retain(claim.claim)
       return jsonResult(503, {
         error: 'x402 settlement failed after service execution',
         errorCode: 'x402-settlement-error',
@@ -142,6 +148,7 @@ export class X402ServiceFacade {
       }, { 'Retry-After': '30' })
     }
 
+    this.claims.retain(claim.claim)
     if (!settlement.success) return instructionResult(settlement.response)
     return jsonResult(200, responseBody, settlement.headers)
   }

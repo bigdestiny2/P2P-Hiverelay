@@ -159,6 +159,77 @@ test('stop() removes per-core upload listeners before restart', async (t) => {
   served.stop()
 })
 
+test('telemetry releases closed native cores after churn and continues counting live uploads', async (t) => {
+  const a = tmpDir(); const b = tmpDir(); const c = tmpDir()
+  const server = new Corestore(a.dir)
+  const firstClient = new Corestore(b.dir)
+  const secondClient = new Corestore(c.dir)
+  const served = new ServedAccounting({ store: server })
+  t.teardown(async () => {
+    served.stop()
+    await Promise.all([server.close(), firstClient.close(), secondClient.close()])
+    a.cleanup(); b.cleanup(); c.cleanup()
+  })
+  await Promise.all([server.ready(), firstClient.ready(), secondClient.ready()])
+  served.start()
+
+  const live = server.get({ name: 'churn-live' })
+  await live.ready()
+  await live.append(b4a.from('live core remains available'))
+  const firstBytes = await replicateAndPull(server, firstClient, live.key)
+  const closed = []
+  for (let i = 0; i < 32; i++) {
+    const core = server.get({ name: `churn-${i}` })
+    await core.ready()
+    closed.push(core)
+    await core.close()
+  }
+  const observedBefore = served._listeners.size
+  t.is(observedBefore, 33, 'one monitor was attached to each real backing core')
+
+  // Corestore retains idle backing cores briefly after their final session
+  // closes. Wait for its real collection cycle; do not forge monitor state.
+  const deadline = Date.now() + 15000
+  while (closed.some(core => !core.core.closed) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 50))
+  }
+  t.ok(closed.every(core => core.core.closed), 'native idle-core collection completed')
+
+  const summary = served.getSummary()
+  t.is(summary.trackedCores, 1, 'telemetry retains only the live core monitor')
+  t.is(served._listeners.size, 1, '32 closed native cores are no longer strongly retained')
+  t.is(summary.totalBytesServed, firstBytes, 'cleanup preserves cumulative byte accounting')
+  t.is(summary.totalBlocksServed, 1, 'cleanup preserves cumulative block accounting')
+  t.comment(`native monitor references: ${observedBefore} before telemetry, ${served._listeners.size} after telemetry`)
+
+  const secondBytes = await replicateAndPull(server, secondClient, live.key)
+  t.is(served.totalBytesServed, firstBytes + secondBytes, 'live replication remains counted exactly once')
+  t.is(served.totalBlocksServed, 2, 'both independently downloaded blocks are counted')
+  served.stop()
+  served.stop()
+  t.is(served._listeners.size, 0, 'stop clears the remaining monitor once')
+  t.is(served.getSummary().trackedCores, 0, 'pruning followed by stop does not underflow')
+})
+
+test('telemetry detaches closed legacy upload listeners and ignores closed startup cores', async (t) => {
+  const core = new EventEmitter()
+  const store = new EventEmitter()
+  store.cores = new Map([['core', core]])
+  const served = new ServedAccounting({ store })
+  served.start()
+  core.emit('upload', 0, 7)
+  core.closed = true
+
+  t.is(served.getSummary().trackedCores, 0)
+  t.is(core.listenerCount('upload'), 0, 'closed legacy session is detached during telemetry')
+  core.emit('upload', 1, 9)
+  t.is(served.totalBytesServed, 7, 'a detached session no longer contributes uploads')
+  served.stop()
+  served.start()
+  t.is(served.getSummary().trackedCores, 0, 'closed startup core is not reattached')
+  served.stop()
+})
+
 test('constructor requires a store', async (t) => {
   t.exception(() => new ServedAccounting({}), /store is required/, 'throws without a store')
 })

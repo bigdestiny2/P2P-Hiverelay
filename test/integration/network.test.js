@@ -25,6 +25,7 @@ function createNode (testnet, overrides = {}) {
     bootstrapNodes: testnet.bootstrap,
     enableAPI: false,
     enableMetrics: false,
+    enableHolesail: false,
     ...overrides
   })
 }
