@@ -25,3 +25,6 @@ tmp-test-relay2/
 packages/core/dashboard
 .t/
 .npm-cache/
+
+# Local operator inventory overrides are not release authority.
+fleet/relays.local.json

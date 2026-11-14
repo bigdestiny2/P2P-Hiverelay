@@ -52,7 +52,7 @@
 #   https://github.com/holepunchto/udx-native
 #
 # Node 22 LTS — Bare/Pear runtime targets stay aligned.
-FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS deps
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS deps
 WORKDIR /app
 
 # Install build tools needed for any native deps that DO build from
@@ -86,7 +86,7 @@ RUN npm ci --workspaces --include-workspace-root --no-audit --no-fund && \
     npm prune --omit=dev --workspaces --include-workspace-root --ignore-scripts --no-audit --no-fund
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
-FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS runtime
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS runtime
 
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.

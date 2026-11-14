@@ -3,3 +3,4 @@ import '../../packages/blind-client-public-browser/test/browser-artifact-inbox.t
 import '../../packages/blind-client-public-browser/test/cell-get-browser-artifact.test.js'
 import '../../packages/blind-client-public-browser/test/cell-get-control.test.js'
 import '../../packages/blind-client-public-browser/test/http-control.test.js'
+import '../../packages/blind-client-public-browser/test/predecessor-reference.test.js'

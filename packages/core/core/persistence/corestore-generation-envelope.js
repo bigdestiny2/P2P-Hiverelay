@@ -19,6 +19,7 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from 'crypto'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'path'
 import DeviceFile from 'device-file'
 import FDLock from 'fd-lock'
+import { tryLock, unlock } from 'fs-native-extensions'
 
 export const CORESTORE_GENERATION_ENVELOPE = Object.freeze({
   schema: 'hiverelay-corestore-generation-envelope-v1',
@@ -26,6 +27,8 @@ export const CORESTORE_GENERATION_ENVELOPE = Object.freeze({
   activationSchema: 'hiverelay-corestore-generation-activation-v1',
   importIntentSchema: 'hiverelay-corestore-legacy-import-intent-v1',
   importReceiptSchema: 'hiverelay-corestore-legacy-import-receipt-v1',
+  cs7ImportIntentSchema: 'hiverelay-corestore-cs7-import-intent-v1',
+  cs7ImportReceiptSchema: 'hiverelay-corestore-cs7-import-receipt-v1',
   restoreIntentSchema: 'hiverelay-corestore-device-restore-intent-v1',
   restoreReceiptSchema: 'hiverelay-corestore-device-restore-receipt-v1',
   mode: 'hc11-envelope-v1',
@@ -58,6 +61,7 @@ export const CORESTORE_GENERATION_MIGRATION_BINDING = Object.freeze({
 export const CORESTORE_GENERATION_CAPABILITIES = Object.freeze({
   triggerKind: 'hc11-only-write',
   importedCs6AndHc11ReaderImplemented: true,
+  importedRawCs7ReaderImplemented: true,
   freshHc11ReaderImplemented: true,
   writesLegacyGeneration: false,
   oldWriterFenceScope: 'configured-envelope-path-only',
@@ -91,6 +95,9 @@ const DEFAULT_MAX_ENTRIES = 250_000
 const DEFAULT_MAX_BYTES = 64 * 1024 * 1024 * 1024
 const DEFAULT_MAX_DEPTH = 256
 const LEGACY_CORESTORE_OWNED = Object.freeze(['cores', 'primary-key'])
+const CS7_PORTABLE_OWNED = Object.freeze(['cores', 'primary-key', 'db'])
+const CS7_IMPORT_METHOD = 'exact-reviewed-offline-cs7-payload-copy'
+const CS7_MARKER_POLICY = 'preserve-source-create-destination-on-first-authorized-open'
 const ENVELOPE_RESERVED = new Set([
   CORESTORE_GENERATION_ENVELOPE.authorityDirectory,
   CORESTORE_GENERATION_ENVELOPE.generationDirectory,
@@ -325,6 +332,52 @@ export function corestoreGenerationHealth (binding, store) {
 }
 
 export function importLegacyCorestoreCopyIntoEnvelope ({ sourceRoot, envelopeRoot, ceremony, limits, faultInjector } = {}) {
+  return importCorestoreCopyIntoEnvelope({ sourceRoot, envelopeRoot, ceremony, limits, faultInjector })
+}
+
+// CORESTORE binds an inode/device, so copying that marker cannot produce a
+// portable writer. Preserve it in the source/backup and sign its exact digest;
+// the normal authorized first open creates and seals the destination marker.
+export async function importRawCs7CorestoreCopyIntoEnvelope (options = {}) {
+  const source = canonicalAbsolute(options.sourceRoot, 'raw CS7 copy root')
+  assertLegacyImportSourcePreflight(source)
+  const marker = join(source, 'CORESTORE')
+  const markerState = lstatSync(marker)
+  if (!markerState.isFile() || markerState.isSymbolicLink() || markerState.nlink !== 1 ||
+      markerState.size === 0 || markerState.size > 65536) {
+    fail('raw CS7 source device marker must be a bounded single-link regular file', 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+  }
+  const markerBytes = readRegularFile(marker, 'raw CS7 source device marker')
+  const fields = new Map()
+  for (const line of markerBytes.toString('utf8').trim().split(/\r?\n/)) {
+    const match = /^(device\/(?:platform|inode|created|attribute))=([^\r\n=]+)$/.exec(line)
+    if (!match || fields.has(match[1])) fail('raw CS7 source device marker has unrecognized metadata', 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+    fields.set(match[1], match[2])
+  }
+  if (!/^(?:linux|darwin|win32|android|ios)$/.test(fields.get('device/platform') || '') ||
+      !/^[1-9][0-9]*$/.test(fields.get('device/inode') || '') ||
+      !/^[1-9][0-9]*$/.test(fields.get('device/created') || '') ||
+      (fields.has('device/attribute') && fields.get('device/attribute') !== 'original')) {
+    fail('raw CS7 source device marker is incomplete', 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+  }
+  const descriptor = openSync(marker, FS_CONSTANTS.O_RDONLY | (FS_CONSTANTS.O_NOFOLLOW || 0))
+  let locked = false
+  try {
+    // Linux requires a writable descriptor for an exclusive OFD lock. A
+    // shared lock supports an immutable source and still excludes every
+    // native Corestore writer, which acquires an exclusive marker lock.
+    locked = tryLock(descriptor, { shared: true })
+    if (!locked) fail('raw CS7 source marker cannot be locked while a writer is active')
+    const opened = fstatSync(descriptor)
+    const current = lstatSync(marker)
+    if (opened.dev !== current.dev || opened.ino !== current.ino) fail('raw CS7 source marker changed while locking')
+    return importCorestoreCopyIntoEnvelope({ ...options, rawCs7: true })
+  } finally {
+    try { if (locked) unlock(descriptor) } finally { closeSync(descriptor) }
+  }
+}
+
+function importCorestoreCopyIntoEnvelope ({ sourceRoot, envelopeRoot, ceremony, limits, faultInjector, rawCs7 = false } = {}) {
   if (faultInjector != null && typeof faultInjector !== 'function') throw new TypeError('faultInjector must be a function')
   const source = canonicalAbsolute(sourceRoot, 'legacy copy root')
   const root = canonicalAbsolute(envelopeRoot, 'generation envelope root')
@@ -339,33 +392,61 @@ export function importLegacyCorestoreCopyIntoEnvelope ({ sourceRoot, envelopeRoo
   if (existsSync(binding.paths.trigger)) {
     fail('legacy import cannot run after the HC11 activation trigger')
   }
-  validateImportTargetState(binding, priorImport)
+  const ownedNames = rawCs7 ? CS7_PORTABLE_OWNED : LEGACY_CORESTORE_OWNED
+  validateImportTargetState(binding, priorImport, ownedNames)
   const normalizedLimits = treeLimits(limits)
   const sourceNames = readdirSync(source).sort(compareCodeUnits)
-  for (const ownedName of LEGACY_CORESTORE_OWNED) {
+  for (const ownedName of rawCs7 ? ['CORESTORE', 'db'] : LEGACY_CORESTORE_OWNED) {
     if (!sourceNames.includes(ownedName)) {
-      fail(`legacy CS6 copy is missing required ${ownedName}`, 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+      fail(`${rawCs7 ? 'raw CS7' : 'legacy CS6'} copy is missing required ${ownedName}`, 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
     }
   }
-  const allowed = new Set([...LEGACY_CORESTORE_OWNED, ...binding.manifest.topLevelSidecars])
+  if (rawCs7 && (binding.manifest.topLevelSidecars.includes('db') ||
+      sourceNames.includes('cores') !== sourceNames.includes('primary-key'))) {
+    fail('raw CS7 copy must keep db owned and retain both or neither legacy cores/primary-key',
+      'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+  }
+  const allowed = new Set([...ownedNames, ...(rawCs7 ? ['CORESTORE'] : []), ...binding.manifest.topLevelSidecars])
   const unknown = sourceNames.filter(name => !allowed.has(name))
   if (unknown.length) {
     fail(`legacy copy contains unclassified top-level entries: ${unknown.join(', ')}`,
       'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
   }
   const before = inventoryTree(source, normalizedLimits)
-  const owned = projectInventory(before, new Set(LEGACY_CORESTORE_OWNED))
+  const marker = rawCs7 ? before.entries.find(entry => entry.path === 'CORESTORE') : null
+  if (rawCs7 && (marker?.kind !== 'file' || marker.size === 0 ||
+      !before.entries.some(entry => entry.path === 'db' && entry.kind === 'directory') ||
+      !before.entries.some(entry => entry.path === 'db/IDENTITY' && entry.kind === 'file' && entry.size > 0) ||
+      (sourceNames.includes('cores') &&
+        (!before.entries.some(entry => entry.path === 'cores' && entry.kind === 'directory') ||
+         !before.entries.some(entry => entry.path === 'primary-key' && entry.kind === 'file' && entry.size === 32))))) {
+    fail('raw CS7 copy requires a regular marker and an identified database', 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+  }
+  if (rawCs7) {
+    const current = before.entries.find(entry => entry.path === 'db/CURRENT')
+    if (current?.kind !== 'file' || current.size < 1 || current.size > 256) {
+      fail('raw CS7 copy requires a bounded RocksDB CURRENT record', 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+    }
+    const currentBytes = readRegularFile(join(source, 'db', 'CURRENT'), 'raw CS7 RocksDB CURRENT')
+    const manifest = /^(MANIFEST-[0-9]+)\n$/.exec(currentBytes.toString('ascii'))
+    if (!manifest || !before.entries.some(entry => entry.path === `db/${manifest[1]}` && entry.kind === 'file' && entry.size > 0)) {
+      fail('raw CS7 RocksDB CURRENT must name an existing nonempty manifest', 'CORESTORE_GENERATION_LEGACY_LAYOUT_INVALID')
+    }
+  }
+  const owned = projectInventory(before, new Set(ownedNames))
   const sidecars = projectInventory(before, new Set(binding.manifest.topLevelSidecars))
   const intentBody = {
-    schema: CORESTORE_GENERATION_ENVELOPE.importIntentSchema,
+    schema: rawCs7 ? CORESTORE_GENERATION_ENVELOPE.cs7ImportIntentSchema : CORESTORE_GENERATION_ENVELOPE.importIntentSchema,
     installationId: binding.installationId,
     sourceContentSha256: before.contentSha256,
     sourceEntries: before.entries.length,
     sourceBytes: before.totalBytes.toString(),
-    cs6OwnedContentSha256: owned.contentSha256,
+    ...(rawCs7
+      ? { portableOwnedContentSha256: owned.contentSha256, sourceDeviceMarker: marker, deviceMarkerPolicy: CS7_MARKER_POLICY }
+      : { cs6OwnedContentSha256: owned.contentSha256 }),
     relaySidecarContentSha256: sidecars.contentSha256,
     targetGeneration: CORESTORE_GENERATION_ENVELOPE.generation,
-    method: 'exact-reviewed-offline-copy',
+    method: rawCs7 ? CS7_IMPORT_METHOD : 'exact-reviewed-offline-copy',
     migrationTooling: CORESTORE_GENERATION_MIGRATION_BINDING
   }
   installOrValidateSigned(binding.paths.importIntent, intentBody, binding.authorityKey, 'legacy-import-intent')
@@ -380,24 +461,26 @@ export function importLegacyCorestoreCopyIntoEnvelope ({ sourceRoot, envelopeRoo
   const after = inventoryTree(source, normalizedLimits)
   if (!sameInventory(before, after, true)) fail('legacy source copy changed during offline import', 'CORESTORE_GENERATION_SOURCE_CHANGED')
   const importedOwned = projectInventory(inventoryTree(binding.paths.generationRoot, normalizedLimits),
-    new Set(LEGACY_CORESTORE_OWNED))
+    new Set(ownedNames))
   const importedSidecars = projectInventory(inventoryTree(binding.root, normalizedLimits),
     new Set(binding.manifest.topLevelSidecars))
   if (!sameInventory(owned, importedOwned, false) || !sameInventory(sidecars, importedSidecars, false)) {
     fail('imported generation does not exactly match the preserved legacy copy', 'CORESTORE_GENERATION_IMPORT_MISMATCH')
   }
   const receiptBody = {
-    schema: CORESTORE_GENERATION_ENVELOPE.importReceiptSchema,
+    schema: rawCs7 ? CORESTORE_GENERATION_ENVELOPE.cs7ImportReceiptSchema : CORESTORE_GENERATION_ENVELOPE.importReceiptSchema,
     installationId: binding.installationId,
     sourceContentSha256: before.contentSha256,
-    importedCs6OwnedContentSha256: importedOwned.contentSha256,
+    ...(rawCs7
+      ? { importedPortableOwnedContentSha256: importedOwned.contentSha256, sourceDeviceMarker: marker, deviceMarkerPolicy: CS7_MARKER_POLICY }
+      : { importedCs6OwnedContentSha256: importedOwned.contentSha256 }),
     importedRelaySidecarContentSha256: importedSidecars.contentSha256,
     sourceEntries: before.entries.length,
     sourceBytes: before.totalBytes.toString(),
     targetGeneration: CORESTORE_GENERATION_ENVELOPE.generation,
-    method: 'exact-reviewed-offline-copy',
+    method: rawCs7 ? CS7_IMPORT_METHOD : 'exact-reviewed-offline-copy',
     sourceUnchanged: true,
-    exactCopyVerified: true,
+    ...(rawCs7 ? { exactPortablePayloadCopyVerified: true } : { exactCopyVerified: true }),
     migrationTooling: CORESTORE_GENERATION_MIGRATION_BINDING
   }
   injectSync(faultInjector, 'corestore-generation:before-import-receipt-sync', Object.freeze({
@@ -698,9 +781,9 @@ export function assertPatchedHypercoreStorageMigration () {
   })
 }
 
-function validateImportTargetState (binding, priorImport) {
+function validateImportTargetState (binding, priorImport, ownedNames = LEGACY_CORESTORE_OWNED) {
   const generationNames = readdirSync(binding.paths.generationRoot).sort(compareCodeUnits)
-  const unexpectedGeneration = generationNames.filter(name => !LEGACY_CORESTORE_OWNED.includes(name))
+  const unexpectedGeneration = generationNames.filter(name => !ownedNames.includes(name))
   if (unexpectedGeneration.length) {
     fail(`legacy import target contains undeclared entries: ${unexpectedGeneration.join(', ')}`,
       'CORESTORE_GENERATION_IMPORT_MISMATCH')
@@ -800,6 +883,9 @@ async function ensureHc11Trigger (prepared, sentinel) {
   verifyEnvelopeLayout(binding, options)
   const fingerprint = generationFingerprint(binding.paths.generationRoot, binding.installationId, sentinel)
   const importedLegacy = importReceipt != null
+  const importedCs7 = importReceipt?.schema === CORESTORE_GENERATION_ENVELOPE.cs7ImportReceiptSchema
+  const verifiedReaderState = importedCs7 ? 'imported-raw-cs7-hc11' : importedLegacy ? 'imported-cs6-plus-hc11' : 'fresh-hc11-only'
+  const pearMigrateCandidateWriterMode = importedLegacy && !importedCs7 ? 'dual-read' : null
   const body = {
     schema: CORESTORE_GENERATION_ENVELOPE.triggerSchema,
     installationId: binding.installationId,
@@ -814,8 +900,8 @@ async function ensureHc11Trigger (prepared, sentinel) {
     databaseIdentitySha256: fingerprint.databaseIdentitySha256,
     activationSentinel: sentinel,
     importedLegacyContentSha256: importedLegacy ? importReceipt.sourceContentSha256 : null,
-    verifiedReaderState: importedLegacy ? 'imported-cs6-plus-hc11' : 'fresh-hc11-only',
-    pearMigrateCandidateWriterMode: importedLegacy ? 'dual-read' : null,
+    verifiedReaderState,
+    pearMigrateCandidateWriterMode,
     oldWriterFence: {
       scope: 'configured-envelope-path-only',
       d40Cs7: 'reserved-directory-at-envelope-CORESTORE',
@@ -879,8 +965,8 @@ async function ensureHc11Trigger (prepared, sentinel) {
     triggerRecordSha256: signedFileDigest(binding.paths.trigger),
     deviceRestoreReceiptSha256: restoreReceipt == null ? null : restoreReceiptSha256,
     importedLegacyContentSha256: importedLegacy ? importReceipt.sourceContentSha256 : null,
-    verifiedReaderState: importedLegacy ? 'imported-cs6-plus-hc11' : 'fresh-hc11-only',
-    pearMigrateCandidateWriterMode: importedLegacy ? 'dual-read' : null,
+    verifiedReaderState,
+    pearMigrateCandidateWriterMode,
     migrationRecordCompatible: false,
     migrationRecordAdapterRequired: true,
     blindCumulativeDualReadImplemented: false,
@@ -966,6 +1052,28 @@ function readImportState (binding) {
   const intent = readOptionalSigned(binding.paths.importIntent, binding.authorityKey, 'legacy import intent')
   const receipt = readOptionalSigned(binding.paths.importReceipt, binding.authorityKey, 'legacy import receipt')
   if (receipt && !intent) fail('legacy import receipt has no signed intent')
+  if (intent?.schema === CORESTORE_GENERATION_ENVELOPE.cs7ImportIntentSchema) {
+    if (intent.installationId !== binding.installationId || intent.method !== CS7_IMPORT_METHOD ||
+        intent.targetGeneration !== CORESTORE_GENERATION_ENVELOPE.generation ||
+        intent.deviceMarkerPolicy !== CS7_MARKER_POLICY ||
+        !DIGEST.test(intent.sourceContentSha256) || !DIGEST.test(intent.portableOwnedContentSha256) ||
+        intent.sourceDeviceMarker?.path !== 'CORESTORE' || intent.sourceDeviceMarker?.kind !== 'file' ||
+        !DIGEST.test(intent.sourceDeviceMarker?.sha256)) fail('raw CS7 import intent is invalid')
+    if (receipt && (receipt.schema !== CORESTORE_GENERATION_ENVELOPE.cs7ImportReceiptSchema ||
+        receipt.installationId !== intent.installationId || receipt.method !== intent.method ||
+        receipt.targetGeneration !== intent.targetGeneration ||
+        receipt.deviceMarkerPolicy !== intent.deviceMarkerPolicy ||
+        receipt.sourceContentSha256 !== intent.sourceContentSha256 ||
+        receipt.sourceEntries !== intent.sourceEntries || receipt.sourceBytes !== intent.sourceBytes ||
+        receipt.importedPortableOwnedContentSha256 !== intent.portableOwnedContentSha256 ||
+        receipt.importedRelaySidecarContentSha256 !== intent.relaySidecarContentSha256 ||
+        !canonicalBytes(receipt.sourceDeviceMarker).equals(canonicalBytes(intent.sourceDeviceMarker)) ||
+        !canonicalBytes(receipt.migrationTooling).equals(canonicalBytes(intent.migrationTooling)) ||
+        receipt.exactPortablePayloadCopyVerified !== true || receipt.sourceUnchanged !== true)) {
+      fail('raw CS7 import receipt does not close its exact signed intent')
+    }
+    return { intent, receipt }
+  }
   if (intent && (intent.schema !== CORESTORE_GENERATION_ENVELOPE.importIntentSchema ||
       intent.installationId !== binding.installationId || intent.method !== 'exact-reviewed-offline-copy' ||
       intent.targetGeneration !== CORESTORE_GENERATION_ENVELOPE.generation)) {

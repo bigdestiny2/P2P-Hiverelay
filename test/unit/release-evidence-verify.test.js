@@ -21,9 +21,10 @@ const VERIFY_RELEASE_EVIDENCE_SCRIPT = path.join(process.cwd(), 'scripts/verify-
 const FLEET_RELAYS = Object.freeze([
   ['utah-us', 'stable', '51%'],
   ['utah-2gb-a', 'canary', '50%'],
-  ['utah-8gb', 'stable', '48%'],
+  ['dallas', 'stable', '48%'],
   ['sing-1', 'stable', '52%'],
   ['sing-2', 'stable', '53%'],
+  ['amsterdam', 'stable', '46%'],
   ['dubai', 'stable', '47%']
 ])
 

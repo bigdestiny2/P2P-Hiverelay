@@ -36,3 +36,10 @@ Artifacts are release-gated the same way as the blind-client artifacts:
 regenerate through `scripts/`, and the evidence records must match the exact
 artifact bytes, manifest, and source closure. Do not hand-edit anything under
 `browser-artifacts/`.
+
+The upstream refresh versions build metadata and observations as V2 while
+preserving both v1 executable artifacts and their APIs. Exact RC9 inputs and
+observations are retained under `predecessors/rc9/`; those historical records
+do not qualify the current dependency closure. See
+`docs/BLIND-BROWSER-GATE-SCOPE.md` at the repository root for current gates,
+runtime identities, and the required external postcommit acceptance sequence.

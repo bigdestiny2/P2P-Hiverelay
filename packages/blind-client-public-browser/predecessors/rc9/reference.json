@@ -1,0 +1,92 @@
+{
+  "schema": "HiveRelayPublicBrowserPredecessorReferenceV1",
+  "version": 1,
+  "sourceCommit": "d96389fad63f522b429ba182a3adc4d632ab150f",
+  "sourceTree": "ee3ea9c9f6f1622df508ab63ffb20db6d2a652e3",
+  "files": [
+    {
+      "originalPath": "package.json",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/package.json",
+      "sha256": "42b39b6affe7e9a79d9cb4eba0e9388d8f5f97896d4ffadf161441cbd716b3aa",
+      "bytes": 13330
+    },
+    {
+      "originalPath": "package-lock.json",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/package-lock.json",
+      "sha256": "3cf05226be9fdb29efa64da7f850c6d415bd32b3a980cf9df3fecda6c849e2c6",
+      "bytes": 197990
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifact.js",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifact.js",
+      "sha256": "dc6a993d6678a4bffe7f665bc4f97727ab58d5cb53c420416eb4c3f328b606ca",
+      "bytes": 49614
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.chromium-evidence.json",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.chromium-evidence.json",
+      "sha256": "76c05e8e826d6986403e130114bb53cc797b25ec8d4fb3ae727e328a79c88416",
+      "bytes": 2446
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.cross-host-evidence.json",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.cross-host-evidence.json",
+      "sha256": "7c72309603a82c399136538cd6206fcbe118ec1fe8b0de79fc0ef2460a526008",
+      "bytes": 3989
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.manifest.cenc",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.manifest.cenc",
+      "sha256": "d9c8bd117e3dbdeca2b4bdf2ab5b9b8ffff25e84a483a4a52dfa33c738174c0a",
+      "bytes": 1081
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs",
+      "sha256": "c4de3329a35ee0a6514cabfa8763e1217f6ab1fc5650ca794db5e3b9b17a6ebc",
+      "bytes": 191474
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.chromium-evidence.json",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.chromium-evidence.json",
+      "sha256": "4b57e69f03fbb5b035136d6aeaa14a53e5fbb683f31ce18b8a3dfa056ebb18f9",
+      "bytes": 2486
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.cross-host-evidence.json",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.cross-host-evidence.json",
+      "sha256": "b441f06ac332d09149f042a3ab0049b8aab08b5649d75663decb83f08a03bfed",
+      "bytes": 3984
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.manifest.cenc",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.manifest.cenc",
+      "sha256": "8dd73811b3cc935e6bed1cabb452d554b590f183e89afa1b153070a693ced5f0",
+      "bytes": 2384
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs",
+      "sha256": "88e51864c4a21296e64864523a7d602a1df6e24beed7dbbed45690c05eb1902f",
+      "bytes": 234813
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/scripts/generate-blind-client-public-browser-artifacts.mjs",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/scripts/generate-blind-client-public-browser-artifacts.mjs",
+      "sha256": "e443b72e39de2a441e9816aaf934fe30c43b526425942eb0d6f21e768aa1381c",
+      "bytes": 42976
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/scripts/test-blind-client-public-browser-artifact-chromium.mjs",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/scripts/test-blind-client-public-browser-artifact-chromium.mjs",
+      "sha256": "808d12d1dbcce2d1dd96087e7689becf87d325015cddbe6cee86aaf4004ac719",
+      "bytes": 22634
+    },
+    {
+      "originalPath": "packages/blind-client-public-browser/scripts/test-blind-client-public-browser-artifact-cross-host.mjs",
+      "snapshotPath": "packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/scripts/test-blind-client-public-browser-artifact-cross-host.mjs",
+      "sha256": "537109be603a34c0a8ec9036646a6873b64515addc4fddbe16c320a45ba79c9e",
+      "bytes": 23014
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 # Blind browser verification scope
 
-The RC9 public browser controls are the two artifacts in
+The public browser controls retain the RC9 v1 API in the two artifacts in
 `packages/blind-client-public-browser/browser-artifacts/`. The private
 `blind-client-control-v1.mjs` predecessor and its manifest/evidence remain
 byte-frozen. The public successor generator checks their exact hashes and
@@ -9,8 +9,40 @@ checks. It must reject unrelated failures and any changed predecessor byte.
 
 The missing RC8 commit `1cebfaad` is not an appropriate whole-commit repair:
 it replaces the frozen v1 executable bytes. RC9's public successor closure
-instead preserves the earlier predecessor hashes. No artifact regeneration is
-needed for the test and CI scope correction documented here.
+instead preserves the earlier predecessor hashes.
+
+## Upstream-refresh evidence revision
+
+The November 2026 dependency refresh uses build metadata and observation
+schemas V2. This is an evidence-format revision, not a browser API or wire
+protocol revision: the two exported v1 executable artifacts remain byte-for-byte
+identical to RC9. Current root manifests are inputs to the successor closure;
+they are not required to remain the RC9 dependency graph.
+
+The exact RC9 root manifests, public artifact authority, producer scripts,
+artifacts, manifests and observations are archived under
+`packages/blind-client-public-browser/predecessors/rc9/`. Its pinned
+`reference.json` records commit `d96389fad63f522b429ba182a3adc4d632ab150f`,
+tree `ee3ea9c9f6f1622df508ab63ffb20db6d2a652e3`, and every original path,
+byte length and SHA-256. Verification rejects changed or missing snapshot
+bytes. Historical V1 observations cannot qualify V2 manifests. All private
+v1/v2/v3 predecessor files and exact negative-check requirements remain frozen.
+
+The successor closure binds both current root manifests, the exact storage 3.4
+migration patch and installer, the current browser authority and evidence
+producers, and the normalized browser dependency graphs. Its accepted source
+base is commit `1e1466d3ed486b4d6fc68abccb9a8375873af626`; it does not assert
+that a later commit or whole repository tree has already been accepted.
+The final candidate identity still needs the external postcommit sequence.
+
+The V2 host producer pins the available macOS arm64 Node 22.23.4 executable
+and matching headers. This records the runtime actually observed; it is not a
+claim to use the newest Node release. Chromium is the pinned Chrome for Testing
+151.0.7922.34. The separate clean-install proof uses the pinned Linux arm64
+container image and its actual Node 22.23.1 runtime. These are local browser
+and cross-OS container observations, not independent physical-host or deployed
+fleet qualification. They preserve `releaseReady: false` and
+`standaloneAuthority: false`.
 
 ## Current gates
 

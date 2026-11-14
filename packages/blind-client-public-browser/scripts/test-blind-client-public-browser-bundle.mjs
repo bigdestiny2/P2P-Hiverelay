@@ -7,9 +7,9 @@ import b4a from 'b4a'
 import { build } from 'esbuild'
 import {
   BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES,
-  decodeBlindClientPublicBrowserArtifactManifestV1,
-  hashBlindClientPublicBrowserArtifactManifestV1,
-  verifyBlindClientPublicBrowserArtifactV1
+  decodeBlindClientPublicBrowserArtifactManifestV2,
+  hashBlindClientPublicBrowserArtifactManifestV2,
+  verifyBlindClientPublicBrowserArtifactV2
 } from '../browser-artifact.js'
 
 if (process.argv.length !== 2) {
@@ -161,7 +161,7 @@ async function assertLimitedControl (module) {
 }
 
 const report = {
-  schema: 'HiveRelayBlindClientPublicBrowserBundleTestV1',
+  schema: 'HiveRelayBlindClientPublicBrowserBundleTestV2',
   profiles: {}
 }
 await assertGateEnvironment()
@@ -170,12 +170,12 @@ for (const [id, identity] of Object.entries(profiles)) {
     fs.readFile(path.join(root, identity.artifactPath)),
     fs.readFile(path.join(root, identity.manifestPath))
   ])
-  const manifest = decodeBlindClientPublicBrowserArtifactManifestV1(manifestBytes)
-  const verified = verifyBlindClientPublicBrowserArtifactV1({
+  const manifest = decodeBlindClientPublicBrowserArtifactManifestV2(manifestBytes)
+  const verified = verifyBlindClientPublicBrowserArtifactV2({
     profile: id,
     manifestBytes,
     artifactBytes,
-    expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV1(manifestBytes),
+    expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV2(manifestBytes),
     expectedSourceClosureHash: manifest.sourceClosureHash,
     expectedTupleHash: manifest.tupleHash
   })

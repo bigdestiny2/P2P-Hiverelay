@@ -11,17 +11,18 @@ import { build } from 'esbuild'
 import {
   BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_AUTHORITY,
   BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES,
-  createBlindClientPublicBrowserArtifactManifestV1,
-  createBlindClientPublicBrowserArtifactTupleV1,
-  decodeBlindClientPublicBrowserArtifactManifestV1,
-  encodeBlindClientPublicBrowserArtifactManifestV1,
-  hashBlindClientPublicBrowserArtifactManifestV1,
-  hashBlindClientPublicBrowserNormalizedGraphSetV1,
-  hashBlindClientPublicBrowserNormalizedGraphV1,
+  createBlindClientPublicBrowserArtifactManifestV2,
+  createBlindClientPublicBrowserArtifactTupleV2,
+  decodeBlindClientPublicBrowserArtifactManifestV2,
+  encodeBlindClientPublicBrowserArtifactManifestV2,
+  hashBlindClientPublicBrowserArtifactManifestV2,
+  hashBlindClientPublicBrowserNormalizedGraphSetV2,
+  hashBlindClientPublicBrowserNormalizedGraphV2,
   hashBlindClientPublicBrowserSourceClosure,
-  verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1,
-  verifyBlindClientPublicBrowserArtifactV1
+  verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2,
+  verifyBlindClientPublicBrowserArtifactV2
 } from '../browser-artifact.js'
+import { PUBLIC_BROWSER_PREDECESSOR, verifyPublicBrowserPredecessor } from '../predecessor-reference.js'
 
 const argv = process.argv.slice(2)
 const generate = argv.length === 0
@@ -80,10 +81,15 @@ const PROFILE_CONFIG = Object.freeze({
 const FIXED_AUTHORITY_PATHS = Object.freeze([
   'package.json',
   'package-lock.json',
-  'patches/hypercore-storage+3.2.0.patch',
+  'patches/hypercore-storage+3.4.0.patch',
+  'packages/blind-client-public-browser/predecessor-reference.js',
+  PUBLIC_BROWSER_PREDECESSOR.referencePath,
   'packages/blind-client-public-browser/package.json',
   'packages/blind-client-public-browser/browser-artifact.js',
   'packages/blind-client-public-browser/scripts/generate-blind-client-public-browser-artifacts.mjs',
+  'packages/blind-client-public-browser/scripts/test-blind-client-public-browser-artifact-chromium.mjs',
+  'packages/blind-client-public-browser/scripts/test-blind-client-public-browser-artifact-cross-host.mjs',
+  'packages/core/platform/apply-hypercore-storage-migration-patch.js',
   'packages/blind-client-public-browser/scripts/lib/sha512-wasm-csp-disabled.cjs',
   'packages/blind-client-public-browser/scripts/lib/blake2b-wasm-csp-disabled.cjs',
   'packages/blind-client-public-browser/src/browser-control.js',
@@ -104,8 +110,8 @@ const FIXED_AUTHORITY_PATHS = Object.freeze([
   'node_modules/esbuild/package.json'
 ])
 const LEGACY_FROZEN_SHA256 = Object.freeze({
-  'package.json': '42b39b6affe7e9a79d9cb4eba0e9388d8f5f97896d4ffadf161441cbd716b3aa',
-  'package-lock.json': '3cf05226be9fdb29efa64da7f850c6d415bd32b3a980cf9df3fecda6c849e2c6',
+  'packages/blind-client-public-browser/predecessors/rc9/package.json': '42b39b6affe7e9a79d9cb4eba0e9388d8f5f97896d4ffadf161441cbd716b3aa',
+  'packages/blind-client-public-browser/predecessors/rc9/package-lock.json': '3cf05226be9fdb29efa64da7f850c6d415bd32b3a980cf9df3fecda6c849e2c6',
   'patches/hypercore-storage+3.2.0.patch': 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53',
   'packages/blind-client/package.json': 'bda10754b89b255d178ddb4f0190f877a209ad143bebcce10876be80aefbfb29',
   'packages/blind-client/browser-artifact.js': '92f4daa973af957f295ce96c11e9684ad9a2313247832934b952819d2710204e',
@@ -534,7 +540,8 @@ async function sourceSnapshot (discoveries) {
 
 function sourceClosureBytes (snapshot, discoveries) {
   const preClosureTupleParameters = {
-    schema: 'HiveRelayBlindClientPublicBrowserPreClosureTupleParametersV1',
+    schema: 'HiveRelayBlindClientPublicBrowserPreClosureTupleParametersV2',
+    predecessorReference: PUBLIC_BROWSER_PREDECESSOR,
     tupleSchema: BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_AUTHORITY.tupleSchema,
     tupleHashDomain: BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_AUTHORITY.tupleHashDomain,
     sourceClosureHashDomain: BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_AUTHORITY.sourceClosureHashDomain,
@@ -557,7 +564,7 @@ function sourceClosureBytes (snapshot, discoveries) {
     sha256: sha256(content)
   })).sort((left, right) => codePointCompare(left.path, right.path))
   return canonicalJson({
-    schema: 'HiveRelayBlindClientPublicBrowserSourceClosureV1',
+    schema: 'HiveRelayBlindClientPublicBrowserSourceClosureV2',
     preClosureTupleParameters,
     normalizedMetafiles: Object.fromEntries(Object.entries(discoveries).map(([id, value]) => [id, value.graph])),
     entries
@@ -565,6 +572,7 @@ function sourceClosureBytes (snapshot, discoveries) {
 }
 
 async function assertFrozenLegacyHashes () {
+  await verifyPublicBrowserPredecessor(root)
   for (const [relative, expected] of Object.entries(LEGACY_FROZEN_SHA256)) {
     const actual = sha256(await fs.readFile(absolute(relative)))
     if (actual !== expected) throw new Error(`frozen legacy byte changed: ${relative} ${actual}`)
@@ -790,11 +798,11 @@ async function releaseEvidenceStatus (
     throw error
   }
   try {
-    const verified = verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1({
+    const verified = verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2({
       profile: profile.identity.profile,
       manifestBytes,
       artifactBytes,
-      expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV1(manifestBytes),
+      expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV2(manifestBytes),
       expectedSourceClosureHash: sourceClosureHash,
       expectedNormalizedGraphHash: normalizedGraphHash,
       expectedNormalizedGraphSetHash: normalizedGraphSetHash,
@@ -855,27 +863,29 @@ try {
     }
   }
   const normalizedGraphHashes = Object.freeze({
-    full: hashBlindClientPublicBrowserNormalizedGraphV1({
+    full: hashBlindClientPublicBrowserNormalizedGraphV2({
       profileId: 'full',
       normalizedGraph: first.full.graph
     }),
-    limited: hashBlindClientPublicBrowserNormalizedGraphV1({
+    limited: hashBlindClientPublicBrowserNormalizedGraphV2({
       profileId: 'limited',
       normalizedGraph: first.limited.graph
     })
   })
-  const normalizedGraphSetHash = hashBlindClientPublicBrowserNormalizedGraphSetV1(
+  const normalizedGraphSetHash = hashBlindClientPublicBrowserNormalizedGraphSetV2(
     normalizedGraphHashes)
   const closureBytes = sourceClosureBytes(snapshot, discoveries)
   const sourceClosureHash = hashBlindClientPublicBrowserSourceClosure(closureBytes)
   await assertSnapshotCurrent(snapshot)
   report = {
-    schema: 'HiveRelayBlindClientPublicBrowserArtifactGenerationV1',
+    schema: 'HiveRelayBlindClientPublicBrowserArtifactGenerationV2',
     mode: generate
       ? 'generate'
       : ciStructuralOnly
         ? 'ci-structural-only'
         : 'check',
+    predecessorReference: PUBLIC_BROWSER_PREDECESSOR,
+    legacyNegativeContext: 'unchanged-predecessor-scripts-under-current-successor-dependencies',
     sourceClosureHash,
     sourceClosureEntries: snapshot.entries.size,
     normalizedGraphSetHash,
@@ -888,15 +898,15 @@ try {
     profiles: {}
   }
   for (const [id, profile] of Object.entries(PROFILE_CONFIG)) {
-    const tuple = createBlindClientPublicBrowserArtifactTupleV1({ profile: id, sourceClosureHash })
-    const manifestBytes = encodeBlindClientPublicBrowserArtifactManifestV1(
-      createBlindClientPublicBrowserArtifactManifestV1({ tuple, artifactBytes: first[id].artifactBytes }))
-    const manifest = decodeBlindClientPublicBrowserArtifactManifestV1(manifestBytes)
-    const verified = verifyBlindClientPublicBrowserArtifactV1({
+    const tuple = createBlindClientPublicBrowserArtifactTupleV2({ profile: id, sourceClosureHash })
+    const manifestBytes = encodeBlindClientPublicBrowserArtifactManifestV2(
+      createBlindClientPublicBrowserArtifactManifestV2({ tuple, artifactBytes: first[id].artifactBytes }))
+    const manifest = decodeBlindClientPublicBrowserArtifactManifestV2(manifestBytes)
+    const verified = verifyBlindClientPublicBrowserArtifactV2({
       profile: id,
       manifestBytes,
       artifactBytes: first[id].artifactBytes,
-      expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV1(manifestBytes),
+      expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV2(manifestBytes),
       expectedSourceClosureHash: sourceClosureHash,
       expectedTupleHash: manifest.tupleHash
     })

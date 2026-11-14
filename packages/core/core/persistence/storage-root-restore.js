@@ -42,6 +42,7 @@ export {
   corestoreGenerationStatus,
   createContentAddressedCorestoreBackup,
   importLegacyCorestoreCopyIntoEnvelope,
+  importRawCs7CorestoreCopyIntoEnvelope,
   initializeCorestoreGenerationEnvelope,
   inventoryCorestoreGenerationTree,
   rebindRestoredCorestoreDevice,

@@ -303,7 +303,9 @@ test('ordinary style lint excludes only generated bundles and retains dedicated 
   t.alike(ignored, [
     'packages/blind-client/browser-artifacts/blind-client-control-v1.mjs',
     'packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs',
-    'packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs'
+    'packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs',
+    'packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs',
+    'packages/blind-client-public-browser/predecessors/rc9/packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs'
   ])
   const rootPackage = JSON.parse(fs.readFileSync(rootPackageUrl, 'utf8'))
   t.is(rootPackage.scripts['generate:blind-client:browser-artifact'],

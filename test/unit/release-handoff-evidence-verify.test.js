@@ -25,9 +25,10 @@ const FLEET_CHANNEL_CONFIG_SHA = '3'.repeat(64)
 const FLEET_RELAYS = Object.freeze([
   ['utah-us', 'stable'],
   ['utah-2gb-a', 'canary'],
-  ['utah-8gb', 'stable'],
+  ['dallas', 'stable'],
   ['sing-1', 'stable'],
   ['sing-2', 'stable'],
+  ['amsterdam', 'stable'],
   ['dubai', 'stable']
 ])
 
