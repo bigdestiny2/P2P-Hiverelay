@@ -2,8 +2,8 @@ name: Publish Docker image
 
 # Build and push the p2p-hiverelay container image to GitHub Container Registry.
 # Triggers:
-#   - push to main        → publishes :latest + :main-<sha>
-#   - manual workflow run → publishes selected branch snapshot tags
+#   - push to main        → publishes :main + :main-<sha>
+#   - manual workflow run → publishes namespaced branch snapshot tags
 #
 # Release tags are intentionally handled by release-surfaces.yml so the image,
 # digest capture, fleet channels, Umbrel metadata, and StartOS package update
@@ -20,6 +20,8 @@ env:
 
 jobs:
   build-and-push:
+    # Dispatching this workflow at a tag must never publish snapshot images.
+    if: github.ref_type == 'branch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -51,10 +53,14 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # Only the qualified stable-promotion workflow may move latest.
+          flavor: |
+            latest=false
           tags: |
-            type=ref,event=branch
-            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=main,enable={{is_default_branch}}
+            type=ref,event=branch,prefix=branch-,enable={{is_not_default_branch}}
             type=sha,prefix=main-,enable={{is_default_branch}}
+            type=sha,prefix=branch-,enable={{is_not_default_branch}}
 
       - name: Build and push
         id: build

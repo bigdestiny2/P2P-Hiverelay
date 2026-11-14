@@ -11,10 +11,12 @@ function fixture (t) {
   const home = path.join(dir, 'home')
   mkdirSync(bin)
   mkdirSync(path.join(home, 'hiverelay'), { recursive: true })
+  mkdirSync(path.join(home, 'service'), { recursive: true })
   const script = path.join(dir, 'fleet-status.sh')
   copyFileSync('fleet/fleet-status.sh', script)
   writeFileSync(path.join(dir, 'channels.json'), '{"stable":"v0.27.0-rc.1","canary":"v0.27.0-rc.2"}')
   writeFileSync(path.join(home, 'hiverelay/package.json'), '{"version":"0.25.0-rc.9+build.7"}')
+  writeFileSync(path.join(home, 'service/package.json'), '{"version":"0.26.0-rc.2"}')
   const log = path.join(dir, 'calls.jsonl')
   const replies = path.join(dir, 'replies.json')
   writeFileSync(replies, '{}')
@@ -35,7 +37,7 @@ if (host === 'execute.test') {
   process.stderr.write(child.stderr || '')
   process.exit(child.status ?? 1)
 }
-const reply = replies[host] || { stdout: 'v0.25.0-rc.9|RUNNING 3 4|76%\\n' }
+const reply = replies[host] || { stdout: 'v0.25.0-rc.9|RUNNING 3 4|76%|HEALTH\\n' }
 process.stdout.write(reply.stdout || '')
 process.stderr.write(reply.stderr || '')
 process.exit(reply.code || 0)
@@ -48,10 +50,13 @@ fs.appendFileSync(process.env.FLEET_TEST_LOG, JSON.stringify({ command: 'curl', 
   header, headerMode: header ? fs.statSync(header).mode & 0o777 : null,
   authorized: header ? fs.readFileSync(header, 'utf8') === 'Authorization: Bearer ' + process.env.FLEET_TEST_KEY + '\\n' : false }) + '\\n')
 if (!remote) { process.stdout.write('{"stable":"v0.27.0-rc.1","canary":"v0.27.0-rc.2"}'); process.exit(0) }
-process.stdout.write(process.env.FLEET_TEST_HEALTH || '{"running":true,"seededApps":12,"connections":34}')
+process.stdout.write(process.env.FLEET_TEST_HEALTH || '{"running":true,"version":"0.25.0-rc.9+build.7","seededApps":12,"connections":34}')
 process.exit(Number(process.env.FLEET_TEST_CURL_EXIT || 0))
 `)
-  stub('systemctl', "process.stdout.write('Environment=OTHER=fixture HIVERELAY_API_KEY=' + process.env.FLEET_TEST_KEY + '\\n')")
+  stub('systemctl', `
+if (process.argv.includes('--property=WorkingDirectory')) process.stdout.write((process.env.FLEET_TEST_WORKING_DIRECTORY ?? process.env.HOME + '/service') + '\\n')
+else process.stdout.write('Environment=OTHER=fixture HIVERELAY_API_KEY=' + process.env.FLEET_TEST_KEY + '\\n')
+`)
   stub('df', "process.stdout.write('Filesystem Size Used Avail Use% Mounted on\\nfixture 1G 1G 0G 91% /\\n')")
   const env = {
     ...process.env,
@@ -221,8 +226,51 @@ test('fleet status reports reachable stopped, invalid and unavailable health sep
     const result = f.run([], { FLEET_TEST_HEALTH: body || ' ', FLEET_TEST_CURL_EXIT: code })
     t.is(result.status, 0)
     t.ok(result.stdout.includes(expected))
-    t.ok(/execute\s+v0\.25\.0-rc\.9\+build\.7\s+OK/.test(result.stdout))
+    t.ok(/execute\s+v0\.26\.0-rc\.2\s+SERVICE-PACKAGE\s+OK/.test(result.stdout))
     t.absent(result.stdout.includes('SSH-AUTH'))
+  }
+})
+
+test('fleet status observes health version instead of stale rollback or configured package versions', (t) => {
+  const f = fixture(t)
+  f.inventory('relays.json', [relay('execute')])
+  for (const version of ['0.27.0-rc.1', 'v0.27.0-rc.1+build.42']) {
+    const result = f.run([], { FLEET_TEST_HEALTH: JSON.stringify({ running: true, version, seededApps: 2, connections: 9 }) })
+    t.is(result.status, 0)
+    t.ok(result.stdout.includes(`${version.startsWith('v') ? version : 'v' + version}`))
+    t.ok(/execute\s+v0\.27\.0-rc\.1(?:\+build\.42)?\s+HEALTH\s+OK\s+RUNNING/.test(result.stdout))
+    t.absent(result.stdout.includes('v0.25.0-rc.9'), 'rollback checkout does not determine running version')
+    t.absent(result.stdout.includes('v0.26.0-rc.2'), 'health version wins over configured package')
+  }
+})
+
+test('fleet status labels missing or invalid health versions as service-package fallback only', (t) => {
+  const f = fixture(t)
+  f.inventory('relays.json', [relay('execute')])
+  for (const version of [undefined, null, 27, {}, 'latest', '0.27.0-rc..1', '0.27.0-01', '00.27.0', '0.27.0+bad..build', '0.27.0\u001b[31m', '0.27.0|RUNNING 8 9', '0.27.0-' + 'x'.repeat(81)]) {
+    const result = f.run([], { FLEET_TEST_HEALTH: JSON.stringify({ running: true, version, seededApps: 2, connections: 9 }) })
+    t.is(result.status, 0)
+    t.ok(/execute\s+v0\.26\.0-rc\.2\s+SERVICE-PACKAGE\s+OK\s+RUNNING/.test(result.stdout))
+    t.absent(result.stdout.includes('\u001b'))
+  }
+  const invalidHealth = f.run([], { FLEET_TEST_HEALTH: '{"running":"true","version":"0.27.0-rc.1"}' })
+  t.ok(/execute\s+v0\.26\.0-rc\.2\s+SERVICE-PACKAGE\s+OK\s+HEALTH-INVALID/.test(invalidHealth.stdout), 'an invalid health object cannot establish an observed version')
+})
+
+test('fleet status never guesses runtime version without valid health or service package', (t) => {
+  const f = fixture(t)
+  f.inventory('relays.json', [relay('execute')])
+  for (const workingDirectory of ['', 'relative/path', '/missing-service', f.home + '/service\nnot-a-directory']) {
+    const result = f.run([], { FLEET_TEST_CURL_EXIT: '22', FLEET_TEST_WORKING_DIRECTORY: workingDirectory })
+    t.is(result.status, 0)
+    t.ok(/execute\s+\?\s+UNOBSERVED\s+OK\s+HEALTH-UNAVAILABLE/.test(result.stdout))
+    t.absent(result.stdout.includes('v0.25.0-rc.9'), 'does not fall back to HOME/hiverelay')
+  }
+  for (const raw of ['{', '{"version":"0.27.0-01"}', '{"version":"0.27.0\\n"}', '{"version":"' + 'x'.repeat(65536) + '"}']) {
+    writeFileSync(path.join(f.home, 'service/package.json'), raw)
+    const result = f.run([], { FLEET_TEST_HEALTH: '{"running":true}' })
+    t.is(result.status, 0)
+    t.ok(/execute\s+\?\s+UNOBSERVED\s+OK\s+RUNNING/.test(result.stdout))
   }
 })
 

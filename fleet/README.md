@@ -316,7 +316,12 @@ material. `accept-new` accepts unknown host keys but rejects changed keys; verif
 the host fingerprint before repairing `known_hosts`. An SSH success can still
 show `STOPPED`, `HEALTH-UNAVAILABLE` or `HEALTH-INVALID`; check the remote service,
 localhost `/health` and its API key. `VERSION` preserves prerelease and build
-suffixes. The table is read-only and exits successfully after a completed probe
+suffixes. `VERSION-SOURCE=HEALTH` identifies a validated version observed in the
+localhost health response. If that version is missing or invalid, `SERVICE-PACKAGE`
+reads the package in the service's configured `WorkingDirectory`; this does not
+prove the running version. Without either valid source, the version is `?` and
+`VERSION-SOURCE=UNOBSERVED`. A retained rollback checkout at `~/hiverelay` is never
+used implicitly. The table is read-only and exits successfully after a completed probe
 pass even when individual hosts fail; it is not a machine readiness gate.
 `TARGET` is an informational channel hint, not signed rollout evidence. Use the
 rollout checker above for qualification of the exact release and commit.

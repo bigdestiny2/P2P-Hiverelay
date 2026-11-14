@@ -151,11 +151,6 @@ ssh_failure() {
 
 # Remote probe, delivered verbatim over stdin (bash -s) — no quote escaping.
 read -r -d '' REMOTE <<'REMOTE_EOF' || true
-V="$(python3 -c 'import json, re, sys
-v = json.load(open(sys.argv[1])).get("version", "")
-if not isinstance(v, str) or not re.fullmatch(r"v?[0-9]+\.[0-9]+\.[0-9]+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?", v):
-    raise ValueError("invalid version")
-print(v if v.startswith("v") else "v" + v)' "$HOME/hiverelay/package.json" 2>/dev/null || printf '?')"
 read_api_key() {
   local key
   key="$(systemctl show hiverelay -p Environment 2>/dev/null | awk 'BEGIN{RS=" "} /^HIVERELAY_API_KEY=/{sub(/^HIVERELAY_API_KEY=/,""); print; exit}' || true)"
@@ -191,23 +186,46 @@ curl_with_optional_key() {
 K="$(read_api_key)"
 H=$(curl_with_optional_key "$K" -fsS --max-time 10 --max-filesize 65536 http://127.0.0.1:9100/health 2>/dev/null) || H=""
 if [ -z "$H" ]; then
-  R="HEALTH-UNAVAILABLE ? ?"
+  P="?|HEALTH-UNAVAILABLE ? ?|UNOBSERVED"
 else
-  R=$(printf '%s' "$H" | python3 -c 'import sys,json
+  P=$(printf '%s' "$H" | python3 -c 'import sys,json,re
 d=json.load(sys.stdin)
 r=d.get("running")
 if type(r) is not bool: raise ValueError("missing running state")
 def count(k):
     n=d.get(k)
     return n if type(n) is int and n >= 0 else "?"
-print("RUNNING" if r else "STOPPED", count("seededApps"), count("connections"))' 2>/dev/null || echo "HEALTH-INVALID ? ?")
+v=d.get("version")
+valid=isinstance(v,str) and len(v) <= 80 and re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",v)
+if valid and valid.group(4):
+    valid=all(not p.isdigit() or p == "0" or not p.startswith("0") for p in valid.group(4).split("."))
+v=(v if v.startswith("v") else "v"+v) if valid else "?"
+print(v, " ".join(map(str, ("RUNNING" if r else "STOPPED", count("seededApps"), count("connections")))), "HEALTH" if valid else "UNOBSERVED", sep="|")' 2>/dev/null || echo "?|HEALTH-INVALID ? ?|UNOBSERVED")
+fi
+IFS='|' read -r V R VS <<<"$P"
+if [ "$V" = '?' ]; then
+  # The canonical checkout can be an intentionally preserved rollback tree.
+  # A configured package version is only a fallback, not a running-version claim.
+  W="$(systemctl show hiverelay --property=WorkingDirectory --value 2>/dev/null || true)"
+  V="$(python3 -c 'import json,pathlib,re,sys
+w=sys.argv[1]
+if not w.startswith("/") or len(w)>1024 or any(ord(c)<32 or ord(c)==127 for c in w):
+    raise ValueError("invalid working directory")
+p=pathlib.Path(w)/"package.json"
+if p.stat().st_size>65536: raise ValueError("oversize package")
+v=json.loads(p.read_text()).get("version")
+m=isinstance(v,str) and len(v)<=80 and re.fullmatch(r"v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?",v)
+if not m or (m.group(4) and any(s.isdigit() and s!="0" and s.startswith("0") for s in m.group(4).split("."))):
+    raise ValueError("invalid version")
+print(v if v.startswith("v") else "v"+v)' "$W" 2>/dev/null || printf '?')"
+  if [ "$V" != '?' ]; then VS=SERVICE-PACKAGE; fi
 fi
 D=$(df -h / | awk 'NR==2{print $5}')
-echo "$V|$R|$D"
+echo "$V|$R|$D|$VS"
 REMOTE_EOF
 
 printf 'Inventory: %s\n' "$(clean_field "$(basename "$RELAYS")")"
-printf '%-15s %-24s %-10s %-19s %-6s %-6s %-6s %s\n' RELAY VERSION SSH HEALTH APPS CONNS DISK TARGET
+printf '%-15s %-24s %-16s %-10s %-19s %-6s %-6s %-6s %s\n' RELAY VERSION VERSION-SOURCE SSH HEALTH APPS CONNS DISK TARGET
 
 while IFS='|' read -r name host keyspec channel; do
   safe_name="$(clean_field "$name")"
@@ -217,7 +235,7 @@ while IFS='|' read -r name host keyspec channel; do
   if [ -n "$keyspec" ]; then
     case "$keyspec" in '~/'*) keyspec="$HOME/${keyspec:2}" ;; esac
     if [ ! -f "$keyspec" ] || [ ! -r "$keyspec" ]; then
-      printf '%-15s %-24s %-10s %-19s %-6s %-6s %-6s %s\n' "$safe_name" - KEY-MISSING unobserved - - - "$safe_target"
+      printf '%-15s %-24s %-16s %-10s %-19s %-6s %-6s %-6s %s\n' "$safe_name" - UNOBSERVED KEY-MISSING unobserved - - - "$safe_target"
       printf '  KEY-MISSING: configure a readable SSH identity file for this relay.\n'
       continue
     fi
@@ -227,13 +245,15 @@ while IFS='|' read -r name host keyspec channel; do
   ssh_status=0
   out="$(ssh ${keyarg[@]+"${keyarg[@]}"} -o StrictHostKeyChecking=accept-new -o ConnectTimeout=10 -o ServerAliveInterval=10 -o ServerAliveCountMax=1 -o BatchMode=yes "root@$host" bash -s <<<"$REMOTE" 2>"$WORK/ssh-error")" || ssh_status=$?
   if [ "$ssh_status" -ne 0 ]; then
-    printf '%-15s %-24s %-10s %-19s %-6s %-6s %-6s %s\n' "$safe_name" - FAILED unobserved - - - "$safe_target"
+    printf '%-15s %-24s %-16s %-10s %-19s %-6s %-6s %-6s %s\n' "$safe_name" - UNOBSERVED FAILED unobserved - - - "$safe_target"
     printf '  %s\n' "$(ssh_failure "$ssh_status")"
     continue
   fi
   out="$(printf '%s\n' "$out" | tail -n 1)"
-  IFS='|' read -r ver rest disk <<<"$out"
+  IFS='|' read -r ver rest disk version_source <<<"$out"
   [[ "${ver:-}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]] || ver='?'
+  case "${version_source:-}" in HEALTH|SERVICE-PACKAGE) ;; *) version_source=UNOBSERVED; ver='?' ;; esac
+  if [ "$ver" = '?' ]; then version_source=UNOBSERVED; fi
   read -r health apps conns <<<"${rest:-PROBE-INVALID ? ?}"
   case "$health" in RUNNING|STOPPED|HEALTH-UNAVAILABLE|HEALTH-INVALID) ;; *) health=PROBE-INVALID; apps='?'; conns='?' ;; esac
   [[ "${apps:-}" =~ ^[0-9]+$ ]] || apps='?'
@@ -247,8 +267,8 @@ while IFS='|' read -r name host keyspec channel; do
   else
     disk_display='?'
   fi
-  printf '%-15s %-24s %-10s %-19s %-6s %-6s %-6s %s\n' \
-    "$safe_name" "$(clean_field "${ver:-?}")" OK "$(clean_field "$health")" \
+  printf '%-15s %-24s %-16s %-10s %-19s %-6s %-6s %-6s %s\n' \
+    "$safe_name" "$(clean_field "${ver:-?}")" "$version_source" OK "$(clean_field "$health")" \
     "$(clean_field "${apps:-?}")" "$(clean_field "${conns:-?}")" \
     "$(clean_field "$disk_display")" "$safe_target"
 done < "$WORK/active"
@@ -260,5 +280,6 @@ if [ -s "$WORK/excluded" ]; then
   done < "$WORK/excluded"
 fi
 printf '\nSSH failures leave service health unobserved; HEALTH-UNAVAILABLE/INVALID require checking localhost /health and its API key.\n'
+printf 'VERSION-SOURCE: HEALTH = observed localhost response; SERVICE-PACKAGE = configured service package only, running version not observed; UNOBSERVED = no valid version.\n'
 printf 'TARGET is an informational channel hint, not signed rollout or readiness evidence.\n'
 printf 'DISK flags: %s = >=75%% (set/verify maxStorageBytes), %s = >=90%% (act now — a full disk wedges the relay).\n' '!' '!!'
