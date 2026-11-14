@@ -85,6 +85,7 @@ import {
 import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
+import { createRetainedReadController } from '../retained-read-capability.js'
 import { GatewayServer, assertHiveAppGatewayIsolation } from './gateway-server.js'
 import { hasActiveExactGateway } from '../../gateway/exact-app-context.js'
 import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
@@ -121,6 +122,7 @@ const DEFAULT_CONFIG = {
   capacityProfileConfigured: false,
   storage: './storage',
   hiverelayGeneration: null,
+  retainedReadCapability: null,
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   maxConnections: 256,
   maxRelayBandwidthMbps: 100,
@@ -846,6 +848,7 @@ export class RelayNode extends EventEmitter {
     this.metrics = null
     this.api = null
     this.gatewayServer = null
+    this.retainedReadController = null
     this.wsTransport = null
     this.dhtRelayWs = null
     this.pearBlindRelay = null
@@ -1083,6 +1086,9 @@ export class RelayNode extends EventEmitter {
   }
 
   async applyMode (mode, overrides = {}) {
+    if (Object.prototype.hasOwnProperty.call(overrides, 'retainedReadCapability')) {
+      throw new Error('Retained local read authority is selected only at process launch')
+    }
     if (hasActiveExactGateway(this)) {
       throw new Error('Runtime mode changes are forbidden while an exact app-host GatewayServer is active; stop and perform a reviewed restart')
     }
@@ -1876,6 +1882,10 @@ export class RelayNode extends EventEmitter {
         err.code = 'STORAGE_RECOVERY_AUTHORITY_FAILED'
         throw err
       }
+
+      // Optional local-read authority is externally selected, protected and
+      // bound to this guarded generation. It never changes storage admission.
+      this.retainedReadController = await createRetainedReadController(this)
 
       // The dedicated catalog channel is usable only after durable registry
       // recovery and one bounded source/digest completion. Its no-follow disk
@@ -2724,6 +2734,7 @@ export class RelayNode extends EventEmitter {
       await stopRollbackOwner('pearBlindRelay', 'stop')
       await stopRollbackOwner('gatewayServer', 'stop')
       await stopRollbackOwner('api', 'stop')
+      await stopRollbackOwner('retainedReadController', 'stop')
       await stopRollbackOwner('distributedDriveBridge', 'stop')
       await stopRollbackOwner('relay', 'stop')
 
@@ -5995,6 +6006,7 @@ export class RelayNode extends EventEmitter {
     await stopAsync('pearBlindRelay', 'pearBlindRelay.stop')
     await stopAsync('gatewayServer', 'gatewayServer.stop')
     await stopAsync('api', 'api.stop')
+    await stopAsync('retainedReadController', 'retainedReadController.stop')
     await stopAsync('appCatalogController', 'appCatalogController.stop')
     this.appCatalogStore = null
     this._appCatalogStageFactory = null

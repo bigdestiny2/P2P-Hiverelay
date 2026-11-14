@@ -82,7 +82,9 @@ const args = minimist(process.argv.slice(2), {
     'hive-app-public-version',
     'generation-receipt',
     'generation-receipt-sha256',
-    'generation-receipt-sha256-file'
+    'generation-receipt-sha256-file',
+    'retained-read-capability',
+    'retained-read-capability-sha256-file'
   ]
 })
 const command = args._[0]
@@ -548,6 +550,15 @@ async function start () {
   }
 
   const config = loadConfig(cliOverrides)
+  // This authority is launch-selected only; ordinary persisted config and
+  // management updates cannot opt a relay into a different retained snapshot.
+  delete config.retainedReadCapability
+  const retainedManifest = args['retained-read-capability'] || process.env.HIVERELAY_RETAINED_READ_CAPABILITY
+  const retainedPin = args['retained-read-capability-sha256-file'] || process.env.HIVERELAY_RETAINED_READ_CAPABILITY_SHA256_FILE
+  if (retainedManifest || retainedPin) {
+    if (!retainedManifest || !retainedPin) throw new Error('Retained local reads require both an external capability and pin file')
+    config.retainedReadCapability = { manifestPath: retainedManifest, pinPath: retainedPin }
+  }
   let generationLaunch = null
   try {
     const requiredByEnvironment = parseGenerationReceiptRequiredEnvironment(

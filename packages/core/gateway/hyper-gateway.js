@@ -29,6 +29,7 @@ import { updateWithTimeout } from '../core/relay-node/cancellable-drive-update.j
 import { admitPublicHiveAppEntry } from './public-app-admission.js'
 import { isVerifyRequest, serveVerifyBundle } from './verify-bundle.js'
 import { closeSharedDriveEntity, sharedOperationFlights } from '../core/shared-flight-registry.js'
+import { RETAINED_READ_LIMITS } from '../core/retained-read-capability.js'
 import {
   applyGatewayEdgeHeaders,
   buildHivePathLinkHeader,
@@ -818,13 +819,17 @@ export class HyperGateway extends EventEmitter {
     }
 
     let storageProvedDriveVersion = null
+    let retainedReadVersion = null
     if (this._requireLifecycleDriveAuthority) {
       storageProvedDriveVersion = appEntry?.storageProvedDriveVersion
       if (!Number.isSafeInteger(storageProvedDriveVersion) || storageProvedDriveVersion <= 0) {
-        sendJson({ error: 'Drive not available yet — still replicating' }, 404)
-        return
+        retainedReadVersion = this.node.appLifecycle?.retainedReadVersion?.(keyHex) || null
+        if (!retainedReadVersion) {
+          sendJson({ error: 'Drive not available yet — still replicating' }, 404)
+          return
+        }
       }
-      if (exactBytes && storageProvedDriveVersion !== context?.driveVersion) {
+      if (exactBytes && (retainedReadVersion || storageProvedDriveVersion) !== context?.driveVersion) {
         sendJson({
           error: 'App unavailable through public Hive gateway',
           hint: 'Use the app\'s authorized native P2P transport'
@@ -885,6 +890,7 @@ export class HyperGateway extends EventEmitter {
     try {
       const driveLease = await this._acquireDrive(keyHex, {
         requireSeeded: exactBytes || this._requireLifecycleDriveAuthority,
+        retainedReadVersion,
         signal
       })
       if (!driveLease) {
@@ -893,6 +899,15 @@ export class HyperGateway extends EventEmitter {
       }
       const drive = driveLease.drive
       requestDriveLease = this._holdDriveLeaseForRequest(res, driveLease)
+
+      if (driveLease.retainedLocal === true) {
+        res.setHeader('X-Hive-Read-Scope', 'retained-local-snapshot')
+        if (verifyMode) {
+          requestDriveLease.setCheckout(drive)
+          sendJson({ error: 'Verification bundles are unavailable for retained local snapshots' }, 501)
+          return
+        }
+      }
 
       let readDrive = drive
       if (driveLease.immutable === true) {
@@ -944,6 +959,10 @@ export class HyperGateway extends EventEmitter {
         if (entry) {
           filePath = (filePath || '/') + 'index.html'
         } else {
+          if (driveLease.retainedLocal === true) {
+            sendJson({ error: 'Directory listings are unavailable for retained local snapshots' }, 501)
+            return
+          }
           if (verifyMode) {
             // A directory listing is generated JSON — no single block to prove.
             sendJson({ error: 'Verify mode proves file blocks only — request a file path', path: filePath || '/' }, 400)
@@ -978,6 +997,10 @@ export class HyperGateway extends EventEmitter {
       const byteLength = entry.value.blob.byteLength
       if (!Number.isSafeInteger(byteLength) || byteLength < 0) {
         throw new Error('Drive entry has an invalid byte length')
+      }
+      if (driveLease.retainedLocal === true && byteLength > RETAINED_READ_LIMITS.responseBytes && !req.headers.range) {
+        sendJson({ error: 'A bounded single byte range is required', maxResponseBytes: RETAINED_READ_LIMITS.responseBytes }, 413)
+        return
       }
 
       // Verifiable retrieval mode: proof bundle instead of raw bytes. Admission
@@ -1103,6 +1126,10 @@ export class HyperGateway extends EventEmitter {
         }, streamOpts ? 416 : 413)
         return
       }
+      if (driveLease.retainedLocal === true && responseLength > RETAINED_READ_LIMITS.responseBytes) {
+        sendJson({ error: 'Requested retained range exceeds byte limit', maxResponseBytes: RETAINED_READ_LIMITS.responseBytes }, 416)
+        return
+      }
 
       if (
         exactBytes &&
@@ -1216,6 +1243,10 @@ export class HyperGateway extends EventEmitter {
         try { res.destroy(err) } catch {}
         return
       }
+      if (err?.code === 'RETAINED_LOCAL_UNAVAILABLE' || err?.code === 'RETAINED_LOCAL_LIMIT') {
+        sendJson({ error: err.code === 'RETAINED_LOCAL_LIMIT' ? 'Retained local read limit exceeded' : 'Selected local snapshot unavailable' }, err.code === 'RETAINED_LOCAL_LIMIT' ? 413 : 404)
+        return
+      }
       sendJson({ error: 'Gateway read failed' }, 502)
     } finally {
       if (requestDriveLease) requestDriveLease.settleHandler()
@@ -1278,6 +1309,12 @@ export class HyperGateway extends EventEmitter {
   }
 
   async _acquireDrive (keyHex, opts = {}) {
+    if (opts.retainedReadVersion != null) {
+      return this.node.appLifecycle?.acquireRetainedDriveReadLease?.(keyHex, {
+        signal: opts.signal,
+        expectedVersion: opts.retainedReadVersion
+      }) || null
+    }
     const seededEntry = this.node.seededApps && this.node.seededApps.get(keyHex)
     const seededDrive = seededEntry && seededEntry.drive
     if (seededDrive && !seededDrive.closed && !seededDrive.closing) {

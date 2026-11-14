@@ -648,6 +648,16 @@ export class AppLifecycle extends EventEmitter {
     }
   }
 
+  retainedReadVersion (appKeyHex) {
+    if (this._shutdownFenced) return null
+    return this.node.retainedReadController?.versionFor(appKeyHex) || null
+  }
+
+  async acquireRetainedDriveReadLease (appKeyHex, opts) {
+    if (this._shutdownFenced) return null
+    return this.node.retainedReadController?.acquire(appKeyHex, opts) || null
+  }
+
   _beginDriveRetirement (entry) {
     let state = this._driveReadLeaseStates.get(entry)
     if (!state) {
