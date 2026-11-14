@@ -123,7 +123,7 @@
     "test:integration:prepare": "node scripts/prepare-integration-tests.mjs",
     "test:integration": "node scripts/run-brittle-suite.mjs integration",
     "test:public-hive-gateway:live": "brittle-node test/integration/public-hive-gateway-live.test.js",
-    "test:public-hive-gateway:soak": "HIVERELAY_PUBLIC_GATEWAY_SOAK_REQUESTS=1000 brittle test/integration/public-hive-gateway-live.test.js",
+    "test:public-hive-gateway:soak": "HIVERELAY_PUBLIC_GATEWAY_SOAK_REQUESTS=1000 brittle-node test/integration/public-hive-gateway-live.test.js",
     "test:bare": "PATH=\"$PWD/node_modules/bare/bin:$PATH\" brittle-bare test/bare/index.js",
     "demo:pearbrowser": "node scripts/pearbrowser-marketplace-demo.js",
     "demo:pearbrowser:once": "node scripts/pearbrowser-marketplace-demo.js --once",
@@ -148,7 +148,7 @@
   "devDependencies": {
     "@hyperswarm/testnet": "3.1.4",
     "bare": "1.37.1",
-    "brittle": "4.2.0",
+    "brittle": "4.5.0",
     "esbuild": "0.28.1",
     "standard": "^17.1.0",
     "autobee": "2.13.6",

@@ -36,7 +36,7 @@ export function verifyProductionWorkspaceDependencies (root) {
   const owningWorkspaceGraph = {}
   for (const owner of ['.', 'packages/core', 'packages/services', 'packages/client']) {
     const require = createRequire(path.join(root, owner, 'package.json'))
-    const dependencies = ['hypercore', 'corestore', 'hypercore-storage', 'rocksdb-native', 'sodium-universal', 'sodium-native', 'b4a']
+    const dependencies = ['hypercore', 'corestore', 'hypercore-storage', 'rocksdb-native', 'sodium-universal', 'sodium-native', 'b4a', 'fs-native-extensions', 'streamx', 'protomux-rpc', 'rache']
     if (owner === 'packages/core') dependencies.push('@x402/core', '@x402/evm', '@grpc/grpc-js')
     const graph = owningWorkspaceGraph[owner] = {}
     for (const name of dependencies) {
