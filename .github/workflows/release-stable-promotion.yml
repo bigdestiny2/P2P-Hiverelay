@@ -45,18 +45,21 @@ jobs:
       FLEET_ROLLOUT_TIMEOUT_MS: '1800000'
       HIVERELAY_PROMOTION_ALLOWED_SIGNERS_SHA256: ${{ vars.PROMOTION_ALLOWED_SIGNERS_SHA256 }}
       HIVERELAY_PROMOTION_SIGNER_IDENTITY: ${{ vars.PROMOTION_SIGNER_IDENTITY }}
-      HIVERELAY_PROMOTION_ALLOWED_SIGNERS_FILE: ${{ runner.temp }}/promotion-authority/allowed-signers
-      HIVERELAY_FLEET_KNOWN_HOSTS_FILE: ${{ runner.temp }}/promotion-authority/known_hosts
-      HIVERELAY_FLEET_SSH_KEY_FILE: ${{ runner.temp }}/promotion-authority/fleet.key
       HIVERELAY_FLEET_GATEWAY_EVIDENCE: ${{ vars.FLEET_GATEWAY_EVIDENCE }}
       HIVERELAY_FLEET_GATEWAY_MANIFEST: ${{ vars.FLEET_GATEWAY_MANIFEST }}
-      HIVERELAY_FLEET_GATEWAY_WINDOW_STATE: ${{ runner.temp }}/promotion-authority/gateway-window.json
     steps:
       - name: Checkout exact dispatched source
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
           persist-credentials: false
+      - name: Set protected authority paths
+        run: |
+          set -euo pipefail
+          printf 'HIVERELAY_PROMOTION_ALLOWED_SIGNERS_FILE=%s/promotion-authority/allowed-signers\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'HIVERELAY_FLEET_KNOWN_HOSTS_FILE=%s/promotion-authority/known_hosts\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'HIVERELAY_FLEET_SSH_KEY_FILE=%s/promotion-authority/fleet.key\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'HIVERELAY_FLEET_GATEWAY_WINDOW_STATE=%s/promotion-authority/gateway-window.json\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Check exact tag and protected authority
         env:
           RELEASE_TAG: ${{ inputs.tag }}
