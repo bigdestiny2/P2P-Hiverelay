@@ -69,7 +69,7 @@ test('seed() advertises the hypercore-derived discoveryKey, not a plain hash', a
   await client.destroy()
 })
 
-test('seed() accepts an explicit opts.discoveryKey override', async (t) => {
+test('seed() accepts only the canonical explicit opts.discoveryKey override', async (t) => {
   const joins = []
   const swarm = mockSwarm()
   swarm.join = (topic, opts) => { joins.push(b4a.toString(topic, 'hex')); return { destroy: () => {} } }
@@ -84,12 +84,32 @@ test('seed() accepts an explicit opts.discoveryKey override', async (t) => {
 
   const appKey = b4a.alloc(32, 0x42)
   // Pretend the caller already has the drive and knows its discoveryKey.
-  const explicit = b4a.alloc(32, 0x11)
+  const explicit = hypercoreCrypto.discoveryKey(appKey)
   client.seedRequests = new Map()
   await client.seed(appKey, { discoveryKey: explicit, timeout: 50, retryPersistent: false })
 
   t.ok(joins.includes(b4a.toString(explicit, 'hex')), 'explicit discoveryKey honoured')
 
+  await client.destroy()
+})
+
+test('seed() rejects a noncanonical explicit discoveryKey before joining or retrying', async (t) => {
+  const joins = []
+  const swarm = mockSwarm()
+  swarm.join = (topic) => { joins.push(topic); return { destroy: () => {} } }
+  const client = new HiveRelayClient({ swarm })
+  await client.start()
+  const joinsBeforeSeed = joins.length
+  await t.exception(
+    client.seed(b4a.alloc(32, 0x42), {
+      discoveryKey: b4a.alloc(32, 0x11),
+      timeout: 50,
+      retryPersistent: true
+    }),
+    /unsupported-discovery-key-set/
+  )
+  t.is(joins.length, joinsBeforeSeed, 'terminal invalid override never joins a drive DHT topic')
+  t.is(client.getPendingSeeds().length, 0, 'terminal invalid override never enters persistent retry')
   await client.destroy()
 })
 

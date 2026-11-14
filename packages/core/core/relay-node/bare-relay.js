@@ -37,7 +37,11 @@
  */
 
 import Hyperswarm from 'hyperswarm'
-import { openCorestore } from '../persistence/storage-root-restore.js'
+import {
+  corestoreGenerationHealth,
+  corestoreGenerationParticipantOptions,
+  openCorestore
+} from '../persistence/storage-root-restore.js'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 // Use Node-shaped names. Under Bare/Pear they get remapped via the
@@ -45,7 +49,7 @@ import sodium from 'sodium-universal'
 // Under Node they resolve to the built-ins. This lets the same source file
 // import cleanly in both runtimes.
 import { EventEmitter } from 'events'
-import { readFile, writeFile, mkdir, chmod, rename, unlink } from 'fs/promises'
+import { readFile, writeFile, mkdir, chmod, rename, unlink, realpath } from 'fs/promises'
 import { join } from 'path'
 
 import { Seeder } from './seeder.js'
@@ -53,6 +57,7 @@ import { Relay } from './relay.js'
 import { AppLifecycle } from './app-lifecycle.js'
 import { LifecycleScope } from './lifecycle-scope.js'
 import { SeedProtocol } from '../protocol/seed-request.js'
+import { validateSeedDiscoveryHints } from '../protocol/seed-discovery-hints.js'
 import { extractCustodySeedOpts } from '../seed-request-builder.js'
 import { CircuitRelay } from '../protocol/relay-circuit.js'
 import { ProofOfRelay } from '../protocol/proof-of-relay.js'
@@ -92,6 +97,12 @@ import {
   resolveStorageCap
 } from '../../config/storage-cap.js'
 import { StorageAdmissionAuthority } from '../../config/storage-admission-authority.js'
+import { sharedOperationFlights } from '../shared-flight-registry.js'
+import { strictPositiveInteger } from '../completion-scheduler.js'
+import { AppCatalogController } from './app-catalog-controller.js'
+import { AppCatalogDiskStageFactory } from './app-catalog-paged-stage.js'
+import { APP_CATALOG_LIMITS } from './app-catalog-paged.js'
+import { catalogRowToLegacyApp } from './app-catalog-source.js'
 
 // Simple log helper — Bare has no pino, use plain console.
 // Bare doesn't expose `process` as a global; guard env lookup.
@@ -112,6 +123,19 @@ function identityTempPath (keyPath) {
 // operation gets at least this much of its own budget once it actually
 // starts. Keep in sync with relay-node/index.js.
 const MIN_OWNER_OPERATION_BUDGET_MS = 10_000
+const BARE_RETIREMENT_POPULATION_CONSUMER = 'bare-shutdown'
+const BARE_RETIREMENT_PAGE_BUDGET = 64
+const BARE_RETIREMENT_MAX_PAGE_CALLS = 4_097
+const BARE_RETIREMENT_MAX_WAVES = 8
+const LEGACY_CATALOG_SIGNATURE_MAX_AGE_MS = 5 * 60 * 1000
+const HEX_64 = /^[0-9a-f]{64}$/
+const HEX_128 = /^[0-9a-f]{128}$/
+
+function shuttingDownError (operation = 'runtime work') {
+  const err = new Error(`${operation} rejected: BareRelay is shutting down`)
+  err.code = 'SHUTTING_DOWN'
+  return err
+}
 
 function withTimeout (promise, ms, label) {
   let timer
@@ -134,8 +158,73 @@ const log = {
   debug: (...a) => env.HIVERELAY_DEBUG ? console.log('[debug]', ...a) : null
 }
 
+class BareServiceRegistry extends ServiceRegistry {
+  constructor (opts = {}) {
+    super(opts)
+    this._bareAcceptingRequests = true
+    this._bareRequests = new Set()
+  }
+
+  beginShutdown () {
+    this._bareAcceptingRequests = false
+  }
+
+  handleRequest (...args) {
+    if (!this._bareAcceptingRequests) return Promise.reject(shuttingDownError('service request'))
+    const operation = Promise.resolve().then(() => super.handleRequest(...args))
+    this._bareRequests.add(operation)
+    const cleanup = () => this._bareRequests.delete(operation)
+    operation.then(cleanup, cleanup)
+    return operation
+  }
+
+  async drainRequests () {
+    while (this._bareRequests.size > 0) {
+      await Promise.allSettled([...this._bareRequests])
+    }
+  }
+}
+
+class BareServiceProtocol extends ServiceProtocol {
+  constructor (...args) {
+    super(...args)
+    this._bareAcceptingRequests = true
+    this._bareRequests = new Set()
+  }
+
+  beginShutdown () {
+    this._bareAcceptingRequests = false
+  }
+
+  request (...args) {
+    if (!this._bareAcceptingRequests) return Promise.reject(shuttingDownError('service protocol request'))
+    return this._trackBareRequest(Promise.resolve().then(() => super.request(...args)))
+  }
+
+  _handleRequest (...args) {
+    if (!this._bareAcceptingRequests) return Promise.resolve()
+    // ServiceRegistry tracks provider settlement. Keep the outer protocol
+    // chain too so shutdown also proves response/error publication completed.
+    return this._trackBareRequest(Promise.resolve().then(() => super._handleRequest(...args)))
+  }
+
+  _trackBareRequest (operation) {
+    this._bareRequests.add(operation)
+    const cleanup = () => this._bareRequests.delete(operation)
+    operation.then(cleanup, cleanup)
+    return operation
+  }
+
+  async drainRequests () {
+    while (this._bareRequests.size > 0) {
+      await Promise.allSettled([...this._bareRequests])
+    }
+  }
+}
+
 const DEFAULT_CONFIG = {
   storage: './storage',
+  hiverelayGeneration: null,
   enableRelay: true,
   enableSeeding: true,
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
@@ -149,14 +238,60 @@ const DEFAULT_CONFIG = {
   // every inbound seed indefinitely. Default to 'open' here — Pear operators
   // who want a tighter posture can pass acceptMode: 'allowlist' or 'closed'.
   acceptMode: 'open',
-  acceptAllowlist: []
+  acceptAllowlist: [],
+  appCatalogPaged: {
+    sourceIntervalMs: 60_000,
+    sourceBudget: 64,
+    digestBudget: 128,
+    sweepIntervalMs: 1_000,
+    actionLimit: 10
+  }
 }
 
 export class BareRelay extends EventEmitter {
   constructor (opts = {}) {
     super()
+    if (opts.appCatalogPaged != null) {
+      const section = opts.appCatalogPaged
+      const prototype = typeof section === 'object' ? Object.getPrototypeOf(section) : null
+      if (typeof section !== 'object' || Array.isArray(section) ||
+          (prototype !== Object.prototype && prototype !== null)) {
+        throw new TypeError('appCatalogPaged must be a plain object')
+      }
+    }
     this._storagePathExplicit = Object.prototype.hasOwnProperty.call(opts, 'storage')
-    this.config = { ...DEFAULT_CONFIG, ...opts }
+    this.config = {
+      ...DEFAULT_CONFIG,
+      ...opts,
+      appCatalogPaged: {
+        ...DEFAULT_CONFIG.appCatalogPaged,
+        ...(opts.appCatalogPaged || {})
+      }
+    }
+    this.config.appCatalogPaged.sourceIntervalMs = strictPositiveInteger(
+      this.config.appCatalogPaged.sourceIntervalMs,
+      'appCatalogPaged.sourceIntervalMs'
+    )
+    this.config.appCatalogPaged.sourceBudget = strictPositiveInteger(
+      this.config.appCatalogPaged.sourceBudget,
+      'appCatalogPaged.sourceBudget',
+      64
+    )
+    this.config.appCatalogPaged.digestBudget = strictPositiveInteger(
+      this.config.appCatalogPaged.digestBudget,
+      'appCatalogPaged.digestBudget',
+      128
+    )
+    this.config.appCatalogPaged.sweepIntervalMs = strictPositiveInteger(
+      this.config.appCatalogPaged.sweepIntervalMs,
+      'appCatalogPaged.sweepIntervalMs',
+      30_000
+    )
+    this.config.appCatalogPaged.actionLimit = strictPositiveInteger(
+      this.config.appCatalogPaged.actionLimit,
+      'appCatalogPaged.actionLimit',
+      10
+    )
     if (Object.prototype.hasOwnProperty.call(opts, 'maxStorageBytes') && positiveStorageBound(opts.maxStorageBytes) === null) {
       throw new TypeError('maxStorageBytes must be a positive safe integer')
     }
@@ -169,12 +304,16 @@ export class BareRelay extends EventEmitter {
     this.seeder = null
     this.relay = null
     this.appRegistry = null
+    this.appCatalogController = null
+    this.appCatalogStore = null
+    this._appCatalogStageFactory = null
     this.appLifecycle = null
     this._seedProtocol = null
     this._circuitRelay = null
     this._proofOfRelay = null
     this._serviceProtocol = null
     this.serviceRegistry = null
+    this._legacyCatalogAcceptedPeers = new Set()
     this._discovery = null
     this._foundationDiscovery = null
     this._regionDiscovery = null
@@ -203,6 +342,13 @@ export class BareRelay extends EventEmitter {
     this._startupRollbackPending = false
     this._storageIngressReady = false
     this._scope = null
+    // Runtime owners stay strongly reachable until their exact drain and
+    // terminal close have both settled. Failed teardown therefore retries the
+    // same object/generation instead of manufacturing a replacement owner.
+    this._bareRuntimeOwners = new Map()
+    this._shutdownFence = null
+    this._shutdownGeneration = 0
+    this._adoptBareRuntimeOwner(this, 'bareRelay')
     this.storageAdmission = new StorageAdmissionAuthority(this.config, {
       getUsedBytes: () => this._storageUsedBytes(),
       getActualBytes: (key) => this._storageActualBytes(key),
@@ -213,7 +359,7 @@ export class BareRelay extends EventEmitter {
 
   // Symmetry with RelayNode so Federation can call it.
   _joinEpochDiscoveryTopics () {
-    if (!this.swarm) return
+    if (!this.swarm || this._shutdownFence) return
     this._epochDiscoveryTopics = syncEpochDiscoveryTopics(
       this._epochDiscoveryTopics,
       this.swarm,
@@ -222,13 +368,21 @@ export class BareRelay extends EventEmitter {
       DISCOVERY_EPOCH_MS,
       (handle) => this._queueEpochDiscoveryDestroy(handle)
     )
+    for (const [key, handle] of this._epochDiscoveryTopics) {
+      this._adoptBareRuntimeOwner(handle, `epochDiscovery:${key}`)
+    }
   }
 
   _queueEpochDiscoveryDestroy (handle) {
     if (!handle || typeof handle.destroy !== 'function') return
     const entry = { handle, promise: null }
     this._retiringEpochDiscoveryHandles.add(entry)
-    const run = Promise.resolve().then(() => handle.destroy())
+    const run = this._retireBareRuntimeOwner(
+      handle,
+      'retiringEpochDiscovery.destroy',
+      () => handle.destroy(),
+      this.config.shutdownTimeoutMs || 30_000
+    )
     entry.promise = run
     run.then(
       () => this._retiringEpochDiscoveryHandles.delete(entry),
@@ -237,26 +391,40 @@ export class BareRelay extends EventEmitter {
   }
 
   async _destroyDiscoveryHandles (timeout) {
-    const destroy = async (handle, label) => {
-      if (!handle || typeof handle.destroy !== 'function') return
-      await this._awaitOwnerOperation(handle, label, () => handle.destroy(), timeout)
+    let firstError = null
+    const destroy = async (handle, label, terminal = null) => {
+      if (!handle) return
+      await this._retireBareRuntimeOwner(
+        handle,
+        label,
+        terminal || (typeof handle.destroy === 'function' ? () => handle.destroy() : async () => {}),
+        timeout
+      )
     }
     for (const entry of [...this._retiringEpochDiscoveryHandles]) {
-      if (entry.promise) {
-        await this._awaitOwnerOperation(
-          entry,
-          'retiringEpochDiscovery.destroy',
-          () => entry.promise,
-          timeout
-        )
-      } else {
-        await destroy(entry.handle, 'retiringEpochDiscovery.destroy')
+      try {
+        if (entry.promise) {
+          await this._retireBareRuntimeOwner(
+            entry.handle,
+            'retiringEpochDiscovery.destroy',
+            () => entry.promise,
+            timeout
+          )
+        } else {
+          await destroy(entry.handle, 'retiringEpochDiscovery.destroy')
+        }
+        this._retiringEpochDiscoveryHandles.delete(entry)
+      } catch (err) {
+        if (!firstError) firstError = err
       }
-      this._retiringEpochDiscoveryHandles.delete(entry)
     }
     for (const [key, handle] of this._epochDiscoveryTopics) {
-      await destroy(handle, `epochDiscovery(${key.slice(0, 8)}).destroy`)
-      this._epochDiscoveryTopics.delete(key)
+      try {
+        await destroy(handle, `epochDiscovery(${key.slice(0, 8)}).destroy`)
+        this._epochDiscoveryTopics.delete(key)
+      } catch (err) {
+        if (!firstError) firstError = err
+      }
     }
     for (const [field, label] of [
       ['_foundationDiscovery', 'foundationDiscovery.destroy'],
@@ -264,9 +432,15 @@ export class BareRelay extends EventEmitter {
       ['_discovery', 'relayDiscovery.destroy']
     ]) {
       if (!this[field]) continue
-      await destroy(this[field], label)
-      this[field] = null
+      const handle = this[field]
+      try {
+        await destroy(handle, label)
+        if (this[field] === handle) this[field] = null
+      } catch (err) {
+        if (!firstError) firstError = err
+      }
     }
+    if (firstError) throw firstError
   }
 
   _resolveAcceptMode () { return resolveAcceptMode(this.config) }
@@ -295,14 +469,284 @@ export class BareRelay extends EventEmitter {
     return Number.isSafeInteger(entry?.bytesStored) && entry.bytesStored >= 0 ? entry.bytesStored : 0
   }
 
-  _storageAdmission (additionalBytes = 0) {
-    return this.storageAdmission.admission(additionalBytes, { refresh: true })
+  _cachedStorageRejection (additionalBytes = 0, opts = {}) {
+    if (!this.storageAdmission || typeof this.storageAdmission.cachedRejection !== 'function') {
+      return { reject: true, exactRequired: false, reason: 'storage-admission-unavailable', informationalAvailableBytes: 0 }
+    }
+    return this.storageAdmission.cachedRejection(additionalBytes, { ...opts, storageSummary: null })
+  }
+
+  _informationalAvailableStorageBytes () {
+    const hint = this._cachedStorageRejection(0)
+    return Number.isSafeInteger(hint.informationalAvailableBytes) && hint.informationalAvailableBytes >= 0
+      ? hint.informationalAvailableBytes
+      : 0
+  }
+
+  async _startAppCatalogController () {
+    if (this.appCatalogController && !this.appCatalogController.stopped) {
+      return this.appCatalogController.start()
+    }
+    const canonicalStorage = await realpath(this.config.storage)
+    const stageFactory = new AppCatalogDiskStageFactory({
+      rootDir: join(canonicalStorage, 'app-catalog-paged')
+    })
+    const catalogConfig = this.config.appCatalogPaged
+    const controller = new AppCatalogController({
+      appRegistry: this.appRegistry,
+      keyPair: this.swarm.keyPair,
+      stageFactory,
+      sourceIntervalMs: catalogConfig.sourceIntervalMs,
+      sourceBudget: catalogConfig.sourceBudget,
+      digestBudget: catalogConfig.digestBudget,
+      sweepIntervalMs: catalogConfig.sweepIntervalMs,
+      actionLimit: catalogConfig.actionLimit,
+      onCatalogComplete: completed => this._emitSafely('app-catalog-paged', {
+        peerPubkey: completed.peerPubkey,
+        snapshotId: completed.snapshot.snapshotId,
+        highWater: completed.snapshot.highWater,
+        entryCount: completed.snapshot.entryCount
+      }),
+      onCatalogActionPage: action => this._applyPagedCatalogAction(action),
+      onLegacyFallback: event => this._emitSafely('catalog-legacy-fallback', event),
+      onError: event => this._emitSafely('catalog-paged-error', {
+        phase: event.phase,
+        peer: event.peer,
+        error: event.error?.message || String(event.error)
+      })
+    })
+    this._appCatalogStageFactory = stageFactory
+    this.appCatalogController = controller
+    this.appCatalogStore = controller.store
+    this._adoptBareStartupOwner(controller, 'appCatalogController')
+    return controller.start()
+  }
+
+  _startCoreServiceProtocol () {
+    if (this._serviceProtocol && this.serviceRegistry) return this._serviceProtocol
+    if (this._serviceProtocol || this.serviceRegistry) {
+      throw new Error('Bare core service protocol ownership is inconsistent')
+    }
+    this.serviceRegistry = new BareServiceRegistry()
+    this._adoptBareStartupOwner(this.serviceRegistry, 'serviceRegistry')
+    this._serviceProtocol = new BareServiceProtocol(this.serviceRegistry, {
+      defaultPeerRole: (this.config && this.config.serviceDefaultPeerRole) || 'anonymous',
+      scheduleLegacyAppCatalog: request => this._scheduleLegacyAppCatalog(request)
+    })
+    this._serviceProtocol.on('app-catalog', envelope => this._handleLegacyAppCatalog(envelope))
+    this._serviceProtocol.on('channel-close', ({ remotePubkey }) => {
+      this._legacyCatalogAcceptedPeers?.delete(remotePubkey)
+    })
+    this._adoptBareStartupOwner(this._serviceProtocol, 'serviceProtocol')
+    return this._serviceProtocol
+  }
+
+  _openStorageIngress () {
+    if (!this.appCatalogController || !this._serviceProtocol) {
+      const err = new Error('Bare catalog transports must exist before storage ingress opens')
+      err.code = 'CATALOG_INGRESS_PROTOCOLS_NOT_READY'
+      throw err
+    }
+    this._storageIngressReady = true
+    this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
+  }
+
+  _scheduleLegacyAppCatalog ({ remotePubkey, send }) {
+    const controller = this.appCatalogController
+    if (this._stopRequested || !this._storageIngressReady || this._shutdownFence ||
+        !controller || controller.stopped || typeof send !== 'function') return null
+    const scheduled = controller.scheduleLegacyFallback(remotePubkey, () => {
+      return send(controller.legacyEnvelope())
+    })
+    if (!scheduled) return null
+    return () => controller.cancelLegacyFallback(remotePubkey)
+  }
+
+  _handleLegacyAppCatalog (envelope) {
+    const peer = envelope?.remotePubkey
+    const acceptedPeers = this._legacyCatalogAcceptedPeers instanceof Set
+      ? this._legacyCatalogAcceptedPeers
+      : (this._legacyCatalogAcceptedPeers = new Set())
+    if (this._shutdownFence || this._stopRequested || !this._storageIngressReady ||
+        !this.config.catalogSync || !this.config.enableSeeding ||
+        acceptedPeers.has(peer) ||
+        acceptedPeers.size >= APP_CATALOG_LIMITS.maxInboundPeers ||
+        !this._verifyLegacyCatalogEnvelope(envelope)) {
+      if (!this._shutdownFence && !this._stopRequested && this._storageIngressReady) {
+        this._emitSafely('catalog-sync-error', {
+          source: envelope?.remotePubkey || null,
+          error: 'invalid, stale, or overbound legacy catalog'
+        })
+      }
+      return false
+    }
+    // A legacy services channel owns at most one complete type-7 catalog.
+    // ServiceProtocol's exact channel-close callback releases this peer token;
+    // unique-peer churn therefore cannot retain more than the channel cap.
+    acceptedPeers.add(peer)
+    const operation = this._applyCatalogActions({
+      apps: envelope.apps,
+      maxActions: 10
+    }).catch(err => {
+      this._emitSafely('catalog-sync-error', {
+        source: envelope.remotePubkey,
+        error: err?.message || String(err)
+      })
+    })
+    // Service shutdown drains this exact inbound action chain before closing
+    // the channel/registry owners. The handler's synchronous fence above
+    // prevents a post-shutdown chain from ever being admitted.
+    this._serviceProtocol?._trackBareRequest?.(operation)
+    return true
+  }
+
+  _verifyLegacyCatalogEnvelope (envelope) {
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) ||
+        envelope.delta === true || !Array.isArray(envelope.apps) ||
+        envelope.apps.length > APP_CATALOG_LIMITS.maxLegacyEntries ||
+        !HEX_64.test(envelope.remotePubkey) ||
+        envelope.relayPubkey !== envelope.remotePubkey ||
+        !HEX_64.test(envelope.relayPubkey) ||
+        !Number.isSafeInteger(envelope.catalogTimestamp) || envelope.catalogTimestamp <= 0 ||
+        !HEX_128.test(envelope.signature)) return false
+    const maxAgeMs = Number.isSafeInteger(this.config.catalogSignatureMaxAgeMs) &&
+      this.config.catalogSignatureMaxAgeMs > 0
+      ? this.config.catalogSignatureMaxAgeMs
+      : LEGACY_CATALOG_SIGNATURE_MAX_AGE_MS
+    if (Math.abs(Date.now() - envelope.catalogTimestamp) > maxAgeMs) return false
+    try {
+      const wire = {
+        type: 7,
+        apps: envelope.apps,
+        relayPubkey: envelope.relayPubkey,
+        catalogTimestamp: envelope.catalogTimestamp,
+        signature: envelope.signature
+      }
+      if (b4a.byteLength(JSON.stringify(wire), 'utf8') > APP_CATALOG_LIMITS.maxPayloadBytes) return false
+      const signable = b4a.from(JSON.stringify({
+        apps: envelope.apps,
+        relayPubkey: envelope.relayPubkey,
+        catalogTimestamp: envelope.catalogTimestamp
+      }), 'utf8')
+      return sodium.crypto_sign_verify_detached(
+        b4a.from(envelope.signature, 'hex'),
+        signable,
+        b4a.from(envelope.remotePubkey, 'hex')
+      )
+    } catch {
+      return false
+    }
+  }
+
+  async _applyPagedCatalogAction (action) {
+    if (this._shutdownFence || this._stopRequested || !this._storageIngressReady ||
+        !this.config.enableSeeding) return { acted: 0, stop: true }
+    const apps = []
+    for (const row of action.entries) apps.push(catalogRowToLegacyApp(row))
+    return this._applyCatalogActions({
+      apps,
+      maxActions: action.remainingActions
+    })
+  }
+
+  async _applyCatalogActions ({ apps, maxActions = 10 }) {
+    if (this._shutdownFence || this._stopRequested || !this._storageIngressReady ||
+        !this.config.enableSeeding || !Array.isArray(apps)) return { acted: 0, stop: true }
+    const actionLimit = strictPositiveInteger(
+      Math.min(maxActions, 10),
+      'catalog action limit',
+      10
+    )
+    let acted = 0
+    let mode = this._resolveAcceptMode()
+    if (mode === 'review') mode = 'closed'
+    for (const app of apps) {
+      if (this._shutdownFence || this._stopRequested ||
+          !this._storageIngressReady || acted >= actionLimit) break
+      const appKey = app.appKey
+      if (!appKey) continue
+      const existing = this.appRegistry.get(appKey)
+      // Bare has no reputation authority equivalent to the Node runtime's
+      // explicit follow-anchored policy. An authenticated peer is not by
+      // itself trusted to induce repair I/O for an existing local app.
+      if (existing) continue
+      // Both paged and legacy catalogs authenticate a relay's testimony, not
+      // a publisher's authorization for this drive. Publisher allowlists must
+      // be satisfied through the signed seed-request path instead.
+      if (mode === 'allowlist') {
+        this._emitSafely('catalog-sync-rejected', {
+          appKey,
+          source: 'remote-catalog',
+          mode,
+          reason: 'publisher-authorization-required'
+        })
+        continue
+      }
+      const maxStorageBytes = positiveStorageBound(app.maxStorageBytes)
+      if (maxStorageBytes === null) {
+        this._emitSafely('catalog-sync-rejected', {
+          appKey,
+          source: 'remote-catalog',
+          reason: 'storage-bound-invalid'
+        })
+        continue
+      }
+      if (app.seededAt && this.config.catalogMaxAppAgeMs > 0 &&
+          (Date.now() - app.seededAt) > this.config.catalogMaxAppAgeMs) continue
+      const request = {
+        appKey,
+        publisherPubkey: null,
+        contentType: app.type,
+        privacyTier: app.privacyTier,
+        blind: app.blind,
+        storageClass: app.storageClass,
+        availabilityClass: app.availabilityClass,
+        maxStorageBytes
+      }
+      if (this._decideAcceptance(request, mode) !== 'accept') {
+        this._emitSafely('catalog-sync-rejected', { appKey, source: 'remote-catalog', mode })
+        continue
+      }
+      acted++
+      try {
+        await this.seedApp(appKey, {
+          appId: app.appId,
+          version: app.version,
+          type: app.type,
+          parentKey: app.parentKey,
+          mountPath: app.mountPath,
+          privacyTier: app.privacyTier,
+          blind: app.blind,
+          storageClass: app.storageClass,
+          availabilityClass: app.availabilityClass,
+          // Open acceptance permits discovery-based storage, but the catalog
+          // claim must not become a locally attributed publisher identity.
+          publisherPubkey: null,
+          maxStorage: maxStorageBytes
+        })
+        this._emitSafely('catalog-sync', { appKey, source: 'remote-catalog', mode })
+      } catch (err) {
+        this._emitSafely('catalog-sync-error', { appKey, error: err.message || String(err) })
+      }
+    }
+    return { acted, stop: acted >= actionLimit }
   }
 
   get publicKey () { return this.swarm ? this.swarm.keyPair.publicKey : null }
   get seededApps () { return this.appRegistry ? this.appRegistry.apps : new Map() }
-  seedApp (appKey, opts) { return this.appLifecycle.seedApp(appKey, opts) }
-  unseedApp (appKey, opts) { return this.appLifecycle.unseedApp(appKey, opts) }
+  getStorageGenerationStatus () {
+    return corestoreGenerationHealth(this.config.hiverelayGeneration, this.store)
+  }
+
+  seedApp (appKey, opts) {
+    this._assertBareWorkAccepted('seedApp')
+    return this.appLifecycle.seedApp(appKey, opts)
+  }
+
+  unseedApp (appKey, opts) {
+    this._assertBareWorkAccepted('unseedApp')
+    return this.appLifecycle.unseedApp(appKey, opts)
+  }
 
   // The Node RelayNode sets this.keyPair; Bare only has this.swarm.keyPair.
   // Alias it so services that sign with the relay identity (e.g. storage-proof)
@@ -311,6 +755,14 @@ export class BareRelay extends EventEmitter {
 
   start () {
     if (this._startCompletion) return this._startCompletion
+    if (this._startupRollbackPending) {
+      const err = new Error('startup rollback is still pending storage mutation settlement')
+      err.code = 'STORAGE_STARTUP_ROLLBACK_PENDING'
+      return Promise.reject(err)
+    }
+    if (this._shutdownFence && this._shutdownFence.state !== 'COMPLETE') {
+      return Promise.reject(shuttingDownError('start'))
+    }
     if (!this._stopping && this.running) {
       if (!this._lastStartCompletion) this._lastStartCompletion = Promise.resolve(this)
       return this._lastStartCompletion
@@ -343,6 +795,10 @@ export class BareRelay extends EventEmitter {
       err.code = 'STORAGE_STARTUP_ROLLBACK_PENDING'
       throw err
     }
+    if (this._shutdownFence) {
+      if (this._shutdownFence.state !== 'COMPLETE') throw shuttingDownError('start')
+      this._resetBareRuntimeCycle()
+    }
     this._stopRequested = false
     this._storageIngressReady = false
     this._scope = new LifecycleScope()
@@ -354,6 +810,7 @@ export class BareRelay extends EventEmitter {
       // Only the built-in relative default may be created automatically;
       // custom paths must pre-exist so a missing mount fails closed.
       if (!this._storagePathExplicit) await mkdir(this.config.storage, { recursive: true })
+      this._assertBareWorkAccepted('start')
       resolveStorageCap(this.config)
       const storageProof = getStorageCapProvenance(this.config)
       if (!storageProof || storageProof.status !== 'resolved') {
@@ -365,14 +822,20 @@ export class BareRelay extends EventEmitter {
       this.storageAdmission.beginRecovery(['drives', 'cores'])
       this.storageAdmission.refreshFilesystem()
       await this.storageAdmission.activatePhysicalEnforcement({ purpose: 'bare-relay-startup' })
+      this._assertBareWorkAccepted('start')
 
       // 1. Corestore — persistent hypercore storage.
       // openCorestore, not `new Corestore`: Corestore 7 sweeps every
       // unrecognised top-level entry of a pre-7 root into db/ *inside its
       // constructor*, which would strand app-registry.json and evicted.json
       // before load() below can migrate them. See storage-root-restore.js.
-      this.store = openCorestore(this.config.storage)
+      this.store = openCorestore(
+        this.config.storage,
+        corestoreGenerationParticipantOptions(this.config.hiverelayGeneration, 'bare-relay')
+      )
+      this._adoptBareStartupOwner(this.store, 'corestore')
       await this.store.ready()
+      this._assertBareWorkAccepted('start')
 
       // 2. App registry — tracks what we're seeding.
       // AppRegistry takes a storage *directory*, not a full file path.
@@ -385,8 +848,10 @@ export class BareRelay extends EventEmitter {
         requirePhysicalEnforcement: this.config.requirePhysicalEnforcement === true ||
           !!this.config.physicalEnforcer
       })
+      this._adoptBareStartupOwner(this.appRegistry, 'appRegistry')
       this.appRegistry.setStore(this.store)
       await this.appRegistry.load()
+      this._assertBareWorkAccepted('start')
 
       // 3. Connection-layer firewall — runs before Noise handshake. Cheapest
       //    DoS defense available. See packages/core/core/relay-node/swarm-firewall.js
@@ -407,6 +872,7 @@ export class BareRelay extends EventEmitter {
         keyPair: await this._deriveKeypair(),
         firewall: (remotePubKey, payload) => this.swarmFirewall.check(remotePubKey, payload)
       })
+      this._adoptBareStartupOwner(this.swarm, 'swarm')
 
       // 4. Seeder — pulls and keeps hypercores replicating
       this.seeder = new Seeder(this.store, this.swarm, {
@@ -414,7 +880,9 @@ export class BareRelay extends EventEmitter {
         storageAdmission: this.storageAdmission,
         storagePath: join(this.config.storage, 'seeded-cores.json')
       })
+      this._adoptBareStartupOwner(this.seeder, 'seeder')
       await this.seeder.start()
+      this._assertBareWorkAccepted('start')
 
       // 5. Relay for circuit traversal (optional)
       if (this.config.enableRelay) {
@@ -422,11 +890,13 @@ export class BareRelay extends EventEmitter {
           maxCircuits: 256,
           maxBandwidthMbps: 100
         })
+        this._adoptBareStartupOwner(this.relay, 'relay')
       }
 
       // 6. Protocol handlers — these attach to every incoming connection.
       // SeedProtocol has signature (swarm, opts); event-driven API.
       this._seedProtocol = new SeedProtocol(this.swarm, { keyPair: this.swarm.keyPair })
+      this._adoptBareStartupOwner(this._seedProtocol, 'seedProtocol')
       this._seedProtocol.on('seed-request', (msg, channel) => {
         this._onSeedRequest(msg, channel).catch((err) => this.emit('seed-error', { error: err }))
       })
@@ -435,20 +905,26 @@ export class BareRelay extends EventEmitter {
       this._circuitRelay = this.relay
         ? new CircuitRelay(this.relay)
         : null
+      this._adoptBareStartupOwner(this._circuitRelay, 'circuitRelay')
       this._proofOfRelay = new ProofOfRelay(this.swarm.keyPair)
+      this._adoptBareStartupOwner(this._proofOfRelay, 'proofOfRelay')
 
       // 7. App lifecycle — seed/unseed/index operations
       this.appLifecycle = new AppLifecycle(this)
+      this._adoptBareStartupOwner(this.appLifecycle, 'appLifecycle')
       // Core inventory sealed in Seeder.start(); seal the drive inventory before
       // any storage-producing service provider is constructed or started.
       const reseedEntries = await this.appLifecycle.loadRegistry()
+      this._assertBareWorkAccepted('start')
       if (!this.storageAdmission.recoveryReady) {
         const err = new Error('storage recovery inventories did not seal before writable services')
         err.code = 'STORAGE_RECOVERY_INVENTORY_INCOMPLETE'
         throw err
       }
-      this._storageIngressReady = true
-      this.swarm.on('connection', (conn, info) => this._onConnection(conn, info))
+      await this._startAppCatalogController()
+      this._assertBareWorkAccepted('start')
+      this._startCoreServiceProtocol()
+      this._openStorageIngress()
 
       // 8. Services layer — Bare-safe subset.
       //
@@ -457,7 +933,6 @@ export class BareRelay extends EventEmitter {
       //   - Compute and AI builtins, which need Node-only deps (vm / dns), are
       //     simply not in the list below
       if (this.config.enableServices !== false) {
-        this.serviceRegistry = new ServiceRegistry()
         const bareSafeServices = [
           { name: 'identity', module: 'p2p-hiveservices/builtin/identity-service.js', className: 'IdentityService', opts: { keyPair: this.swarm.keyPair } },
           { name: 'storage', module: 'p2p-hiveservices/builtin/storage-service.js', className: 'StorageService', opts: { store: this.store } },
@@ -513,18 +988,40 @@ export class BareRelay extends EventEmitter {
         let registered = 0
         let servicesPackageMissing = false
         for (const spec of bareSafeServices) {
+          let provider = null
           try {
             const mod = await import(spec.module)
+            this._assertBareWorkAccepted('start')
             const Ctor = mod[spec.className]
             if (!Ctor) {
               log.warn('  service skipped (missing export):', spec.name)
               continue
             }
-            const provider = new Ctor(spec.opts || {})
+            provider = new Ctor(spec.opts || {})
+            this._adoptBareStartupOwner(provider, `service:${spec.name}`)
             this.serviceRegistry.register(provider)
             registered++
           } catch (err) {
-          // First-time MODULE_NOT_FOUND on the whole package → skip rest quietly.
+            if (provider) {
+              try {
+                await this._retireBareRuntimeOwner(
+                  provider,
+                  `service:${spec.name}`,
+                  typeof provider.stop === 'function'
+                    ? () => provider.stop()
+                    : (typeof provider.destroy === 'function' ? () => provider.destroy() : async () => {}),
+                  this.config.shutdownTimeoutMs || 30_000
+                )
+              } catch (teardownErr) {
+                const failure = new Error(`Bare service ${spec.name} registration teardown did not settle`)
+                failure.code = 'BARE_SERVICE_REGISTRATION_TEARDOWN_FAILED'
+                failure.startCause = err
+                failure.teardownCause = teardownErr
+                throw failure
+              }
+            }
+            if (err?.code === 'SHUTTING_DOWN') throw err
+            // First-time MODULE_NOT_FOUND on the whole package → skip rest quietly.
             if (err.code === 'ERR_MODULE_NOT_FOUND' && err.message.includes('p2p-hiveservices')) {
               servicesPackageMissing = true
               break
@@ -537,17 +1034,11 @@ export class BareRelay extends EventEmitter {
           log.info('  services: p2p-hiveservices not installed — running Core-only')
         } else {
           const startup = await this.serviceRegistry.startAll({ node: this, store: this.store })
+          this._assertBareWorkAccepted('start')
           registered = startup.started.length
           for (const failure of startup.failed) {
             log.warn('  service start failed:', failure.name, '-', failure.error)
           }
-          // ServiceProtocol signature is (registry, opts)
-          // Secure-by-default: anonymous swarm peers cannot reach
-          // authenticated-user/relay-admin routes. Operators opt into an open
-          // surface explicitly via config.serviceDefaultPeerRole.
-          this._serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-            defaultPeerRole: (this.config && this.config.serviceDefaultPeerRole) || 'anonymous'
-          })
           log.info('  services:', registered, 'registered')
         }
       }
@@ -558,15 +1049,17 @@ export class BareRelay extends EventEmitter {
           port: this.config.httpPort,
           host: this.config.httpHost || '0.0.0.0'
         })
+        this._adoptBareStartupOwner(this.httpServer, 'httpServer')
         try {
           const { port } = await this.httpServer.start()
+          this._assertBareWorkAccepted('start')
           log.info('  http: http://127.0.0.1:' + port + '/status')
         } catch (startErr) {
           const server = this.httpServer
           try {
-            await this._awaitOwnerOperation(
+            await this._retireBareRuntimeOwner(
               server,
-              'httpServer.stop',
+              'httpServer',
               () => server.stop(),
               this.config.shutdownTimeoutMs || 30_000
             )
@@ -578,6 +1071,7 @@ export class BareRelay extends EventEmitter {
             failure.teardownCause = teardownErr
             throw failure
           }
+          if (startErr?.code === 'SHUTTING_DOWN') throw startErr
           log.warn('  http start failed (continuing without):', startErr.message)
         }
       }
@@ -591,6 +1085,7 @@ export class BareRelay extends EventEmitter {
       const rotateMode = this.config.privacy && this.config.privacy.rotateDiscoveryTopic
       if (rotateMode !== 'strict') {
         this._discovery = this.swarm.join(RELAY_DISCOVERY_TOPIC, { server: true, client: true })
+        this._adoptBareStartupOwner(this._discovery, 'relayDiscovery')
       }
       if (rotateMode === 'additive' || rotateMode === 'strict') {
         this._joinEpochDiscoveryTopics()
@@ -602,6 +1097,7 @@ export class BareRelay extends EventEmitter {
       }
       if (this.config.foundation === true) {
         this._foundationDiscovery = this.swarm.join(FOUNDATION_TOPIC, { server: true, client: false })
+        this._adoptBareStartupOwner(this._foundationDiscovery, 'foundationDiscovery')
       }
 
       // 11. Federation — opt-in cross-relay catalog sharing. Always-on as a
@@ -617,7 +1113,9 @@ export class BareRelay extends EventEmitter {
         trustedForkObservers: this.config.federation?.trustedForkObservers || [],
         storagePath: join(this.config.storage, 'federation.json')
       })
+      this._adoptBareStartupOwner(this.federation, 'federation')
       try { await this.federation.load() } catch (err) { log.warn('  federation load failed:', err.message) }
+      this._assertBareWorkAccepted('start')
       if (this.config.federation?.enabled !== false) {
         this.federation.start()
       }
@@ -630,10 +1128,12 @@ export class BareRelay extends EventEmitter {
           if (t.unref) t.unref()
         })
       ])
+      this._assertBareWorkAccepted('start')
 
       // 9. Replay any previously-seeded apps from the registry
       if (this.config.enableSeeding) {
         await this.appLifecycle.reseedDrives(reseedEntries)
+        this._assertBareWorkAccepted('start')
       }
 
       if (this._stopRequested) throw new Error('START_CANCELLED_BY_STOP')
@@ -656,8 +1156,10 @@ export class BareRelay extends EventEmitter {
       } catch (rollbackErr) {
         rollbackErr.cause = err
         failure = rollbackErr
-        this._startupRollbackPending = rollbackErr.code === 'STORAGE_MUTATION_DRAIN_TIMEOUT' ||
-          rollbackErr.code === 'STORAGE_WRITER_QUIESCE_FAILED'
+        // Any incomplete rollback retains live owner records, not only storage
+        // mutation timeouts. Keep the retry gate closed until those exact
+        // owners settle in a later stop/rollback wave.
+        this._startupRollbackPending = true
       } finally {
         this._ownerDeadline = null
       }
@@ -666,98 +1168,45 @@ export class BareRelay extends EventEmitter {
   }
 
   async _rollbackFailedStart () {
-    this._storageIngressReady = false
+    this._installBareShutdownFence('startup-rollback')
+    const timeout = this.config.shutdownTimeoutMs || 30_000
     let writerQuiesceError = null
+    const settleWriter = async (run) => {
+      try { await run() } catch (err) { if (!writerQuiesceError) writerQuiesceError = err }
+    }
     if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
-    if (this.httpServer) {
-      const server = this.httpServer
-      try {
-        await this._awaitOwnerOperation(
-          server,
-          'httpServer.stop',
-          () => server.stop(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.httpServer === server) this.httpServer = null
-      } catch (stopErr) {
-        writerQuiesceError = stopErr
-      }
-    }
-    try {
-      await this._destroyProtocolHandlers(this.config.shutdownTimeoutMs || 30_000)
-    } catch (stopErr) {
-      writerQuiesceError = stopErr
-    }
-    if (this.serviceRegistry) {
-      const registry = this.serviceRegistry
-      try {
-        await this._awaitOwnerOperation(
-          registry,
-          'serviceRegistry.stopAll',
-          () => registry.stopAll({ throwOnError: true }),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.serviceRegistry === registry) this.serviceRegistry = null
-      } catch (stopErr) {
-        writerQuiesceError = stopErr
-      }
-    }
-    if (this.federation) {
-      const federation = this.federation
-      try {
-        await this._awaitOwnerOperation(
-          federation,
-          'federation.stop',
-          () => federation.stop(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.federation === federation) this.federation = null
-      } catch (stopErr) {
-        if (!writerQuiesceError) writerQuiesceError = stopErr
-      }
-    }
-    try {
-      await this._drainLifecycleAndSeededDrives(this.config.shutdownTimeoutMs || 30_000)
-    } catch (stopErr) {
-      if (!writerQuiesceError) writerQuiesceError = stopErr
-    }
-    if (this.seeder) {
-      const seeder = this.seeder
-      try {
-        await this._awaitOwnerOperation(
-          seeder,
-          'seeder.stop',
-          () => seeder.stop(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.seeder === seeder) this.seeder = null
-      } catch (stopErr) {
-        if (!writerQuiesceError) writerQuiesceError = stopErr
-      }
-    }
+    await settleWriter(() => this._retireBareField('httpServer', 'httpServer', server => server.stop(), timeout))
+    await settleWriter(() => this._retireBareField(
+      'appCatalogController',
+      'appCatalogController',
+      value => value.stop(),
+      timeout
+    ))
+    this.appCatalogStore = null
+    this._appCatalogStageFactory = null
+    await settleWriter(() => this._stopBareServiceIngress(timeout))
+    await settleWriter(() => this._destroyProtocolHandlers(timeout))
+    await settleWriter(() => this._stopBareServices(timeout))
+    await settleWriter(() => this._retireBareField('federation', 'federation', value => value.stop(), timeout))
+    await settleWriter(() => this._drainLifecycleAndSeededDrives(timeout))
+    await settleWriter(() => this._retireBareField('seeder', 'seeder', value => value.stop(), timeout))
     if (this.appRegistry && this.store) {
-      try {
+      await settleWriter(async () => {
         await this._awaitOwnerOperation(
           this.appRegistry,
           'appRegistry.flush',
           () => this.appRegistry.flush({ throwOnError: true }),
-          this.config.shutdownTimeoutMs || 30_000
+          timeout
         )
-      } catch (flushErr) {
-        if (!writerQuiesceError) writerQuiesceError = flushErr
-      }
+      })
     }
     if (this.storageAdmission) this.storageAdmission.closeMutations('storage-startup-rollback')
     if (this.storageAdmission) {
       await this.storageAdmission.drainMutations({
-        timeoutMs: this._remainingOwnerBudget(this.config.shutdownTimeoutMs || 30_000)
+        timeoutMs: this._remainingOwnerBudget(timeout)
       })
     }
-    try {
-      await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
-    } catch (discoveryErr) {
-      if (!writerQuiesceError) writerQuiesceError = discoveryErr
-    }
+    await settleWriter(() => this._destroyDiscoveryHandles(timeout))
     if (writerQuiesceError) {
       if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
       const failure = new Error('storage writer quiescence did not settle')
@@ -766,15 +1215,8 @@ export class BareRelay extends EventEmitter {
       throw failure
     }
     if (this.relay) {
-      const relay = this.relay
       try {
-        await this._awaitOwnerOperation(
-          relay,
-          'relay.stop',
-          () => relay.stop(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.relay === relay) this.relay = null
+        await this._retireBareField('relay', 'relay', value => value.stop(), timeout)
       } catch (relayErr) {
         if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
         const failure = new Error('relay teardown did not settle')
@@ -785,14 +1227,7 @@ export class BareRelay extends EventEmitter {
     }
     if (this.swarm) {
       try {
-        const swarm = this.swarm
-        await this._awaitOwnerOperation(
-          swarm,
-          'swarm.destroy',
-          () => swarm.destroy(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.swarm === swarm) this.swarm = null
+        await this._retireBareField('swarm', 'swarm', value => value.destroy(), timeout)
       } catch (swarmErr) {
         if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
         const failure = new Error('swarm teardown did not settle')
@@ -803,15 +1238,8 @@ export class BareRelay extends EventEmitter {
     }
     if (this.swarmFirewall) { try { this.swarmFirewall.destroy() } catch (_) {} this.swarmFirewall = null }
     if (this.store) {
-      const store = this.store
       try {
-        await this._awaitOwnerOperation(
-          store,
-          'store.close',
-          () => store.close(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.store === store) this.store = null
+        await this._retireBareField('store', 'corestore', value => value.close(), timeout)
       } catch (storeErr) {
         if (this.storageAdmission) this.storageAdmission.failClosed('storage-writer-quiesce-failed')
         const failure = new Error('corestore teardown did not settle')
@@ -822,7 +1250,15 @@ export class BareRelay extends EventEmitter {
     }
     if (this.appRegistry) {
       try { this.appRegistry.detachStore() } catch (_) {}
+      await this._retireBareRuntimeOwner(
+        this.appRegistry,
+        'appRegistry',
+        async () => {},
+        timeout,
+        { retainRecord: true }
+      )
     }
+    await this._completeBareRuntimeShutdown(timeout)
     this.running = false
     this.startedAt = null
     this._startupRollbackPending = false
@@ -834,14 +1270,12 @@ export class BareRelay extends EventEmitter {
       const protocol = this[field]
       if (!protocol) continue
       try {
-        if (typeof protocol.destroy === 'function') {
-          await this._awaitOwnerOperation(
-            protocol,
-            `${field}.destroy`,
-            () => protocol.destroy(),
-            timeout
-          )
-        }
+        await this._retireBareRuntimeOwner(
+          protocol,
+          field,
+          typeof protocol.destroy === 'function' ? () => protocol.destroy() : async () => {},
+          timeout
+        )
         if (this[field] === protocol) this[field] = null
       } catch (err) {
         if (!firstError) firstError = err
@@ -851,6 +1285,7 @@ export class BareRelay extends EventEmitter {
   }
 
   _ownerOperation (owner, label, run) {
+    if (!(this._ownerOperations instanceof WeakMap)) this._ownerOperations = new WeakMap()
     const existing = this._ownerOperations.get(owner)
     if (existing) {
       if (existing.label === label) return existing.operation
@@ -884,27 +1319,512 @@ export class BareRelay extends EventEmitter {
     return budget
   }
 
+  _adoptBareRuntimeOwner (owner, label) {
+    if (!owner || (typeof owner !== 'object' && typeof owner !== 'function')) return null
+    if (!(this._bareRuntimeOwners instanceof Map)) this._bareRuntimeOwners = new Map()
+    let record = this._bareRuntimeOwners.get(owner)
+    if (!record) {
+      record = {
+        owner,
+        label,
+        generation: null,
+        state: 'LIVE',
+        terminalSettled: false,
+        terminalRaw: null
+      }
+      this._bareRuntimeOwners.set(owner, record)
+    } else if (label && !record.label) {
+      record.label = label
+    }
+    if (this._shutdownFence && this._shutdownFence.state !== 'COMPLETE') {
+      this._fenceBareRuntimeOwner(record)
+    }
+    return record
+  }
+
+  _fenceBareRuntimeOwner (record) {
+    if (!record || record.state !== 'LIVE') return record
+    let state = sharedOperationFlights.getStats(record.owner).owner
+    if (!state) {
+      sharedOperationFlights.activateOwner(record.owner)
+      state = sharedOperationFlights.getStats(record.owner).owner
+    }
+    record.generation = state.accepting
+      ? sharedOperationFlights.invalidateOwner(record.owner, { retire: true })
+      : state.generation
+    record.state = 'FENCED'
+    return record
+  }
+
+  _inventoryBareRuntimeOwners () {
+    for (const [field, label] of [
+      ['httpServer', 'httpServer'],
+      ['_serviceProtocol', 'serviceProtocol'],
+      ['_seedProtocol', 'seedProtocol'],
+      ['_circuitRelay', 'circuitRelay'],
+      ['_proofOfRelay', 'proofOfRelay'],
+      ['serviceRegistry', 'serviceRegistry'],
+      ['appCatalogController', 'appCatalogController'],
+      ['federation', 'federation'],
+      ['appLifecycle', 'appLifecycle'],
+      ['seeder', 'seeder'],
+      ['appRegistry', 'appRegistry'],
+      ['relay', 'relay'],
+      ['swarm', 'swarm'],
+      ['store', 'corestore']
+    ]) {
+      this._adoptBareRuntimeOwner(this[field], label)
+    }
+
+    if (this.serviceRegistry?.services instanceof Map) {
+      for (const [name, entry] of this.serviceRegistry.services) {
+        this._adoptBareRuntimeOwner(entry?.provider, `service:${name}`)
+      }
+    }
+    for (const [label, handle] of [
+      ['relayDiscovery', this._discovery],
+      ['foundationDiscovery', this._foundationDiscovery],
+      ['regionDiscovery', this._regionDiscovery]
+    ]) {
+      this._adoptBareRuntimeOwner(handle, label)
+    }
+    if (this._epochDiscoveryTopics instanceof Map) {
+      for (const [key, handle] of this._epochDiscoveryTopics) {
+        this._adoptBareRuntimeOwner(handle, `epochDiscovery:${key}`)
+      }
+    }
+    if (this._retiringEpochDiscoveryHandles instanceof Set) {
+      for (const entry of this._retiringEpochDiscoveryHandles) {
+        this._adoptBareRuntimeOwner(entry?.handle, 'retiringEpochDiscovery')
+      }
+    }
+  }
+
+  _installBareShutdownFence (reason) {
+    let fence = this._shutdownFence
+    if (fence?.state === 'COMPLETE') return fence
+    if (!fence) {
+      this._shutdownGeneration = Number.isSafeInteger(this._shutdownGeneration) && this._shutdownGeneration >= 0
+        ? this._shutdownGeneration + 1
+        : 1
+      fence = {
+        generation: this._shutdownGeneration,
+        reason,
+        state: 'FENCED',
+        installedAt: Date.now(),
+        firstError: null,
+        serviceProtocolFenceOwner: null,
+        serviceRegistryFenceOwner: null,
+        appLifecycleFenceOwner: null,
+        appCatalogControllerFenceOwner: null,
+        settledDriveEntries: new WeakSet(),
+        settledDriveKeys: new Set()
+      }
+      // Publish the process-wide fence before any externally callable hook.
+      this._shutdownFence = fence
+    }
+    this._storageIngressReady = false
+    this._stopRequested = true
+    this._legacyCatalogAcceptedPeers?.clear()
+
+    // Inventory and invalidate every already-published Bare owner before a
+    // hook can synchronously re-enter and attempt a raw shared flight.
+    this._inventoryBareRuntimeOwners()
+    for (const record of this._bareRuntimeOwners.values()) this._fenceBareRuntimeOwner(record)
+
+    let firstError = null
+    try {
+      if (this._scope && typeof this._scope.abort === 'function') this._scope.abort()
+    } catch (err) {
+      firstError = err
+    }
+    const fenceOwner = (slot, owner) => {
+      if (!owner || fence[slot] === owner) return
+      try {
+        if (typeof owner.beginShutdown === 'function') owner.beginShutdown()
+        fence[slot] = owner
+      } catch (err) {
+        if (!firstError) firstError = err
+      }
+    }
+    fenceOwner('serviceProtocolFenceOwner', this._serviceProtocol)
+    fenceOwner('serviceRegistryFenceOwner', this.serviceRegistry)
+    fenceOwner('appLifecycleFenceOwner', this.appLifecycle)
+    fenceOwner('appCatalogControllerFenceOwner', this.appCatalogController)
+    // Only the current attempt's unresolved hook error is retained. A later
+    // stop/rollback wave retries the same hook on the same owner/generation.
+    fence.firstError = firstError
+    return fence
+  }
+
+  _assertBareWorkAccepted (operation) {
+    if (this._shutdownFence) throw shuttingDownError(operation)
+  }
+
+  _adoptBareStartupOwner (owner, label) {
+    const record = this._adoptBareRuntimeOwner(owner, label)
+    this._assertBareWorkAccepted('start')
+    return record
+  }
+
+  _resetBareRuntimeCycle () {
+    for (const record of this._bareRuntimeOwners.values()) {
+      if (record.owner !== this && record.state !== 'CLOSED') {
+        const err = new Error(`Bare runtime owner ${record.label} did not settle before restart`)
+        err.code = 'BARE_OWNER_RETIREMENT_PENDING'
+        throw err
+      }
+    }
+    this._bareRuntimeOwners.clear()
+    this._shutdownFence = null
+    const record = this._adoptBareRuntimeOwner(this, 'bareRelay')
+    record.generation = sharedOperationFlights.activateOwner(this)
+  }
+
+  async _drainBareRuntimeOwner (record, timeout) {
+    if (!record || record.state === 'CLOSED') return
+    await sharedOperationFlights.drainOwner(record.owner, {
+      timeoutMs: Math.max(1, Math.min(120_000, this._remainingOwnerBudget(timeout)))
+    })
+  }
+
+  async _retireBareRuntimeOwner (owner, label, terminal, timeout, opts = {}) {
+    const record = this._adoptBareRuntimeOwner(owner, label)
+    if (!record || record.state === 'CLOSED') return
+    this._fenceBareRuntimeOwner(record)
+
+    // First prefer a true drain. If a raw library flight settles only when its
+    // exact owner closes, continue into that terminal-close subphase and prove
+    // the drain again afterwards.
+    let preDrainError = null
+    try { await this._drainBareRuntimeOwner(record, timeout) } catch (err) { preDrainError = err }
+
+    if (!record.terminalSettled) {
+      try {
+        const terminalTimeout = Number.isSafeInteger(timeout) && timeout > 0
+          ? Math.max(MIN_OWNER_OPERATION_BUDGET_MS, Math.min(timeout, 60_000))
+          : MIN_OWNER_OPERATION_BUDGET_MS
+        if (!record.terminalRaw) {
+          const raw = Promise.resolve().then(terminal)
+          record.terminalRaw = raw
+          raw.then(
+            () => {
+              if (record.terminalRaw !== raw) return
+              record.terminalSettled = true
+            },
+            () => {
+              // A true terminal rejection is settled and may be explicitly
+              // retried. A waiter timeout never clears terminalRaw, so it can
+              // neither lose nor duplicate an unresolved close call.
+              if (record.terminalRaw === raw) record.terminalRaw = null
+            }
+          )
+        }
+        await withTimeout(record.terminalRaw, terminalTimeout, `${label}.terminalClose`)
+        record.terminalSettled = true
+      } catch (err) {
+        if (preDrainError && !err.preDrainCause) err.preDrainCause = preDrainError
+        throw err
+      }
+    }
+
+    // terminal() proved this exact object cannot perform more work. Releasing
+    // an orphan keyed by that same object is now safe; late raw settlement is
+    // reduced to the registry's non-mutating sink.
+    sharedOperationFlights.closeEntity(owner, `${label} terminal close settled`)
+    await this._drainBareRuntimeOwner(record, timeout)
+    record.state = 'CLOSED'
+    if (owner !== this && opts.retainRecord !== true) this._bareRuntimeOwners.delete(owner)
+  }
+
+  async _drainBareServiceRequests (protocol, registry, timeout, phase) {
+    let firstError = null
+    for (const [owner, label] of [
+      [protocol, `serviceProtocol.requests.${phase}`],
+      [registry, `serviceRegistry.requests.${phase}`]
+    ]) {
+      if (!owner || typeof owner.drainRequests !== 'function') continue
+      try {
+        await withTimeout(
+          owner.drainRequests(),
+          this._remainingOwnerBudget(timeout),
+          label
+        )
+      } catch (err) {
+        if (!firstError) firstError = err
+      }
+    }
+    if (firstError) throw firstError
+  }
+
+  async _stopBareServiceIngress (timeout) {
+    const protocol = this._serviceProtocol
+    if (!protocol) return
+    const registry = this.serviceRegistry
+    let preDrainError = null
+    try {
+      await this._drainBareServiceRequests(protocol, registry, timeout, 'preCloseDrain')
+    } catch (err) {
+      preDrainError = err
+    }
+
+    let terminalError = null
+    try {
+      await this._retireBareRuntimeOwner(
+        protocol,
+        'serviceProtocol',
+        typeof protocol.destroy === 'function' ? () => protocol.destroy() : async () => {},
+        timeout
+      )
+      if (this._serviceProtocol === protocol) this._serviceProtocol = null
+    } catch (err) {
+      terminalError = err
+    }
+
+    let postDrainError = null
+    try {
+      await this._drainBareServiceRequests(protocol, registry, timeout, 'postCloseDrain')
+    } catch (err) {
+      postDrainError = err
+    }
+    if (terminalError || postDrainError) {
+      const error = terminalError || postDrainError
+      if (preDrainError && !error.preDrainCause) error.preDrainCause = preDrainError
+      throw error
+    }
+  }
+
+  async _stopBareServices (timeout) {
+    const registry = this.serviceRegistry
+    if (!registry) return
+    const providerRecords = []
+    const seen = new Set()
+    if (registry.services instanceof Map) {
+      for (const [name, entry] of registry.services) {
+        const record = this._adoptBareRuntimeOwner(entry?.provider, `service:${name}`)
+        if (record && !seen.has(record.owner)) {
+          seen.add(record.owner)
+          providerRecords.push(record)
+        }
+      }
+    }
+    for (const record of this._bareRuntimeOwners.values()) {
+      if (!record.label?.startsWith('service:') || seen.has(record.owner)) continue
+      seen.add(record.owner)
+      providerRecords.push(record)
+    }
+
+    let preDrainError = null
+    if (typeof registry.drainRequests === 'function') {
+      try {
+        await withTimeout(
+          registry.drainRequests(),
+          this._remainingOwnerBudget(timeout),
+          'serviceRegistry.requests.drain'
+        )
+      } catch (err) {
+        preDrainError = err
+      }
+    }
+    for (const record of providerRecords) {
+      try { await this._drainBareRuntimeOwner(record, timeout) } catch (err) {
+        if (!preDrainError) preDrainError = err
+      }
+    }
+
+    let stopError = null
+    try {
+      await this._awaitOwnerOperation(
+        registry,
+        'serviceRegistry.stopAll',
+        () => registry.stopAll({ throwOnError: true }),
+        timeout
+      )
+    } catch (err) {
+      stopError = err
+    }
+
+    const retainedProviders = new Set()
+    if (registry.services instanceof Map) {
+      for (const entry of registry.services.values()) retainedProviders.add(entry?.provider)
+    }
+    let postDrainError = null
+    for (const record of providerRecords) {
+      if (retainedProviders.has(record.owner)) continue
+      record.terminalSettled = true
+      sharedOperationFlights.closeEntity(record.owner, `${record.label} terminal close settled`)
+      try {
+        await this._drainBareRuntimeOwner(record, timeout)
+        record.state = 'CLOSED'
+        this._bareRuntimeOwners.delete(record.owner)
+      } catch (err) {
+        if (!postDrainError) postDrainError = err
+      }
+    }
+    if (typeof registry.drainRequests === 'function') {
+      try {
+        await withTimeout(
+          registry.drainRequests(),
+          this._remainingOwnerBudget(timeout),
+          'serviceRegistry.requests.postCloseDrain'
+        )
+      } catch (err) {
+        if (!postDrainError) postDrainError = err
+      }
+    }
+
+    if (stopError || postDrainError) {
+      const error = stopError || postDrainError
+      if (preDrainError && !error.preDrainCause) error.preDrainCause = preDrainError
+      throw error
+    }
+
+    await this._retireBareRuntimeOwner(registry, 'serviceRegistry', async () => {}, timeout)
+    if (this.serviceRegistry === registry) this.serviceRegistry = null
+  }
+
+  async _retireBareField (field, label, terminal, timeout) {
+    const owner = this[field]
+    if (!owner) return
+    await this._retireBareRuntimeOwner(owner, label, () => terminal(owner), timeout)
+    if (this[field] === owner) this[field] = null
+  }
+
+  async _completeBareRuntimeShutdown (timeout) {
+    for (const record of [...this._bareRuntimeOwners.values()]) {
+      if (record.owner === this || record.state === 'CLOSED') continue
+      if (!record.terminalSettled) {
+        const err = new Error(`Bare runtime owner ${record.label} has not completed terminal close`)
+        err.code = 'BARE_OWNER_RETIREMENT_PENDING'
+        throw err
+      }
+      sharedOperationFlights.closeEntity(record.owner, `${record.label} terminal close settled`)
+      await this._drainBareRuntimeOwner(record, timeout)
+      record.state = 'CLOSED'
+      this._bareRuntimeOwners.delete(record.owner)
+    }
+    await this._retireBareRuntimeOwner(this, 'bareRelay', async () => {}, timeout)
+    if (this._shutdownFence) this._shutdownFence.state = 'COMPLETE'
+  }
+
   async _drainLifecycleAndSeededDrives (timeout) {
+    const fence = this._installBareShutdownFence('lifecycle-drain')
     const scope = this._scope
     if (scope) {
       await withTimeout(scope.drain(), this._remainingOwnerBudget(timeout), 'lifecycleScope.drain')
       if (this._scope === scope) this._scope = null
     }
-    if (!this.appLifecycle || !this.appRegistry) return
-    if (typeof this.appLifecycle.drainRetiringDrives === 'function') {
-      await withTimeout(
-        this.appLifecycle.drainRetiringDrives(),
-        this._remainingOwnerBudget(timeout),
-        'retiringDrives.drain'
-      )
+    if (!this.appLifecycle) return
+
+    const registry = this.appRegistry
+    if (!registry || typeof registry.page !== 'function' ||
+        typeof registry.releasePopulationConsumer !== 'function') {
+      const err = new Error('Bare seeded-drive retirement requires bounded registry paging')
+      err.code = 'APP_REGISTRY_BOUNDED_PAGE_REQUIRED'
+      throw err
     }
-    for (const appKey of [...this.appRegistry.apps.keys()]) {
-      await withTimeout(
-        this.appLifecycle.unseedApp(appKey, { forget: false }),
-        this._remainingOwnerBudget(timeout),
-        `unseedApp(${appKey.slice(0, 8)})`
-      )
+
+    let lastError = null
+    let reachedStableWave = false
+    try {
+      for (let wave = 0; wave < BARE_RETIREMENT_MAX_WAVES; wave++) {
+        let waveError = null
+        let attempted = 0
+        if (typeof this.appLifecycle.drainRetiringDrives === 'function') {
+          try {
+            await withTimeout(
+              this.appLifecycle.drainRetiringDrives(),
+              this._remainingOwnerBudget(timeout),
+              'retiringDrives.drain'
+            )
+          } catch (err) {
+            waveError = err
+          }
+        }
+
+        let pageCalls = 0
+        let page
+        do {
+          page = registry.page(
+            BARE_RETIREMENT_POPULATION_CONSUMER,
+            BARE_RETIREMENT_PAGE_BUDGET
+          )
+          pageCalls++
+          if (!page || !Array.isArray(page.entries) ||
+              page.entries.length > BARE_RETIREMENT_PAGE_BUDGET ||
+              typeof page.complete !== 'boolean' ||
+              (!page.complete && (!Number.isSafeInteger(page.examined) || page.examined < 1))) {
+            const err = new Error('Bare seeded-drive retirement received an invalid registry page')
+            err.code = 'APP_REGISTRY_BOUNDED_PAGE_INVALID'
+            throw err
+          }
+          if (pageCalls > BARE_RETIREMENT_MAX_PAGE_CALLS) {
+            const err = new Error('Bare seeded-drive retirement population bound was exceeded')
+            err.code = 'APP_REGISTRY_BOUNDED_PAGE_EXHAUSTED'
+            throw err
+          }
+          for (const item of page.entries) {
+            const appKey = item?.key
+            const entry = item?.value
+            if (typeof appKey !== 'string') {
+              const err = new Error('Bare seeded-drive retirement received an invalid registry key')
+              err.code = 'APP_REGISTRY_BOUNDED_PAGE_INVALID'
+              throw err
+            }
+            const settled = entry && (typeof entry === 'object' || typeof entry === 'function')
+              ? fence.settledDriveEntries.has(entry)
+              : fence.settledDriveKeys.has(appKey)
+            if (settled) continue
+            attempted++
+            try {
+              await withTimeout(
+                this.appLifecycle.unseedApp(appKey, { forget: false }),
+                this._remainingOwnerBudget(timeout),
+                `unseedApp(${appKey.slice(0, 8)})`
+              )
+              if (entry && (typeof entry === 'object' || typeof entry === 'function')) {
+                fence.settledDriveEntries.add(entry)
+              } else {
+                fence.settledDriveKeys.add(appKey)
+              }
+            } catch (err) {
+              if (!waveError) waveError = err
+            }
+          }
+        } while (!page.complete)
+
+        lastError = waveError
+        if (!waveError && attempted === 0) {
+          reachedStableWave = true
+          break
+        }
+      }
+
+      if (lastError) throw lastError
+      if (fence.firstError) throw fence.firstError
+      if (typeof this.appLifecycle.drainRetiringDrives === 'function') {
+        await withTimeout(
+          this.appLifecycle.drainRetiringDrives(),
+          this._remainingOwnerBudget(timeout),
+          'retiringDrives.finalDrain'
+        )
+      }
+      if (!reachedStableWave) {
+        const err = new Error('Bare seeded-drive retirement did not reach a stable empty wave')
+        err.code = 'BARE_OWNER_RETIREMENT_PENDING'
+        throw err
+      }
+    } finally {
+      registry.releasePopulationConsumer(BARE_RETIREMENT_POPULATION_CONSUMER)
     }
+
+    await this._retireBareRuntimeOwner(
+      this.appLifecycle,
+      'appLifecycle',
+      async () => {},
+      timeout,
+      { retainRecord: true }
+    )
   }
 
   stop () {
@@ -920,8 +1840,7 @@ export class BareRelay extends EventEmitter {
 
   async _stop () {
     if (!this.running && !this._starting && !this._startupRollbackPending) return
-    this._stopRequested = true
-    this._storageIngressReady = false
+    this._installBareShutdownFence('normal-stop')
     this._ownerDeadline = Date.now() + (this.config.shutdownTimeoutMs || 30_000)
     log.info('BareRelay stopping…')
 
@@ -968,62 +1887,44 @@ export class BareRelay extends EventEmitter {
     // Stop ingress and every append-capable provider while their final flush
     // can still use the authority. A failure seals admission and deliberately
     // leaves Corestore owned for a later supervisor retry.
-    try {
-      if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
-      if (this.httpServer) {
-        const server = this.httpServer
-        await this._awaitOwnerOperation(server, 'httpServer.stop', () => server.stop(), this.config.shutdownTimeoutMs || 30_000)
-        if (this.httpServer === server) this.httpServer = null
-      }
-      await this._destroyProtocolHandlers(this.config.shutdownTimeoutMs || 30_000)
-      if (this.serviceRegistry) {
-        const registry = this.serviceRegistry
-        await this._awaitOwnerOperation(
-          registry,
-          'serviceRegistry.stopAll',
-          () => registry.stopAll({ throwOnError: true }),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.serviceRegistry === registry) this.serviceRegistry = null
-      }
-      if (this.federation) {
-        const federation = this.federation
-        await this._awaitOwnerOperation(
-          federation,
-          'federation.stop',
-          () => federation.stop(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.federation === federation) this.federation = null
-      }
-      await this._drainLifecycleAndSeededDrives(this.config.shutdownTimeoutMs || 30_000)
-      if (this.seeder) {
-        const seeder = this.seeder
-        await this._awaitOwnerOperation(
-          seeder,
-          'seeder.stop',
-          () => seeder.stop(),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-        if (this.seeder === seeder) this.seeder = null
-      }
-      if (this.appRegistry) {
-        await this._awaitOwnerOperation(
-          this.appRegistry,
-          'appRegistry.flush',
-          () => this.appRegistry.flush({ throwOnError: true }),
-          this.config.shutdownTimeoutMs || 30_000
-        )
-      }
-      await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
-    } catch (err) {
+    let writerQuiesceError = null
+    const settleWriter = async (run) => {
+      try { await run() } catch (err) { if (!writerQuiesceError) writerQuiesceError = err }
+    }
+    const timeout = this.config.shutdownTimeoutMs || 30_000
+    if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
+    await settleWriter(() => this._retireBareField('httpServer', 'httpServer', server => server.stop(), timeout))
+    await settleWriter(() => this._retireBareField(
+      'appCatalogController',
+      'appCatalogController',
+      value => value.stop(),
+      timeout
+    ))
+    this.appCatalogStore = null
+    this._appCatalogStageFactory = null
+    await settleWriter(() => this._stopBareServiceIngress(timeout))
+    await settleWriter(() => this._destroyProtocolHandlers(timeout))
+    await settleWriter(() => this._stopBareServices(timeout))
+    await settleWriter(() => this._retireBareField('federation', 'federation', value => value.stop(), timeout))
+    await settleWriter(() => this._drainLifecycleAndSeededDrives(timeout))
+    await settleWriter(() => this._retireBareField('seeder', 'seeder', value => value.stop(), timeout))
+    if (this.appRegistry) {
+      await settleWriter(() => this._awaitOwnerOperation(
+        this.appRegistry,
+        'appRegistry.flush',
+        () => this.appRegistry.flush({ throwOnError: true }),
+        timeout
+      ))
+    }
+    await settleWriter(() => this._destroyDiscoveryHandles(timeout))
+    if (writerQuiesceError) {
       if (this.storageAdmission) {
         this.storageAdmission.closeMutations('storage-writer-quiesce-failed')
         this.storageAdmission.failClosed('storage-writer-quiesce-failed')
       }
       const failure = new Error('storage writer quiescence did not settle')
       failure.code = 'STORAGE_WRITER_QUIESCE_FAILED'
-      failure.cause = err
+      failure.cause = writerQuiesceError
       throw failure
     }
     if (this.storageAdmission) this.storageAdmission.closeMutations()
@@ -1034,22 +1935,27 @@ export class BareRelay extends EventEmitter {
     }
 
     if (this.relay) {
-      const relay = this.relay
-      await this._awaitOwnerOperation(relay, 'relay.stop', () => relay.stop(), this.config.shutdownTimeoutMs || 30_000)
-      if (this.relay === relay) this.relay = null
+      await this._retireBareField('relay', 'relay', value => value.stop(), timeout)
     }
     if (this.swarm) {
-      const swarm = this.swarm
-      await this._awaitOwnerOperation(swarm, 'swarm.destroy', () => swarm.destroy(), this.config.shutdownTimeoutMs || 30_000)
-      if (this.swarm === swarm) this.swarm = null
+      await this._retireBareField('swarm', 'swarm', value => value.destroy(), timeout)
     }
     if (this.swarmFirewall) { try { this.swarmFirewall.destroy() } catch (_) {} this.swarmFirewall = null }
     if (this.store) {
-      const store = this.store
-      await this._awaitOwnerOperation(store, 'store.close', () => store.close(), this.config.shutdownTimeoutMs || 30_000)
-      if (this.store === store) this.store = null
+      await this._retireBareField('store', 'corestore', value => value.close(), timeout)
+    }
+    if (this.appRegistry) {
+      try { this.appRegistry.detachStore() } catch (_) {}
+      await this._retireBareRuntimeOwner(
+        this.appRegistry,
+        'appRegistry',
+        async () => {},
+        timeout,
+        { retainRecord: true }
+      )
     }
 
+    await this._completeBareRuntimeShutdown(timeout)
     this.running = false
     this._startupRollbackPending = false
     this._ownerDeadline = null
@@ -1092,25 +1998,31 @@ export class BareRelay extends EventEmitter {
   // ─── Connection handling ─────────────────────────────────────────
 
   _onConnection (conn, info) {
-    if (!this._storageIngressReady) {
+    if (this._shutdownFence || !this._storageIngressReady) {
       // Guard the destroy: the remote can reset while it lands, and a Noise
       // stream erroring with no listener takes down the whole process.
       conn.on('error', () => {})
       try { conn.destroy() } catch (_) {}
       return
     }
-    const remoteHex = info.publicKey ? b4a.toString(info.publicKey, 'hex') : 'anon'
-    log.info('  + peer:', remoteHex.slice(0, 16))
+    const remotePublicKey = conn.remotePublicKey || info?.publicKey || null
+    const remoteHex = remotePublicKey ? b4a.toString(remotePublicKey, 'hex') : null
+    log.info('  + peer:', remoteHex ? remoteHex.slice(0, 16) : 'anon')
     this.connections.set(conn, { lastActivity: Date.now() })
 
-    // Attach our Protomux protocols to this connection
-    try {
-      if (this._seedProtocol) this._seedProtocol.attach(conn, info)
-      if (this._circuitRelay) this._circuitRelay.attach(conn, info)
-      if (this._proofOfRelay) this._proofOfRelay.attach(conn, info)
-      if (this._serviceProtocol) this._serviceProtocol.attach(conn, info)
-    } catch (err) {
-      log.warn('  protocol attach error:', err.message)
+    // Each protocol owns an independent channel. A fault in one optional
+    // attachment must not suppress seed, relay, proof, or legacy ingress.
+    const attach = (name, fn) => {
+      try { fn() } catch (err) { log.warn(`  ${name} protocol attach error:`, err.message) }
+    }
+    if (this.appCatalogController && remotePublicKey) {
+      attach('app-catalog', () => this.appCatalogController.attach(conn, remotePublicKey))
+    }
+    if (this._seedProtocol) attach('seed', () => this._seedProtocol.attach(conn, info))
+    if (this._circuitRelay) attach('circuit-relay', () => this._circuitRelay.attach(conn, info))
+    if (this._proofOfRelay) attach('proof-of-relay', () => this._proofOfRelay.attach(conn, info))
+    if (this._serviceProtocol && remoteHex) {
+      attach('service', () => this._serviceProtocol.attach(conn, remoteHex))
     }
 
     // Always replicate the corestore — this is how we serve seeded content
@@ -1237,6 +2149,13 @@ export class BareRelay extends EventEmitter {
   }
 
   async _onSeedRequest (msg, channel = null, trackedMutation = false) {
+    if (this._shutdownFence) {
+      const err = shuttingDownError('seed request')
+      if (channel && this._seedProtocol && msg?.appKey) {
+        try { this._seedProtocol.denySeedRequest(channel, msg.appKey, 'shutting-down', err.message) } catch (_) {}
+      }
+      throw err
+    }
     if (!trackedMutation && this.storageAdmission?.runMutation) {
       return this.storageAdmission.runMutation(() => this._onSeedRequest(msg, channel, true))
     }
@@ -1257,16 +2176,11 @@ export class BareRelay extends EventEmitter {
       deny('storage-bound-invalid', 'maxStorageBytes must be a positive safe integer')
       return
     }
-    const existingApp = this.appRegistry?.has(appKeyHex) === true
-    const admission = existingApp && this.storageAdmission?.recoveryReady && !this.storageAdmission?.fatalReason
-      ? { allowed: true, availableBytes: this._storageAdmission(0).availableBytes }
-      : this._storageAdmission(maxStorageBytes)
-    const availableBytes = admission.availableBytes
-
-    if (!admission.allowed) {
-      log.warn('  seed rejected (insufficient storage):', appKeyHex.slice(0, 16))
-      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
-      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + (msg.maxStorageBytes || 0))
+    const discoveryHints = validateSeedDiscoveryHints(msg.appKey, msg.discoveryKeys || [])
+    if (!discoveryHints.ok) {
+      log.warn('  seed rejected (discovery hints):', appKeyHex.slice(0, 16), '-', discoveryHints.reason)
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: discoveryHints.reason })
+      deny('unsupported-discovery-key-set', discoveryHints.reason)
       return
     }
 
@@ -1313,7 +2227,7 @@ export class BareRelay extends EventEmitter {
     // extractCustodySeedOpts). The binary wire encoding doesn't yet carry
     // them, so they only arrive on an enriched msg today.
     try {
-      const appResult = await this.appLifecycle.seedApp(appKeyHex, {
+      await this.appLifecycle.seedApp(appKeyHex, {
         publisherPubkey: effectivePublisher,
         maxStorage: maxStorageBytes,
         revocable: msg.revocable !== false,
@@ -1324,24 +2238,6 @@ export class BareRelay extends EventEmitter {
         availabilityClass: msg.availabilityClass || null,
         ...extractCustodySeedOpts(msg)
       })
-      const newCoreKeys = []
-      try {
-        for (const dk of (msg.discoveryKeys || [])) {
-          const keyHex = b4a.toString(dk, 'hex')
-          if (keyHex === appKeyHex) continue
-          const existed = this.seeder.cores.has(keyHex)
-          await this.seeder.seedCore(keyHex, { maxStorageBytes })
-          if (!existed) newCoreKeys.push(keyHex)
-        }
-      } catch (err) {
-        for (const keyHex of newCoreKeys.reverse()) {
-          try { await this.seeder.unseedCore(keyHex) } catch (_) {}
-        }
-        if (appResult.alreadySeeded !== true) {
-          try { await this.appLifecycle.unseedApp(appKeyHex) } catch (_) {}
-        }
-        throw err
-      }
     } catch (err) {
       log.warn('  seed error:', err.message)
       this.emit('seed-error', { appKey: appKeyHex, error: err })
@@ -1349,12 +2245,22 @@ export class BareRelay extends EventEmitter {
       return
     }
 
+    if (this._shutdownFence) {
+      this._emitSafely('seed-rejected', { appKey: appKeyHex, reason: 'SHUTTING_DOWN' })
+      deny('shutting-down', 'relay shutdown began before seed acknowledgement')
+      return
+    }
+
+    if (!this.storageAdmission?.canAcknowledge?.(`drive:${appKeyHex}`)) {
+      try { this.emit('seed-ack-error', { appKey: appKeyHex, error: new Error('storage commitment is not acknowledgeable') }) } catch (_) {}
+      return
+    }
     try {
       this._seedProtocol.acceptSeedRequest(
         msg.appKey,
         this.swarm.keyPair.publicKey,
         (this.config.regions && this.config.regions[0]) || 'unknown',
-        this._storageAdmission(0).availableBytes
+        this._informationalAvailableStorageBytes()
       )
     } catch (err) {
       try { this.emit('seed-ack-error', { appKey: appKeyHex, error: err }) } catch (_) {}
@@ -1365,6 +2271,11 @@ export class BareRelay extends EventEmitter {
   }
 
   _onUnseedRequest (msg) {
+    if (this._shutdownFence) {
+      const appKey = msg?.appKey ? b4a.toString(msg.appKey, 'hex') : null
+      this._emitSafely('unseed-rejected', { appKey, reason: 'SHUTTING_DOWN' })
+      return false
+    }
     const appKeyHex = b4a.toString(msg.appKey, 'hex')
     const publisherHex = b4a.toString(msg.publisherPubkey, 'hex')
     const signatureHex = b4a.toString(msg.signature, 'hex')
@@ -1381,23 +2292,6 @@ export class BareRelay extends EventEmitter {
     }).catch((err) => {
       log.warn('  unseed error:', err.message)
     })
-  }
-
-  // ─── Eviction (called by AppLifecycle when storage is full) ──────
-
-  async _evictOldestApp () {
-    let oldest = null
-    for (const [key, entry] of this.appRegistry.apps) {
-      if (!oldest || entry.startedAt < oldest.entry.startedAt) {
-        oldest = { key, entry }
-      }
-    }
-    if (oldest) {
-      log.info('  evicting oldest app:', oldest.key.slice(0, 16))
-      await this.appLifecycle.unseedApp(oldest.key)
-      return true
-    }
-    return false
   }
 
   // Used by AppLifecycle for parent drive lookup (distributed-drive compat).

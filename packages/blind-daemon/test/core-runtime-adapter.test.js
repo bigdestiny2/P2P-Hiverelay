@@ -3,6 +3,9 @@ import path from 'node:path'
 import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
+import { inspectEngineHistory, generationBytes, options as cellOptions, clock as cellClock, BlindCellStorageEngine } from './generation-history-fixture.js'
+import { prepareBlindGenerationStartup } from '../generation-startup.js'
+import { BLIND_STORE_READER_MODE } from '../storage-generation-v12.js'
 import {
   FAMILY,
   OPERATION,
@@ -317,6 +320,46 @@ test('CORE.MIRROR commits before activation and exact signed retry survives desc
   await storage.close()
 })
 
+test('CORE.MIRROR replay re-establishes the generation floor after callback failure and restart', async t => {
+  const root = await temporaryRoot(t, 'blind-core-generation-retry')
+  const time = clock()
+  const keys = signingAuthority()
+  const descriptor = descriptorAuthority(keys.publicKey)
+  const upstream = upstreamAuthority()
+  const mirror = mirrorRequest(keys.publicKey, { clientNonce: b4a.alloc(32, 0xd8) })
+  const prepared = admission(mirror.requestCommitment, 0xd8, mirror.request.leaseClass)
+  const input = executionInput(OPERATION.CORE.MIRROR, mirror.request, mirror.requestCommitment, prepared)
+  let failedCallbacks = 0
+  let storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey, {
+    async onBlindWriteAcknowledged () {
+      failedCallbacks++
+      throw new Error('generation floor append failed before durability')
+    }
+  }))
+  await storage.open()
+  await t.exception(adapterHarness(storage, keys, descriptor, upstream).execute(input),
+    /generation floor append failed/)
+  t.is(failedCallbacks, 1)
+  t.is(upstream.activations(), 0, 'no upstream activation followed the refused accepted-WAL response')
+  await storage.close()
+
+  const replayEvidence = []
+  storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey, {
+    onBlindWriteAcknowledged (evidence) {
+      replayEvidence.push({ walSequence: evidence.walSequence, walHash: b4a.from(evidence.walHash) })
+    }
+  }))
+  await storage.open()
+  const replay = await adapterHarness(storage, keys, descriptor, upstream).execute(input)
+  t.ok(isCommittedCoreResult(replay))
+  t.ok(replayEvidence.length >= 2,
+    'the accepted replay and its activation each prove the floor before the external result')
+  t.is(upstream.activations(), 1)
+  t.is(replayEvidence.at(-1).walSequence, storage.transactionStore.walSequence)
+  t.alike(replayEvidence.at(-1).walHash, storage.transactionStore.walHash)
+  await storage.close()
+})
+
 test('CORE.PROVE pins its immutable source across extension, detects substitution, and expires durably', async t => {
   const root = await temporaryRoot(t, 'blind-core-prove')
   const time = clock()
@@ -557,6 +600,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   upstream.setUnavailableAttempts(1)
   const storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey))
   await storage.open()
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, false, 'fresh CORE has no committed history')
   const adapter = adapterHarness(storage, keys, descriptor, upstream)
   const mirror = mirrorRequest(keys.publicKey)
   const input = executionInput(OPERATION.CORE.MIRROR, mirror.request, mirror.requestCommitment,
@@ -565,6 +609,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   const accepted = await adapter.execute(input)
   const pending = storage.inspectMirrorSpend(input.preparedAdmission.spendTag)
   t.is(pending.state, 'RETRY_PENDING')
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, true, 'accepted sponsorship is historical even before activation succeeds')
   t.is(pending.retryCount, 1)
   t.is(storage.inspectCore(mirror.request.corePublicKey), null)
   const resumed = await adapter.execute(input)
@@ -579,6 +624,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   t.is(storage.status().accounting.activeCores, 0)
   t.is(storage.status().accounting.corpusBytes, 0)
   t.is(await blobCount(root), 0)
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, true, 'sponsorship expiry leaves history and retained floors')
 
   const stale = mirrorRequest(keys.publicKey, {
     corePublicKey: mirror.request.corePublicKey,
@@ -601,6 +647,7 @@ test('CORE activation unavailability is bounded RETRY_PENDING and sponsorship ex
   t.is(storage.inspectCore(mirror.request.corePublicKey).stateRevision, 1n)
   t.is(storage.inspectCore(mirror.request.corePublicKey).leaseEpoch, 1008)
   await storage.close()
+  t.is(await inspectEngineHistory(BlindCoreStorageEngine, storageOptions(root, time, keys.publicKey)), true, 'read-only full replay retains CORE history')
 })
 
 test('CORE storage rejects invalid signed result builders before a WAL spend is committed', async t => {
@@ -632,7 +679,9 @@ test('CORE storage rejects invalid signed result builders before a WAL spend is 
   }), 'INTERNAL')
   t.is(storage.status().accounting.mirrorAttempts, 0)
   t.is(storage.status().accounting.walSequence, 0n)
+  t.is(storage.storageGenerationEvidence().hasIrreversibleState, false, 'rejected invalid result creates no history')
   await storage.close()
+  t.is(await inspectEngineHistory(BlindCoreStorageEngine, storageOptions(root, time, keys.publicKey)), false)
 })
 
 test('CORE.PROVE refuses a charged source race before committing the spend or a dangling pin', async t => {
@@ -679,6 +728,125 @@ test('CORE.PROVE refuses a charged source race before committing the spend or a 
   t.is(await blobCount(root), 1)
   await storage.close()
 })
+
+async function paidOpenRecord (keys) {
+  const relayPublicKey = keys.publicKey
+  const wireProfileHash = fixtureBytes(32, 0x12)
+  const parentSessionId = fixtureBytes(16, 0x13)
+  const request = fixtureCoreOpen(wireProfileHash)
+  const requestCommitment = coreOpenReplicationRequestCommitment({
+    relayPublicKey,
+    wireProfileHash,
+    sessionClass: request.sessionClass,
+    controlChannelId: request.controlChannelId,
+    parentChannelBinding: request.parentChannelBinding,
+    clientNonce: request.clientNonce
+  })
+  const prepared = admission(requestCommitment, 0xd1, 0)
+  const record = {
+    logicalRetryKey: coreOpenReplicationLogicalRetryKey(relayPublicKey, request),
+    spendTag: prepared.spendTag,
+    requestCommitment,
+    wireProfileHash,
+    sessionClass: request.sessionClass,
+    clientNonce: request.clientNonce,
+    parentSessionId,
+    controlChannelId: request.controlChannelId,
+    parentChannelBinding: request.parentChannelBinding,
+    streamId: 40n,
+    maxSessionBytes: 16n * 1024n * 1024n,
+    idleMillis: 30000,
+    lifetimeMillis: 600000,
+    openedAtEpoch: 1000,
+    result: await signedCoreOpenResult(keys, fixtureCoreResult(relayPublicKey, {
+      request,
+      streamId: 40n,
+      maxSessionBytes: 16n * 1024n * 1024n,
+      idleMillis: 30000,
+      lifetimeMillis: 600000,
+      openedAtEpoch: 1000,
+      requestCommitment
+    })),
+    preparedAdmission: prepared
+  }
+  return record
+}
+
+for (const phase of ['reserved', 'live', 'terminal']) {
+  test(`paid OPEN-only ${phase} state establishes live, full-replay and conservative startup history`, async t => {
+    const directory = await temporaryRoot(t, 'core-open-history')
+    const cellRoot = path.join(directory, 'cell')
+    const coreRoot = path.join(directory, 'core')
+    await fs.mkdir(cellRoot, { mode: 0o700 })
+    await fs.mkdir(coreRoot, { mode: 0o700 })
+    const time = clock()
+    const keys = signingAuthority()
+    const coreOptions = storageOptions(coreRoot, time, keys.publicKey)
+    const stores = [
+      { role: 'cell', root: cellRoot, engineOptions: cellOptions(cellRoot, cellClock()) },
+      { role: 'core', root: coreRoot, engineOptions: coreOptions }
+    ]
+    const startupOptions = {
+      stores,
+      manifestKey: b4a.alloc(32, 0x72),
+      installationIdentity: b4a.from('paid-core-open-history'),
+      readerMode: BLIND_STORE_READER_MODE.BLIND_ONLY
+    }
+    let startup = await prepareBlindGenerationStartup({ ...startupOptions, allowFreshGenesis: true })
+    const beforeTrigger = await generationBytes(cellRoot)
+    const cell = new BlindCellStorageEngine({ ...stores[0].engineOptions, generationStartupHandoff: startup.handoffs.get('cell') })
+    let storage = new BlindCoreStorageEngine({ ...coreOptions, generationStartupHandoff: startup.handoffs.get('core') })
+    await cell.open()
+    await storage.open()
+    t.is(storage.storageGenerationEvidence().hasIrreversibleState, false)
+    const record = await paidOpenRecord(keys)
+    const persistence = storage.openPersistence()
+    const beforeInvalid = storage.transactionStore.walSequence
+    await rejectsCode(t, persistence.reserve({
+      ...record,
+      preparedAdmission: { ...record.preparedAdmission, costClass: { ...record.preparedAdmission.costClass, costUnits: 0n } }
+    }), 'SPEND_INVALID')
+    t.is(storage.transactionStore.walSequence, beforeInvalid, 'zero-cost OPEN cannot append a spend')
+    t.is(storage.storageGenerationEvidence().hasIrreversibleState, false)
+    await persistence.reserve(record)
+    t.is(storage.storageGenerationEvidence().hasIrreversibleState, true, 'valid reserved OPEN already persists its paid spend')
+    if (phase !== 'reserved') await persistence.activate(record)
+    if (phase === 'terminal') await persistence.terminal({ ...record, terminalReason: 'ordinary-child-close' })
+    t.is(storage.storageGenerationEvidence().hasIrreversibleState, true)
+    t.is(storage.spends.size, 1)
+    t.is([...storage.spends.values()][0].operation, 'OPEN_REPLICATION')
+    t.is(storage.mirrorAttempts.size, 0, 'no MIRROR establishes history in this fixture')
+    t.is(storage.activeCores.size, 0)
+    t.is(storage.proofPins.size, 0, 'no PROVE establishes history in this fixture')
+    t.ok(storage.inspectOpenRecords()[0].resultBytes, 'real signed OPEN result is retained')
+    await storage.close()
+    await cell.close()
+    await startup.close()
+    const walBefore = await fs.readFile(path.join(coreRoot, 'control', 'wal.v2'))
+    t.is(await inspectEngineHistory(BlindCoreStorageEngine, coreOptions), true, 'read-only semantic replay includes the OPEN spend')
+    t.alike(await fs.readFile(path.join(coreRoot, 'control', 'wal.v2')), walBefore)
+    // Restore the exact valid pretrigger authority prefix over surviving full WAL.
+    for (const item of await generationBytes(cellRoot)) await fs.unlink(path.join(cellRoot, 'control', item.name))
+    for (const item of beforeTrigger) await fs.writeFile(path.join(cellRoot, 'control', item.name), item.bytes, { mode: 0o600 })
+    startup = await prepareBlindGenerationStartup(startupOptions)
+    t.alike(startup.currentStores.map(store => [store.role, store.hasIrreversibleState]), [['cell', false], ['core', true]])
+    t.is(startup.floor.firstIrreversibleWriteAcknowledged, true)
+    t.is(startup.floor.trigger?.role, 'core')
+    t.is(startup.floor.trigger?.recoveryConservative, true)
+    const trigger = startup.floor.triggerReceipt()
+    storage = new BlindCoreStorageEngine({ ...coreOptions, generationStartupHandoff: startup.handoffs.get('core') })
+    await storage.open()
+    t.is(storage.storageGenerationEvidence().hasIrreversibleState, true)
+    t.is(storage.inspectOpenRecords()[0].lifecycleState, 3, 'reopened child is terminal and retains the paid spend')
+    t.is(storage.spends.size, 1)
+    await storage.close()
+    await startup.close()
+    startup = await prepareBlindGenerationStartup(startupOptions)
+    t.alike(startup.floor.triggerReceipt(), trigger, 'later OPEN terminalization never rewrites the first trigger')
+    t.comment(JSON.stringify({ phase, paidCostUnits: String(record.preparedAdmission.costClass.costUnits), trigger, openOnly: true }))
+    await startup.close()
+  })
+}
 
 test('recovered CORE.OPEN_REPLICATION is forced terminal and cannot allocate a replacement child', async t => {
   const root = await temporaryRoot(t, 'blind-core-open-recovery')
@@ -891,3 +1059,74 @@ test('CORE child stream applies real backpressure, abort cleanup, and the exact 
   await capped.service.close()
   await capped.plane.close()
 })
+
+for (const [scenario, activation, expectedState, terminalReason, options] of [
+  ['invalid head', () => ({ verified: false }), 'TERMINAL', 1],
+  ['invalid corpus size', () => ({ ...retryCorpus(), corpusByteLength: 0 }), 'TERMINAL', 4],
+  ['invalid corpus hash', () => ({ ...retryCorpus(), corpusHash: b4a.alloc(32) }), 'TERMINAL', 4],
+  ['corpus length mismatch', () => ({ ...retryCorpus(), corpusByteLength: 65 }), 'TERMINAL', 4],
+  ['corpus hash mismatch', () => ({ ...retryCorpus(), corpusHash: b4a.alloc(32, 0x55) }), 'TERMINAL', 4],
+  ['expired staging deadline', retryCorpus, 'TERMINAL', 4, { expired: true }],
+  ['cancelled staging', retryCorpus, 'RETRY_PENDING', null, { aborted: true }],
+  ['upstream unavailable', () => ({ verified: false, unavailable: true }), 'RETRY_PENDING', null]
+]) {
+  test(`CORE pending mirror handles ${scenario} durably without changing its signed acceptance`, async t => {
+    const root = await temporaryRoot(t, 'blind-core-terminal-retry')
+    const time = clock()
+    const keys = signingAuthority()
+    const descriptor = descriptorAuthority(keys.publicKey)
+    const upstream = upstreamAuthority()
+    upstream.setUnavailableAttempts(1)
+    let storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey))
+    t.teardown(async () => storage.close())
+    await storage.open()
+    let adapter = adapterHarness(storage, keys, descriptor, upstream)
+    const mirror = mirrorRequest(keys.publicKey)
+    const input = executionInput(OPERATION.CORE.MIRROR, mirror.request, mirror.requestCommitment,
+      admission(mirror.requestCommitment, 0xf3, 1))
+    const spendTag = input.preparedAdmission.spendTag
+    const accepted = await adapter.execute(input)
+    t.is(storage.inspectMirrorSpend(spendTag).state, 'RETRY_PENDING')
+    const before = storage.status().accounting.walSequence
+    const controller = new AbortController()
+    if (options?.aborted) controller.abort()
+    await storage.completeMirror(spendTag, activation(), {
+      signal: controller.signal,
+      ...(options?.expired ? { deadlineUnixMillis: time.millis - 1n } : {})
+    })
+    const observed = storage.inspectMirrorSpend(spendTag)
+    t.is(observed.state, expectedState)
+    if (terminalReason !== null) t.is(observed.terminalReason, terminalReason)
+    t.is(observed.retryCount, expectedState === 'TERMINAL' ? 1 : 2)
+    t.is(storage.status().accounting.walSequence, before + 1n, 'one durable transition')
+    t.is(storage.inspectCore(mirror.request.corePublicKey), null)
+    t.is(await blobCount(root), 0)
+    t.alike(await fs.readdir(path.join(root, 'staging')), [])
+    await storage.close()
+    storage = new BlindCoreStorageEngine(storageOptions(root, time, keys.publicKey))
+    await storage.open()
+    t.is(storage.inspectMirrorSpend(spendTag).state, expectedState, 'restart retains the outcome')
+    adapter = adapterHarness(storage, keys, descriptor, upstream)
+    if (expectedState === 'TERMINAL') {
+      const replay = await adapter.execute(input)
+      t.alike(replay.body, accepted.body, 'replay retains the original signed acceptance')
+      t.is(upstream.activations(), 1, 'terminal retry never reaches upstream')
+      t.is(storage.status().accounting.walSequence, before + 1n, 'terminal replay is read-only')
+    } else {
+      upstream.setUnavailableAttempts(2)
+      const retry = await adapter.execute(input)
+      t.alike(retry.body, accepted.body)
+      t.is(storage.inspectMirrorSpend(spendTag).retryCount, 3)
+      const exhausted = await adapter.execute(input)
+      t.alike(exhausted.body, accepted.body)
+      t.is(storage.inspectMirrorSpend(spendTag).state, 'TERMINAL')
+      t.is(storage.inspectMirrorSpend(spendTag).terminalReason, 2, 'unavailability retains its retry bound')
+    }
+    await storage.close()
+  })
+}
+
+function retryCorpus () {
+  const corpus = b4a.alloc(64, 0x4f)
+  return { verified: true, corpus, corpusByteLength: corpus.byteLength, corpusHash: blake2b256(corpus) }
+}

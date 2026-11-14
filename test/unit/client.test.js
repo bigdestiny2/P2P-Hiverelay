@@ -4,6 +4,8 @@ import { EventEmitter } from 'events'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
+import { rm } from 'fs/promises'
+import createTestnet from '@hyperswarm/testnet'
 
 // ─── Multi-device pairing ────────────────────────────────────────────
 // Two paths: identity sharing (full trust, both devices = same key) and
@@ -14,6 +16,22 @@ import b4a from 'b4a'
 
 function tmpStorage () {
   return join(tmpdir(), 'hiverelay-client-test-' + randomBytes(8).toString('hex'))
+}
+
+async function simpleClient (t) {
+  // Exercise the real owned swarm/store without making cleanup depend on
+  // public bootstrap availability or remote DHT unannounce latency.
+  const testnet = await createTestnet(2, t)
+  const storage = tmpStorage()
+  const client = new HiveRelayClient(storage, {
+    bootstrap: testnet.bootstrap,
+    bootstrapCacheEnabled: false
+  })
+  t.teardown(async () => {
+    await client.destroy()
+    await rm(storage, { recursive: true, force: true })
+  })
+  return client
 }
 
 // Mock swarm for low-level unit tests (advanced mode)
@@ -40,8 +58,7 @@ test('HiveRelayClient - simple mode: constructor with storage path', (t) => {
 })
 
 test('HiveRelayClient - simple mode: start creates swarm and store', async (t) => {
-  const client = new HiveRelayClient(tmpStorage())
-  t.teardown(async () => { await client.destroy() })
+  const client = await simpleClient(t)
 
   await client.start()
   t.is(client._started, true, 'started')
@@ -50,8 +67,7 @@ test('HiveRelayClient - simple mode: start creates swarm and store', async (t) =
 })
 
 test('HiveRelayClient - simple mode: start is idempotent', async (t) => {
-  const client = new HiveRelayClient(tmpStorage())
-  t.teardown(async () => { await client.destroy() })
+  const client = await simpleClient(t)
 
   await client.start()
   const swarm1 = client.swarm
@@ -60,12 +76,7 @@ test('HiveRelayClient - simple mode: start is idempotent', async (t) => {
 })
 
 test('HiveRelayClient - simple mode: publish and get', async (t) => {
-  // These "simple mode" tests construct a real Corestore + Hyperswarm per
-  // test; swarm teardown in brittle's t.teardown chain can take 8-10s
-  // depending on DHT state, so we widen the default 30s budget.
-  t.timeout(90_000)
-  const client = new HiveRelayClient(tmpStorage())
-  t.teardown(async () => { await client.destroy() })
+  const client = await simpleClient(t)
 
   await client.start()
 
@@ -87,9 +98,7 @@ test('HiveRelayClient - simple mode: publish and get', async (t) => {
 })
 
 test('HiveRelayClient - simple mode: put and get', async (t) => {
-  t.timeout(90_000)
-  const client = new HiveRelayClient(tmpStorage())
-  t.teardown(async () => { await client.destroy() })
+  const client = await simpleClient(t)
 
   await client.start()
   const drive = await client.publish([], { seed: false })
@@ -101,9 +110,7 @@ test('HiveRelayClient - simple mode: put and get', async (t) => {
 })
 
 test('HiveRelayClient - simple mode: get throws for unknown drive', async (t) => {
-  t.timeout(90_000)
-  const client = new HiveRelayClient(tmpStorage())
-  t.teardown(async () => { await client.destroy() })
+  const client = await simpleClient(t)
 
   await client.start()
   try {
@@ -115,9 +122,7 @@ test('HiveRelayClient - simple mode: get throws for unknown drive', async (t) =>
 })
 
 test('HiveRelayClient - simple mode: closeDrive removes drive', async (t) => {
-  t.timeout(90_000)
-  const client = new HiveRelayClient(tmpStorage())
-  t.teardown(async () => { await client.destroy() })
+  const client = await simpleClient(t)
 
   await client.start()
   const drive = await client.publish([], { seed: false })
@@ -129,12 +134,11 @@ test('HiveRelayClient - simple mode: closeDrive removes drive', async (t) => {
 })
 
 test('HiveRelayClient - simple mode: getStatus', async (t) => {
-  const client = new HiveRelayClient(tmpStorage())
+  const client = await simpleClient(t)
 
   const before = client.getStatus()
   t.is(before.started, false, 'not started before')
 
-  t.teardown(async () => { await client.destroy() })
   await client.start()
 
   const after = client.getStatus()
@@ -144,8 +148,7 @@ test('HiveRelayClient - simple mode: getStatus', async (t) => {
 })
 
 test('HiveRelayClient - simple mode: destroy cleans up', async (t) => {
-  t.timeout(90_000)
-  const client = new HiveRelayClient(tmpStorage())
+  const client = await simpleClient(t)
   await client.start()
   await client.publish([{ path: '/a.txt', content: 'a' }], { seed: false })
   t.is(client.drives.size, 1, 'drive exists')
@@ -163,7 +166,7 @@ test('HiveRelayClient - simple mode: destroy safe when not started', async (t) =
 
 test('HiveRelayClient - simple mode: emits events', async (t) => {
   t.plan(2)
-  const client = new HiveRelayClient(tmpStorage())
+  const client = await simpleClient(t)
 
   client.on('started', () => t.pass('started event'))
   client.on('published', ({ files }) => t.is(files, 1, 'published event'))

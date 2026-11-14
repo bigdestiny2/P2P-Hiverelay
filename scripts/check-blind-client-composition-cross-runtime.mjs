@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import b4a from 'b4a'
 import { build } from 'esbuild'
+import { privateVectorRuntime } from './lib/private-vector-runtime.mjs'
 import { computeClientCompositionRuntimeVectors } from '../packages/blind-protocol/client-composition-runtime-vectors.js'
 import {
   blake2b256,
@@ -35,8 +36,8 @@ function same (left, right, label) {
 }
 
 try {
-  const bare = path.join(root, 'node_modules', 'bare', 'bin', 'bare')
-  const bareRun = await run(bare, [path.join(root,
+  const bare = await privateVectorRuntime(root)
+  const bareRun = await run(bare.executable, [path.join(root,
     'scripts/emit-blind-client-composition-runtime-vectors.mjs')], {
     cwd: root,
     maxBuffer: 16 * 1024 * 1024
@@ -75,7 +76,7 @@ try {
     }
   }
   process.stdout.write('client-composition cross-runtime bytes verified ' +
-    `(${Object.keys(fixtures).length} fixtures; Node=Bare=browser-targeted bundle)\n`)
+    `(${Object.keys(fixtures).length} fixtures; Node=${process.version}, private Bare=${bare.version}, browser-targeted bundle; executable=${bare.executable})\n`)
 } finally {
   await fs.rm(temporary, { recursive: true, force: true })
 }

@@ -712,7 +712,7 @@ test('outboxlog: Corestore operation journal rejects corrupt blocks before repla
   const admission = createJournalAdmission()
 
   await t.exception(createHypercoreOutboxJournal({ store, ...journalStorage(admission) }), /corrupt block 0/)
-  core._blocks[0] = Buffer.from(JSON.stringify({ seq: 1, kind: 'create', appId: A, inviteKey: '1'.repeat(64) }))
+  core._blocks[0] = Buffer.from(JSON.stringify({ version: 1, seq: 1, kind: 'create', appId: A, inviteKey: '1'.repeat(64) }))
   const retry = await createHypercoreOutboxJournal({ store, ...journalStorage(admission) })
   t.is(retry.loadSync().length, 1, 'factory failure releases only its lease, so corrected state can retry in-process')
   await retry.close()
@@ -915,7 +915,7 @@ test('outboxlog aggregate controller is exclusive and restores its monotonic led
   const core = createMockCore('exclusive-restart')
   const first = await createHypercoreOutboxJournal({ core, ...journalStorage(admission) })
   await t.exception(createHypercoreOutboxJournal({ core, ...journalStorage(admission) }), /handoff unavailable/)
-  first.appendSync({ seq: 1, kind: 'append', appId: A })
+  first.appendSync({ version: 1, seq: 1, kind: 'create', appId: A, inviteKey: '1'.repeat(64) })
   await first.flush()
   const consumed = first.storageController.consumedBytes
   await first.close()
@@ -929,7 +929,7 @@ test('outboxlog process restart retains full aggregate debt after exact bytes ma
   const core = createMockCore('process-restart')
   const firstAdmission = createJournalAdmission()
   const first = await createHypercoreOutboxJournal({ core, ...journalStorage(firstAdmission) })
-  first.appendSync({ seq: 1, kind: 'append', appId: A })
+  first.appendSync({ version: 1, seq: 1, kind: 'create', appId: A, inviteKey: '1'.repeat(64) })
   await first.flush()
   await first.close()
   const storage = await core.info({ storage: true })

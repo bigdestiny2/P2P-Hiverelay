@@ -85,6 +85,12 @@ sign the preferred `hiverelay.seed-request.v3` domain-separated preimage.
 Upgraded relays advertise `seed-signature-domain-v3` in their signed capability
 document.
 
+Seed protocol 1.1 accepts only the canonical discovery routing hint for the
+single requested drive. Omit `opts.discoveryKey` to derive it automatically;
+if the property is present it must be the exact 32-byte canonical value.
+Explicit `undefined`, malformed, or noncanonical overrides fail before a drive
+topic is joined and are never placed in persistent retry.
+
 Publisher-signed `/api/v1/seed` and `hiverelay-publish` submissions can also
 use the replay-hardened `hiverelay.seed-request.replay-v1` profile by signing
 `issuedAt` plus a 16-byte `requestNonce`. Relays advertising

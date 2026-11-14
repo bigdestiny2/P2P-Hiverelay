@@ -255,6 +255,33 @@ test('ServiceRegistry - startAll and stopAll', async (t) => {
   t.is(registry.services.size, 0, 'services cleared')
 })
 
+test('ServiceRegistry - local startup diagnostic retains safe codes without provider payloads', async (t) => {
+  const registry = new ServiceRegistry()
+  class BlockedService extends ServiceProvider {
+    manifest () { return { name: 'outboxlog', version: '1.0.0', capabilities: [] } }
+    async start () {
+      const error = new Error('private configuration value must not reach aggregate startup diagnostics')
+      error.code = 'STORAGE_ADMISSION_BLOCKED'
+      error.storageAdmission = { reason: 'storage-commitment-unknown', secret: 'private' }
+      throw error
+    }
+
+    async stop () {}
+  }
+  registry.register(new BlockedService())
+  const result = await registry.startAll({})
+  const error = registry.startupError(result.failed)
+  t.is(error.code, 'SERVICE_START_FAILED')
+  t.ok(error.message.includes('STORAGE_ADMISSION_BLOCKED: storage-commitment-unknown'))
+  t.alike(error.failures, [{ name: 'outboxlog', code: 'STORAGE_ADMISSION_BLOCKED', reason: 'storage-commitment-unknown' }])
+  t.is(error.cause.errors[0].reason, 'storage-commitment-unknown')
+  t.absent(error.message.includes('private'))
+  t.absent(JSON.stringify(error).includes('private'))
+  const malformed = registry.startupError([{ name: 'outboxlog', code: 'raw secret key', reason: 'private/config' }])
+  t.is(malformed.failures[0].code, 'SERVICE_START_FAILED')
+  t.is(malformed.failures[0].reason, null)
+})
+
 test('ServiceRegistry - startAll fail-closed unregisters failed service', async (t) => {
   const registry = new ServiceRegistry()
 

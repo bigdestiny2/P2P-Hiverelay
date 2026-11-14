@@ -163,20 +163,14 @@ export function loadVnextForwardConfig (environment = process.env) {
 // on the same root skips publication and returns through validated recovery,
 // so the sealed bytes stay byte-identical.
 //
-// Derivation rule for the caller-supplied consistency tokens: bucketMapHash
-// and partitionKey are bound through manifest -> checkpoint as opaque tokens;
-// the storage engine never independently validates bucketMapHash against a
-// live bucket map (verified in the accepted storage paths), so the caller
-// derives both deterministically from the sealed identity, e.g.
-//   bucketMapHash = blake2b256('hiverelay.blind.bucket-map.v1'    | storeId | u64be(mapGeneration))
-//   partitionKey  = blake2b256('hiverelay.blind.partition-key.v1' | storeId | manifestKey)
-// so that re-running the ceremony is byte-identical and idempotent.
+// The caller-supplied bucketMapHash is a public consistency token bound through
+// manifest -> checkpoint. Virtual-bucket placement itself is the ratified D6
+// public BLAKE2b-256 mapping over 65,536 buckets; there is no partition secret,
+// partition-secret backup, recovery, or rotation input in this ceremony.
 //
-// Secret hygiene: the ceremony makes no secret copies of its own — manifestKey
-// and partitionKey are passed through to the driven stores, which copy them
-// internally; the verification TwoSlotManifestStore zeroes its internal key
-// copy on close. Caller-owned secret buffers stay caller-owned and are never
-// logged here.
+// Secret hygiene: the ceremony makes no secret copies of its own. The
+// verification TwoSlotManifestStore zeroes its internal manifest-key copy on
+// close. Caller-owned secret buffers stay caller-owned and are never logged.
 
 const STORE_GENESIS_MAX_U64 = (1n << 64n) - 1n
 
@@ -423,17 +417,15 @@ function compareGenesisSnapshotEntries (left, right) {
 // semantic authority/verifier factories into the sorted canonical empty
 // global fragments, and brands the empty-genesis publication verifier the
 // coordinator requires.
-async function emptyGenesisSnapshotAuthority (partitionKey, manifest) {
-  const cell = createBlindCellControlSnapshotSemanticAuthority({ partitionKey })
-  const inbox = createBlindInboxControlSnapshotSemanticAuthority({ partitionKey })
-  const core = createBlindCoreControlSnapshotSemanticAuthority({ partitionKey })
+async function emptyGenesisSnapshotAuthority (manifest) {
+  const cell = createBlindCellControlSnapshotSemanticAuthority()
+  const inbox = createBlindInboxControlSnapshotSemanticAuthority()
+  const core = createBlindCoreControlSnapshotSemanticAuthority()
   const cellInbox = createBlindCellInboxControlSnapshotSemanticAuthority({
-    partitionKey,
     cellVerifier: createBlindCellControlSnapshotSemanticVerifier(cell),
     inboxVerifier: createBlindInboxControlSnapshotSemanticVerifier(inbox)
   })
   const combined = createBlindCellInboxCoreControlSnapshotSemanticAuthority({
-    partitionKey,
     cellInboxVerifier: createBlindCellInboxControlSnapshotSemanticVerifier(cellInbox),
     coreVerifier: createBlindCoreControlSnapshotSemanticVerifier(core)
   })
@@ -545,7 +537,9 @@ export async function runVnextStoreGenesisCeremony (options = {}) {
   const descriptorHashFloor = genesisDescriptorFloor(options.descriptor, options.descriptorCanonicalBytes)
   const manifestKey = genesisBytes32(options.manifestKey, 'manifestKey')
   const ownerFenceTokenHash = genesisBytes32(options.ownerFenceTokenHash, 'ownerFenceTokenHash')
-  const partitionKey = genesisBytes32(options.partitionKey, 'partitionKey')
+  if (Object.prototype.hasOwnProperty.call(options, 'partitionKey')) {
+    genesisFailure('partitionKey is retired by D6; the public 65,536-bucket mapping has no secret input')
+  }
   const bucketMapHash = genesisBytes32(options.bucketMapHash, 'bucketMapHash')
   const mapGeneration = genesisU64(options.mapGeneration, 'mapGeneration', true)
   const maximumSnapshotBytes = genesisInteger(
@@ -566,14 +560,13 @@ export async function runVnextStoreGenesisCeremony (options = {}) {
     mapGeneration,
     ownerFenceTokenHash
   })
-  const snapshot = await emptyGenesisSnapshotAuthority(partitionKey, manifestTemplate)
+  const snapshot = await emptyGenesisSnapshotAuthority(manifestTemplate)
   await ensureGenesisStoreRoot(storeRoot)
   const controlDirectory = path.join(storeRoot, 'control')
 
   const coordinator = new BlindProfile1StoreGenesisCoordinator({
     root: storeRoot,
     manifestKey,
-    partitionKey,
     manifestTemplate,
     genesisRecord: {
       type: 9,

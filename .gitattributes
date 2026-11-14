@@ -1,3 +1,7 @@
 # Shell scripts must stay LF; CRLF breaks container shebangs.
 *.sh text eol=lf
 docker-entrypoint.sh text eol=lf
+
+# Preserve the accepted unified-patch bytes; its context blank lines carry one
+# literal leading space by patch format and are not source whitespace defects.
+packages/core/patches/hypercore-storage+3.2.0.patch -whitespace

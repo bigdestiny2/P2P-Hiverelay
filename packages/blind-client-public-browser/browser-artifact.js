@@ -2,18 +2,18 @@ import b4a from 'b4a'
 import { createHash } from 'node:crypto'
 import { domainLengthHash } from '../blind-protocol/hashes.js'
 
-const ACCEPTED_SOURCE_COMMIT = '1a114f64c97547cab6a18102c2ef4bff930e53ed'
-const ACCEPTED_SOURCE_TREE = '5a341ba17a3d91a750cac94ba51116fe3552a6aa'
-const TUPLE_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactTupleV1'
-const TUPLE_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.artifact-tuple.v1'
-const SOURCE_CLOSURE_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.source-closure.v1'
-const MANIFEST_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactManifestV1'
-const CHROMIUM_EVIDENCE_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV1'
-const CROSS_HOST_EVIDENCE_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactCrossHostEvidenceV1'
-const NORMALIZED_GRAPH_SCHEMA = 'HiveRelayBlindClientPublicBrowserNormalizedGraphDigestV1'
-const NORMALIZED_GRAPH_SET_SCHEMA = 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV1'
-const NORMALIZED_GRAPH_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.normalized-graph.v1'
-const NORMALIZED_GRAPH_SET_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.normalized-graph-set.v1'
+const ACCEPTED_SOURCE_COMMIT = '1e1466d3ed486b4d6fc68abccb9a8375873af626'
+const ACCEPTED_SOURCE_TREE = '2b9dbf4a5165d3562df12b0b21ca10dcace71288'
+const TUPLE_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactTupleV2'
+const TUPLE_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.artifact-tuple.v2'
+const SOURCE_CLOSURE_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.source-closure.v2'
+const MANIFEST_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactManifestV2'
+const CHROMIUM_EVIDENCE_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV2'
+const CROSS_HOST_EVIDENCE_SCHEMA = 'HiveRelayBlindClientPublicBrowserArtifactCrossHostEvidenceV2'
+const NORMALIZED_GRAPH_SCHEMA = 'HiveRelayBlindClientPublicBrowserNormalizedGraphDigestV2'
+const NORMALIZED_GRAPH_SET_SCHEMA = 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV2'
+const NORMALIZED_GRAPH_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.normalized-graph.v2'
+const NORMALIZED_GRAPH_SET_HASH_DOMAIN = 'hiverelay.blind-client-public-browser.normalized-graph-set.v2'
 const CANDIDATE_IDENTITY_BINDING = 'external-postcommit-final-sequence'
 const SOURCE_ARCHIVE_IDENTITY = 'same-committed-relative-bytes'
 const MAX_ARTIFACT_BYTES = 4 * 1024 * 1024
@@ -21,13 +21,13 @@ const MAX_CANONICAL_JSON_BYTES = 128 * 1024
 const HASH_PATTERN = /^[0-9a-f]{64}$/
 const CONTENT_SECURITY_POLICY = "default-src 'self'; base-uri 'none'; object-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: hyper: pear:; connect-src 'self' hyper: pear: https://relay-syd.p2phiverelay.xyz https://relay-dal.p2phiverelay.xyz; frame-ancestors 'none'; form-action 'none'"
 const CONTENT_SECURITY_POLICY_HASH = 'b3c81c106609f04764e531e72842dffcaf061d33263a5c24c447a9a06cd0ed6b'
-const HOST_NODE_EXECUTABLE = '/opt/homebrew/Cellar/node@22/22.22.0/bin/node'
-const HOST_NODE_EXECUTABLE_HASH = '59776c1735b2c28a28b0ae00b58bd9cbe524572e0caf62e043d5e44a62d98cce'
-const HEADER_CACHE_PATH = '/Users/localllm/Library/Caches/node-gyp/22.22.0'
-const HEADER_CACHE_DIGEST = 'dcd517fb9670e6192712badf0bdf1a9dfc4c8ff88887d06e4d4f4eb42e574990'
+const HOST_NODE_EXECUTABLE = '/opt/homebrew/Cellar/node@22/22.23.4/bin/node'
+const HOST_NODE_EXECUTABLE_HASH = '210bbbc13dee7ee3913eef05cc9d7eaee5b327a86dfe524bfb8cb3e5949e50dc'
+const HEADER_CACHE_PATH = '/Users/localllm/Library/Caches/node-gyp/22.23.4'
+const HEADER_CACHE_DIGEST = 'ab912ffccf49c82259f265c35860f4c5de7a5ba0f50d276a23462c31a8d19dc7'
 const HEADER_INSTALL_VERSION_HASH = '25d4f2a86deb5e2574bb3210b67bb24fcc4afb19f93a7b65a057daa874a9d18e'
-const HEADER_NODE_H_PATH = '/Users/localllm/Library/Caches/node-gyp/22.22.0/include/node/node.h'
-const HEADER_NODE_H_HASH = '4da8d691b256d4bef9c0e89114645f08787dc4892eae76240d28efdf4fa55019'
+const HEADER_NODE_H_PATH = '/Users/localllm/Library/Caches/node-gyp/22.23.4/include/node/node.h'
+const HEADER_NODE_H_HASH = 'bc47b118a731e9663b145e4823ebc7f31237140d6ea95417519d894d7a0498cb'
 const PATCH_HASH = 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53'
 const CONTAINER_IMAGE_ID = 'sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4'
 const CHROMIUM_EXECUTABLE_PATH = '/Users/localllm/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell'
@@ -158,7 +158,7 @@ const FULL_PROFILE = profile({
   artifactId: 'blind-client-public-control-v1',
   profile: 'hiverelay.blind-client-public-browser.full.v1',
   artifactHashDomain: 'hiverelay.blind-client-public-browser.full-artifact-hash.v1',
-  manifestHashDomain: 'hiverelay.blind-client-public-browser.full-manifest-hash.v1',
+  manifestHashDomain: 'hiverelay.blind-client-public-browser.full-manifest-hash.v2',
   artifactPath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.mjs',
   manifestPath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.manifest.cenc',
   chromiumEvidencePath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-control-v1.chromium-evidence.json',
@@ -178,7 +178,7 @@ const LIMITED_PROFILE = profile({
   artifactId: 'blind-client-public-cell-get-v1',
   profile: 'hiverelay.blind-client-public-browser.cell-get.v1',
   artifactHashDomain: 'hiverelay.blind-client-public-browser.cell-get-artifact-hash.v1',
-  manifestHashDomain: 'hiverelay.blind-client-public-browser.cell-get-manifest-hash.v1',
+  manifestHashDomain: 'hiverelay.blind-client-public-browser.cell-get-manifest-hash.v2',
   artifactPath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs',
   manifestPath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.manifest.cenc',
   chromiumEvidencePath: 'packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.chromium-evidence.json',
@@ -655,7 +655,7 @@ function normalizedGraphSetDigestPreimage (value) {
   })
 }
 
-export function createBlindClientPublicBrowserNormalizedGraphDigestPreimageV1 (input) {
+export function createBlindClientPublicBrowserNormalizedGraphDigestPreimageV2 (input) {
   exactOrderedObject(input, ['profileId', 'normalizedGraph'],
     'normalized graph digest creation input')
   return normalizedGraphDigestPreimage({
@@ -665,16 +665,16 @@ export function createBlindClientPublicBrowserNormalizedGraphDigestPreimageV1 (i
   })
 }
 
-export function encodeBlindClientPublicBrowserNormalizedGraphDigestPreimageV1 (input) {
+export function encodeBlindClientPublicBrowserNormalizedGraphDigestPreimageV2 (input) {
   return encodeCanonicalJson(normalizedGraphDigestPreimage(input))
 }
 
-export function hashBlindClientPublicBrowserNormalizedGraphV1 (input) {
+export function hashBlindClientPublicBrowserNormalizedGraphV2 (input) {
   return sha256NulDomain(NORMALIZED_GRAPH_HASH_DOMAIN,
-    encodeCanonicalJson(createBlindClientPublicBrowserNormalizedGraphDigestPreimageV1(input)))
+    encodeCanonicalJson(createBlindClientPublicBrowserNormalizedGraphDigestPreimageV2(input)))
 }
 
-export function createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1 (input) {
+export function createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2 (input) {
   exactOrderedObject(input, ['full', 'limited'], 'normalized graph set creation input')
   return normalizedGraphSetDigestPreimage({
     schema: NORMALIZED_GRAPH_SET_SCHEMA,
@@ -683,13 +683,13 @@ export function createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1
   })
 }
 
-export function encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1 (input) {
+export function encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2 (input) {
   return encodeCanonicalJson(normalizedGraphSetDigestPreimage(input))
 }
 
-export function hashBlindClientPublicBrowserNormalizedGraphSetV1 (input) {
+export function hashBlindClientPublicBrowserNormalizedGraphSetV2 (input) {
   return sha256NulDomain(NORMALIZED_GRAPH_SET_HASH_DOMAIN,
-    encodeCanonicalJson(createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1(input)))
+    encodeCanonicalJson(createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2(input)))
 }
 
 function parseCanonicalJson (input, field, canonicalize) {
@@ -740,7 +740,7 @@ function tupleInput (value) {
   return Object.freeze(output)
 }
 
-export function createBlindClientPublicBrowserArtifactTupleV1 (input) {
+export function createBlindClientPublicBrowserArtifactTupleV2 (input) {
   exactObject(input, ['profile', 'sourceClosureHash'], 'artifact tuple creation input')
   const identity = profileIdentity(input.profile)
   return tupleInput({
@@ -757,19 +757,19 @@ export function createBlindClientPublicBrowserArtifactTupleV1 (input) {
   })
 }
 
-export function encodeBlindClientPublicBrowserArtifactTupleV1 (input) {
+export function encodeBlindClientPublicBrowserArtifactTupleV2 (input) {
   return encodeCanonicalJson(tupleInput(input))
 }
 
-export function decodeBlindClientPublicBrowserArtifactTupleV1 (input) {
+export function decodeBlindClientPublicBrowserArtifactTupleV2 (input) {
   return parseCanonicalJson(input, 'artifact tuple', tupleInput)
 }
 
-export function hashBlindClientPublicBrowserArtifactTupleV1 (input) {
+export function hashBlindClientPublicBrowserArtifactTupleV2 (input) {
   const encoded = b4a.isBuffer(input) || ArrayBuffer.isView(input) || input instanceof ArrayBuffer
-    ? encodeBlindClientPublicBrowserArtifactTupleV1(
-      decodeBlindClientPublicBrowserArtifactTupleV1(input))
-    : encodeBlindClientPublicBrowserArtifactTupleV1(input)
+    ? encodeBlindClientPublicBrowserArtifactTupleV2(
+      decodeBlindClientPublicBrowserArtifactTupleV2(input))
+    : encodeBlindClientPublicBrowserArtifactTupleV2(input)
   return digest(TUPLE_HASH_DOMAIN, encoded)
 }
 
@@ -801,17 +801,17 @@ function manifestTuple (value) {
 
 function manifestInput (value) {
   exactObject(value, MANIFEST_FIELDS, 'artifact manifest')
-  if (value.schema !== MANIFEST_SCHEMA || value.version !== 1) {
+  if (value.schema !== MANIFEST_SCHEMA || value.version !== 2) {
     fail('BAD_BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT', 'artifact manifest schema or version is unsupported')
   }
   const tuple = manifestTuple(value)
-  const tupleHash = hashBlindClientPublicBrowserArtifactTupleV1(tuple)
+  const tupleHash = hashBlindClientPublicBrowserArtifactTupleV2(tuple)
   if (hashHex(value.tupleHash, 'tupleHash') !== tupleHash) {
     fail('BLIND_CLIENT_PUBLIC_BROWSER_TUPLE_MISMATCH', 'artifact manifest does not bind its canonical tuple')
   }
   return Object.freeze({
     schema: MANIFEST_SCHEMA,
-    version: 1,
+    version: 2,
     acceptedSourceCommit: tuple.acceptedSourceCommit,
     acceptedSourceTree: tuple.acceptedSourceTree,
     sourceClosureHash: tuple.sourceClosureHash,
@@ -827,14 +827,14 @@ function manifestInput (value) {
   })
 }
 
-export function createBlindClientPublicBrowserArtifactManifestV1 (input) {
+export function createBlindClientPublicBrowserArtifactManifestV2 (input) {
   exactObject(input, ['tuple', 'artifactBytes'], 'artifact manifest creation input')
   const tuple = tupleInput(input.tuple)
   const artifactBytes = bytes(input.artifactBytes, 'artifactBytes')
   const identity = profileIdentity(tuple.profile)
   return manifestInput({
     schema: MANIFEST_SCHEMA,
-    version: 1,
+    version: 2,
     acceptedSourceCommit: tuple.acceptedSourceCommit,
     acceptedSourceTree: tuple.acceptedSourceTree,
     sourceClosureHash: tuple.sourceClosureHash,
@@ -844,44 +844,44 @@ export function createBlindClientPublicBrowserArtifactManifestV1 (input) {
     artifactPath: tuple.artifactPath,
     exactSortedExports: tuple.exactSortedExports,
     toolchain: tuple.toolchain,
-    tupleHash: hashBlindClientPublicBrowserArtifactTupleV1(tuple),
+    tupleHash: hashBlindClientPublicBrowserArtifactTupleV2(tuple),
     artifactLength: artifactBytes.byteLength,
     artifactHash: hashBlindClientPublicBrowserArtifact(identity.profile, artifactBytes)
   })
 }
 
-export function encodeBlindClientPublicBrowserArtifactManifestV1 (input) {
+export function encodeBlindClientPublicBrowserArtifactManifestV2 (input) {
   return encodeCanonicalJson(manifestInput(input))
 }
 
-export function decodeBlindClientPublicBrowserArtifactManifestV1 (input) {
+export function decodeBlindClientPublicBrowserArtifactManifestV2 (input) {
   return parseCanonicalJson(input, 'artifact manifest', manifestInput)
 }
 
-export function hashBlindClientPublicBrowserArtifactManifestV1 (input) {
+export function hashBlindClientPublicBrowserArtifactManifestV2 (input) {
   let manifest
   let encoded
   if (b4a.isBuffer(input) || ArrayBuffer.isView(input) || input instanceof ArrayBuffer) {
-    manifest = decodeBlindClientPublicBrowserArtifactManifestV1(input)
-    encoded = encodeBlindClientPublicBrowserArtifactManifestV1(manifest)
+    manifest = decodeBlindClientPublicBrowserArtifactManifestV2(input)
+    encoded = encodeBlindClientPublicBrowserArtifactManifestV2(manifest)
   } else {
     manifest = manifestInput(input)
-    encoded = encodeBlindClientPublicBrowserArtifactManifestV1(manifest)
+    encoded = encodeBlindClientPublicBrowserArtifactManifestV2(manifest)
   }
   return digest(manifest.manifestHashDomain, encoded)
 }
 
-export function verifyBlindClientPublicBrowserArtifactV1 (input) {
+export function verifyBlindClientPublicBrowserArtifactV2 (input) {
   allowedObject(input,
     ['profile', 'manifestBytes', 'artifactBytes', 'expectedManifestHash', 'expectedSourceClosureHash'],
     ['expectedTupleHash'], 'artifact verification input')
   const identity = profileIdentity(input.profile)
   const manifestBytes = bytes(input.manifestBytes, 'manifestBytes')
-  const manifest = decodeBlindClientPublicBrowserArtifactManifestV1(manifestBytes)
+  const manifest = decodeBlindClientPublicBrowserArtifactManifestV2(manifestBytes)
   if (manifest.profile !== identity.profile) {
     fail('BLIND_CLIENT_PUBLIC_BROWSER_PROFILE_SWAP', 'artifact manifest has the wrong profile identity')
   }
-  const manifestHash = hashBlindClientPublicBrowserArtifactManifestV1(manifestBytes)
+  const manifestHash = hashBlindClientPublicBrowserArtifactManifestV2(manifestBytes)
   if (manifestHash !== hashHex(input.expectedManifestHash, 'expectedManifestHash')) {
     fail('BLIND_CLIENT_PUBLIC_BROWSER_MANIFEST_DRIFT', 'artifact manifest does not match its authenticated expected hash')
   }
@@ -914,7 +914,7 @@ export function verifyBlindClientPublicBrowserArtifactV1 (input) {
 function chromiumEvidenceInput (value) {
   exactObject(value, CHROMIUM_EVIDENCE_FIELDS, 'Chromium evidence')
   const identity = profileIdentity(value.profile)
-  if (value.schema !== CHROMIUM_EVIDENCE_SCHEMA || value.version !== 1 ||
+  if (value.schema !== CHROMIUM_EVIDENCE_SCHEMA || value.version !== 2 ||
       value.evidenceClass !== 'real-chromium' || value.artifactPath !== identity.artifactPath ||
       value.chromium !== 'Google Chrome for Testing 151.0.7922.34' ||
       value.chromiumExecutablePath !== CHROMIUM_EXECUTABLE_PATH ||
@@ -933,7 +933,7 @@ function chromiumEvidenceInput (value) {
   }
   return Object.freeze({
     schema: CHROMIUM_EVIDENCE_SCHEMA,
-    version: 1,
+    version: 2,
     evidenceClass: 'real-chromium',
     profile: identity.profile,
     artifactPath: identity.artifactPath,
@@ -967,7 +967,7 @@ function chromiumEvidenceInput (value) {
 function crossHostEvidenceInput (value) {
   exactObject(value, CROSS_HOST_EVIDENCE_FIELDS, 'cross-host evidence')
   const identity = profileIdentity(value.profile)
-  if (value.schema !== CROSS_HOST_EVIDENCE_SCHEMA || value.version !== 1 ||
+  if (value.schema !== CROSS_HOST_EVIDENCE_SCHEMA || value.version !== 2 ||
       value.evidenceClass !== 'clean-linux-container' || value.artifactPath !== identity.artifactPath ||
       value.acceptedSourceCommit !== ACCEPTED_SOURCE_COMMIT ||
       value.acceptedSourceTree !== ACCEPTED_SOURCE_TREE ||
@@ -975,7 +975,7 @@ function crossHostEvidenceInput (value) {
       value.standaloneAuthority !== false || value.sourceArchiveIdentity !== SOURCE_ARCHIVE_IDENTITY ||
       value.hostNodeExecutable !== HOST_NODE_EXECUTABLE ||
       value.hostNodeExecutableHash !== HOST_NODE_EXECUTABLE_HASH ||
-      value.hostNode !== 'v22.22.0' || value.hostModulesAbi !== '127' ||
+      value.hostNode !== 'v22.23.4' || value.hostModulesAbi !== '127' ||
       value.hostNapi !== '10' || value.hostPlatform !== 'darwin' ||
       value.hostArchitecture !== 'arm64' || value.headerCachePath !== HEADER_CACHE_PATH ||
       value.headerCacheFileCount !== 2726 || value.headerCacheSymlinkCount !== 0 ||
@@ -984,7 +984,7 @@ function crossHostEvidenceInput (value) {
       value.headerCacheInstallVersion !== '11' ||
       value.headerCacheInstallVersionHash !== HEADER_INSTALL_VERSION_HASH ||
       value.headerCacheNodeHeaderPath !== HEADER_NODE_H_PATH ||
-      value.headerCacheNodeHeaderBytes !== 69621 ||
+      value.headerCacheNodeHeaderBytes !== 69595 ||
       value.headerCacheNodeHeaderHash !== HEADER_NODE_H_HASH ||
       value.nativeAddonPath !== 'packages/blind-peercred/build/Release/blind_peercred.node' ||
       value.nativeAddonPackage !== '@hiverelay/blind-peercred' ||
@@ -998,7 +998,7 @@ function crossHostEvidenceInput (value) {
       value.containerCapabilitiesDropped !== true || value.containerNoNewPrivileges !== true ||
       value.installNetworkPhase !== 'networked-exact-lock-npm-ci-ignore-scripts' ||
       value.generationNetworkPhase !== 'none' ||
-      value.patchApplied !== 'hypercore-storage@3.2.0' || value.patchHash !== PATCH_HASH ||
+      value.patchApplied !== 'hypercore-storage@3.4.0' || value.patchHash !== PATCH_HASH ||
       value.containerNativeRebuild !== 'omitted-unreachable' ||
       value.fullNativeAddonReachable !== false || value.limitedNativeAddonReachable !== false ||
       value.artifactManifestByteEquality !== true || value.committedEvidenceInputsUntouched !== true ||
@@ -1008,7 +1008,7 @@ function crossHostEvidenceInput (value) {
   }
   return Object.freeze({
     schema: CROSS_HOST_EVIDENCE_SCHEMA,
-    version: 1,
+    version: 2,
     evidenceClass: 'clean-linux-container',
     profile: identity.profile,
     artifactPath: identity.artifactPath,
@@ -1024,7 +1024,7 @@ function crossHostEvidenceInput (value) {
     sourceArchiveIdentity: SOURCE_ARCHIVE_IDENTITY,
     hostNodeExecutable: HOST_NODE_EXECUTABLE,
     hostNodeExecutableHash: HOST_NODE_EXECUTABLE_HASH,
-    hostNode: 'v22.22.0',
+    hostNode: 'v22.23.4',
     hostModulesAbi: '127',
     hostNapi: '10',
     hostPlatform: 'darwin',
@@ -1037,7 +1037,7 @@ function crossHostEvidenceInput (value) {
     headerCacheInstallVersion: '11',
     headerCacheInstallVersionHash: HEADER_INSTALL_VERSION_HASH,
     headerCacheNodeHeaderPath: HEADER_NODE_H_PATH,
-    headerCacheNodeHeaderBytes: 69621,
+    headerCacheNodeHeaderBytes: 69595,
     headerCacheNodeHeaderHash: HEADER_NODE_H_HASH,
     nativeAddonPath: 'packages/blind-peercred/build/Release/blind_peercred.node',
     nativeAddonPackage: '@hiverelay/blind-peercred',
@@ -1056,7 +1056,7 @@ function crossHostEvidenceInput (value) {
     containerNoNewPrivileges: true,
     installNetworkPhase: 'networked-exact-lock-npm-ci-ignore-scripts',
     generationNetworkPhase: 'none',
-    patchApplied: 'hypercore-storage@3.2.0',
+    patchApplied: 'hypercore-storage@3.4.0',
     patchHash: PATCH_HASH,
     containerNativeRebuild: 'omitted-unreachable',
     fullNativeAddonReachable: false,
@@ -1072,19 +1072,19 @@ function crossHostEvidenceInput (value) {
   })
 }
 
-export function encodeBlindClientPublicBrowserChromiumEvidenceV1 (input) {
+export function encodeBlindClientPublicBrowserChromiumEvidenceV2 (input) {
   return encodeCanonicalJson(chromiumEvidenceInput(input))
 }
 
-export function decodeBlindClientPublicBrowserChromiumEvidenceV1 (input) {
+export function decodeBlindClientPublicBrowserChromiumEvidenceV2 (input) {
   return parseCanonicalJson(input, 'Chromium evidence', chromiumEvidenceInput)
 }
 
-export function encodeBlindClientPublicBrowserCrossHostEvidenceV1 (input) {
+export function encodeBlindClientPublicBrowserCrossHostEvidenceV2 (input) {
   return encodeCanonicalJson(crossHostEvidenceInput(input))
 }
 
-export function decodeBlindClientPublicBrowserCrossHostEvidenceV1 (input) {
+export function decodeBlindClientPublicBrowserCrossHostEvidenceV2 (input) {
   return parseCanonicalJson(input, 'cross-host evidence', crossHostEvidenceInput)
 }
 
@@ -1100,7 +1100,7 @@ function verifyEvidenceBinding (evidence, verified, field) {
   }
 }
 
-export function verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1 (input) {
+export function verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2 (input) {
   allowedObject(input, [
     'profile',
     'manifestBytes',
@@ -1112,7 +1112,7 @@ export function verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1 (input) 
     'chromiumEvidenceBytes',
     'crossHostEvidenceBytes'
   ], ['expectedTupleHash'], 'release evidence verification input')
-  const verified = verifyBlindClientPublicBrowserArtifactV1({
+  const verified = verifyBlindClientPublicBrowserArtifactV2({
     profile: input.profile,
     manifestBytes: input.manifestBytes,
     artifactBytes: input.artifactBytes,
@@ -1120,8 +1120,8 @@ export function verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1 (input) 
     expectedSourceClosureHash: input.expectedSourceClosureHash,
     ...(input.expectedTupleHash == null ? {} : { expectedTupleHash: input.expectedTupleHash })
   })
-  const chromium = decodeBlindClientPublicBrowserChromiumEvidenceV1(input.chromiumEvidenceBytes)
-  const crossHost = decodeBlindClientPublicBrowserCrossHostEvidenceV1(input.crossHostEvidenceBytes)
+  const chromium = decodeBlindClientPublicBrowserChromiumEvidenceV2(input.chromiumEvidenceBytes)
+  const crossHost = decodeBlindClientPublicBrowserCrossHostEvidenceV2(input.crossHostEvidenceBytes)
   verifyEvidenceBinding(chromium, verified, 'Chromium evidence')
   verifyEvidenceBinding(crossHost, verified, 'cross-host evidence')
   if (crossHost.normalizedGraphHash !==

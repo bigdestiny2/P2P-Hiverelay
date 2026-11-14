@@ -1,0 +1,219 @@
+{
+  "schema": "hiverelay.checkpoint-obligations.v1",
+  "lane_a_verbatim": "**A \u2014 freeze the internal-store successor and G04 participant interface.** Own only a new private successor artifact/spec/vector directory plus explicitly owned generator/decoder additions when compiled. Cover role identity, complete CORE state, cumulative history binding, checkpoint publication/coverage capability, bounded suffix replay, migration refusal/reader matrix and typed HC11 evidence. Reuse canonical codecs, current hashing/MAC machinery and native no-replace/owner primitives; do not add a general database or map serializer. Acceptance: deterministic positive/negative vectors for pristine/retired histories, paid OPEN-only, missing/regressed fields, role/identity/floor forks, unknown versions and cross-language byte equality on the exact intended targets. Preserve every predecessor vector/artifact. This is a format/interface acceptance, not runtime G02.",
+  "scope_interpretation": "Specify the six source-backed design obligations in a complete format/interface artifact with executable deterministic codecs/vectors. Runtime engine capture/hydration, checkpoint publication/pruning orchestration and actual HC11 coordinator implementation remain lanes B/C, not implementation authority here.",
+  "design_traceability": [
+    {
+      "id": "A-DESIGN-1",
+      "locked_clause_verbatim": "1. Introduce a new private internal-store format/catalog authority, with a distinct version/hash and explicit per-role checkpoint payloads. Keep all v1/v1.2 artifacts and decoders byte-identical. The outer checkpoint/manifest layouts may be reused only if their existing fields can unambiguously select the new role-specific payload and format; otherwise introduce explicit new versions. Pin exact keyspace, codec limits, accounting rules and predecessor behavior in reviewed vectors. Do not choose a version number by convention in an implementation lane.",
+      "contract": "FORMAT.md",
+      "sections": [
+        "1. Encoding and selection",
+        "3. Per-role complete state"
+      ],
+      "codec_or_interface": [
+        "Snapshot",
+        "rowCodecs",
+        "rowKeys"
+      ],
+      "runtime_implementation": "unimplemented; B/C required"
+    },
+    {
+      "id": "A-DESIGN-2",
+      "locked_clause_verbatim": "2. Give each authenticated role snapshot a mandatory historical fact that survives deletion: role identity, monotone irreversible-history state, exact covered WAL sequence/hash, and binding to the installation authority/history reference. For an untriggered full-WAL predecessor, derive the fact only from the accepted real reducers; a published successor must OR its predecessor fact with valid suffix transitions and never clear it. Preserve the original first-trigger receipt bytes. Validate snapshot history against the existing floor and authenticated checkpoint lineage before recovery; missing/false/conflicting history must never create fresh authority. The exact reference layout should be shared with the G04 interface design so it does not need another incompatible rewrite.",
+      "contract": "FORMAT.md",
+      "sections": [
+        "2. Mandatory cumulative history",
+        "6. Typed HC11 installation history"
+      ],
+      "codec_or_interface": [
+        "History",
+        "assertSnapshotSuccessor",
+        "Participants"
+      ],
+      "runtime_implementation": "unimplemented; B/C required"
+    },
+    {
+      "id": "A-DESIGN-3",
+      "locked_clause_verbatim": "3. Add complete CORE semantic records, including canonical prepared admissions for paid OPEN, MIRROR attempts/results/retry state, active corpus and durable fork/length/lease floors, PROVE pin/source references and retained spend evidence. Reconstruct all indexes/counts/accounting from canonical records, using the same reducer invariants. Capture transient work by draining or refusing it; persisted live/reserved OPEN records recover under the existing terminalization rule, without ticket resurrection.",
+      "contract": "FORMAT.md",
+      "sections": [
+        "3. Per-role complete state"
+      ],
+      "codec_or_interface": [
+        "CoreState",
+        "validateCore",
+        "PaidOpen",
+        "Generation",
+        "Proof"
+      ],
+      "runtime_implementation": "unimplemented; B/C required"
+    },
+    {
+      "id": "A-DESIGN-4",
+      "locked_clause_verbatim": "4. Add branded capture and hydrate operations inside each real engine, tied to its root, active owner lease, WAL barrier and format authority. Reuse the real private reducers for suffix replay. Capture epoch/descriptor/recovery-gap state, retention bookkeeping and body reference ownership with the exact WAL tuple. Validate all live referenced opaque bytes and quotas before orphan cleanup, tail truncation, clock sweeps, session terminalization, or visibility. The shadow must be detached until the joint authority is complete; callers cannot supply a fabricated \u201ccomplete\u201d state or arbitrary successful semantic callback.",
+      "contract": "FORMAT.md",
+      "sections": [
+        "4. Engine-owned capture, hydration and suffix interface"
+      ],
+      "codec_or_interface": [
+        "participant-contract.d.ts:EngineCheckpointPort",
+        "ReplayBinding"
+      ],
+      "runtime_implementation": "unimplemented; B/C required"
+    },
+    {
+      "id": "A-DESIGN-5",
+      "locked_clause_verbatim": "5. Publish immutable snapshot/header, verify them, advance both manifest slots by existing CAS order, then mint a root/role/anchor-specific pruning capability. It must prove snapshot completeness, cumulative history coverage, retained spends/retry pins and valid lineage under the current owner. Only it may authorize sealed-prefix deletion. Keep the live segment and all checkpoint/snapshot finals initially; no checkpoint GC is needed to complete this first restoration component. Removing spent state still requires real retention transitions; serialization is not permission to discard it.",
+      "contract": "FORMAT.md",
+      "sections": [
+        "5. Publication and pruning authority"
+      ],
+      "codec_or_interface": [
+        "participant-contract.d.ts:RoleCheckpointCoordinator",
+        "CoverageBinding"
+      ],
+      "runtime_implementation": "unimplemented; B/C required"
+    },
+    {
+      "id": "A-DESIGN-6",
+      "locked_clause_verbatim": "6. On restart, authenticate all participating root manifests/checkpoints/history and shared authority first. Hydrate each shadow at its own anchor; mechanically verify retained covered frames without applying them twice, then semantically apply only the suffix. Revalidate all file/lease identities, floor and source tuples before handing the state to mutable engine open. Extend the existing startup handoff, without releasing store ownership or conflating reader integrity with write availability after quarantine.",
+      "contract": "FORMAT.md",
+      "sections": [
+        "4. Engine-owned capture, hydration and suffix interface",
+        "6. Typed HC11 installation history"
+      ],
+      "codec_or_interface": [
+        "participant-contract.d.ts:SharedHistoryPort",
+        "assertParticipantsSuccessor",
+        "ReplayBinding"
+      ],
+      "runtime_implementation": "unimplemented; B/C required"
+    }
+  ],
+  "deliverables": [
+    {
+      "id": "A-DELIVERABLE-1",
+      "locked_text_verbatim": "Distinct private internal-store successor with explicit version/hash/catalog, per-role canonical payloads and exact bounded keyspace; preserve all frozen predecessor bytes and decoders.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-2",
+      "locked_text_verbatim": "Mandatory monotone role history, exact covered WAL tuple and installation authority reference semantics; history comes from validated reducer transitions, survives retirement and cannot clear across predecessors.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-3",
+      "locked_text_verbatim": "Complete CORE semantic payload contract: paid OPEN prepared admission and lifecycle, MIRROR attempts/results/retries, active corpus references, persistent fork/length/lease floors, PROVE pin/source state, retained spends and derived accounting/index invariants.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-4",
+      "locked_text_verbatim": "Typed per-root capture/hydrate, checkpoint publication/coverage and suffix replay interfaces with root/role/lease/WAL/format/lineage binding; opaque body ownership; bounded u64 sequence distinct from observed work limits; no fabricated semantic callbacks.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-5",
+      "locked_text_verbatim": "Explicit snapshot/header/manifest commit order and coverage capability requirements before physical pruning; anti-replay retention, cancellation, ownership and quarantine remain normative obligations for later implementation.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-6",
+      "locked_text_verbatim": "Typed opaque HC11 participant evidence and shared installation history interface without representing HC11 as blind WAL; state whether authority is first irreversible bit/per-role coverage or additionally later append high-water, and limit claims accordingly.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-7",
+      "locked_text_verbatim": "Compatibility/refusal and migration/rollback record covering old/full/pruned/unknown formats, no source-downgrade authorization, D7 dual-read-only post-trigger constraint, closed whole-copy versus authenticated pruned restore versus stale-backup/device-rebind proof.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-8",
+      "locked_text_verbatim": "Deterministic positive/negative vectors for pristine and legally retired histories, paid OPEN-only, missing/regressed facts, role/identity/floor forks, incomplete CORE state and unknown versions; byte equality on explicitly pinned actual intended runtime targets with unsupported rows stated honestly.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    },
+    {
+      "id": "A-DELIVERABLE-9",
+      "locked_text_verbatim": "Protected-source provenance, exact clean commits, immutable evidence snapshots/raw command results and strict handoff/evidence for independent contract review; no runtime G02/G04/G05 or production closure claim.",
+      "evidence": [
+        "FORMAT.md",
+        "source-bindings.json",
+        "format-authority-v2.json",
+        "vectors-manifest.json",
+        "../../../../packages/blind-protocol/checkpoint-format-successor/participant-contract.d.ts"
+      ],
+      "status": "produced-for-independent-review"
+    }
+  ],
+  "excluded_runtime_lanes": {
+    "B": "Real three-root checkpoint publication, physical pruning and authenticated engine hydration.",
+    "C": "Actual shared blind/HC11 authority, runtime append ordering, restore and G05 qualification."
+  },
+  "acceptance_gate": "027-CHECKPOINT-FORMAT-INDEPENDENT-REVIEW",
+  "self_accepted": false,
+  "continuity_correction": {
+    "predecessor_commit": "699154da16a0be40b92134335bc0b113eb5c30a9",
+    "findings": [
+      "F4: retained OPEN identity, same-state exactness, legal transitions with suffix WAL and terminal finality",
+      "F5: newly expired PROVE suffix WAL with original evidence and expiry finality"
+    ],
+    "qualification": "Positive and individually valid negative relationships, frozen codec/hash/source binding regeneration, independent Python byte/hash roundtrip, actual predecessor family reconstruction and indexed capacity guards; exact target evidence in successor handoff.",
+    "authority": "Private format correction only; capture/hydration/publication/pruning and G04/G05 remain required."
+  }
+}

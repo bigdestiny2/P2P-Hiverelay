@@ -31,6 +31,8 @@
 #   HIVERELAY_API_KEY=...         (secures management endpoints)
 #   HIVERELAY_API_PORT=9100       (API port inside container)
 #   HIVERELAY_HOLESAIL=1          (enable Holesail for NAT traversal)
+#   HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json
+#   HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256
 #   LNBITS_URL=http://...         (LNbits payment provider; auto-detected on Umbrel)
 #   LNBITS_ADMIN_KEY=...          (LNbits admin key for invoice creation)
 
@@ -50,7 +52,7 @@
 #   https://github.com/holepunchto/udx-native
 #
 # Node 22 LTS — Bare/Pear runtime targets stay aligned.
-FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS deps
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS deps
 WORKDIR /app
 
 # Install build tools needed for any native deps that DO build from
@@ -70,6 +72,8 @@ COPY packages/blind-peercred/binding.gyp packages/blind-peercred/peercred.cc pac
 COPY packages/blind-edge/package.json packages/blind-edge/
 COPY packages/blind-daemon/package.json packages/blind-daemon/
 COPY packages/core/package.json packages/core/
+COPY packages/core/platform/apply-hypercore-storage-migration-patch.js packages/core/platform/
+COPY packages/core/patches packages/core/patches/
 COPY packages/services/package.json packages/services/
 COPY packages/client/package.json packages/client/
 COPY packages/verifier/package.json packages/verifier/
@@ -82,7 +86,7 @@ RUN npm ci --workspaces --include-workspace-root --no-audit --no-fund && \
     npm prune --omit=dev --workspaces --include-workspace-root --ignore-scripts --no-audit --no-fund
 
 # ─── Stage 2: runtime ─────────────────────────────────────────────────
-FROM node:22-bookworm-slim@sha256:53ada149d435c38b14476cb57e4a7da73c15595aba79bd6971b547ceb6d018bf AS runtime
+FROM node:22.23.5-bookworm-slim@sha256:e9f565d32859f0cbfb52125eafe8be39390f24dac302dc3cdf566e8ba3ab21ee AS runtime
 
 # tini for proper PID 1 signal handling (graceful shutdown).
 # wget for HEALTHCHECK without bringing curl/openssl bloat.
@@ -105,13 +109,13 @@ LABEL org.opencontainers.image.revision="$SOURCE_COMMIT"
 
 WORKDIR /app
 
-# Bring in already-installed modules from the deps stage. npm 7+ hoists
-# most workspace deps to the root `node_modules/`. Per-package
-# `node_modules/` only exist when there's a version conflict — historically
-# `packages/core/node_modules/` etc. weren't created by `npm ci --workspaces`
-# at all, so the per-package COPY commands here used to fail the whole
-# build. Copy the root tree once; that's enough for production startup.
+# Preserve both hoisted and workspace-local production dependencies. Conflicting
+# versions (including the pinned sodium cohort and x402 SDK) live under packages;
+# copying only the root tree silently resolves an older hoisted package instead.
+# The dependency-stage packages directory always exists and also carries native
+# workspace build outputs. The exact source overlay below replaces its manifests.
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages ./packages
 
 # Copy application source (respects .dockerignore)
 COPY . .
@@ -120,6 +124,9 @@ COPY . .
 # compiler toolchain are present. Its workspace build output is not hoisted
 # into node_modules, so carry it into the otherwise toolchain-free runtime.
 COPY --from=deps /app/packages/blind-peercred/build ./packages/blind-peercred/build
+
+# Resolve from each actual consuming workspace, not the root's different graph.
+RUN node packages/core/platform/verify-production-workspace-dependencies.js
 
 # Non-root user for security. Fixed UID/GID so volume permissions stay
 # consistent across image rebuilds — operators with existing data
@@ -161,6 +168,9 @@ EXPOSE 9100
 ENV NODE_ENV=production \
     HIVERELAY_STORAGE=/data \
     HIVERELAY_CONFIG_DIR=/config \
+    HIVERELAY_REQUIRE_GENERATION_RECEIPT=1 \
+    HIVERELAY_GENERATION_RECEIPT=/config/storage-generation-receipt.v1.json \
+    HIVERELAY_GENERATION_RECEIPT_SHA256_FILE=/config/storage-generation-receipt.v1.sha256 \
     HIVERELAY_LOG_LEVEL=info \
     HIVERELAY_API_PORT=9100 \
     HIVERELAY_API_HOST=0.0.0.0

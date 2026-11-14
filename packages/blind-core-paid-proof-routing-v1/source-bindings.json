@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "profile": "hiverelay.private.core-paid-proof-routing.v1",
+  "masterBase": "44f81fff03676e8285e828e2fef94be94e555bd1",
+  "upstreamSource": "d0d88ba363f316fdf36bf56ce9bec286c554e107",
+  "upstreamProfileDigest": "1e9945d3f46d388926058015b2424c36dd37686a1001546e2b6023d5deedb70e",
+  "modifiesWireOrWalBytes": false,
+  "preAdmissionLookup": "full canonical CORE serve request including admission bytes and independently recomputed relay-bound request commitment; bounded committed pin sizing only",
+  "replayAuthority": "parent storage prepared spend/op/request validation, live exact pin, immutable source reference and proof hash, signed acknowledgement and durability fences",
+  "retiredBodyRead": "only storage-owned replay after admission revalidation and coordinator budget reservation",
+  "files": [
+    {
+      "path": "package-lock.json",
+      "sha256": "8bbb3145b600e196182756ae844322984d37f082a5904e5b186cc6d347363183"
+    },
+    {
+      "path": "packages/blind-daemon/coordinator.js",
+      "sha256": "3bc097fefb0f0e4d7f0dbbe7abeaa288fba49bff918d354d0cba0e2791998483"
+    },
+    {
+      "path": "packages/blind-daemon/admission-coordinator.js",
+      "sha256": "1984ce47674566b02eca8b669b025f47ac0838ff79b0d3a25625b3c8a69ff73d"
+    },
+    {
+      "path": "packages/blind-daemon/core-runtime-adapter.js",
+      "sha256": "093133293b238558f8e970e38bc20f952a66567c62a08d65ed73f3b6b2e426b6"
+    },
+    {
+      "path": "packages/blind-daemon/core-storage-engine-checkpoint-v1.js",
+      "sha256": "a0096e25e73d04f5d8d39fc145b065d257b7647968ce3b33e65a023545367408"
+    },
+    {
+      "path": "packages/blind-protocol/hashes.js",
+      "sha256": "5c764dee359d9fba7324cca1e5fb7491e12c4ecb581b292ac2da3151ad0b8fd6"
+    },
+    {
+      "path": "packages/blind-protocol/schemas.js",
+      "sha256": "f9bd83e70fe802f099e9bbf6c1ebc053fedc4b7f511b9286200d37d1bb87054d"
+    },
+    {
+      "path": "packages/blind-core-upstream-hc11-v1/index.js",
+      "sha256": "c29d1676a7a36ee05aa47c91355dd38a974958cdc19642d2c467f1b503a1266f"
+    },
+    {
+      "path": "packages/blind-core-upstream-hc11-v1/format.js",
+      "sha256": "fe85056c4a58eb0d13792480d7c645be70c1a15829dfe358d18cd89959326116"
+    },
+    {
+      "path": "packages/blind-core-upstream-hc11-v1/format-contract.json",
+      "sha256": "8bc8e8a0ae1c763709eed8042a68c0f71aa6a4341da3e40e6149d463fb5025b1"
+    },
+    {
+      "path": "packages/blind-core-upstream-hc11-v1/package-lock.json",
+      "sha256": "df9f7373f93fbdf40a28620c5e65a7d7b229802e1c9a89a472cad2f5cc5eaa09"
+    }
+  ]
+}

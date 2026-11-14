@@ -1519,7 +1519,7 @@ function normalizeJournal (journal) {
   return journal
 }
 
-function normalizeJournalEntry (entry, expectedSeq) {
+export function normalizeJournalEntry (entry, expectedSeq) {
   if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null
   if (entry.version !== OUTBOXLOG_JOURNAL_VERSION) return null
   if (entry.seq !== expectedSeq) return null

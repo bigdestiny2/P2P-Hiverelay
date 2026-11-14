@@ -137,20 +137,24 @@ test('storage cap: wrong backing device fails closed without rewriting explicit 
 
 test('storage admission: already-over-cap blocks adoption but keeps management non-destructive', async (t) => {
   const config = {
+    storage: STORAGE,
     maxStorageBytes: 20 * GiB,
     eviction: { enabled: false }
   }
   markStorageCapExplicit(config, 'management-api')
   // A direct/programmatic config has no filesystem proof; mark a resolved
   // physical snapshot so this test isolates over-cap semantics.
-  const fs = filesystem({ totalBytes: 100 * GiB, availableBytes: 80 * GiB })
+  const fs = filesystem({
+    totalBytes: 100 * GiB,
+    availableBytes: 80 * GiB,
+    currentStorageBytes: 25 * GiB
+  })
   resolveStorageCap({ ...config, storage: STORAGE }, fs.opts)
 
   const node = {
     config,
     seeder: { maxStorageBytes: 20 * GiB },
     _storageUsedBytes: () => 25 * GiB,
-    _storageAdmission: RelayNode.prototype._storageAdmission,
     diskMonitor: null,
     storageAccounting: null
   }
@@ -170,7 +174,9 @@ test('storage admission: already-over-cap blocks adoption but keeps management n
   })
   node.storageAdmission.refreshFilesystem()
 
-  const result = await RelayNode.prototype.applyStorageDesignation.call(node, 20 * GiB)
+  const result = await RelayNode.prototype.applyStorageDesignation.call(node, 20 * GiB, {
+    storageProof: fs.opts
+  })
 
   t.is(result.ok, true, 'management update remains available')
   t.is(result.overCap, true)
@@ -344,7 +350,6 @@ test('storage designation reports the profile ceiling that actually blocks adopt
     seeder: { maxStorageBytes: 20 * GiB },
     // Inside the 20 GiB operator cap, but past the 7 GiB durable pool.
     _storageUsedBytes: () => 8 * GiB,
-    _storageAdmission: RelayNode.prototype._storageAdmission,
     diskMonitor: null,
     storageAccounting: null
   }
@@ -362,7 +367,16 @@ test('storage designation reports the profile ceiling that actually blocks adopt
     })
   })
 
-  const result = await RelayNode.prototype.applyStorageDesignation.call(node, 20 * GiB)
+  const fs = filesystem({
+    totalBytes: 100 * GiB,
+    availableBytes: 80 * GiB,
+    currentStorageBytes: 8 * GiB,
+    realpath: dir
+  })
+
+  const result = await RelayNode.prototype.applyStorageDesignation.call(node, 20 * GiB, {
+    storageProof: fs.opts
+  })
 
   t.is(result.ok, true)
   t.is(result.maxStorageBytes, 20 * GiB, 'the operator designation is echoed unchanged')

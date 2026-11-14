@@ -1,0 +1,26 @@
+{
+  "name": "@hiverelay/blind-core-upstream-hc11-v1",
+  "version": "0.0.0-r01.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./format": "./format.js"
+  },
+  "scripts": {
+    "test": "node --test test/real-core.test.mjs",
+    "vectors": "node generate-vectors.mjs",
+    "check:vectors": "node generate-vectors.mjs --check",
+    "test:integration": "node --test test/storage.test.mjs"
+  },
+  "dependencies": {
+    "hypercore": "11.34.1",
+    "corestore": "7.11.1",
+    "compact-encoding": "3.3.0",
+    "hypercore-crypto": "3.7.0",
+    "flat-tree": "1.13.0"
+  },
+  "engines": {
+    "node": ">=22.22.0"
+  }
+}

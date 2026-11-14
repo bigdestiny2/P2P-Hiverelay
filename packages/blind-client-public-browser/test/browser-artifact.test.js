@@ -6,21 +6,21 @@ import * as full from '../src/browser-control.js'
 import {
   BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES,
   BLIND_CLIENT_PUBLIC_BROWSER_TOOLCHAIN,
-  createBlindClientPublicBrowserArtifactManifestV1,
-  createBlindClientPublicBrowserNormalizedGraphDigestPreimageV1,
-  createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1,
-  createBlindClientPublicBrowserArtifactTupleV1,
-  encodeBlindClientPublicBrowserArtifactManifestV1,
-  encodeBlindClientPublicBrowserChromiumEvidenceV1,
-  encodeBlindClientPublicBrowserCrossHostEvidenceV1,
-  encodeBlindClientPublicBrowserNormalizedGraphDigestPreimageV1,
-  encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1,
-  hashBlindClientPublicBrowserArtifactManifestV1,
-  hashBlindClientPublicBrowserArtifactTupleV1,
-  hashBlindClientPublicBrowserNormalizedGraphSetV1,
-  hashBlindClientPublicBrowserNormalizedGraphV1,
-  verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1,
-  verifyBlindClientPublicBrowserArtifactV1
+  createBlindClientPublicBrowserArtifactManifestV2,
+  createBlindClientPublicBrowserNormalizedGraphDigestPreimageV2,
+  createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2,
+  createBlindClientPublicBrowserArtifactTupleV2,
+  encodeBlindClientPublicBrowserArtifactManifestV2,
+  encodeBlindClientPublicBrowserChromiumEvidenceV2,
+  encodeBlindClientPublicBrowserCrossHostEvidenceV2,
+  encodeBlindClientPublicBrowserNormalizedGraphDigestPreimageV2,
+  encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2,
+  hashBlindClientPublicBrowserArtifactManifestV2,
+  hashBlindClientPublicBrowserArtifactTupleV2,
+  hashBlindClientPublicBrowserNormalizedGraphSetV2,
+  hashBlindClientPublicBrowserNormalizedGraphV2,
+  verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2,
+  verifyBlindClientPublicBrowserArtifactV2
 } from '../browser-artifact.js'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -130,26 +130,26 @@ function artifactFixture (profile = 'full') {
   const identity = BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES[profile]
   const sourceClosureHash = '11'.repeat(32)
   const artifactBytes = Buffer.from('export const deterministic = true\n')
-  const tuple = createBlindClientPublicBrowserArtifactTupleV1({ profile, sourceClosureHash })
-  const manifest = createBlindClientPublicBrowserArtifactManifestV1({ tuple, artifactBytes })
-  const manifestBytes = encodeBlindClientPublicBrowserArtifactManifestV1(manifest)
+  const tuple = createBlindClientPublicBrowserArtifactTupleV2({ profile, sourceClosureHash })
+  const manifest = createBlindClientPublicBrowserArtifactManifestV2({ tuple, artifactBytes })
+  const manifestBytes = encodeBlindClientPublicBrowserArtifactManifestV2(manifest)
   return {
     profile,
     identity,
     sourceClosureHash,
     artifactBytes,
     tuple,
-    tupleHash: hashBlindClientPublicBrowserArtifactTupleV1(tuple),
+    tupleHash: hashBlindClientPublicBrowserArtifactTupleV2(tuple),
     manifest,
     manifestBytes,
-    manifestHash: hashBlindClientPublicBrowserArtifactManifestV1(manifestBytes)
+    manifestHash: hashBlindClientPublicBrowserArtifactManifestV2(manifestBytes)
   }
 }
 
 function chromiumEvidence (fixture) {
   return {
-    schema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV1',
-    version: 1,
+    schema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV2',
+    version: 2,
     evidenceClass: 'real-chromium',
     profile: fixture.identity.profile,
     artifactPath: fixture.identity.artifactPath,
@@ -179,8 +179,8 @@ function chromiumEvidence (fixture) {
 
 function crossHostEvidence (fixture) {
   return {
-    schema: 'HiveRelayBlindClientPublicBrowserArtifactCrossHostEvidenceV1',
-    version: 1,
+    schema: 'HiveRelayBlindClientPublicBrowserArtifactCrossHostEvidenceV2',
+    version: 2,
     evidenceClass: 'clean-linux-container',
     profile: fixture.identity.profile,
     artifactPath: fixture.identity.artifactPath,
@@ -189,28 +189,28 @@ function crossHostEvidence (fixture) {
     manifestHash: fixture.manifestHash,
     tupleHash: fixture.tupleHash,
     sourceClosureHash: fixture.sourceClosureHash,
-    acceptedSourceCommit: '1a114f64c97547cab6a18102c2ef4bff930e53ed',
-    acceptedSourceTree: '5a341ba17a3d91a750cac94ba51116fe3552a6aa',
+    acceptedSourceCommit: '1e1466d3ed486b4d6fc68abccb9a8375873af626',
+    acceptedSourceTree: '2b9dbf4a5165d3562df12b0b21ca10dcace71288',
     candidateIdentityBinding: 'external-postcommit-final-sequence',
     standaloneAuthority: false,
     sourceArchiveIdentity: 'same-committed-relative-bytes',
-    hostNodeExecutable: '/opt/homebrew/Cellar/node@22/22.22.0/bin/node',
-    hostNodeExecutableHash: '59776c1735b2c28a28b0ae00b58bd9cbe524572e0caf62e043d5e44a62d98cce',
-    hostNode: 'v22.22.0',
+    hostNodeExecutable: '/opt/homebrew/Cellar/node@22/22.23.4/bin/node',
+    hostNodeExecutableHash: '210bbbc13dee7ee3913eef05cc9d7eaee5b327a86dfe524bfb8cb3e5949e50dc',
+    hostNode: 'v22.23.4',
     hostModulesAbi: '127',
     hostNapi: '10',
     hostPlatform: 'darwin',
     hostArchitecture: 'arm64',
-    headerCachePath: '/Users/localllm/Library/Caches/node-gyp/22.22.0',
+    headerCachePath: '/Users/localllm/Library/Caches/node-gyp/22.23.4',
     headerCacheFileCount: 2726,
     headerCacheSymlinkCount: 0,
-    headerCacheDigest: 'dcd517fb9670e6192712badf0bdf1a9dfc4c8ff88887d06e4d4f4eb42e574990',
-    headerCachePostflightDigest: 'dcd517fb9670e6192712badf0bdf1a9dfc4c8ff88887d06e4d4f4eb42e574990',
+    headerCacheDigest: 'ab912ffccf49c82259f265c35860f4c5de7a5ba0f50d276a23462c31a8d19dc7',
+    headerCachePostflightDigest: 'ab912ffccf49c82259f265c35860f4c5de7a5ba0f50d276a23462c31a8d19dc7',
     headerCacheInstallVersion: '11',
     headerCacheInstallVersionHash: '25d4f2a86deb5e2574bb3210b67bb24fcc4afb19f93a7b65a057daa874a9d18e',
-    headerCacheNodeHeaderPath: '/Users/localllm/Library/Caches/node-gyp/22.22.0/include/node/node.h',
-    headerCacheNodeHeaderBytes: 69621,
-    headerCacheNodeHeaderHash: '4da8d691b256d4bef9c0e89114645f08787dc4892eae76240d28efdf4fa55019',
+    headerCacheNodeHeaderPath: '/Users/localllm/Library/Caches/node-gyp/22.23.4/include/node/node.h',
+    headerCacheNodeHeaderBytes: 69595,
+    headerCacheNodeHeaderHash: 'bc47b118a731e9663b145e4823ebc7f31237140d6ea95417519d894d7a0498cb',
     nativeAddonPath: 'packages/blind-peercred/build/Release/blind_peercred.node',
     nativeAddonPackage: '@hiverelay/blind-peercred',
     nativeAddonVersion: '1.0.0-rc.1',
@@ -228,7 +228,7 @@ function crossHostEvidence (fixture) {
     containerNoNewPrivileges: true,
     installNetworkPhase: 'networked-exact-lock-npm-ci-ignore-scripts',
     generationNetworkPhase: 'none',
-    patchApplied: 'hypercore-storage@3.2.0',
+    patchApplied: 'hypercore-storage@3.4.0',
     patchHash: 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53',
     containerNativeRebuild: 'omitted-unreachable',
     fullNativeAddonReachable: false,
@@ -246,7 +246,7 @@ function crossHostEvidence (fixture) {
 
 test('canonical verifier binds profile, tuple, artifact and complete release evidence', t => {
   const fixture = artifactFixture()
-  const verified = verifyBlindClientPublicBrowserArtifactV1({
+  const verified = verifyBlindClientPublicBrowserArtifactV2({
     profile: fixture.profile,
     manifestBytes: fixture.manifestBytes,
     artifactBytes: fixture.artifactBytes,
@@ -256,7 +256,7 @@ test('canonical verifier binds profile, tuple, artifact and complete release evi
   })
   t.is(verified.artifactHash, fixture.manifest.artifactHash)
 
-  const release = verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1({
+  const release = verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2({
     profile: fixture.profile,
     manifestBytes: fixture.manifestBytes,
     artifactBytes: fixture.artifactBytes,
@@ -265,9 +265,9 @@ test('canonical verifier binds profile, tuple, artifact and complete release evi
     expectedNormalizedGraphHash: '33'.repeat(32),
     expectedNormalizedGraphSetHash: '44'.repeat(32),
     expectedTupleHash: fixture.tupleHash,
-    chromiumEvidenceBytes: encodeBlindClientPublicBrowserChromiumEvidenceV1(
+    chromiumEvidenceBytes: encodeBlindClientPublicBrowserChromiumEvidenceV2(
       chromiumEvidence(fixture)),
-    crossHostEvidenceBytes: encodeBlindClientPublicBrowserCrossHostEvidenceV1(
+    crossHostEvidenceBytes: encodeBlindClientPublicBrowserCrossHostEvidenceV2(
       crossHostEvidence(fixture))
   })
   t.is(release.evidenceValid, true)
@@ -306,76 +306,76 @@ function normalizedGraphFixture () {
 
 test('normalized graph digests use exact SHA-256 NUL domains and canonical bytes', t => {
   const graph = normalizedGraphFixture()
-  const fullPreimage = createBlindClientPublicBrowserNormalizedGraphDigestPreimageV1({
+  const fullPreimage = createBlindClientPublicBrowserNormalizedGraphDigestPreimageV2({
     profileId: 'full',
     normalizedGraph: graph
   })
-  const fullBytes = encodeBlindClientPublicBrowserNormalizedGraphDigestPreimageV1(fullPreimage)
+  const fullBytes = encodeBlindClientPublicBrowserNormalizedGraphDigestPreimageV2(fullPreimage)
   t.is(fullBytes.toString(), JSON.stringify({
-    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphDigestV1',
+    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphDigestV2',
     profileId: 'full',
     normalizedGraph: graph
   }, null, 2) + '\n')
-  const full = hashBlindClientPublicBrowserNormalizedGraphV1({
+  const full = hashBlindClientPublicBrowserNormalizedGraphV2({
     profileId: 'full',
     normalizedGraph: graph
   })
-  const limited = hashBlindClientPublicBrowserNormalizedGraphV1({
+  const limited = hashBlindClientPublicBrowserNormalizedGraphV2({
     profileId: 'limited',
     normalizedGraph: graph
   })
-  t.is(full, '8217f6dc1898f5f37518fdf119d10eb5bdb52f2151330046423bf86b5eefdd04')
-  t.is(limited, '9ea57348efc8f66b788e4eae2fc665b2c5b6330976d3e4b7de5193c07167a7b2')
+  t.is(full, 'd37e970f1d1bc84f2716af71436831b904bb578a36b47a375222c007a18cd0a6')
+  t.is(limited, '133eb908994cf8193ac8703608d506905d87fd92d846d26be75aab3a490eea6d')
   t.unlike(full, limited)
 
-  const setPreimage = createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1({
+  const setPreimage = createBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2({
     full,
     limited
   })
-  const setBytes = encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1(setPreimage)
+  const setBytes = encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2(setPreimage)
   t.is(setBytes.toString(), JSON.stringify({
-    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV1',
+    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV2',
     profileOrder: ['full', 'limited'],
     profiles: { full, limited }
   }, null, 2) + '\n')
-  t.is(hashBlindClientPublicBrowserNormalizedGraphSetV1({ full, limited }),
-    '95bdaf70841ec22feb54796a5dd5f7a39777942ddaecfbc23dc5e5b39b50db67')
+  t.is(hashBlindClientPublicBrowserNormalizedGraphSetV2({ full, limited }),
+    '4a9d80919ddc8a2d15967970306b06ca5aab3d07d8f3c84b42af7fef05aea087')
 })
 
 test('normalized graph digests reject mutation, swap, field/order drift and substitution', t => {
   const graph = normalizedGraphFixture()
-  const full = hashBlindClientPublicBrowserNormalizedGraphV1({ profileId: 'full', normalizedGraph: graph })
-  const limited = hashBlindClientPublicBrowserNormalizedGraphV1({ profileId: 'limited', normalizedGraph: graph })
-  const set = hashBlindClientPublicBrowserNormalizedGraphSetV1({ full, limited })
+  const full = hashBlindClientPublicBrowserNormalizedGraphV2({ profileId: 'full', normalizedGraph: graph })
+  const limited = hashBlindClientPublicBrowserNormalizedGraphV2({ profileId: 'limited', normalizedGraph: graph })
+  const set = hashBlindClientPublicBrowserNormalizedGraphSetV2({ full, limited })
   const mutated = structuredClone(graph)
   mutated.outputs[0].bytes++
-  t.unlike(hashBlindClientPublicBrowserNormalizedGraphV1({
+  t.unlike(hashBlindClientPublicBrowserNormalizedGraphV2({
     profileId: 'full',
     normalizedGraph: mutated
   }), full)
-  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV1({
+  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV2({
     normalizedGraph: graph,
     profileId: 'full'
   }), /canonical order/)
-  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV1({
+  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV2({
     profileId: 'full',
     normalizedGraph: { outputs: graph.outputs, inputs: graph.inputs }
   }), /canonical order/)
-  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV1({
+  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV2({
     profileId: 'full',
     normalizedGraph: { ...graph, unknown: true }
   }), /missing or unexpected/)
-  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV1({
+  t.exception(() => hashBlindClientPublicBrowserNormalizedGraphV2({
     profileId: 'full',
     normalizedGraph: { inputs: graph.inputs }
   }), /missing or unexpected/)
-  t.exception(() => encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1({
-    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV1',
+  t.exception(() => encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2({
+    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV2',
     profileOrder: ['limited', 'full'],
     profiles: { full, limited }
   }), /ordered inventory/)
-  t.exception(() => encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV1({
-    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV1',
+  t.exception(() => encodeBlindClientPublicBrowserNormalizedGraphSetDigestPreimageV2({
+    schema: 'HiveRelayBlindClientPublicBrowserNormalizedGraphSetDigestV2',
     profileOrder: ['full', 'limited'],
     profiles: { limited, full }
   }), /canonical order/)
@@ -390,29 +390,29 @@ test('normalized graph digests reject mutation, swap, field/order drift and subs
     expectedSourceClosureHash: fixture.sourceClosureHash,
     expectedNormalizedGraphHash: evidence.normalizedGraphHash,
     expectedNormalizedGraphSetHash: evidence.normalizedGraphSetHash,
-    chromiumEvidenceBytes: encodeBlindClientPublicBrowserChromiumEvidenceV1(chromiumEvidence(fixture)),
-    crossHostEvidenceBytes: encodeBlindClientPublicBrowserCrossHostEvidenceV1(evidence)
+    chromiumEvidenceBytes: encodeBlindClientPublicBrowserChromiumEvidenceV2(chromiumEvidence(fixture)),
+    crossHostEvidenceBytes: encodeBlindClientPublicBrowserCrossHostEvidenceV2(evidence)
   }
-  t.exception(() => verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1({
+  t.exception(() => verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2({
     ...input,
     expectedNormalizedGraphHash: limited
   }), /profile graph digest/)
-  t.exception(() => verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1({
+  t.exception(() => verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2({
     ...input,
     expectedNormalizedGraphSetHash: set
   }), /ordered graph set digest/)
-  t.exception(() => verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1({
+  t.exception(() => verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2({
     ...input,
     expectedNormalizedGraphHash: fixture.sourceClosureHash
   }), /profile graph digest/)
   const omitted = crossHostEvidence(fixture)
   delete omitted.normalizedGraphSetHash
-  t.exception(() => encodeBlindClientPublicBrowserCrossHostEvidenceV1(omitted), /missing or unexpected/)
+  t.exception(() => encodeBlindClientPublicBrowserCrossHostEvidenceV2(omitted), /missing or unexpected/)
 })
 
 test('verifier rejects swaps, false authority and candidate self-reference fields', t => {
   const fixture = artifactFixture()
-  t.exception(() => verifyBlindClientPublicBrowserArtifactV1({
+  t.exception(() => verifyBlindClientPublicBrowserArtifactV2({
     profile: 'limited',
     manifestBytes: fixture.manifestBytes,
     artifactBytes: fixture.artifactBytes,
@@ -420,11 +420,11 @@ test('verifier rejects swaps, false authority and candidate self-reference field
     expectedSourceClosureHash: fixture.sourceClosureHash
   }), /wrong profile/)
 
-  t.exception(() => encodeBlindClientPublicBrowserChromiumEvidenceV1({
+  t.exception(() => encodeBlindClientPublicBrowserChromiumEvidenceV2({
     ...chromiumEvidence(fixture),
     standaloneAuthority: true
   }), /authority identity/)
-  t.exception(() => encodeBlindClientPublicBrowserCrossHostEvidenceV1({
+  t.exception(() => encodeBlindClientPublicBrowserCrossHostEvidenceV2({
     ...crossHostEvidence(fixture),
     candidateCommit: '44'.repeat(20)
   }), /missing or unexpected/)

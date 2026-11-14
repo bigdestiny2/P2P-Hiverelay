@@ -1,3 +1,5 @@
+import { prepareBlindGenerationStartup } from './generation-startup.js'
+import { verifyBlindStoreSessionTransactionLease } from './store-session.js'
 import { constants as FS_CONSTANTS } from 'node:fs'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -68,7 +70,9 @@ import { BlindInboxStorageEngine } from './inbox-storage-engine.js'
 import { BlindCoreStorageEngine } from './core-storage-engine.js'
 import { loadBundledBlindStoreFormatAuthority } from './store-format-binding.js'
 import {
+  BLIND_STORE_GENERATION_CAPABILITIES,
   BLIND_STORE_READER_MODE,
+  createBlindGenerationWriterAcknowledgment,
   openBlindStoreGenerationFloor
 } from './storage-generation-v12.js'
 import { loadProductionEntrypointConfig } from './production-entrypoint.js'
@@ -86,6 +90,13 @@ const DESCRIBE_OPERATION_BITS = operationBits(FAMILY.DESCRIBE, Object.values(OPE
 const CELL_OPERATION_BITS = operationBits(FAMILY.CELL, Object.values(OPERATION.CELL))
 const INBOX_OPERATION_BITS = operationBits(FAMILY.INBOX, Object.values(OPERATION.INBOX))
 const CORE_UNARY_OPERATION_BITS = operationBits(FAMILY.CORE, [OPERATION.CORE.MIRROR, OPERATION.CORE.PROVE])
+const GENERATION_WRITE_OPERATION_BITS = operationBits(FAMILY.CELL, [
+  OPERATION.CELL.PUT, OPERATION.CELL.RENEW, OPERATION.CELL.DROP
+]) | operationBits(FAMILY.INBOX, [
+  OPERATION.INBOX.CREATE, OPERATION.INBOX.RENEW, OPERATION.INBOX.CLOSE, OPERATION.INBOX.APPEND
+]) | operationBits(FAMILY.CORE, [
+  OPERATION.CORE.MIRROR, OPERATION.CORE.PROVE, OPERATION.CORE.OPEN_REPLICATION
+])
 const DESCRIBE_AND_CELL_OPERATION_BITS = DESCRIBE_OPERATION_BITS | CELL_OPERATION_BITS
 const DESCRIBE_CELL_INBOX_OPERATION_BITS = DESCRIBE_AND_CELL_OPERATION_BITS | INBOX_OPERATION_BITS
 const DESCRIBE_CELL_INBOX_CORE_OPERATION_BITS = DESCRIBE_CELL_INBOX_OPERATION_BITS | CORE_UNARY_OPERATION_BITS
@@ -148,6 +159,10 @@ export async function assertProductionRuntimeReleaseReady (environment = process
   if (isVnextPublicTestProfile(profile)) {
     const { runtimeExclusions, storageBlockers } = await vnextPublicTestCompleteness(environment)
     assertProductionRuntimeCompleteness({ runtimeExclusions, storageBlockers })
+    if (BLIND_STORE_GENERATION_CAPABILITIES.rc9BlindProductionMustRemainDisabled) {
+      runtimeFailure('BLIND_STORAGE_GENERATION_UNSAFE',
+        `RC9 blind production is disabled: ${BLIND_STORE_GENERATION_CAPABILITIES.rc9BlindProductionBlocker}`)
+    }
     return
   }
   assertProductionRuntimeCompleteness()
@@ -820,7 +835,31 @@ async function syncDirectory (directory) {
   }
 }
 
-export async function bindStoreIdentity (root, expected) {
+async function validateRuntimeStoreIdentity (root, expected) {
+  try {
+    const existing = await readBoundFile(path.join(root, RUNTIME_BINDING_FILE), {
+      field: 'runtime store binding',
+      maximumBytes: RUNTIME_BINDING_BYTES,
+      exactBytes: RUNTIME_BINDING_BYTES,
+      secret: true
+    })
+    if (!timingSafeEqual(existing, expected)) {
+      runtimeFailure('BLIND_RUNTIME_STORE_IDENTITY_MISMATCH',
+        'store root is bound to another relay/store/durability/map/fence tuple')
+    }
+  } catch (error) {
+    if (error.code !== 'ENOENT') throw error
+    const rootNames = await fs.readdir(root)
+    const shell = rootNames.length === 1 && rootNames[0] === 'control' &&
+      (await fs.readdir(path.join(root, 'control'))).every(name => name === 'writer.lock.v1')
+    if (rootNames.length !== 0 && !shell) {
+      runtimeFailure('BLIND_RUNTIME_STORE_BINDING_REQUIRED',
+        'a nonempty store without a verified runtime binding must not be claimed or modified')
+    }
+  }
+}
+
+export async function bindStoreIdentity (root, expected, startupLease = null) {
   const file = path.join(root, RUNTIME_BINDING_FILE)
   let existing
   let created = false
@@ -836,7 +875,13 @@ export async function bindStoreIdentity (root, expected) {
   }
   if (!existing) {
     const entries = await fs.readdir(root)
-    if (entries.length !== 0) {
+    if (startupLease != null) {
+      await verifyBlindStoreSessionTransactionLease(startupLease, root)
+      if (entries.length !== 1 || entries[0] !== 'control' ||
+          JSON.stringify(await fs.readdir(path.join(root, 'control'))) !== JSON.stringify(['writer.lock.v1'])) {
+        runtimeFailure('BLIND_RUNTIME_STORE_BINDING_REQUIRED', 'fresh startup layout changed before binding')
+      }
+    } else if (entries.length !== 0) {
       runtimeFailure('BLIND_RUNTIME_STORE_BINDING_REQUIRED',
         'a nonempty store without a verified runtime binding must not be claimed or modified')
     }
@@ -869,40 +914,14 @@ export async function bindStoreIdentity (root, expected) {
   return created
 }
 
-// Generation-floor bootstrap for the vNext genesis-manifested store
-// (orchestration step 3 of bind -> genesis -> generation-floor bootstrap ->
-// serve). The serving path creates the storage-generation floor only when it
-// binds a pristine store itself (allowCreate: storeBindingCreated), so on a
-// store that was bound BEFORE the store-genesis ceremony ran it correctly
-// refuses to invent evidence ('blind store generation evidence is missing').
-// This helper is the explicit ceremony-side step that establishes that
-// evidence. It:
-//  1. fails fast unless the two-slot genesis manifest MAC-verifies under the
-//     launch key and the exact descriptor-floor/map/fence bindings (i.e. the
-//     store-genesis ceremony genuinely sealed this store);
-//  2. re-verifies the on-disk runtime binding against the recomputed binding
-//     (bindStoreIdentity returns false on an already-bound store);
-//  3. opens the cell storage engine with the SAME constructor arguments the
-//     serving path uses and reads the WAL anchor (walSequence/walHash) from the
-//     engine's own recovery — including any clock reconciliation the engine
-//     itself appends during open — so the recorded evidence is exactly the
-//     anchor the serving path recovers on its first boot (the anchor is read,
-//     never predicted or re-derived);
-//  4. creates the generation-floor record with allowCreate: true. Re-running
-//    the helper is idempotent: an existing record is re-validated against the
-//    same anchor by the frozen generation-floor chain rules.
-//
-// Timing: run after the store-genesis ceremony and before the first serve
-// boot, within the same lease epoch. If the wall-clock epoch rolls between
-// the bootstrap and the first serve boot, the serving engine's clock
-// reconciliation advances the WAL past the recorded anchor and the frozen
-// generation floor fails closed ('evidence was rolled back or replayed') —
-// the same fail-closed rule the accepted fresh-store flow already lives with
-// across restarts before the first acknowledged blind write.
-//
-// Secret hygiene: manifestKey and ownerFenceTokenHash stay caller-owned; they
-// are consumed (HMAC/MAC verification) but never copied, logged, or zeroed
-// here.
+// Explicit generation bootstrap runs after sealed genesis and before serving.
+// It holds real ownership, verifies the manifest/checkpoint/snapshot and full
+// CELL WAL read-only, then validates any existing generation chain. Only a
+// verified fresh sealed root can create missing generation evidence. Recovery
+// follows that boundary; the final registration uses its actual WAL head,
+// including any legitimate clock reconciliation. Re-runs validate the same
+// persisted authority and never reconstruct evidence through mutable recovery.
+// Keys and owner-fence material remain caller-owned.
 export async function bootstrapVnextStoreGenerationFloor ({
   storeRoot,
   descriptor,
@@ -929,13 +948,12 @@ export async function bootstrapVnextStoreGenerationFloor ({
   } finally {
     await manifestStore.close()
   }
-  const bindingCreated = await bindStoreIdentity(storeRoot, binding)
   const storeFormatAuthority = await loadBundledBlindStoreFormatAuthority({
     expectedStoreFormatHash: descriptor.durability.storeFormatHash,
     expectedFormatMajor: descriptor.durability.storeFormatMajor,
     expectedFormatMinor: descriptor.durability.storeFormatMinor
   })
-  const storage = new BlindCellStorageEngine({
+  const cellOptions = {
     root: storeRoot,
     relayPublicKey: descriptor.relayPublicKey,
     storeId: descriptor.storeId,
@@ -945,32 +963,49 @@ export async function bootstrapVnextStoreGenerationFloor ({
     ownerFenceTokenHash,
     durabilityContinuityHash: descriptor.durabilityContinuityHash,
     storeFormatAuthority
-  })
-  await storage.open()
-  let storeEvidence
-  try {
-    storeEvidence = {
-      walSequence: storage.transactionStore.walSequence,
-      walHash: b4a.from(storage.transactionStore.walHash)
-    }
-  } finally {
-    await storage.close()
   }
-  const floor = await openBlindStoreGenerationFloor(controlDirectory, {
+  let bindingCreated = false
+  const startup = await prepareBlindGenerationStartup({
+    stores: [{
+      role: 'cell',
+      root: storeRoot,
+      engineOptions: cellOptions,
+      manifestOptions: {
+        manifestKey,
+        descriptorFloor: { sequence: descriptor.descriptorSequence, hash: serviceDescriptorHash(encodeCanonical(blindServiceDescriptorV1, descriptor)) },
+        expectedBindings: vnextStoreGenesisExpectedBindings(descriptor, serviceDescriptorHash(encodeCanonical(blindServiceDescriptorV1, descriptor)), mapGeneration, ownerFenceTokenHash)
+      }
+    }],
     manifestKey,
-    storeIdentity: binding,
-    allowCreate: true,
-    storeEvidence
+    installationIdentity: binding,
+    readerMode: storeReaderMode,
+    allowSealedGenesis: true,
+    validateBindings: async () => {
+      await validateRuntimeStoreIdentity(storeRoot, binding)
+    },
+    bindIdentities: async roots => { bindingCreated = await bindStoreIdentity(storeRoot, binding, roots[0].lease) }
   })
-  floor.assertReaderMode(storeReaderMode)
-  return Object.freeze({
-    bindingCreated,
-    storeEvidence: Object.freeze({
-      walSequence: storeEvidence.walSequence,
-      walHash: b4a.from(storeEvidence.walHash)
-    }),
-    firstBlindOnlyWriteAcknowledged: floor.firstBlindOnlyWriteAcknowledged
-  })
+  const storage = new BlindCellStorageEngine({ ...cellOptions, generationStartupHandoff: startup.handoffs.get('cell') })
+  try {
+    await storage.open()
+    const generationEvidence = storage.storageGenerationEvidence()
+    const floor = await openBlindStoreGenerationFloor(controlDirectory, {
+      manifestKey,
+      installationIdentity: binding,
+      currentStores: [{ role: 'cell', storeIdentity: binding, ...generationEvidence }]
+    })
+    floor.assertReaderMode(storeReaderMode)
+    return Object.freeze({
+      bindingCreated,
+      storeEvidence: Object.freeze({
+        walSequence: generationEvidence.storeEvidence.walSequence,
+        walHash: b4a.from(generationEvidence.storeEvidence.walHash)
+      }),
+      firstBlindOnlyWriteAcknowledged: floor.firstBlindOnlyWriteAcknowledged
+    })
+  } finally {
+    try { await storage.close() } finally { await startup.close() }
+  }
 }
 
 // Pre-flight the sealed two-slot manifest check (MAC + exact launch bindings)
@@ -1394,6 +1429,16 @@ export function productionStorageOperationalIntegrity (status) {
   })
 }
 
+export function productionGenerationReadyOperationBits (status, enabledOperationBits) {
+  // Floor publication uncertainty is a writer failure, not evidence that
+  // already verified payload bytes are corrupt. Uncharged reader operations
+  // retain their integrity contract; charged reads still require their WAL
+  // fence and cannot create or replay a charge after quarantine.
+  return status.writerQuarantineReason == null
+    ? enabledOperationBits
+    : enabledOperationBits & ~GENERATION_WRITE_OPERATION_BITS
+}
+
 function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits, writeReadinessGuard = null, inboxReadinessGuard = null) {
   return async input => {
     const status = storage.status()
@@ -1405,9 +1450,10 @@ function storageDependencySnapshot (storage, enabledOperationBits, readyRoleBits
     const operationalIntegrity = productionStorageOperationalIntegrity(status)
     const writeReady = writeReadinessGuard == null || writeReadinessGuard(input) === true
     const inboxReady = inboxReadinessGuard == null || inboxReadinessGuard() === true
-    const readyOperationBits = writeReady
+    const writeOperationBits = writeReady
       ? enabledOperationBits
       : enabledOperationBits & ~CELL_PUT_OPERATION_BIT_V2
+    const readyOperationBits = productionGenerationReadyOperationBits(status, writeOperationBits)
     return Object.freeze({
       selfVerified: true,
       descriptorSequence: input.descriptorSequence,
@@ -1617,6 +1663,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
   let inboxAdapter
   let coreAdapter
   let manifestFloorState = null
+  let generationStartup
   try {
     const descriptorBytes = await Promise.all(config.descriptorFiles.map((file, index) => readBoundFile(file, {
       field: `descriptorFiles[${index}]`,
@@ -1732,9 +1779,10 @@ export async function assembleProductionBlindDaemon (options = {}) {
       }
       const binding = encodeRuntimeBinding(descriptorSnapshot.descriptor, config.mapGeneration,
         ownerFenceTokenHash, manifestKey)
-      const storeBindingCreated = await bindStoreIdentity(config.storeRoot, binding)
       let storeFloor = null
-      storage = new BlindCellStorageEngine({
+      let inboxOptions
+      let coreOptions
+      const cellOptions = {
         root: config.storeRoot,
         relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
         storeId: descriptorSnapshot.descriptor.storeId,
@@ -1744,14 +1792,90 @@ export async function assembleProductionBlindDaemon (options = {}) {
         ownerFenceTokenHash,
         durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
         storeFormatAuthority,
-        onBlindWriteAcknowledged: evidence => storeFloor.acknowledgeBlindOnlyWrite(evidence)
-      })
-      await storage.open()
-      storeFloor = await openBlindStoreGenerationFloor(path.join(config.storeRoot, 'control'), {
+        onBlindWriteAcknowledged: createBlindGenerationWriterAcknowledgment(() => storeFloor, 'cell')
+      }
+      if (inboxRuntimeEnabled) {
+        await verifyPrivateStoreRoot(config.inboxStoreRoot)
+        inboxCursorKey = await readBoundFile(config.inboxCursorKeyFile, {
+          field: 'inbox cursor key',
+          exactBytes: 32,
+          maximumBytes: 32,
+          secret: true
+        })
+        inboxOptions = {
+          root: config.inboxStoreRoot,
+          relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
+          storeId: descriptorSnapshot.descriptor.storeId,
+          durabilityProfileId: descriptorSnapshot.descriptor.durability.profileId,
+          durabilityProfileHash: descriptorSnapshot.descriptor.durabilityProfileHash,
+          cursorKey: inboxCursorKey,
+          mapGeneration: config.mapGeneration,
+          ownerFenceTokenHash,
+          durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
+          storeFormatAuthority,
+          onBlindWriteAcknowledged: createBlindGenerationWriterAcknowledgment(() => storeFloor, 'inbox')
+        }
+      }
+      if (coreRuntimeEnabled) {
+        await verifyPrivateStoreRoot(config.coreStoreRoot)
+        coreOptions = {
+          root: config.coreStoreRoot,
+          relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
+          ownerFenceTokenHash,
+          durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
+          maximumSponsoredCoreLength: descriptorSnapshot.descriptor.maxSponsoredCoreLength,
+          nowEpoch: currentLeaseEpoch,
+          nowUnixMillis: currentUnixMillis,
+          onBlindWriteAcknowledged: createBlindGenerationWriterAcknowledgment(() => storeFloor, 'core')
+        }
+      }
+      const participating = [{
+        role: 'cell',
+        root: config.storeRoot,
+        engineOptions: cellOptions,
+        manifestOptions: requireManifestFloor
+          ? {
+              manifestKey,
+              descriptorFloor: { sequence: descriptorSnapshot.descriptorSequence, hash: descriptorSnapshot.hash },
+              expectedBindings: vnextStoreGenesisExpectedBindings(
+                descriptorSnapshot.descriptor, descriptorSnapshot.hash, config.mapGeneration, ownerFenceTokenHash)
+            }
+          : null
+      }]
+      if (inboxOptions) participating.push({ role: 'inbox', root: config.inboxStoreRoot, engineOptions: inboxOptions })
+      if (coreOptions) participating.push({ role: 'core', root: config.coreStoreRoot, engineOptions: coreOptions })
+      generationStartup = await prepareBlindGenerationStartup({
+        stores: participating,
         manifestKey,
-        storeIdentity: binding,
-        allowCreate: storeBindingCreated,
-        storeEvidence: { walSequence: storage.transactionStore.walSequence, walHash: storage.transactionStore.walHash }
+        installationIdentity: binding,
+        readerMode: config.storeReaderMode,
+        allowFreshGenesis: true,
+        validateBindings: async () => {
+          for (const store of participating) await validateRuntimeStoreIdentity(store.root, binding)
+        },
+        bindIdentities: async roots => {
+          for (const { root, lease } of roots) await bindStoreIdentity(root, binding, lease)
+        }
+      })
+      storeFloor = generationStartup.floor
+      storage = new BlindCellStorageEngine({ ...cellOptions, generationStartupHandoff: generationStartup.handoffs.get('cell') })
+      await storage.open()
+      if (inboxOptions) {
+        inboxStorage = new BlindInboxStorageEngine({ ...inboxOptions, generationStartupHandoff: generationStartup.handoffs.get('inbox') })
+        await inboxStorage.open()
+      }
+      if (coreOptions) {
+        coreStorage = new BlindCoreStorageEngine({ ...coreOptions, generationStartupHandoff: generationStartup.handoffs.get('core') })
+        await coreStorage.open()
+      }
+      await generationStartup.releaseValidation()
+      // Recovery may reconcile clocks or terminalize interrupted operations.
+      // Advance the already-validated floor from the actual recovered heads.
+      const currentStores = [{ role: 'cell', storeIdentity: binding, ...storage.storageGenerationEvidence() }]
+      if (inboxStorage) currentStores.push({ role: 'inbox', storeIdentity: binding, ...inboxStorage.storageGenerationEvidence() })
+      if (coreStorage) currentStores.push({ role: 'core', storeIdentity: binding, ...coreStorage.storageGenerationEvidence() })
+      storeFloor = await openBlindStoreGenerationFloor(path.join(config.storeRoot, 'control'), {
+        manifestKey, installationIdentity: binding, currentStores
       })
       storeFloor.assertReaderMode(config.storeReaderMode)
       if (requireManifestFloor) {
@@ -1768,67 +1892,6 @@ export async function assembleProductionBlindDaemon (options = {}) {
           descriptorSequence: descriptorSnapshot.descriptorSequence,
           descriptorHash: descriptorSnapshot.hash
         })
-      }
-      if (inboxRuntimeEnabled) {
-        await verifyPrivateStoreRoot(config.inboxStoreRoot)
-        const inboxBindingCreated = await bindStoreIdentity(config.inboxStoreRoot, binding)
-        let inboxFloor = null
-        inboxCursorKey = await readBoundFile(config.inboxCursorKeyFile, {
-          field: 'inbox cursor key',
-          exactBytes: 32,
-          maximumBytes: 32,
-          secret: true
-        })
-        inboxStorage = new BlindInboxStorageEngine({
-          root: config.inboxStoreRoot,
-          relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
-          storeId: descriptorSnapshot.descriptor.storeId,
-          durabilityProfileId: descriptorSnapshot.descriptor.durability.profileId,
-          durabilityProfileHash: descriptorSnapshot.descriptor.durabilityProfileHash,
-          cursorKey: inboxCursorKey,
-          mapGeneration: config.mapGeneration,
-          ownerFenceTokenHash,
-          durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
-          storeFormatAuthority,
-          onBlindWriteAcknowledged: evidence => inboxFloor.acknowledgeBlindOnlyWrite(evidence)
-        })
-        await inboxStorage.open()
-        inboxFloor = await openBlindStoreGenerationFloor(path.join(config.inboxStoreRoot, 'control'), {
-          manifestKey,
-          storeIdentity: binding,
-          allowCreate: inboxBindingCreated,
-          storeEvidence: {
-            walSequence: inboxStorage.transactionStore.walSequence,
-            walHash: inboxStorage.transactionStore.walHash
-          }
-        })
-        inboxFloor.assertReaderMode(config.storeReaderMode)
-      }
-      if (coreRuntimeEnabled) {
-        await verifyPrivateStoreRoot(config.coreStoreRoot)
-        const coreBindingCreated = await bindStoreIdentity(config.coreStoreRoot, binding)
-        let coreFloor = null
-        coreStorage = new BlindCoreStorageEngine({
-          root: config.coreStoreRoot,
-          relayPublicKey: descriptorSnapshot.descriptor.relayPublicKey,
-          ownerFenceTokenHash,
-          durabilityContinuityHash: descriptorSnapshot.descriptor.durabilityContinuityHash,
-          maximumSponsoredCoreLength: descriptorSnapshot.descriptor.maxSponsoredCoreLength,
-          nowEpoch: currentLeaseEpoch,
-          nowUnixMillis: currentUnixMillis,
-          onBlindWriteAcknowledged: evidence => coreFloor.acknowledgeBlindOnlyWrite(evidence)
-        })
-        await coreStorage.open()
-        coreFloor = await openBlindStoreGenerationFloor(path.join(config.coreStoreRoot, 'control'), {
-          manifestKey,
-          storeIdentity: binding,
-          allowCreate: coreBindingCreated,
-          storeEvidence: {
-            walSequence: coreStorage.transactionStore.walSequence,
-            walHash: coreStorage.transactionStore.walHash
-          }
-        })
-        coreFloor.assertReaderMode(config.storeReaderMode)
       }
       if (cellRuntimeEnabled) {
         try {
@@ -2143,6 +2206,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
           } catch (error) {
             failure = failure || error
           } finally {
+            try { if (generationStartup) await generationStartup.close() } catch (error) { failure = failure || error }
             signer.close()
           }
           if (failure) throw failure
@@ -2191,6 +2255,7 @@ export async function assembleProductionBlindDaemon (options = {}) {
     if (coreStorage) await coreStorage.close().catch(() => {})
     if (inboxStorage) await inboxStorage.close().catch(() => {})
     if (storage) await storage.close().catch(() => {})
+    if (generationStartup) await generationStartup.close().catch(() => {})
     if (signer) signer.close()
     else if (secretKey) secretKey.fill(0)
     throw error

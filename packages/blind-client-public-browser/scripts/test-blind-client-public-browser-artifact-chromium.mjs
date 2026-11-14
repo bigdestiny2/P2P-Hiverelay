@@ -12,10 +12,10 @@ import { fileURLToPath } from 'node:url'
 import b4a from 'b4a'
 import {
   BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES,
-  decodeBlindClientPublicBrowserArtifactManifestV1,
-  encodeBlindClientPublicBrowserChromiumEvidenceV1,
-  hashBlindClientPublicBrowserArtifactManifestV1,
-  verifyBlindClientPublicBrowserArtifactV1
+  decodeBlindClientPublicBrowserArtifactManifestV2,
+  encodeBlindClientPublicBrowserChromiumEvidenceV2,
+  hashBlindClientPublicBrowserArtifactManifestV2,
+  verifyBlindClientPublicBrowserArtifactV2
 } from '../browser-artifact.js'
 
 const execute = promisify(execFile)
@@ -29,8 +29,8 @@ if (!hostMode && !ciFunctionalOnly) {
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const root = path.resolve(packageRoot, '../..')
 const generator = path.join(packageRoot, 'scripts/generate-blind-client-public-browser-artifacts.mjs')
-const hostNode = '/opt/homebrew/Cellar/node@22/22.22.0/bin/node'
-const hostNodeHash = '59776c1735b2c28a28b0ae00b58bd9cbe524572e0caf62e043d5e44a62d98cce'
+const hostNode = '/opt/homebrew/Cellar/node@22/22.23.4/bin/node'
+const hostNodeHash = '210bbbc13dee7ee3913eef05cc9d7eaee5b327a86dfe524bfb8cb3e5949e50dc'
 const hostChromium = '/Users/localllm/Library/Caches/ms-playwright/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell'
 const hostChromiumVersion = 'Google Chrome for Testing 151.0.7922.34'
 const hostChromiumHash = '7687bff7cb2db075f250e6d5848bbc8838cac3802ac3952a899c574f8eccab45'
@@ -82,7 +82,7 @@ async function assertHostEnvironment () {
     if (process.env[name] !== value) throw new Error(`${name} must be the exact scoped host gate path ${value}`)
     await requireRealDirectoryAncestry(value, name)
   }
-  if (process.execPath !== hostNode || process.version !== 'v22.22.0' ||
+  if (process.execPath !== hostNode || process.version !== 'v22.23.4' ||
       process.versions.modules !== '127' || process.versions.napi !== '10' ||
       process.platform !== 'darwin' || process.arch !== 'arm64' ||
       await sha256File(process.execPath) !== hostNodeHash) {
@@ -147,7 +147,7 @@ async function generatorReport () {
   })
   const reports = result.stdout.split(/\r?\n/).filter(Boolean).map(line => {
     try { return JSON.parse(line) } catch { return null }
-  }).filter(value => value && value.schema === 'HiveRelayBlindClientPublicBrowserArtifactGenerationV1')
+  }).filter(value => value && value.schema === 'HiveRelayBlindClientPublicBrowserArtifactGenerationV2')
   if (reports.length !== 1 || reports[0].mode !== 'check' ||
       !/^[0-9a-f]{64}$/.test(reports[0].normalizedGraphSetHash)) {
     throw new Error('host Chromium gate did not receive one canonical generator report')
@@ -351,15 +351,15 @@ async function runProfile (
     fs.readFile(absolute(identity.artifactPath)),
     fs.readFile(absolute(identity.manifestPath))
   ])
-  const verified = verifyBlindClientPublicBrowserArtifactV1({
+  const verified = verifyBlindClientPublicBrowserArtifactV2({
     profile: id,
     manifestBytes,
     artifactBytes,
     expectedManifestHash: generatorProfile == null
-      ? hashBlindClientPublicBrowserArtifactManifestV1(manifestBytes)
+      ? hashBlindClientPublicBrowserArtifactManifestV2(manifestBytes)
       : generatorProfile.manifestHash,
     expectedSourceClosureHash: generatorProfile == null
-      ? decodeBlindClientPublicBrowserArtifactManifestV1(manifestBytes).sourceClosureHash
+      ? decodeBlindClientPublicBrowserArtifactManifestV2(manifestBytes).sourceClosureHash
       : generatorSourceClosureHash,
     ...(generatorProfile == null ? {} : { expectedTupleHash: generatorProfile.tupleHash })
   })
@@ -486,7 +486,7 @@ if ((await matchingTempChildren(tempParent)).length !== 0) {
 }
 
 const report = {
-  schema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumGateV1',
+  schema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumGateV2',
   mode: hostMode ? 'pinned-host-evidence' : 'ci-functional-only',
   chromium: version,
   releaseReady: false,
@@ -500,8 +500,8 @@ for (const [id, identity] of Object.entries(profiles)) {
   const result = results[id]
   if (hostMode) {
     const evidence = {
-      schema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV1',
-      version: 1,
+      schema: 'HiveRelayBlindClientPublicBrowserArtifactChromiumEvidenceV2',
+      version: 2,
       evidenceClass: 'real-chromium',
       profile: identity.profile,
       artifactPath: identity.artifactPath,
@@ -528,7 +528,7 @@ for (const [id, identity] of Object.entries(profiles)) {
       passed: true
     }
     await fs.writeFile(absolute(identity.chromiumEvidencePath),
-      encodeBlindClientPublicBrowserChromiumEvidenceV1(evidence), { mode: 0o644 })
+      encodeBlindClientPublicBrowserChromiumEvidenceV2(evidence), { mode: 0o644 })
   }
   report.profiles[id] = {
     profile: identity.profile,

@@ -5,7 +5,8 @@ Requires=hiverelay-health-watchdog.service
 [Timer]
 OnBootSec=3min
 OnUnitActiveSec=2min
-AccuracySec=30s
+AccuracySec=1s
+RandomizedDelaySec=0
 Persistent=true
 Unit=hiverelay-health-watchdog.service
 

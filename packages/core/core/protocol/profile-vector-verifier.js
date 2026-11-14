@@ -81,6 +81,7 @@ import {
 
 const PROFILE_VECTOR_VERIFIERS = Object.freeze({
   'accounting-receipt-v1-os-grounded': verifyAccountingVector,
+  'accounting-receipt-v2-os-grounded': verifyAccountingVector,
   'retrievability-proof-signable-v1': verifyRetrievabilityVector,
   'relaykernel-profile-v1-minimal-compat': verifyRelayKernelVector,
   'relaykernel-profile-v1-app-module-boundary': verifyRelayKernelVector,
@@ -162,8 +163,15 @@ function profileVectorInventory (vectors, requireSupportedSet) {
 }
 
 function verifyAccountingVector (vector, errors) {
-  const verdict = verifyAccountingReceipt(vector.receipt)
+  const verdict = verifyAccountingReceipt(vector.receipt, { verifierNow: vector.verifierNow })
   if (!verdict.valid) errors.push('accounting receipt failed verification: ' + verdict.reason)
+  if (vector.name === 'accounting-receipt-v2-os-grounded' && !verdict.evidenceEligible) {
+    errors.push('accounting receipt is not eligible v2 evidence: ' + verdict.evidenceReason)
+  }
+  if (vector.name === 'accounting-receipt-v1-os-grounded' &&
+      (!verdict.legacy || verdict.evidenceEligible)) {
+    errors.push('accounting v1 receipt must remain legacy display-only')
+  }
   if (vector.receipt?.relayPubkey !== vector.relayPubkey) errors.push('accounting relayPubkey mismatch')
   compareHex(
     'accounting signableHex',
@@ -554,8 +562,10 @@ function capabilityVectorRelay (input = {}, keyPair) {
     swarm: { keyPair }
   }
   if (input.appRegistry) {
-    const entries = Array.isArray(input.appRegistry.catalog) ? input.appRegistry.catalog : []
-    relay.appRegistry = { catalog: () => entries }
+    const stats = input.appRegistry.catalogStats && typeof input.appRegistry.catalogStats === 'object'
+      ? input.appRegistry.catalogStats
+      : {}
+    relay.appRegistry = { catalogStats: () => ({ ...stats }) }
   }
   if (input.federation) {
     const snapshot = input.federation.snapshot || {}

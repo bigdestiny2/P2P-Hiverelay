@@ -22,6 +22,68 @@ const CAP = 10 * GiB
 const STORAGE = '/verified/storage'
 const K1 = 'a'.repeat(64)
 
+test('outbox recovery charges exact bytes and every finite promise while leaving unknown pins closed', t => {
+  const journalKey = 'outboxlog:outboxlog/operations'
+  for (const deficit of [0, 1]) {
+    const a = authority({ cap: 4 * GiB - deficit, getUsedBytes: () => GiB, recoveryKinds: [] })
+    a.adoptRecovery('workload:registry', GiB, { kind: 'workload' })
+    const pending = a.reserve('workload:pending', GiB, { kind: 'workload' })
+    t.ok(pending.allowed)
+    a.adoptRecovery(`drive:${K1}`, null, { kind: 'drive' })
+    a.adoptRecovery('core:' + 'b'.repeat(64), null, { kind: 'core' })
+    const before = a.snapshot().records
+    const result = a.recoverOutboxJournal(journalKey, GiB, 1024)
+    t.is(result.allowed, deficit === 0)
+    if (deficit) t.alike(a.snapshot().records, before, 'one-byte cap shortfall leaves all records unchanged')
+    else {
+      t.is(result.admission.usedBytes, 3 * GiB, 'tree plus committed and pending promises, without actual-byte discounts')
+      t.is(a.get(journalKey).boundBytes, GiB)
+      t.is(a.get(`drive:${K1}`).state, 'unknown-recovery')
+      t.is(a.reserve('core:' + 'c'.repeat(64), 1).reason, 'storage-commitment-unknown')
+      t.is(a.recoverOutboxJournal(journalKey, GiB, 1024).reason, 'outboxlog-recovery-already-owned')
+    }
+  }
+})
+
+test('outbox recovery retains fresh statfs reserve, capacity profile and root identity checks', t => {
+  const journalKey = 'outboxlog:outboxlog/operations'
+  const make = opts => {
+    const a = authority({ recoveryKinds: [], ...opts })
+    a.adoptRecovery(`drive:${K1}`, null, { kind: 'drive' })
+    return a
+  }
+  const physical = make({ sampleFilesystem: () => ({ ...physicalSample(), freeBytes: 11 * GiB }) })
+  physical.adoptRecovery('workload:registry', GiB / 2, { kind: 'workload' })
+  t.is(physical.recoverOutboxJournal(journalKey, GiB / 2 + 1, 0).reason, 'insufficient-storage')
+  t.absent(physical.get(journalKey), 'physical reserve and finite debt cannot be spent twice')
+  let samples = 0
+  const swapped = make({ sampleFilesystem: () => ({ ...physicalSample(), inode: String(++samples) }) })
+  t.is(swapped.recoverOutboxJournal(journalKey, GiB, 0).reason, 'storage-filesystem-changed-during-usage-measurement')
+  const invalidProfile = make({ capacityProfile: 'not-a-profile' })
+  t.is(invalidProfile.recoverOutboxJournal(journalKey, GiB, 0).reason, 'capacity-profile-invalid')
+  t.absent(invalidProfile.get(journalKey))
+})
+
+test('outbox recovery refuses unsealed, stopped, fatal, unrecognized unknown and conflicting records', t => {
+  const journalKey = 'outboxlog:outboxlog/operations'
+  const cases = [
+    ['unsealed', a => a.beginRecovery(['drives']), 'storage-recovery-inventory-pending'],
+    ['stopped', a => a.closeMutations('stopped'), 'stopped'],
+    ['fatal', a => a.failClosed('fatal'), 'fatal'],
+    ['required physical enforcement', a => { a.config.requirePhysicalEnforcement = true }, 'storage-physical-enforcement-unavailable'],
+    ['unknown workload', a => a.adoptRecovery('workload:unproven', null), 'storage-commitment-unknown'],
+    ['noncanonical pin', a => a.adoptRecovery('drive:BAD', null, { kind: 'drive' }), 'storage-commitment-unknown'],
+    ['conflicting journal', a => a.adoptRecovery(journalKey, null), 'outboxlog-recovery-already-owned']
+  ]
+  for (const [label, setup, reason] of cases) {
+    const a = authority({ recoveryKinds: [] })
+    setup(a)
+    const before = a.snapshot().records
+    t.is(a.recoverOutboxJournal(journalKey, GiB, 0).reason, reason, label)
+    t.alike(a.snapshot().records, before)
+  }
+})
+
 function healthySample (checkedAt = Date.now()) {
   return {
     ok: true,
@@ -127,6 +189,53 @@ function physicalAuthority (opts = {}) {
   })
   return { authority, provider }
 }
+
+test('storage authority: cached capacity is reject-only and never authorizes a mutation', (t) => {
+  const admission = authority({ cap: 1000, recoveryKinds: [] })
+  const complete = {
+    totalBytes: 400,
+    diskBytes: 400,
+    diskMeasuredAt: 10_000,
+    diskMeasureDurationMs: 10,
+    diskIntervalMs: 1000,
+    diskMeasurementComplete: true
+  }
+
+  const attempt = admission.cachedRejection(100, { storageSummary: complete, now: 10_100 })
+  t.is(attempt.reject, false)
+  t.is(attempt.exactRequired, true)
+  t.absent(Object.hasOwn(attempt, 'allowed'), 'cache result has no authorization field')
+  t.is(attempt.informationalAvailableBytes, 600)
+
+  const full = admission.cachedRejection(600, { storageSummary: complete, now: 10_100 })
+  t.is(full.reject, true)
+  t.is(full.exactRequired, false)
+  t.is(full.reason, 'storage-full')
+
+  const stale = admission.cachedRejection(1, { storageSummary: complete, now: 4_000_000 })
+  t.is(stale.reject, false, 'stale cache cannot authorize or invent a rejection')
+  t.is(stale.exactRequired, true)
+  t.is(stale.reason, 'storage-measurement-stale')
+})
+
+test('storage authority: cached rejection fails closed for recovery, fatal and stop state', (t) => {
+  const summary = {
+    totalBytes: 0,
+    diskBytes: 0,
+    diskMeasuredAt: Date.now(),
+    diskMeasureDurationMs: 0,
+    diskIntervalMs: 1000,
+    diskMeasurementComplete: true
+  }
+  const admission = authority({ cap: 1000, recoveryKinds: ['drives'] })
+  t.is(admission.cachedRejection(1, { storageSummary: summary }).reason, 'storage-recovery-inventory-pending')
+  admission.markRecoveryReady('drives')
+  admission.closeMutations('shutdown-fence')
+  t.is(admission.cachedRejection(1, { storageSummary: summary }).reason, 'shutdown-fence')
+  admission.openMutations()
+  admission.failClosed('fatal-proof-drift')
+  t.is(admission.cachedRejection(1, { storageSummary: summary }).reason, 'fatal-proof-drift')
+})
 
 async function captureRejection (run) {
   try {
@@ -1074,4 +1183,27 @@ test('storage authority: the profile ceiling binds a real seeder against a real 
 
   await seeder.stop()
   await store.close()
+})
+
+test('storage authority: retirement release is idempotent only for the exact id', (t) => {
+  const a = authority({ recoveryKinds: [] })
+  const key = `drive:${K1}`
+  const retirementId = 'b'.repeat(32)
+  a.adoptRecovery(key, 4096, { kind: 'drive' })
+  t.ok(a.beginRetirement(key, retirementId), 'retirement id is bound before durable deletion')
+  t.ok(a.releaseRetirement(key, retirementId), 'first exact release removes the commitment')
+  t.ok(a.releaseRetirement(key, retirementId), 'same retirement id can safely repeat')
+  t.absent(a.releaseRetirement(key, 'c'.repeat(32)), 'another retirement id cannot claim the release')
+  t.is(a.get(key), null)
+  t.ok(a.completeRetirement(key, retirementId), 'final durable tombstone releases the in-memory retry receipt')
+  t.absent(a.releaseRetirement(key, retirementId), 'completed retry state does not accumulate indefinitely')
+
+  const next = a.reserve(key, 8192, { kind: 'drive' })
+  t.ok(next.allowed, 'a forgotten address may begin a genuinely new reservation generation')
+  t.ok(a.commit(next))
+  t.absent(a.releaseRetirement(key, retirementId), 'the old retirement id cannot release the new generation')
+  const nextRetirementId = 'd'.repeat(32)
+  t.ok(a.beginRetirement(key, nextRetirementId))
+  t.ok(a.releaseRetirement(key, nextRetirementId))
+  t.is(a.get(key), null)
 })

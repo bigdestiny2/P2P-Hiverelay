@@ -18,6 +18,10 @@ export default {
 
   // Node identity
   storage: './hiverelay-storage',
+  // Public, externally pinned HC11 envelope authority. Null preserves the
+  // legacy direct-Corestore API for development and isolated tests; release
+  // entrypoints must supply the full binding before promotion.
+  hiverelayGeneration: null,
 
   // Network
   // When null, uses HyperDHT defaults (node1-3.hyperdht.org:49737).
@@ -161,7 +165,38 @@ export default {
   // stat()ed every tickMs; defaults walk ~1,200 drives in ~4 minutes.
   storageAccounting: {
     tickMs: 5000,
-    batchSize: 25
+    batchSize: 25,
+    operationsPerSecond: 32,
+    javascriptSliceMs: 10,
+    maxOpenDirectories: 64,
+    maxPathBytes: 4096,
+    maxDepth: 256,
+    maxQueuedPathBytes: 32 * 1024 * 1024,
+    maxBookkeepingBytes: 64 * 1024 * 1024,
+    maxEntries: 250_000,
+    maxDirectories: 50_000
+  },
+
+  // Cached, fixed-memory process/cgroup diagnostics. Health reads only the
+  // last completed sample; it never opens procfs or walks relay populations.
+  resourceDiagnostics: {
+    sampleIntervalMs: 5_000,
+    fileReadBytes: 32 * 1024,
+    fdScanLimit: 4_096,
+    heapSpaceLimit: 32,
+    healthSampleLimit: 256,
+    schedulerLimit: 16
+  },
+
+  // Dedicated bounded P2P app-catalog transport. Source and digest work are
+  // completion-scheduled; actionLimit is the exact mutation fan-out ceiling
+  // for one completed peer catalog.
+  appCatalogPaged: {
+    sourceIntervalMs: 60_000,
+    sourceBudget: 64,
+    digestBudget: 128,
+    sweepIntervalMs: 1_000,
+    actionLimit: 10
   },
 
   // Over-replication eviction (Phase A). OFF by default. Under disk
@@ -189,10 +224,25 @@ export default {
   // Seeding registry
   registryKey: null, // null = create new autobase
   registryScanInterval: 60_000, // 1 minute
+  registryScanBudget: 64,
   registryAutoAccept: true, // Auto-accept matching seed requests (false = approval mode)
   targetReplicaFloor: 2,
   replicationCheckInterval: 60_000,
+  replicationCheckBudget: 64,
   replicationRepairEnabled: true,
+  anchorCheckBudget: 32,
+  repairBudget: 32,
+  repairMaxConcurrent: 3,
+  custodyExpiryBudget: 32,
+  custodyWitnessBudget: 32,
+  acceptanceReconcileBudget: 32,
+  autoHeal: {
+    enabled: false,
+    localRefreshBudget: 64,
+    federationRefreshBudget: 64,
+    decisionBudget: 64,
+    proofScanBudget: 64
+  },
 
   // Catalog and gateway trust policy
   gatewayPublicOnlyPrivacyTier: true,
@@ -297,9 +347,25 @@ export default {
     tor: false,
     i2p: false,
     websocket: false,
-    holesail: false
+    holesail: false,
+    // Pear 3.4 native UDX fallback. Additive and operator-gated: this is a
+    // connection pipe, not storage admission or a native blind-peer server.
+    pearBlindRelay: false
   },
   wsPort: 8765,
+
+  pearBlindRelay: {
+    maxSessions: 1024,
+    keepAliveMs: 5000,
+    maxPendingPairings: 1024,
+    maxPendingPerSession: 16,
+    maxActiveLinks: 2048,
+    maxActiveLinksPerSession: 16,
+    pairingTimeoutMs: 30000,
+    idleTimeoutMs: 60000,
+    maxLinkLifetimeMs: 3600000,
+    stopTimeoutMs: 5000
+  },
 
   // Holesail API tunnel (for relays behind NAT)
   holesail: {
@@ -377,5 +443,6 @@ export default {
   },
 
   // Shutdown
-  shutdownTimeoutMs: 10_000
+  shutdownTimeoutMs: 10_000,
+  driveCloseTimeoutMs: 10_000
 }

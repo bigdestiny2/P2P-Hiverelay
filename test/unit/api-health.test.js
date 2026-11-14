@@ -6,15 +6,19 @@ import {
   resolveHealthRoute
 } from '../../packages/core/core/relay-node/api-health.js'
 
+const RESOURCE_DIAGNOSTICS = Object.freeze({
+  kind: 'HiveRelayResourceDiagnosticsV1',
+  version: 1,
+  process: { uptimeMs: 1234 },
+  sample: { available: true }
+})
+
 function nodeFixture (overrides = {}) {
   return {
     running: true,
     config: {},
-    metrics: {
-      getSummary () {
-        return { uptime: 1234 }
-      }
-    },
+    metrics: { getSummary () { throw new Error('health must not call metrics summary') } },
+    getResourceDiagnostics () { return RESOURCE_DIAGNOSTICS },
     ...overrides
   }
 }
@@ -81,9 +85,11 @@ test('api health: healthy response includes version uptime running and disk fact
   t.alike(out.payload, {
     ok: true,
     version: '9.9.9',
-    uptime: 1234,
+    uptime: { ms: 1234, hours: 0, human: '0m' },
     running: true,
-    disk: { usedPct: 42, status: 'ok' }
+    disk: { usedPct: 42, status: 'ok' },
+    storageGeneration: null,
+    resourceDiagnostics: RESOURCE_DIAGNOSTICS
   })
 })
 
@@ -123,10 +129,13 @@ test('api health: diskHealthGate drains critical relays with stable fleet payloa
   t.alike(out.payload, {
     ok: false,
     reason: 'disk-critical',
+    reasons: [{ code: 'disk-critical', status: 'critical' }],
     version: '2.0.0',
-    uptime: 1234,
+    uptime: { ms: 1234, hours: 0, human: '0m' },
     running: false,
-    disk: { usedPct: 98.2, status: 'critical' }
+    disk: { usedPct: 98.2, status: 'critical' },
+    storageGeneration: null,
+    resourceDiagnostics: RESOURCE_DIAGNOSTICS
   })
 })
 
@@ -150,11 +159,14 @@ test('api health: fail-closed storage authority reports 503 before the disk gate
   t.alike(out.payload, {
     ok: false,
     reason: 'storage-fail-closed',
+    reasons: [{ code: 'storage-fail-closed', detail: 'journal invariant violated' }],
     storageFatalReason: 'journal invariant violated',
     version: '3.0.0',
-    uptime: 1234,
+    uptime: { ms: 1234, hours: 0, human: '0m' },
     running: true,
-    disk: { usedPct: 99, status: 'critical' }
+    disk: { usedPct: 99, status: 'critical' },
+    storageGeneration: null,
+    resourceDiagnostics: RESOURCE_DIAGNOSTICS
   })
 })
 
@@ -174,7 +186,7 @@ test('api health: healthy storage authority does not perturb the 200 payload', (
 test('api health: missing metrics and disk monitor remain stable', (t) => {
   const out = buildHealthResponse({
     version: null,
-    node: nodeFixture({ metrics: null, diskMonitor: null })
+    node: nodeFixture({ metrics: null, diskMonitor: null, getResourceDiagnostics: () => null })
   })
 
   t.is(out.status, 200)
@@ -183,6 +195,26 @@ test('api health: missing metrics and disk monitor remain stable', (t) => {
     version: null,
     uptime: null,
     running: true,
-    disk: null
+    disk: null,
+    storageGeneration: null,
+    resourceDiagnostics: null
   })
+})
+
+test('api health: request path never walks stats, registries, storage, or unresolved drives', (t) => {
+  const forbidden = () => { throw new Error('forbidden health walk') }
+  const out = buildHealthResponse({
+    version: '4.0.0',
+    node: nodeFixture({
+      getStats: forbidden,
+      metrics: { startedAt: Date.now() - 1000, getSummary: forbidden },
+      appRegistry: { catalog: forbidden, snapshot: forbidden },
+      storageAccounting: { getSummary: forbidden, measureDisk: forbidden },
+      getResourceDiagnostics () { return RESOURCE_DIAGNOSTICS }
+    })
+  })
+
+  t.is(out.status, 200)
+  t.is(out.payload.ok, true)
+  t.is(out.payload.resourceDiagnostics, RESOURCE_DIAGNOSTICS)
 })

@@ -134,6 +134,21 @@ test('release blocker closure reports missing full-release evidence', async (t) 
   t.absent(res.stdout.includes(TEST_NPM_TOKEN))
 })
 
+test('historical checkpoints retain old sidecars while artifact checkpoints require promotion', async (t) => {
+  const dir = await tempDir(t)
+  for (const staged of [false, true]) {
+    await writeJson(path.join(dir, 'release-evidence.json'), {
+      release: staged ? { stage: { name: 'artifact-v1' } } : {}
+    })
+    const res = await runCheck(['--json', '--skip-git', '--bundle-dir', dir])
+    t.is(res.status, 1, 'incomplete evidence cannot clear release')
+    const report = JSON.parse(res.stdout)
+    t.is(Boolean(item(report, 'evidence.stable-promotion').id), staged)
+    t.is(Boolean(item(report, 'evidence.official-umbrel-pr').id), !staged)
+    t.is(Boolean(item(report, 'evidence.startos-registry').id), !staged)
+  }
+})
+
 test('release blocker closure writes public-safe JSON report when blocked', async (t) => {
   const dir = await tempDir(t)
   const envFile = await validEnvFile(t)

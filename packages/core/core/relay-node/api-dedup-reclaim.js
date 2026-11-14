@@ -1,6 +1,7 @@
 import { formatErr } from '../error-prefixes.js'
 
 const RECLAIM_UNAVAILABLE = 'dedup reclaim not available (eviction manager not enabled)'
+const MAX_DEDUP_RECLAIM_BUDGET = 64
 export const DEDUP_RECLAIM_AUTH_MESSAGE = 'Unauthorized — API key required for /api/dedup/reclaim'
 
 const DEDUP_RECLAIM_ROUTES = Object.freeze({
@@ -22,16 +23,16 @@ function badRequest (message) {
 
 function parseNonNegativeInteger (body, name, defaultValue) {
   if (body[name] === undefined) return { ok: true, value: defaultValue }
-  if (!Number.isSafeInteger(body[name]) || body[name] < 0) {
-    return { ok: false, message: `${name} must be a non-negative integer` }
+  if (!Number.isSafeInteger(body[name]) || body[name] < 0 || body[name] > MAX_DEDUP_RECLAIM_BUDGET) {
+    return { ok: false, message: `${name} must be a safe integer within 0..${MAX_DEDUP_RECLAIM_BUDGET}` }
   }
   return { ok: true, value: body[name] }
 }
 
 function parsePositiveInteger (body, name) {
   if (body[name] === undefined) return { ok: true, value: undefined }
-  if (!Number.isSafeInteger(body[name]) || body[name] <= 0) {
-    return { ok: false, message: `${name} must be a positive integer` }
+  if (!Number.isSafeInteger(body[name]) || body[name] <= 0 || body[name] > MAX_DEDUP_RECLAIM_BUDGET) {
+    return { ok: false, message: `${name} must be a safe integer within 1..${MAX_DEDUP_RECLAIM_BUDGET}` }
   }
   return { ok: true, value: body[name] }
 }

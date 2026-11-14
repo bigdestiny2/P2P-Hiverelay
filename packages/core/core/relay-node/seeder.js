@@ -872,7 +872,16 @@ export class Seeder extends EventEmitter {
   }
 
   hasCapacity (additionalBytes = 0) {
-    if (this.storageAdmission) return this.storageAdmission.admission(additionalBytes, { refresh: true }).allowed === true
+    if (this.storageAdmission) {
+      const snapshot = typeof this.storageAdmission.capacitySnapshot === 'function'
+        ? this.storageAdmission.capacitySnapshot()
+        : null
+      if (!snapshot || snapshot.recoveryReady !== true || snapshot.acceptingMutations !== true ||
+          snapshot.valid !== true || snapshot.unknownCommitments !== 0 || snapshot.fatalReason) return false
+      // This is only a cheap permission to attempt seedCore(). The exact
+      // authority is reserve("core:<key>") inside that mutation boundary.
+      return true
+    }
     if (this._canAdopt) {
       const admission = this._canAdopt(additionalBytes)
       return typeof admission === 'boolean' ? admission : !!(admission && admission.allowed)

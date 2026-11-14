@@ -1,6 +1,10 @@
 import test from 'brittle'
 import { readFile } from 'node:fs/promises'
 import {
+  DEFAULT_ATTEMPTS,
+  DEFAULT_INITIAL_DELAY_MS,
+  DEFAULT_MAX_DELAY_MS,
+  DEFAULT_COMMAND_TIMEOUT_MS,
   ensureNpmDistTag,
   execOutputWithTimeout,
   normalizeNpmCommandError,
@@ -212,21 +216,26 @@ test('npm existence probe fails closed on registry timeouts and ambiguous output
 
 test('release workflow verifies bounded npm readback before downstream surfaces', async (t) => {
   const workflow = await readFile('.github/workflows/release-surfaces.yml', 'utf8')
-  const probe = workflow.indexOf('--probe-only')
-  const publish = workflow.indexOf('npm publish "./$pkg" --access public --tag "$dist_tag"')
-  const readback = workflow.indexOf('node scripts/ensure-npm-dist-tag.mjs', publish)
+  const publisher = await readFile('scripts/release-stages/publish-npm.mjs', 'utf8')
+  const immutableDist = await readFile('scripts/release-stages/npm-immutable-dist.mjs', 'utf8')
+  const publishStep = workflow.indexOf('- name: Publish exact npm artifact bytes under next')
+  const entrypoint = workflow.indexOf('node scripts/release-stages/publish-npm.mjs', publishStep)
   const docker = workflow.indexOf('- name: Setup Docker Buildx')
-  const publishStep = workflow.slice(workflow.lastIndexOf('- name: Publish npm packages', publish), docker)
+  const probe = publisher.indexOf("'--probe-only'")
+  const publish = publisher.indexOf("run('npm', ['publish'")
+  const readback = publisher.indexOf('await waitForImmutableNpmDist', publish)
+  const stagingTag = publisher.indexOf("'--tag', RELEASE_NPM_STAGING_TAG", readback)
 
-  t.ok(probe >= 0)
-  t.ok(publish > probe)
-  t.ok(readback > publish)
-  t.ok(docker > readback)
-  t.ok(workflow.includes('--attempts 12'))
-  t.ok(workflow.includes('--initial-delay-ms 2000'))
-  t.ok(workflow.includes('--max-delay-ms 15000'))
-  t.is(workflow.match(/--command-timeout-ms 30000/g)?.length, 2)
-  t.ok(publishStep.includes('timeout-minutes: 120'))
+  t.ok(publishStep >= 0 && entrypoint > publishStep && docker > entrypoint)
+  t.ok(workflow.slice(publishStep, docker).includes('timeout-minutes: 120'))
+  t.ok(probe >= 0 && publish > probe && readback > publish && stagingTag > readback)
+  t.is(DEFAULT_ATTEMPTS, 12)
+  t.is(DEFAULT_INITIAL_DELAY_MS, 2000)
+  t.is(DEFAULT_MAX_DELAY_MS, 15000)
+  t.is(DEFAULT_COMMAND_TIMEOUT_MS, 30000)
+  t.ok(publisher.includes("'--command-timeout-ms', '30000'"))
+  t.ok(publisher.includes("if (probe === 'missing')"))
+  t.ok(immutableDist.includes('actual.integrity !== expected.integrity || actual.shasum !== expected.shasum'))
   t.absent(workflow.includes('if npm view "$name@$version" version'))
   t.absent(workflow.includes('current="$(npm view "$name" "dist-tags.$dist_tag")"'))
 })

@@ -9,12 +9,12 @@ import { promisify } from 'node:util'
 import { fileURLToPath } from 'node:url'
 import {
   BLIND_CLIENT_PUBLIC_BROWSER_ARTIFACT_PROFILES,
-  decodeBlindClientPublicBrowserArtifactManifestV1,
-  encodeBlindClientPublicBrowserCrossHostEvidenceV1,
-  hashBlindClientPublicBrowserArtifactManifestV1,
-  hashBlindClientPublicBrowserNormalizedGraphSetV1,
-  verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1,
-  verifyBlindClientPublicBrowserArtifactV1
+  decodeBlindClientPublicBrowserArtifactManifestV2,
+  encodeBlindClientPublicBrowserCrossHostEvidenceV2,
+  hashBlindClientPublicBrowserArtifactManifestV2,
+  hashBlindClientPublicBrowserNormalizedGraphSetV2,
+  verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2,
+  verifyBlindClientPublicBrowserArtifactV2
 } from '../browser-artifact.js'
 
 if (process.argv.length !== 2) {
@@ -24,14 +24,14 @@ if (process.argv.length !== 2) {
 const execute = promisify(execFile)
 const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const root = path.resolve(packageRoot, '../..')
-const canonicalSourceRoot = '/Users/localllm/.pear-wt/s29artifact5'
-const hostNode = '/opt/homebrew/Cellar/node@22/22.22.0/bin/node'
-const hostNodeHash = '59776c1735b2c28a28b0ae00b58bd9cbe524572e0caf62e043d5e44a62d98cce'
-const headerCache = '/Users/localllm/Library/Caches/node-gyp/22.22.0'
-const headerCacheHash = 'dcd517fb9670e6192712badf0bdf1a9dfc4c8ff88887d06e4d4f4eb42e574990'
+const canonicalSourceRoot = '/Users/localllm/.pear-wt/hr112-7f42'
+const hostNode = '/opt/homebrew/Cellar/node@22/22.23.4/bin/node'
+const hostNodeHash = '210bbbc13dee7ee3913eef05cc9d7eaee5b327a86dfe524bfb8cb3e5949e50dc'
+const headerCache = '/Users/localllm/Library/Caches/node-gyp/22.23.4'
+const headerCacheHash = 'ab912ffccf49c82259f265c35860f4c5de7a5ba0f50d276a23462c31a8d19dc7'
 const headerInstallVersionHash = '25d4f2a86deb5e2574bb3210b67bb24fcc4afb19f93a7b65a057daa874a9d18e'
-const headerNodeH = '/Users/localllm/Library/Caches/node-gyp/22.22.0/include/node/node.h'
-const headerNodeHHash = '4da8d691b256d4bef9c0e89114645f08787dc4892eae76240d28efdf4fa55019'
+const headerNodeH = '/Users/localllm/Library/Caches/node-gyp/22.23.4/include/node/node.h'
+const headerNodeHHash = 'bc47b118a731e9663b145e4823ebc7f31237140d6ea95417519d894d7a0498cb'
 const image = 'sha256:813a7480f28fdadac1f7f5c824bcdad435b5bc1322a5968bbbdef8d058f9dff4'
 const patchHash = 'fbcd793cfb4fd3334b04bfd9163a728064eef2500361cb83ef84e95d13b46b53'
 const gateRoot = path.join(root, '.t/seq29-browser-artifact-gates')
@@ -85,7 +85,7 @@ async function assertHostEnvironment () {
     if (process.env[name] !== value) throw new Error(`${name} must be ${value}`)
     await requireRealDirectoryAncestry(value, name)
   }
-  if (process.execPath !== hostNode || process.version !== 'v22.22.0' ||
+  if (process.execPath !== hostNode || process.version !== 'v22.23.4' ||
       process.versions.modules !== '127' || process.versions.napi !== '10' ||
       process.platform !== 'darwin' || process.arch !== 'arm64' ||
       await sha256File(process.execPath) !== hostNodeHash) {
@@ -137,7 +137,7 @@ async function headerIdentity () {
   if (identity.fileCount !== 2726 || identity.symlinkCount !== 0 ||
       identity.digest !== headerCacheHash || identity.installVersion !== '11' ||
       identity.installVersionHash !== headerInstallVersionHash ||
-      identity.nodeHeaderBytes !== 69621 || identity.nodeHeaderHash !== headerNodeHHash) {
+      identity.nodeHeaderBytes !== 69595 || identity.nodeHeaderHash !== headerNodeHHash) {
     throw new Error(`pinned node-gyp header cache identity changed: ${JSON.stringify(identity)}`)
   }
   return identity
@@ -213,7 +213,7 @@ cd /source
 tar --exclude='./.git' --exclude='./node_modules' --exclude='./.t/seq29-browser-artifact-gates' --exclude='./packages/blind-peercred/build' -cf - . | tar -xf - -C /stage/repository
 cd /stage/repository
 npm ci --ignore-scripts --no-audit --no-fund
-node node_modules/patch-package/index.js --error-on-fail
+node packages/core/platform/apply-hypercore-storage-migration-patch.js
 mkdir -p .t/seq29-browser-artifact-gates/tmp .t/seq29-browser-artifact-gates/npm-cache
 node -e "process.stdout.write('HIVERELAY_INSTALL_ENV=' + JSON.stringify({node:process.version,modules:process.versions.modules,napi:process.versions.napi,platform:process.platform,architecture:process.arch}) + '\\n')"`
     const common = [
@@ -277,7 +277,7 @@ node -e "process.stdout.write('HIVERELAY_GENERATION_ENV=' + JSON.stringify({node
     })
     const reports = generated.stdout.split(/\r?\n/).filter(Boolean).map(line => {
       try { return JSON.parse(line) } catch { return null }
-    }).filter(value => value && value.schema === 'HiveRelayBlindClientPublicBrowserArtifactGenerationV1')
+    }).filter(value => value && value.schema === 'HiveRelayBlindClientPublicBrowserArtifactGenerationV2')
     const environmentLine = generated.stdout.split(/\r?\n/)
       .find(line => line.startsWith('HIVERELAY_GENERATION_ENV='))
     if (reports.length !== 1 || !environmentLine) {
@@ -300,7 +300,7 @@ node -e "process.stdout.write('HIVERELAY_GENERATION_ENV=' + JSON.stringify({node
         throw new Error(`${id} container graph report changed its required identity`)
       }
     }
-    if (hashBlindClientPublicBrowserNormalizedGraphSetV1({
+    if (hashBlindClientPublicBrowserNormalizedGraphSetV2({
       full: report.profiles.full.normalizedGraphHash,
       limited: report.profiles.limited.normalizedGraphHash
     }) !== report.normalizedGraphSetHash) {
@@ -337,12 +337,12 @@ async function verifiedProfile (id, report) {
     fs.readFile(absolute(identity.artifactPath)),
     fs.readFile(absolute(identity.manifestPath))
   ])
-  const manifest = decodeBlindClientPublicBrowserArtifactManifestV1(manifestBytes)
-  const verified = verifyBlindClientPublicBrowserArtifactV1({
+  const manifest = decodeBlindClientPublicBrowserArtifactManifestV2(manifestBytes)
+  const verified = verifyBlindClientPublicBrowserArtifactV2({
     profile: id,
     artifactBytes,
     manifestBytes,
-    expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV1(manifestBytes),
+    expectedManifestHash: hashBlindClientPublicBrowserArtifactManifestV2(manifestBytes),
     expectedSourceClosureHash: manifest.sourceClosureHash,
     expectedTupleHash: manifest.tupleHash
   })
@@ -388,9 +388,9 @@ if (JSON.stringify(headerBefore) !== JSON.stringify(headerAfter)) {
 const generatedEvidence = {}
 for (const id of ['full', 'limited']) {
   const item = await verifiedProfile(id, container.report)
-  generatedEvidence[id] = encodeBlindClientPublicBrowserCrossHostEvidenceV1({
-    schema: 'HiveRelayBlindClientPublicBrowserArtifactCrossHostEvidenceV1',
-    version: 1,
+  generatedEvidence[id] = encodeBlindClientPublicBrowserCrossHostEvidenceV2({
+    schema: 'HiveRelayBlindClientPublicBrowserArtifactCrossHostEvidenceV2',
+    version: 2,
     evidenceClass: 'clean-linux-container',
     profile: item.verified.profile,
     artifactPath: item.verified.artifactPath,
@@ -399,14 +399,14 @@ for (const id of ['full', 'limited']) {
     manifestHash: item.verified.manifestHash,
     tupleHash: item.verified.tupleHash,
     sourceClosureHash: item.verified.sourceClosureHash,
-    acceptedSourceCommit: '1a114f64c97547cab6a18102c2ef4bff930e53ed',
-    acceptedSourceTree: '5a341ba17a3d91a750cac94ba51116fe3552a6aa',
+    acceptedSourceCommit: '1e1466d3ed486b4d6fc68abccb9a8375873af626',
+    acceptedSourceTree: '2b9dbf4a5165d3562df12b0b21ca10dcace71288',
     candidateIdentityBinding: 'external-postcommit-final-sequence',
     standaloneAuthority: false,
     sourceArchiveIdentity: 'same-committed-relative-bytes',
     hostNodeExecutable: hostNode,
     hostNodeExecutableHash: hostNodeHash,
-    hostNode: 'v22.22.0',
+    hostNode: 'v22.23.4',
     hostModulesAbi: '127',
     hostNapi: '10',
     hostPlatform: 'darwin',
@@ -438,7 +438,7 @@ for (const id of ['full', 'limited']) {
     containerNoNewPrivileges: true,
     installNetworkPhase: 'networked-exact-lock-npm-ci-ignore-scripts',
     generationNetworkPhase: 'none',
-    patchApplied: 'hypercore-storage@3.2.0',
+    patchApplied: 'hypercore-storage@3.4.0',
     patchHash,
     containerNativeRebuild: 'omitted-unreachable',
     fullNativeAddonReachable: false,
@@ -453,7 +453,7 @@ for (const id of ['full', 'limited']) {
     passed: true
   })
   const chromiumEvidenceBytes = await fs.readFile(absolute(item.identity.chromiumEvidencePath))
-  const release = verifyBlindClientPublicBrowserArtifactReleaseEvidenceV1({
+  const release = verifyBlindClientPublicBrowserArtifactReleaseEvidenceV2({
     profile: id,
     artifactBytes: item.artifactBytes,
     manifestBytes: item.manifestBytes,
@@ -476,7 +476,7 @@ await Promise.all(['full', 'limited'].map(id => fs.writeFile(
   generatedEvidence[id], { mode: 0o644 }
 )))
 const report = {
-  schema: 'HiveRelayBlindClientPublicBrowserArtifactCrossHostGateV1',
+  schema: 'HiveRelayBlindClientPublicBrowserArtifactCrossHostGateV2',
   containerImageId: image,
   containerPlatform: 'linux/arm64',
   containerNode: container.environment.node,

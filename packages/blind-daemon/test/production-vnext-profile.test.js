@@ -1,3 +1,4 @@
+import { TwoSlotManifestStore } from '../manifest-store.js'
 import test from 'brittle'
 import fs from 'node:fs/promises'
 import path from 'node:path'
@@ -27,6 +28,8 @@ import {
   blindErrorV1,
   blindHealthChallengeV1,
   blindHealthResultV1,
+  blindLocalCheckpointV1,
+  localCheckpointHash,
   blindServiceDescriptorV1,
   blake2b256,
   coreMirrorRequestV1,
@@ -54,10 +57,10 @@ import {
   bindStoreIdentity,
   bootstrapVnextStoreGenerationFloor,
   encodeRuntimeBinding,
-  loadProductionRuntimeConfig,
-  productionReleaseGateFor
+  loadProductionRuntimeConfig
 } from '../production-runtime.js'
 import {
+  vnextStoreGenesisExpectedBindings,
   deriveVnextBucketMapHash,
   loadVnextForwardConfig,
   runVnextStoreGenesisCeremony
@@ -100,11 +103,17 @@ async function gateError (environment) {
   return error
 }
 
-test('vNext gate genuinely assembles the complete baseline with zero exclusions', async t => {
+async function localVnextAssemblyGate (environment) {
+  const error = await gateError(environment)
+  if (error == null || error.code !== 'BLIND_STORAGE_GENERATION_UNSAFE') throw error
+}
+
+test('vNext production gate validates the baseline then enforces the RC9 generation-safety blocker', async t => {
   const fixture = await vnextSealedFixture()
   t.teardown(() => cleanup(fixture.directory))
   const error = await gateError(fixture.environment)
-  t.is(error, null, 'the genuine production release gate passes with zero baseline exclusions')
+  t.is(error && error.code, 'BLIND_STORAGE_GENERATION_UNSAFE')
+  t.ok(error.message.includes('pre-floor open may mutate or erase evidence'))
 
   // Every baseline item is TRUE-assembled by a real code path (the static
   // binding verification, the entrypoint CELL/INBOX/CORE line, the sealed
@@ -178,20 +187,21 @@ test('completeness scope is frozen: baseline never evaluates profile-2 items, ev
   t.absent(BASELINE_COMPLETENESS_EXCLUSIONS.includes(PROFILE2_WITNESS))
   t.alike([...PROFILE2_COMPLETENESS_EXCLUSIONS], [FORWARD_EXEC, PROFILE2_WITNESS])
 
-  // With no FORWARD material the baseline gate passes: the baseline set is
-  // genuinely assembled and profile-2 items are never evaluated under it.
+  // With no FORWARD material the baseline reaches the same generation-safety
+  // blocker: profile-2 items are never evaluated under it.
   const without = await vnextSealedFixture()
   t.teardown(() => cleanup(without.directory))
   t.is(loadVnextForwardConfig(without.environment), null, 'absent FORWARD material parses as unconfigured')
-  t.is(await gateError(without.environment), null, 'baseline gate passes with no FORWARD material')
+  t.is((await gateError(without.environment)).code, 'BLIND_STORAGE_GENERATION_UNSAFE')
 
   // Even with a complete FORWARD storage identity configured, the baseline
-  // gate still does not evaluate profile-2 items; it passes unchanged.
+  // gate still does not evaluate profile-2 items; the same generation blocker
+  // remains non-overridable.
   const withForward = await vnextSealedFixture({ forward: true })
   t.teardown(() => cleanup(withForward.directory))
   t.ok(loadVnextForwardConfig(withForward.environment), 'complete FORWARD storage identity parses')
-  t.is(await gateError(withForward.environment), null,
-    'baseline gate passes; FORWARD and the profile-2 witness are never baseline items')
+  t.is((await gateError(withForward.environment)).code, 'BLIND_STORAGE_GENERATION_UNSAFE',
+    'baseline reaches the generation blocker; FORWARD and the profile-2 witness are never baseline items')
 })
 
 test('the profile-2 acceptance profile stays fail-closed (static gate, FORWARD bits zero)', async t => {
@@ -331,8 +341,6 @@ async function orchestrateVnextServingStore (fixture) {
       descriptorCanonicalBytes,
       manifestKey,
       ownerFenceTokenHash,
-      partitionKey: blake2b256(b4a.concat([
-        b4a.from('hiverelay.blind.partition-key.v1', 'ascii'), descriptor.storeId, manifestKey])),
       bucketMapHash: deriveVnextBucketMapHash(descriptor.storeId, mapGeneration),
       mapGeneration
     })
@@ -366,11 +374,9 @@ async function orchestrateVnextServingStore (fixture) {
   }
 }
 
-// Assemble the production runtime exactly as cli.js does for the vNext
-// profile: the genuine production release gate bound to the signed
-// environment, the sealed admission redemption adapter loaded through the
-// production VM bridge, strict admission capture, and the manifest floor
-// required. No test seams.
+// Exercise the complete vNext assembly below the deliberately closed RC9
+// public gate. The local gate consumes only the final generation-safety error;
+// every earlier binding/completeness failure remains fatal.
 async function assembleVnextRuntime (fixture, environment = fixture.environment) {
   const bootstrap = loadDaemonBootstrapConfig(environment)
   const entrypointConfig = loadProductionEntrypointConfig(environment)
@@ -378,7 +384,7 @@ async function assembleVnextRuntime (fixture, environment = fixture.environment)
   return assembleProductionBlindDaemon({
     bootstrap,
     runtimeConfig: loadProductionRuntimeConfig(environment, bootstrap.endpointIds),
-    releaseGate: productionReleaseGateFor(environment),
+    releaseGate: () => localVnextAssemblyGate(environment),
     enableCellRuntime: true,
     enableInboxRuntime: true,
     enableCoreRuntime: true,
@@ -751,4 +757,125 @@ test('F-01: a serve against a pristine un-sealed root fails coded pre-mutation a
   const baselineExcluded = runtime.status().exclusions.filter(name =>
     BASELINE_COMPLETENESS_EXCLUSIONS.includes(name))
   t.alike(baselineExcluded, [], 'the correct ceremony then assembles with zero baseline exclusions')
+})
+
+async function startupTree (root, relative = '') {
+  const records = []
+  for (const name of (await fs.readdir(path.join(root, relative))).sort()) {
+    const child = path.join(relative, name)
+    const stat = await fs.lstat(path.join(root, child))
+    records.push({
+      path: child,
+      directory: stat.isDirectory(),
+      mode: stat.mode & 0o777,
+      nlink: stat.nlink,
+      bytes: stat.isFile() ? b4a.toString(await fs.readFile(path.join(root, child)), 'hex') : null
+    })
+    if (stat.isDirectory()) records.push(...await startupTree(root, child))
+  }
+  return records
+}
+
+for (const invalid of ['malformed-floor', 'rolled-back-wal', 'invalid-snapshot']) {
+  test(`explicit generation bootstrap rejects ${invalid} before recovery cleanup`, async t => {
+    const fixture = await vnextSealedFixture()
+    t.teardown(() => cleanup(fixture.directory))
+    const { descriptor } = await orchestrateVnextServingStore(fixture)
+    const storeRoot = fixture.environment.HIVERELAY_BLIND_STORE_ROOT
+    const control = path.join(storeRoot, 'control')
+    if (invalid === 'malformed-floor') {
+      const name = (await fs.readdir(control)).find(name => name.includes('generation-record-'))
+      await fs.writeFile(path.join(control, name), '{malformed')
+    } else if (invalid === 'rolled-back-wal') {
+      await fs.writeFile(path.join(control, 'wal.v2'), b4a.alloc(0))
+    } else {
+      const name = (await fs.readdir(control)).find(name => name.startsWith('snapshot-'))
+      await fs.writeFile(path.join(control, name), b4a.from('invalid snapshot'))
+    }
+    await fs.appendFile(path.join(control, 'wal.v2'), b4a.alloc(13, 0xff))
+    await fs.writeFile(path.join(storeRoot, 'staging', 'interrupted.tmp'), 'retained', { mode: 0o600 })
+    const before = await startupTree(storeRoot)
+    const manifestKey = await fs.readFile(fixture.environment.HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE)
+    const ownerFenceTokenHash = await fs.readFile(fixture.environment.HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE)
+    await t.exception(bootstrapVnextStoreGenerationFloor({ storeRoot, descriptor, manifestKey, ownerFenceTokenHash, mapGeneration: 1n }))
+    t.alike(await startupTree(storeRoot), before, 'bootstrap rejects with every byte and directory entry unchanged')
+    t.comment(JSON.stringify({ invalid, before, after: await startupTree(storeRoot) }))
+  })
+}
+
+for (const kind of ['rollback', 'fork']) {
+  test(`still-valid descriptor ${kind} rejects every startup mutation under ownership`, async t => {
+    const fixture = await vnextSealedFixture({ functionalAdmission: true })
+    t.teardown(() => cleanup(fixture.directory))
+    const { descriptor } = await orchestrateVnextServingStore(fixture)
+    const runtime = await assembleVnextRuntime(fixture)
+    await runtime.close()
+    const roots = [fixture.environment.HIVERELAY_BLIND_STORE_ROOT,
+      fixture.environment.HIVERELAY_BLIND_INBOX_STORE_ROOT, fixture.environment.HIVERELAY_BLIND_CORE_STORE_ROOT]
+    const manifestKey = await fs.readFile(fixture.environment.HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE)
+    const ownerFenceTokenHash = await fs.readFile(fixture.environment.HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE)
+    const manifest = new TwoSlotManifestStore({
+      controlDirectory: path.join(roots[0], 'control'),
+      manifestKey,
+      expectedBindings: vnextStoreGenesisExpectedBindings(descriptor, fixture.successorHash, 1n, ownerFenceTokenHash)
+    })
+    await manifest.open()
+    const snapshot = await manifest.load()
+    await manifest.advance(snapshot.hash, {
+      descriptorSequenceFloor: kind === 'rollback' ? 2n : 1n,
+      descriptorHashFloor: kind === 'rollback' ? fixture.successorHash : b4a.alloc(32, 0x9a)
+    })
+    await manifest.close()
+    for (const root of roots) {
+      await fs.appendFile(path.join(root, 'control', 'wal.v2'), b4a.alloc(13, 0xff))
+      await fs.writeFile(path.join(root, 'staging', 'descriptor-startup.tmp'), 'retained', { mode: 0o600 })
+    }
+    const before = await Promise.all(roots.map(root => startupTree(root)))
+    const error = await failure(() => assembleVnextRuntime(fixture))
+    t.is(error?.code, kind === 'rollback' ? 'BLIND_RUNTIME_DESCRIPTOR_FLOOR_ROLLBACK' : 'BLIND_RUNTIME_DESCRIPTOR_FLOOR_FORK')
+    const after = await Promise.all(roots.map(root => startupTree(root)))
+    t.alike(after, before, 'all roots remain byte-exact on still-valid rejected descriptor')
+    t.comment(JSON.stringify({ invalid: 'descriptor-' + kind, before, after }))
+    const bootstrapError = await failure(() => bootstrapVnextStoreGenerationFloor({
+      storeRoot: roots[0], descriptor, manifestKey, ownerFenceTokenHash, mapGeneration: 1n
+    }))
+    t.is(bootstrapError?.code, error.code, 'explicit bootstrap applies the same owned descriptor-floor comparison')
+    t.alike(await Promise.all(roots.map(root => startupTree(root))), before)
+  })
+}
+
+test('a forward descriptor refresh passes read-only startup comparison and persists the new floor', async t => {
+  const fixture = await vnextSealedFixture({ functionalAdmission: true })
+  t.teardown(() => cleanup(fixture.directory))
+  const { descriptor } = await orchestrateVnextServingStore(fixture)
+  const root = fixture.environment.HIVERELAY_BLIND_STORE_ROOT
+  const manifestKey = await fs.readFile(fixture.environment.HIVERELAY_BLIND_STORE_MANIFEST_KEY_FILE)
+  const fence = await fs.readFile(fixture.environment.HIVERELAY_BLIND_OWNER_FENCE_TOKEN_HASH_FILE)
+  const manifest = new TwoSlotManifestStore({
+    controlDirectory: path.join(root, 'control'),
+    manifestKey,
+    expectedBindings: vnextStoreGenesisExpectedBindings(descriptor, fixture.successorHash, 1n, fence)
+  })
+  await manifest.open()
+  const snapshot = await manifest.load()
+  // Model a persisted predecessor descriptor floor beneath the still-valid
+  // configured successor. This is a test fixture, never a rollback procedure.
+  const checkpointPath = path.join(root, 'control', `checkpoint-${b4a.toString(snapshot.manifest.checkpointHash, 'hex')}.v1`)
+  const checkpoint = decodeCanonical(blindLocalCheckpointV1, await fs.readFile(checkpointPath), { copyBytes: true })
+  const predecessor = encodeCanonical(blindLocalCheckpointV1, {
+    ...checkpoint,
+    descriptorSequenceFloor: 0n,
+    descriptorHashFloor: fixture.genesisHash
+  })
+  const checkpointHash = localCheckpointHash(predecessor)
+  await fs.writeFile(path.join(root, 'control', `checkpoint-${b4a.toString(checkpointHash, 'hex')}.v1`), predecessor, { mode: 0o600 })
+  await manifest.advance(snapshot.hash, { checkpointHash, descriptorSequenceFloor: 0n, descriptorHashFloor: fixture.genesisHash })
+  await manifest.close()
+  const runtime = await assembleVnextRuntime(fixture)
+  t.is(runtime.status().manifestFloor.descriptorSequenceFloor, 1n)
+  t.alike(runtime.status().manifestFloor.descriptorHashFloor, fixture.successorHash)
+  await runtime.close()
+  const restarted = await assembleVnextRuntime(fixture)
+  t.is(restarted.status().manifestFloor.descriptorSequenceFloor, 1n)
+  await restarted.close()
 })

@@ -1,0 +1,144 @@
+name: Stable promotion
+run-name: Promote existing ${{ inputs.tag }} artifact bytes
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Exact GA artifact tag; dispatch this workflow at that same tag
+        required: true
+        type: string
+      qualification_run_id:
+        description: Independent reviewer run containing the signed qualification bundle
+        required: true
+        type: string
+      qualification_artifact_id:
+        description: Exact immutable qualification artifact ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  packages: write
+
+concurrency:
+  group: stable-promotion-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment: hiverelay-stable-promotion
+    env:
+      GH_TOKEN: ${{ secrets.STABLE_DISTRIBUTION_TOKEN }}
+      NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+      UMBREL_STORE_TOKEN: ${{ secrets.UMBREL_STORE_TOKEN }}
+      UMBREL_OFFICIAL_PR_TOKEN: ${{ secrets.UMBREL_OFFICIAL_PR_TOKEN }}
+      UMBREL_OFFICIAL_FORK: ${{ vars.UMBREL_OFFICIAL_FORK }}
+      ECOSYSTEM_CONSUMER_TOKEN: ${{ secrets.ECOSYSTEM_CONSUMER_TOKEN }}
+      STARTOS_REGISTRY_URL: ${{ vars.STARTOS_REGISTRY_URL }}
+      STARTOS_DEVELOPER_KEY_PEM: ${{ secrets.STARTOS_DEVELOPER_KEY_PEM }}
+      FLEET_SSH_PRIVATE_KEY: ${{ secrets.FLEET_SSH_PRIVATE_KEY }}
+      FLEET_ROLLOUT_TIMEOUT_MS: '1800000'
+      HIVERELAY_PROMOTION_ALLOWED_SIGNERS_SHA256: ${{ vars.PROMOTION_ALLOWED_SIGNERS_SHA256 }}
+      HIVERELAY_PROMOTION_SIGNER_IDENTITY: ${{ vars.PROMOTION_SIGNER_IDENTITY }}
+      HIVERELAY_FLEET_GATEWAY_EVIDENCE: ${{ vars.FLEET_GATEWAY_EVIDENCE }}
+      HIVERELAY_FLEET_GATEWAY_MANIFEST: ${{ vars.FLEET_GATEWAY_MANIFEST }}
+    steps:
+      - name: Checkout exact dispatched source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set protected authority paths
+        run: |
+          set -euo pipefail
+          printf 'HIVERELAY_PROMOTION_ALLOWED_SIGNERS_FILE=%s/promotion-authority/allowed-signers\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'HIVERELAY_FLEET_KNOWN_HOSTS_FILE=%s/promotion-authority/known_hosts\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'HIVERELAY_FLEET_SSH_KEY_FILE=%s/promotion-authority/fleet.key\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'HIVERELAY_FLEET_GATEWAY_WINDOW_STATE=%s/promotion-authority/gateway-window.json\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Check exact tag and protected authority
+        env:
+          RELEASE_TAG: ${{ inputs.tag }}
+          PROMOTION_ALLOWED_SIGNERS: ${{ vars.PROMOTION_ALLOWED_SIGNERS }}
+          FLEET_KNOWN_HOSTS: ${{ secrets.FLEET_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          test "$GITHUB_REF" = "refs/tags/$RELEASE_TAG"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(git rev-parse "$RELEASE_TAG^{commit}")" = "$GITHUB_SHA"
+          install -d -m 700 "$RUNNER_TEMP/promotion-authority"
+          printf '%s\n' "$PROMOTION_ALLOWED_SIGNERS" > "$HIVERELAY_PROMOTION_ALLOWED_SIGNERS_FILE"
+          printf '%s\n' "$FLEET_KNOWN_HOSTS" > "$HIVERELAY_FLEET_KNOWN_HOSTS_FILE"
+          printf '%s\n' "$FLEET_SSH_PRIVATE_KEY" > "$HIVERELAY_FLEET_SSH_KEY_FILE"
+          chmod 600 "$RUNNER_TEMP/promotion-authority/"*
+          gh auth setup-git
+      - name: Download independent signed qualification bundle
+        env:
+          QUALIFICATION_RUN_ID: ${{ inputs.qualification_run_id }}
+          QUALIFICATION_ARTIFACT_ID: ${{ inputs.qualification_artifact_id }}
+        run: node scripts/release-stages/download-qualification.mjs --run-id "$QUALIFICATION_RUN_ID" --artifact-id "$QUALIFICATION_ARTIFACT_ID" --out "$RUNNER_TEMP/promotion-bundle"
+      - name: Set up Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6 (Node 24)
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Set up Docker buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+      - name: Authenticate existing OCI promotion
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Install StartOS packaging tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y librsvg2-bin
+          git clone --depth 1 --branch v0.3.5.1 --recurse-submodules \
+            https://github.com/Start9Labs/start-os.git /tmp/start-os
+          cd /tmp/start-os
+          mkdir -p web/dist/static
+          touch web/dist/static/.keep
+          git rev-parse HEAD > GIT_HASH.txt
+          rustup toolchain install 1.78.0
+          # Start9Labs/avahi-sys was deleted upstream; start-os v0.3.5.1's
+          # locked tree depends on its feature/dynamic-linking branch. The
+          # fedimint fork carries the same branch at the same pinned commit
+          # (12bef9e4), so rewrite the git URL instead of touching the lock.
+          git config --global url."https://github.com/fedimint/avahi-sys".insteadOf \
+            "https://github.com/Start9Labs/avahi-sys"
+          git config --global url."https://github.com/fedimint/jsonpath".insteadOf \
+            "https://github.com/Start9Labs/jsonpath"
+          cd core/startos
+          cargo +1.78.0 install --path . --bin startbox \
+            --no-default-features --features cli,sdk --locked
+          git config --global --unset url."https://github.com/fedimint/avahi-sys".insteadOf
+          git config --global --unset url."https://github.com/fedimint/jsonpath".insteadOf
+          ln -sf "$HOME/.cargo/bin/startbox" "$HOME/.cargo/bin/start-sdk"
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          start-sdk --version
+
+      - name: Configure existing StartOS publisher identity
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.embassy"
+          printf '%s\n' "$STARTOS_DEVELOPER_KEY_PEM" > "$HOME/.embassy/developer.key.pem"
+          chmod 600 "$HOME/.embassy/developer.key.pem"
+      - name: Promote existing qualified bytes and verify current readbacks
+        run: node scripts/release-stages/promote.mjs --mode promote --bundle-dir "$RUNNER_TEMP/promotion-bundle"
+      - name: Retain immutable promotion receipt
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1 (Node 24)
+        with:
+          name: stable-promotion-${{ inputs.tag }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/promotion-bundle/release-stable-promotion-evidence.json
+            ${{ runner.temp }}/promotion-bundle/stable-promotion-fleet-evidence.json
+          if-no-files-found: error
+      - name: Publish distinct receipts without rewriting artifact closure
+        run: node scripts/release-stages/publish-receipt.mjs --bundle-dir "$RUNNER_TEMP/promotion-bundle"

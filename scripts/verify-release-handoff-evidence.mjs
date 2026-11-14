@@ -5,6 +5,8 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import {
+  validateReleaseStage,
+  assertArtifactSurfaceState,
   RELEASE_CLOSURE_EVIDENCE,
   RELEASE_SYNC_WORKFLOW_SCOPE,
   expectedReleaseClosureStatus,
@@ -296,6 +298,7 @@ function assertReleaseEvidenceSchema (body) {
     'tagSha',
     'metadataSha',
     'publicGateway',
+    'stage',
     'workflow',
     'closure'
   ])
@@ -377,6 +380,19 @@ function assertReleaseEvidenceSchema (body) {
 }
 
 async function verifyReleaseHandoffs (release, inputs) {
+  if (validateReleaseStage(release)) {
+    assertArtifactSurfaceState(release)
+    const imageTime = verifyImageManifestSidecar(release, requireFile(inputs.releaseImageManifestFile, 'release image manifest evidence'))
+    verifySmokeSidecar(release, release.gates.pushedImageSmokeEvidence, inputs.releaseImageSmokeFile, 'release-image-smoke', RELEASE_IMAGE_SMOKE_CHECKS, imageTime)
+    verifySmokeSidecar(release, release.gates.umbrelPackageSmokeEvidence, inputs.umbrelPackageSmokeFile, 'umbrel-package-smoke', UMBREL_PACKAGE_SMOKE_CHECKS, imageTime)
+    const packageFile = requireFile(inputs.startosPackageFile, 'StartOS package')
+    requireEqual('StartOS package SHA-256', await sha256LargeFile(packageFile, 'StartOS package'), release.artifacts.startosPackage.sha256)
+    if (inputs.requireUmbrelRuntimeReview) {
+      const { stablePromotion } = await import('./release-stages/promote.mjs')
+      stablePromotion({ bundleDir: path.dirname(inputs.releaseFile), allowedSigners: process.env.HIVERELAY_PROMOTION_ALLOWED_SIGNERS_FILE, mode: 'verify' })
+    }
+    return
+  }
   if (release.release.prerelease) {
     verifyPrereleaseSkips(release)
     forbidPresent('fleet rollout handoff evidence', inputs.fleetRolloutFile)

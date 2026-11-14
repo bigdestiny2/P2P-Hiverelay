@@ -1,4 +1,5 @@
 import test from 'brittle'
+import { createHash } from 'node:crypto'
 import { X402ServiceFacade } from '../../packages/core/incentive/x402/service-facade.js'
 
 const PAY_TO = '0x1111111111111111111111111111111111111111'
@@ -58,7 +59,20 @@ function fakeServer () {
       }
       return {
         type: 'payment-verified',
-        paymentPayload: { x402Version: 2, payload: { authorization: header } },
+        paymentPayload: {
+          x402Version: 2,
+          payload: {
+            signature: header,
+            authorization: {
+              from: PAY_TO,
+              to: PAY_TO,
+              value: '1000',
+              validAfter: '0',
+              validBefore: '9999999999',
+              nonce: '0x' + createHash('sha256').update(header).digest('hex')
+            }
+          }
+        },
         paymentRequirements: {
           scheme: 'exact',
           network: 'eip155:84532',
@@ -193,4 +207,103 @@ test('x402 facade forwards repeated query parameters to paid GET services', asyn
 
   t.is(result.status, 200)
   t.alike(received, { from: '10', tag: ['a', 'b'] })
+})
+
+test('x402 facade releases a pre-execution failure only after cancellation completes', async (t) => {
+  const server = fakeServer()
+  const process = server.processHTTPRequest.bind(server)
+  let cancelStarted
+  let finishCancel
+  const started = new Promise(resolve => { cancelStarted = resolve })
+  const finish = new Promise(resolve => { finishCancel = resolve })
+  let cancellations = 0
+  server.processHTTPRequest = async context => {
+    const result = await process(context)
+    if (result.cancellationDispatcher) {
+      result.cancellationDispatcher.cancel = async () => {
+        if (++cancellations === 1) {
+          cancelStarted()
+          await finish
+        }
+      }
+    }
+    return result
+  }
+  const facade = new X402ServiceFacade({ config: config(), serverFactory: async () => server })
+  let executions = 0
+  const args = {
+    req: request('retry-payment'),
+    url: new URL('https://relay.example/svc/vrf/prove'),
+    readBody: async () => ({}),
+    execute: async () => { executions++; return {} }
+  }
+  const first = facade.handle({ ...args, readBody: async () => { throw new Error('invalid body') } })
+  await started
+  t.is((await facade.handle(args)).status, 402, 'pending cancellation retains ownership')
+  t.is(executions, 0)
+  finishCancel()
+  t.is((await first).status, 400)
+  t.is((await facade.handle(args)).status, 200, 'pre-execution failure can retry after cancellation')
+  t.is(executions, 1)
+})
+
+test('x402 facade retains an authorization when the handler throws after starting work', async (t) => {
+  const server = fakeServer()
+  const facade = new X402ServiceFacade({ config: config(), serverFactory: async () => server })
+  let executions = 0
+  const args = {
+    req: request('handler-failure'),
+    url: new URL('https://relay.example/svc/vrf/prove'),
+    readBody: async () => ({}),
+    execute: async () => { executions++; throw new Error('side effect may already have happened') }
+  }
+  t.is((await facade.handle(args)).status, 400)
+  t.is((await facade.handle(args)).status, 402)
+  t.is(executions, 1, 'a handler exception never reopens its payment')
+  t.is((await facade.handle({ ...args, req: request('distinct-payment'), execute: async () => ({}) })).status, 200)
+})
+
+test('x402 facade retains executed claims after thrown and rejected settlements', async (t) => {
+  for (const throws of [true, false]) {
+    const server = fakeServer()
+    server.processSettlement = async () => {
+      if (throws) throw new Error('facilitator unavailable')
+      return { success: false, response: { status: 402, headers: {}, body: { error: 'settlement rejected' } } }
+    }
+    const facade = new X402ServiceFacade({ config: config(), serverFactory: async () => server })
+    let executions = 0
+    const args = {
+      req: request('settlement-failure'),
+      url: new URL('https://relay.example/svc/vrf/prove'),
+      readBody: async () => ({}),
+      execute: async () => { executions++; return {} }
+    }
+    t.is((await facade.handle(args)).status, throws ? 503 : 402)
+    t.is((await facade.handle(args)).status, 402)
+    t.is(executions, 1)
+  }
+})
+
+test('x402 facade fails closed on a malformed verified authorization', async (t) => {
+  const server = fakeServer()
+  const process = server.processHTTPRequest.bind(server)
+  server.processHTTPRequest = async context => {
+    const result = await process(context)
+    if (result.paymentPayload) result.paymentPayload.payload.authorization.nonce = 'invalid'
+    return result
+  }
+  const facade = new X402ServiceFacade({ config: config(), serverFactory: async () => server })
+  let reads = 0
+  let executions = 0
+  const result = await facade.handle({
+    req: request('malformed-payment'),
+    url: new URL('https://relay.example/svc/vrf/prove'),
+    readBody: async () => { reads++; return {} },
+    execute: async () => { executions++; return {} }
+  })
+  t.is(result.status, 402)
+  t.is(reads, 0)
+  t.is(executions, 0)
+  t.is(facade.claims.claims.size, 0)
+  t.is(server.cancellations.length, 1)
 })

@@ -60,7 +60,7 @@ export class ServedAccounting extends EventEmitter {
   }
 
   _attach (core) {
-    if (!core || this._tracked.has(core)) return
+    if (!core || core.closed || core.closing || this._tracked.has(core)) return
     if (typeof core.on === 'function') {
       // Public session (or stub). Subscribing 'upload' auto-registers the
       // session as a replication monitor in hypercore 11 — same event the
@@ -99,6 +99,11 @@ export class ServedAccounting extends EventEmitter {
   }
 
   getSummary () {
+    // Corestore's internal Cores have no close event. Release their strong
+    // references during telemetry so idle-core collection can reclaim them.
+    for (const entry of this._listeners) {
+      if (entry.core.closed) this._detach(entry)
+    }
     return {
       totalBytesServed: this.totalBytesServed,
       totalBlocksServed: this.totalBlocksServed,
@@ -114,15 +119,19 @@ export class ServedAccounting extends EventEmitter {
     } else if (typeof this.store.removeListener === 'function') {
       this.store.removeListener('core-open', this._onCoreOpen)
     }
-    for (const entry of this._listeners) {
-      if (entry.onUpload && entry.core && typeof entry.core.removeListener === 'function') {
-        entry.core.removeListener('upload', entry.onUpload)
-      } else if (entry.monitor && entry.core && typeof entry.core.removeMonitor === 'function') {
-        entry.core.removeMonitor(entry.monitor)
-      }
-    }
-    this._listeners.clear()
+    for (const entry of this._listeners) this._detach(entry)
     this._tracked = new WeakSet()
     this._coreCount = 0
+  }
+
+  _detach (entry) {
+    if (entry.onUpload && typeof entry.core.removeListener === 'function') {
+      entry.core.removeListener('upload', entry.onUpload)
+    } else if (entry.monitor && typeof entry.core.removeMonitor === 'function') {
+      entry.core.removeMonitor(entry.monitor)
+    }
+    this._listeners.delete(entry)
+    this._tracked.delete(entry.core)
+    this._coreCount--
   }
 }

@@ -346,8 +346,8 @@ export class ArbitrationService extends ServiceProvider {
     for (const receipt of dispute.evidence.receipts) {
       let valid = false
       try {
-        // Dynamic import to avoid hard dep
-        const { BandwidthReceipt } = await import('../../protocol/bandwidth-receipt.js')
+        // Resolve through the declared core package in both installs and workspaces.
+        const { BandwidthReceipt } = await import('p2p-hiverelay/core/protocol/bandwidth-receipt.js')
         valid = BandwidthReceipt.verify(receipt)
       } catch {
         valid = false

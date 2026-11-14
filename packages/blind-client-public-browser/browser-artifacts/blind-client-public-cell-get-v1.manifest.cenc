@@ -1,12 +1,12 @@
 {
-  "schema": "HiveRelayBlindClientPublicBrowserArtifactManifestV1",
-  "version": 1,
-  "acceptedSourceCommit": "1a114f64c97547cab6a18102c2ef4bff930e53ed",
-  "acceptedSourceTree": "5a341ba17a3d91a750cac94ba51116fe3552a6aa",
-  "sourceClosureHash": "0aa3d2c176e133a9bbee88bc50374a4debbccf9e61ceecaf84cc1578afee05d3",
+  "schema": "HiveRelayBlindClientPublicBrowserArtifactManifestV2",
+  "version": 2,
+  "acceptedSourceCommit": "1e1466d3ed486b4d6fc68abccb9a8375873af626",
+  "acceptedSourceTree": "2b9dbf4a5165d3562df12b0b21ca10dcace71288",
+  "sourceClosureHash": "3cdf1eb96f00899e912fa30294a054075db7b5c447a33e87efbb079541797b01",
   "profile": "hiverelay.blind-client-public-browser.cell-get.v1",
   "artifactHashDomain": "hiverelay.blind-client-public-browser.cell-get-artifact-hash.v1",
-  "manifestHashDomain": "hiverelay.blind-client-public-browser.cell-get-manifest-hash.v1",
+  "manifestHashDomain": "hiverelay.blind-client-public-browser.cell-get-manifest-hash.v2",
   "artifactPath": "packages/blind-client-public-browser/browser-artifacts/blind-client-public-cell-get-v1.mjs",
   "exactSortedExports": [
     "createBlindCellGetControl",
@@ -18,7 +18,7 @@
     "napi": "10",
     "esbuild": "0.28.1"
   },
-  "tupleHash": "7c42d9f4468e46951659e7d7bcd4db2ea6556ed5afefd29d817f1da0fb3e38a7",
-  "artifactLength": 191474,
-  "artifactHash": "ef60c0a45fe093d214cddb17f207675dfdf1df3bb5861bc9ea24542376bffb1c"
+  "tupleHash": "20f601a705ee5c57918d12600b2bdade70cc3c61a5980d2f7a3ae12df2e81cd0",
+  "artifactLength": 191525,
+  "artifactHash": "4898b72452df29984b85de6d663b0923d5bbe8ab0ae42053856ea43a38f98627"
 }

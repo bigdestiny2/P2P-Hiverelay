@@ -1330,8 +1330,7 @@ function requirePublicAddress (value, label) {
     }
   } else {
     const address = new Address6(normalized)
-    if (address.isULA() || address.isLoopback() || address.isLinkLocal() || address.isDocumentation() ||
-        address.isUnspecified() || address.isMulticast() || address.isMapped4() || address.is6to4() || address.isTeredo()) {
+    if (!address.isGlobal() || address.isMapped4() || address.is6to4() || address.isTeredo()) {
       throw new Error(`${label} must be a globally routable unicast address`)
     }
   }

@@ -1,6 +1,9 @@
 import test from 'brittle'
 import createTestnet from '@hyperswarm/testnet'
 import Hyperdrive from 'hyperdrive'
+import hypercoreCrypto from 'hypercore-crypto'
+import sodium from 'sodium-universal'
+import { serializeSeedRequestForDomainSigning } from 'p2p-hiverelay/core/protocol/seed-request.js'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import b4a from 'b4a'
 import path from 'path'
@@ -22,6 +25,7 @@ function createNode (testnet, overrides = {}) {
     bootstrapNodes: testnet.bootstrap,
     enableAPI: false,
     enableMetrics: false,
+    enableHolesail: false,
     ...overrides
   })
 }
@@ -195,11 +199,14 @@ test('integration: seeding registry requests replicate across relays', async (t)
   await nodeA.swarm.flush()
   await nodeB.swarm.flush()
 
-  const appKey = randomBytes(32)
-  const appKeyHex = appKey.toString('hex')
-  await nodeA.seedingRegistry.publishRequest({
+  const appKeyHex = await authorLocalDrive(nodeA, {
+    '/registry.txt': b4a.from('registry replication fixture')
+  })
+  const appKey = b4a.from(appKeyHex, 'hex')
+  const discoveryKey = hypercoreCrypto.discoveryKey(appKey)
+  const request = {
     appKey,
-    discoveryKeys: [randomBytes(32)],
+    discoveryKeys: [discoveryKey],
     replicationFactor: 1,
     geoPreference: [],
     maxStorageBytes: TEST_MAX_STORAGE_BYTES,
@@ -207,7 +214,25 @@ test('integration: seeding registry requests replicate across relays', async (t)
     ttlSeconds: 3600,
     privacyTier: 'public',
     publisherPubkey: nodeA.swarm.keyPair.publicKey
-  })
+  }
+
+  // Unsigned local-management authority is intentionally bound to one relay.
+  // Prove that the bytes arrive but cannot become a foreign active request.
+  const originLogKey = b4a.toString(nodeA.seedingRegistry.localLog.key, 'hex')
+  const quarantined = []
+  nodeB.seedingRegistry.on('entry-quarantined', entry => quarantined.push(entry))
+  const unsignedOffset = nodeA.seedingRegistry.localLog.length
+  await nodeA.seedingRegistry.publishRequest(request)
+  const unsigned = JSON.parse(b4a.toString(await nodeA.seedingRegistry.localLog.get(unsignedOffset)))
+  t.is(unsigned.kind, 'authenticated-local-management', 'unsigned publish retains local-management provenance')
+  const refused = await waitFor(() => quarantined.some(entry => entry.logId === originLogKey && entry.reason === 'origin-drift'), 20000, 250)
+  t.is(refused, true, 'node B receives and quarantines foreign local-management authority')
+  t.absent((await nodeB.seedingRegistry.getActiveRequests()).find(entry => entry.appKey === appKeyHex), 'foreign local-management request never becomes active')
+
+  // A cross-relay request carries a publisher signature over its exact fields.
+  const publisherSignature = b4a.alloc(sodium.crypto_sign_BYTES)
+  sodium.crypto_sign_detached(publisherSignature, serializeSeedRequestForDomainSigning(request), nodeA.swarm.keyPair.secretKey)
+  await nodeA.seedingRegistry.publishRequest({ ...request, publisherSignature })
 
   let replicatedEntry = null
   const replicated = await waitFor(async () => {
@@ -216,7 +241,9 @@ test('integration: seeding registry requests replicate across relays', async (t)
     return replicatedEntry !== null
   }, 20000, 250)
 
-  t.is(replicated, true, 'node B indexed node A registry request')
+  t.is(replicated, true, 'node B indexed node A publisher-signed registry request')
+  t.is(replicatedEntry?.seedSignatureProfile, 'domain-v3', 'replicated request retains verified publisher-signature provenance')
+  t.alike(replicatedEntry?.discoveryKeys, [b4a.toString(discoveryKey, 'hex')], 'the actual app discovery key replicates exactly')
   t.is(replicatedEntry?.maxStorageBytes, TEST_MAX_STORAGE_BYTES, 'finite storage bound replicates exactly')
 })
 
@@ -264,7 +291,8 @@ test('integration: peerless drive without a blob proof fails before durable admi
   t.ok(error, 'peerless drive is rejected')
   t.ok(
     /DRIVE_SIZE_UNRESOLVED|timeout/i.test(error?.message || '') ||
-      error?.code === 'STORAGE_SIZE_PROOF_UNAVAILABLE',
+      error?.code === 'STORAGE_SIZE_PROOF_UNAVAILABLE' ||
+        error?.code === 'SHARED_FLIGHT_TIMEOUT',
     'rejection identifies unresolved authoritative drive size'
   )
   t.is(node.appRegistry.has(fakeKey), false, 'failed proof creates no durable registry entry')

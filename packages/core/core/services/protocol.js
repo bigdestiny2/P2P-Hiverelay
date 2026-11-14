@@ -12,8 +12,8 @@
  *   1: REQUEST   - RPC call: { id, service, method, params }
  *   2: RESPONSE  - RPC reply: { id, result }
  *   3: ERROR     - RPC error: { id, error }
- *   7: APP_CATALOG - Full seeded-app catalog, sent on channel open
- *   8: APP_CATALOG_DELTA - Added/removed app keys for live catalog churn
+ *   7: APP_CATALOG - One controller-scheduled legacy fallback (receive-compatible)
+ *   8: APP_CATALOG_DELTA - Legacy receive compatibility only
  *
  * Wire format: JSON over Protomux binary channel.
  * Future: switch to compact-encoding for performance.
@@ -55,6 +55,10 @@ const MSG_EVENT = 6
 const MSG_APP_CATALOG = 7
 const MSG_APP_CATALOG_DELTA = 8
 export const MAX_SERVICE_MESSAGE_BYTES = 1024 * 1024
+const MAX_LEGACY_APP_CATALOG_ENTRIES = 128
+const MAX_LEGACY_APP_CATALOG_BYTES = 65_536
+const HEX_64 = /^[0-9a-f]{64}$/
+const HEX_128 = /^[0-9a-f]{128}$/
 
 const MAX_REMOTE_SUBSCRIBE_TOPICS_PER_MESSAGE = 64
 const MAX_REMOTE_SUBSCRIPTIONS_PER_PEER = 128
@@ -72,70 +76,6 @@ export const serviceMessageEncoding = createLengthPrefixedJsonEncoding({
   malformedError: 'malformed JSON'
 })
 
-function catalogEntryKey (entry) {
-  if (!entry || typeof entry !== 'object') return null
-  const key = entry.appKey || entry.key || entry.driveKey || entry.id
-  return typeof key === 'string' && key.length > 0 ? key : null
-}
-
-function canonicalJson (value) {
-  if (Array.isArray(value)) return '[' + value.map(canonicalJson).join(',') + ']'
-  if (value && typeof value === 'object') {
-    return '{' + Object.keys(value).sort().map((key) => {
-      return JSON.stringify(key) + ':' + canonicalJson(value[key])
-    }).join(',') + '}'
-  }
-  return JSON.stringify(value)
-}
-
-function buildCatalogDelta (previousApps, nextApps) {
-  const previous = new Map()
-  const next = new Map()
-
-  for (const app of Array.isArray(previousApps) ? previousApps : []) {
-    const key = catalogEntryKey(app)
-    if (key) previous.set(key, app)
-  }
-
-  for (const app of Array.isArray(nextApps) ? nextApps : []) {
-    const key = catalogEntryKey(app)
-    if (key) next.set(key, app)
-  }
-
-  const added = []
-  const removed = []
-
-  for (const [key, app] of next) {
-    const prior = previous.get(key)
-    if (!prior || canonicalJson(prior) !== canonicalJson(app)) added.push(app)
-  }
-
-  for (const key of previous.keys()) {
-    if (!next.has(key)) removed.push(key)
-  }
-
-  return { added, removed, apps: [...next.values()] }
-}
-
-function applyCatalogDelta (previousApps, added, removed) {
-  const next = new Map()
-  for (const app of Array.isArray(previousApps) ? previousApps : []) {
-    const key = catalogEntryKey(app)
-    if (key) next.set(key, app)
-  }
-
-  for (const key of Array.isArray(removed) ? removed : []) {
-    if (typeof key === 'string') next.delete(key)
-  }
-
-  for (const app of Array.isArray(added) ? added : []) {
-    const key = catalogEntryKey(app)
-    if (key) next.set(key, app)
-  }
-
-  return [...next.values()]
-}
-
 export class ServiceProtocol extends EventEmitter {
   constructor (registry, opts = {}) {
     super()
@@ -144,7 +84,10 @@ export class ServiceProtocol extends EventEmitter {
     this.channels = new Map() // remotePubkey -> channel
     this._pendingRequests = new Map() // requestId -> { resolve, reject, timer }
     this._peerSubscriptions = new Map() // remotePubkey -> [subId]
-    this._lastAppCatalogByPeer = new Map() // remotePubkey -> last full app list sent
+    this._scheduleLegacyAppCatalogHook = typeof opts.scheduleLegacyAppCatalog === 'function'
+      ? opts.scheduleLegacyAppCatalog
+      : null
+    this._legacyAppCatalogSchedules = new Map() // remotePubkey -> { active, sent, cancel }
     this._nextId = 1
     this.requestTimeout = 30_000
 
@@ -197,12 +140,16 @@ export class ServiceProtocol extends EventEmitter {
    * Set up the service protocol on a Protomux instance.
    */
   attach (mux, remotePubkey) {
+    // One authenticated peer owns at most one services channel. A second
+    // connection must not replace the exact channel token captured by an
+    // already-scheduled legacy fallback.
+    if (this.channels.has(remotePubkey)) return null
     mux = Protomux.from(mux)
     const channel = mux.createChannel({
       protocol: SERVICES_PROTOCOL_NAME,
       id: b4a.from('services-v1'),
       onopen: () => this._onOpen(remotePubkey, channel),
-      onclose: () => this._onClose(remotePubkey)
+      onclose: () => this._onClose(remotePubkey, channel)
     })
 
     if (!channel) return null
@@ -225,7 +172,7 @@ export class ServiceProtocol extends EventEmitter {
     const entry = this.channels.get(remotePubkey)
     if (entry) {
       entry.channel.close()
-      this._cleanupPeer(remotePubkey, { emitClose: false })
+      this._cleanupPeer(remotePubkey, { emitClose: false, channel: entry.channel })
     }
   }
 
@@ -280,114 +227,118 @@ export class ServiceProtocol extends EventEmitter {
     }
   }
 
-  /**
-   * Send the list of seeded apps to a peer.
-   * Called on connect so clients know what apps are available.
-   */
-  sendAppCatalog (remotePubkey) {
-    const entry = this.channels.get(remotePubkey)
-    if (!entry) return
+  _sendScheduledAppCatalog (state, prepared) {
+    const entry = this.channels.get(state.remotePubkey)
+    if (!entry || entry.channel !== state.channel ||
+        this._legacyAppCatalogSchedules.get(state.remotePubkey) !== state) return false
+    const envelope = prepared && typeof prepared === 'object' && prepared.envelope
+      ? prepared.envelope
+      : prepared
+    let encodedBytes = Number.POSITIVE_INFINITY
+    try { encodedBytes = b4a.byteLength(JSON.stringify(envelope), 'utf8') } catch {}
+    if (!envelope || typeof envelope !== 'object' || Array.isArray(envelope) ||
+        Object.keys(envelope).sort().join(',') !== 'apps,catalogTimestamp,relayPubkey,signature,type' ||
+        envelope.type !== MSG_APP_CATALOG || !Array.isArray(envelope.apps) ||
+        envelope.apps.length > MAX_LEGACY_APP_CATALOG_ENTRIES ||
+        !HEX_64.test(envelope.relayPubkey) ||
+        !Number.isSafeInteger(envelope.catalogTimestamp) || envelope.catalogTimestamp < 0 ||
+        !HEX_128.test(envelope.signature) ||
+        encodedBytes > MAX_LEGACY_APP_CATALOG_BYTES) {
+      throw new Error('LEGACY_APP_CATALOG_ENVELOPE_REQUIRED')
+    }
     const channel = entry.channel
-    const msg = this._buildCatalogMessage({ mode: 'full' })
     if (channel && typeof channel.cork === 'function') channel.cork()
     try {
-      entry.msgHandler.send(msg)
-      this._lastAppCatalogByPeer.set(remotePubkey, msg.apps || [])
+      entry.msgHandler.send(envelope)
     } finally {
       if (channel && typeof channel.uncork === 'function') channel.uncork()
     }
+    return prepared
   }
 
   /**
-   * Broadcast app catalog update to all connected peers.
-   * Called when apps are seeded or unseeded.
-   *
-   * Per-channel cork/uncork so each peer sees a single frame for the
-   * full app list rather than one frame per app.
+   * Sender compatibility shim. RC9 never broadcasts a legacy full catalog or
+   * delta on registry churn; capable peers use the dedicated paged channel and
+   * incapable peers receive at most the one controller-owned fallback.
    */
   broadcastAppCatalog () {
-    const fullMsg = this._buildCatalogMessage({ mode: 'full' })
+    return false
+  }
 
-    for (const [remotePubkey, entry] of this.channels) {
-      const previousApps = this._lastAppCatalogByPeer.get(remotePubkey)
-      const msg = previousApps
-        ? this._buildCatalogMessage({ mode: 'delta', previousApps, envelope: fullMsg })
-        : fullMsg
+  _scheduleLegacyAppCatalog (remotePubkey, channel) {
+    if (!this._scheduleLegacyAppCatalogHook) return false
+    const entry = this.channels.get(remotePubkey)
+    if (!entry || entry.channel !== channel) return false
+    const existing = this._legacyAppCatalogSchedules.get(remotePubkey)
+    if (existing?.channel === channel) return false
+    if (existing) this._cancelLegacyAppCatalog(remotePubkey, existing.channel)
 
-      if (msg.type === MSG_APP_CATALOG_DELTA && msg.added.length === 0 && msg.removed.length === 0) {
-        continue
+    const state = { remotePubkey, channel, active: true, sent: false, cancel: null }
+    this._legacyAppCatalogSchedules.set(remotePubkey, state)
+    const send = (prepared) => {
+      if (!state.active || state.sent || this._legacyAppCatalogSchedules.get(remotePubkey) !== state) return false
+      // The fallback is terminal. Consume its one attempt before handing bytes
+      // to Protomux so a send error cannot be retried into a second catalog.
+      state.sent = true
+      return this._sendScheduledAppCatalog(state, prepared)
+    }
+
+    try {
+      const scheduled = this._scheduleLegacyAppCatalogHook({ remotePubkey, send })
+      const cancel = typeof scheduled === 'function'
+        ? scheduled
+        : (scheduled && typeof scheduled.cancel === 'function' ? () => scheduled.cancel() : null)
+      if (state.active && this._legacyAppCatalogSchedules.get(remotePubkey) === state) {
+        state.cancel = cancel
+      } else if (cancel) {
+        cancel()
       }
-
-      const channel = entry.channel
-      if (channel && typeof channel.cork === 'function') channel.cork()
-      try {
-        entry.msgHandler.send(msg)
-        const nextApps = msg.type === MSG_APP_CATALOG_DELTA
-          ? applyCatalogDelta(previousApps, msg.added, msg.removed)
-          : (msg.apps || [])
-        this._lastAppCatalogByPeer.set(remotePubkey, nextApps)
-      } catch {
-        // ignore — try next peer
-      } finally {
-        if (channel && typeof channel.uncork === 'function') channel.uncork()
+      return true
+    } catch (error) {
+      state.active = false
+      if (this._legacyAppCatalogSchedules.get(remotePubkey) === state) {
+        this._legacyAppCatalogSchedules.delete(remotePubkey)
       }
+      this.emit('legacy-app-catalog-schedule-error', { remotePubkey, error })
+      return false
     }
   }
 
-  _buildCatalogMessage (opts = {}) {
-    const mode = opts.mode || 'full'
-    if (this._getCatalogEnvelope) {
-      const envelope = opts.envelope || this._getCatalogEnvelope() || {}
-      if (mode === 'delta') {
-        const delta = buildCatalogDelta(opts.previousApps, Array.isArray(envelope.apps) ? envelope.apps : [])
-        const signed = this._getCatalogEnvelope({ apps: delta.added }) || {}
-        return {
-          type: MSG_APP_CATALOG_DELTA,
-          apps: Array.isArray(signed.apps) ? signed.apps : delta.added,
-          added: Array.isArray(signed.apps) ? signed.apps : delta.added,
-          removed: delta.removed,
-          relayPubkey: signed.relayPubkey || envelope.relayPubkey || null,
-          catalogTimestamp: signed.catalogTimestamp || envelope.catalogTimestamp || null,
-          signature: signed.signature || null
-        }
-      }
-      return {
-        type: MSG_APP_CATALOG,
-        apps: Array.isArray(envelope.apps) ? envelope.apps : [],
-        relayPubkey: envelope.relayPubkey || null,
-        catalogTimestamp: envelope.catalogTimestamp || null,
-        signature: envelope.signature || null
+  _cancelLegacyAppCatalog (remotePubkey, channel = null) {
+    const state = this._legacyAppCatalogSchedules.get(remotePubkey)
+    if (!state || (channel !== null && state.channel !== channel)) return false
+    this._legacyAppCatalogSchedules.delete(remotePubkey)
+    state.active = false
+    if (state.cancel) {
+      try {
+        state.cancel()
+      } catch (error) {
+        this.emit('legacy-app-catalog-cancel-error', { remotePubkey, error })
       }
     }
-
-    const apps = Array.isArray(opts.apps)
-      ? opts.apps
-      : (this._getSeededApps ? this._getSeededApps() : [])
-    if (mode === 'delta') {
-      const delta = buildCatalogDelta(opts.previousApps, apps)
-      return {
-        type: MSG_APP_CATALOG_DELTA,
-        apps: delta.added,
-        added: delta.added,
-        removed: delta.removed
-      }
-    }
-    return { type: MSG_APP_CATALOG, apps: Array.isArray(apps) ? apps : [] }
+    return true
   }
 
   _onOpen (remotePubkey, channel) {
+    const entry = this.channels.get(remotePubkey)
+    if (!entry || entry.channel !== channel) return false
     this.emit('channel-open', { remotePubkey })
-    // Send our service catalog and app catalog on connect
+    // The service catalog remains eager and bounded by its own sanitizer. App
+    // catalogs are scheduled independently by the paged-catalog controller.
     this.sendCatalog(remotePubkey)
-    this.sendAppCatalog(remotePubkey)
+    this._scheduleLegacyAppCatalog(remotePubkey, channel)
+    return true
   }
 
-  _onClose (remotePubkey) {
-    this._cleanupPeer(remotePubkey, { emitClose: true })
+  _onClose (remotePubkey, channel) {
+    return this._cleanupPeer(remotePubkey, { emitClose: true, channel })
   }
 
   _cleanupPeer (remotePubkey, opts = {}) {
     const emitClose = opts.emitClose !== false
+    const entry = this.channels.get(remotePubkey)
+    if (opts.channel && (!entry || entry.channel !== opts.channel)) return false
+    this._cancelLegacyAppCatalog(remotePubkey, entry?.channel || null)
     this.channels.delete(remotePubkey)
 
     // Clean up pub/sub subscriptions for this peer
@@ -396,8 +347,6 @@ export class ServiceProtocol extends EventEmitter {
       for (const entry of subs) this.router.pubsub.unsubscribe(entry.subId)
     }
     this._peerSubscriptions.delete(remotePubkey)
-    this._lastAppCatalogByPeer.delete(remotePubkey)
-
     // Clean up rate limiter state for this peer
     this._peerRateState.delete(remotePubkey)
     this._peerRoles.delete(remotePubkey)
@@ -412,6 +361,7 @@ export class ServiceProtocol extends EventEmitter {
     }
 
     if (emitClose) this.emit('channel-close', { remotePubkey })
+    return true
   }
 
   async _onMessage (remotePubkey, msg) {
@@ -647,6 +597,10 @@ export class ServiceProtocol extends EventEmitter {
       this.detach(pubkey)
     }
 
+    for (const pubkey of Array.from(this._legacyAppCatalogSchedules.keys())) {
+      this._cancelLegacyAppCatalog(pubkey)
+    }
+
     // detach() closes known channels. These clears handle any defensive state
     // left by tests/fakes or peers that disappeared before a close callback.
     if (this._peerSubscriptions.size && this.router) {
@@ -655,7 +609,6 @@ export class ServiceProtocol extends EventEmitter {
       }
     }
     this._peerSubscriptions.clear()
-    this._lastAppCatalogByPeer.clear()
     this._peerRateState.clear()
     this._peerRoles.clear()
   }

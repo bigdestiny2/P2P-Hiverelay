@@ -16,6 +16,7 @@ import { join } from 'path'
 import { StorageAccounting } from 'p2p-hiverelay/core/relay-node/storage-accounting.js'
 import { EvictionManager, xorDistance } from 'p2p-hiverelay/core/relay-node/eviction.js'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
+import { sharedOperationFlights } from 'p2p-hiverelay/core/shared-flight-registry.js'
 
 // ─── fixtures ──────────────────────────────────────────────────────
 
@@ -31,11 +32,33 @@ function fakeDrive (metaBytes, blobBytes) {
 function fakeRegistry (entries) {
   const map = new Map(entries)
   const evicted = new Map()
+  const cursors = new Map()
+  const listeners = new Set()
   return {
     get: (k) => map.get(k),
     keys: () => map.keys(),
     entries: () => map.entries(),
-    delete: (k) => map.delete(k),
+    delete: (k) => {
+      const deleted = map.delete(k)
+      if (deleted) for (const listener of listeners) listener({ type: 'delete', appKey: k })
+      return deleted
+    },
+    page: (consumer, budget) => {
+      const keys = [...map.keys()]
+      const position = cursors.get(consumer) || 0
+      const selected = keys.slice(position, position + budget)
+      const complete = position + selected.length >= keys.length
+      cursors.set(consumer, complete ? 0 : position + selected.length)
+      return {
+        entries: selected.map((key, generation) => ({ key, value: map.get(key), generation: position + generation + 1 })),
+        examined: selected.length,
+        complete,
+        completedHighWater: complete ? keys.length : 0
+      }
+    },
+    releasePopulationConsumer: (consumer) => cursors.delete(consumer),
+    on: (name, listener) => { if (name === 'change') listeners.add(listener) },
+    off: (name, listener) => { if (name === 'change') listeners.delete(listener) },
     markEvicted: (k, at) => evicted.set(k, at || Date.now()),
     isEvicted: (k) => evicted.has(k),
     clearEvicted: (k) => evicted.delete(k),
@@ -103,7 +126,7 @@ test('accounting: paces in batches and prunes removed entries', async (t) => {
   t.is(acc.getSummary().measuredEntries, 2, 'first tick measures only batchSize entries')
   await acc._tick()
   t.is(acc.getSummary().measuredEntries, 3, 'second tick completes the pass')
-  reg._map.delete('b')
+  reg.delete('b')
   await acc._tick() // wraps: cursor reset + prune
   t.absent([...reg._map.keys()].includes('b'), 'entry removed from registry')
   await acc._tick(); await acc._tick()
@@ -318,14 +341,22 @@ test('assertPurgable: sacred entries refuse even operator-initiated purges', asy
 
 test('timeouts: a wedged core cannot freeze accounting or the sweep (v0.15.6)', async (t) => {
   const never = new Promise(() => {}) // a corrupt core's hung await
-  // Accounting: info() never resolves -> measure returns 0 within the timeout.
-  const reg = fakeRegistry([['k1', { drive: { core: { info: () => never }, blobs: null } }]])
+  let resolveInfo
+  const pendingInfo = new Promise(resolve => { resolveInfo = resolve })
+  const core = { info: () => pendingInfo }
+  // Accounting: info() stays pending until cleanup -> measure times out to 0.
+  const reg = fakeRegistry([['k1', { drive: { core, blobs: null } }]])
   const acc = new StorageAccounting({ appRegistry: reg, tickMs: 60_000, batchSize: 5, infoTimeoutMs: 60 })
+  t.teardown(async () => {
+    resolveInfo({ storage: { oplog: 0, tree: 0, blocks: 0, bitfield: 0 } })
+    await sharedOperationFlights.drainOwner(core, { timeoutMs: 1000 })
+    await acc.stop()
+  })
   const t0 = Date.now()
   await acc._tick()
   t.ok(Date.now() - t0 < 2_000, 'tick completed despite hung info()')
   t.is(acc.getBytes('k1'), 0, 'wedged core measured as 0, not frozen')
-  acc.stop()
+  await acc.stop()
 
   // Sweep: unseed hangs -> evict-failed, sweep completes.
   const { ev, registry } = makeEviction({

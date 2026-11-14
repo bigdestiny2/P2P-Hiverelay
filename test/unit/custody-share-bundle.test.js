@@ -511,7 +511,9 @@ test('_readShareBundle: active auxiliary fetch drains before concurrent unseed r
       tail.finally(() => { if (tails.get(key) === tail) tails.delete(key) })
       return operation
     },
-    release () { events.push('authority-release'); committed = false; return true }
+    beginRetirement: () => true,
+    releaseRetirement () { events.push('authority-release'); committed = false; return true },
+    completeRetirement: () => true
   }
   const entry = {
     drive: { async close () { events.push('drive-close') } },
@@ -525,7 +527,8 @@ test('_readShareBundle: active auxiliary fetch drains before concurrent unseed r
     has: key => apps.has(key),
     delete (key) { events.push('registry-retire'); return apps.delete(key) },
     set: (key, value) => apps.set(key, value),
-    async persistDelete () { events.push('registry-delete-durable') }
+    async persistDelete () { events.push('registry-delete-durable') },
+    async persistRetirementState () { events.push('registry-retirement-final') }
   }
   const swarm = new EventEmitter()
   swarm.join = () => ({ async flushed () {} })

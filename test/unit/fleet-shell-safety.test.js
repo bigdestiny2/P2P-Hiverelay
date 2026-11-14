@@ -11,6 +11,9 @@ const deployVps = readFileSync('scripts/deploy-vps.sh', 'utf8')
 const rolloutCheck = readFileSync('scripts/check-fleet-rollout.mjs', 'utf8')
 const relayJanitor = readFileSync('scripts/relay-janitor.js', 'utf8')
 const cli = readFileSync('packages/core/cli/index.js', 'utf8')
+const healthWatchdog = readFileSync('fleet/health-watchdog.sh', 'utf8')
+const healthWatchdogInstaller = readFileSync('fleet/install-health-watchdog.sh', 'utf8')
+const healthWatchdogService = readFileSync('fleet/hiverelay-health-watchdog.service', 'utf8')
 
 test('fleet updater installation executes only an exact signed-checkout updater', (t) => {
   const blobGate = 'fleet/updater.sh differs from the signed checkout'
@@ -30,6 +33,22 @@ test('fleet updater installation executes only an exact signed-checkout updater'
   t.ok(updaterLauncher.indexOf(tagGate) < updaterLauncher.indexOf(execUpdater))
   t.absent(updaterLauncher.includes('source "$CONF"'))
   t.absent(updaterLauncher.includes('. "$CONF"'))
+})
+
+test('fleet health watchdog can signal only through signed pidfd authority', (t) => {
+  t.ok(healthWatchdog.includes('responsive-not-restartable'))
+  t.ok(healthWatchdog.includes('"$NODE" --jitless "$POLICY_HELPER" authorize'))
+  t.ok(healthWatchdog.includes('"$SIGNAL_HELPER"'))
+  t.ok(healthWatchdog.includes('--max-time 5 --max-filesize 65536'))
+  t.absent(healthWatchdog.includes('systemctl kill'))
+  t.absent(healthWatchdog.includes('systemctl restart'))
+  t.absent(healthWatchdog.includes('systemctl start'))
+  t.absent(healthWatchdog.includes('fuser'))
+  t.absent(healthWatchdog.includes('HIVERELAY_HEALTH_'))
+  t.ok(healthWatchdogInstaller.includes('health-watchdog-helper.c'))
+  t.absent(healthWatchdogInstaller.includes("<<'WATCH'"))
+  t.ok(healthWatchdogService.includes('/usr/bin/env -i'))
+  t.ok(healthWatchdogService.includes('CapabilityBoundingSet=CAP_KILL'))
 })
 
 test('fleet updater service requires the preserved root-only runtime environment', (t) => {

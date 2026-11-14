@@ -1,6 +1,6 @@
 {
   "name": "p2p-hiverelay-monorepo",
-  "version": "0.26.0-rc.8",
+  "version": "0.27.0-rc.1",
   "description": "Monorepo root for HiveRelay (Core + Services + Client)",
   "private": true,
   "type": "module",
@@ -20,7 +20,7 @@
     "start": "node scripts/start-blind-local.mjs",
     "start:blind:edge": "node packages/blind-edge/cli.js",
     "start:blind:daemon": "node packages/blind-daemon/cli.js",
-    "postinstall": "patch-package",
+    "postinstall": "node packages/core/platform/apply-hypercore-storage-migration-patch.js",
     "audit:workspace": "node scripts/audit-workspace-alignment.mjs",
     "audit:ecosystem-consumers": "node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest",
     "audit:ecosystem-consumers:latest": "node scripts/audit-ecosystem-consumers.mjs --check --dependency-mode npm-latest",
@@ -58,6 +58,8 @@
     "release:check-blockers": "node scripts/check-release-blockers.mjs",
     "release:check-npm-latest": "node scripts/check-npm-latest.mjs",
     "release:check-npm-packages": "node scripts/check-npm-package-pack.mjs",
+    "release:verify-packed-corestore-patch": "node scripts/verify-packed-corestore-migration-patch.mjs",
+    "release:adapt-pear-migrate-hc11": "node scripts/adapt-pear-migrate-hc11-trigger.mjs",
     "release:check-official-umbrel-pr": "node scripts/check-official-umbrel-pr.mjs",
     "release:check-distribution-env": "node scripts/check-release-distribution-env.mjs",
     "release:resolve-public-gateway": "node scripts/resolve-public-hive-gateway-release.mjs",
@@ -118,9 +120,10 @@
     "verify:blind-ecosystem-migration": "node scripts/verify-blind-ecosystem-migration.mjs --json",
     "verify:blind-ecosystem-migration:strict-cutovers": "node scripts/verify-blind-ecosystem-migration.mjs --json --require-cutovers",
     "verify:blind-ecosystem-migration:strict-removals": "node scripts/verify-blind-ecosystem-migration.mjs --json --require-removals",
+    "test:integration:prepare": "node scripts/prepare-integration-tests.mjs",
     "test:integration": "node scripts/run-brittle-suite.mjs integration",
     "test:public-hive-gateway:live": "brittle-node test/integration/public-hive-gateway-live.test.js",
-    "test:public-hive-gateway:soak": "HIVERELAY_PUBLIC_GATEWAY_SOAK_REQUESTS=1000 brittle test/integration/public-hive-gateway-live.test.js",
+    "test:public-hive-gateway:soak": "HIVERELAY_PUBLIC_GATEWAY_SOAK_REQUESTS=1000 brittle-node test/integration/public-hive-gateway-live.test.js",
     "test:bare": "PATH=\"$PWD/node_modules/bare/bin:$PATH\" brittle-bare test/bare/index.js",
     "demo:pearbrowser": "node scripts/pearbrowser-marketplace-demo.js",
     "demo:pearbrowser:once": "node scripts/pearbrowser-marketplace-demo.js --once",
@@ -138,14 +141,21 @@
     "lab:blind:real:multiprocess:assert": "node scripts/run-multiprocess-blind-relay-lab.mjs --assert-local --pretty",
     "verify:blind:real:multiprocess:evidence": "node scripts/verify-multiprocess-blind-relay-report.mjs --input test/evidence/blind-real-multiprocess-3-local-processes.evidence.json --require-local --pretty",
     "lint": "standard",
-    "lint:fix": "standard --fix"
+    "lint:fix": "standard --fix",
+    "test:autobee": "brittle-node --timeout 60000 test/unit/autobee-compatibility.test.js",
+    "test:autobee:bare": "PATH=\"$PWD/node_modules/bare/bin:$PATH\" brittle-bare --timeout 60000 test/unit/autobee-compatibility.test.js"
   },
   "devDependencies": {
-    "@hyperswarm/testnet": "^3.0.0",
-    "bare": "^1.28.7",
-    "brittle": "^4.0.2",
+    "@hyperswarm/testnet": "3.1.4",
+    "bare": "1.37.1",
+    "brittle": "4.5.0",
     "esbuild": "0.28.1",
-    "standard": "^17.1.0"
+    "standard": "^17.1.0",
+    "autobee": "2.13.6",
+    "corestore": "7.16.1",
+    "hyperdrive": "13.3.4",
+    "hyperswarm": "4.17.2",
+    "bare-runtime": "1.37.1"
   },
   "engines": {
     "node": ">=20.0.0"
@@ -172,19 +182,37 @@
       "**/dist/**",
       "packages/blind-client/browser-artifacts/**",
       "**/transports/dht-relay-ws/vendor/**",
-      "packages/blind-daemon/pow-issuance-v1/sandbox-adapter.js"
+      "packages/blind-daemon/pow-issuance-v1/sandbox-adapter.js",
+      "packages/blind-intent-store-bare/runtime.js",
+      "packages/blind-intent-store-bare/native/flags-darwin-arm64.cjs",
+      "packages/blind-intent-store-bare/native/flags-linux-x64.cjs",
+      "packages/blind-intent-pear-consumer/vendor/blind-intent-store-bare/runtime.js",
+      "packages/blind-intent-pear-consumer/vendor/blind-intent-store-bare/native/flags-darwin-arm64.cjs",
+      "packages/blind-intent-pear-consumer/vendor/blind-intent-store-bare/native/flags-linux-x64.cjs"
     ]
   },
   "dependencies": {
-    "ip-address": "^10.2.0",
+    "ip-address": "10.7.6",
     "patch-package": "^8.0.1",
     "socks": "^2.8.9"
   },
   "overrides": {
-    "js-yaml": "^4.2.0",
-    "protobufjs": "^7.6.5"
+    "js-yaml": "4.3.2",
+    "protobufjs": "^7.6.5",
+    "hyperdht": "6.36.0",
+    "hypercore-storage": "3.4.0",
+    "@hyperswarm/secret-stream": "6.9.2",
+    "corestore": "7.16.1",
+    "hypercore": "11.40.4",
+    "hyperdrive": "13.3.4",
+    "hyperswarm": "4.17.2",
+    "protomux": "3.13.1",
+    "bare-events": "2.9.2",
+    "bare-fs": "4.8.4",
+    "bare-http1": "4.6.3",
+    "bare-path": "3.1.3"
   },
   "optionalDependencies": {
-    "bare-runtime-linux-x64": "1.28.7"
+    "bare-runtime-linux-x64": "1.37.1"
   }
 }

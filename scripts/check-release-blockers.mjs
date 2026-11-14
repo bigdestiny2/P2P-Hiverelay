@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
+import { RELEASE_PROMOTION_EVIDENCE, isArtifactRelease } from './lib/release-evidence-contract.mjs'
 import path from 'node:path'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -50,6 +51,7 @@ const SECRET_PATTERNS = [
 ]
 
 const EVIDENCE_FILES = Object.freeze([
+  { id: 'evidence.stable-promotion', label: 'distinct stable promotion receipt', files: [RELEASE_PROMOTION_EVIDENCE], command: 'node scripts/release-stages/promote.mjs --mode verify --bundle-dir <dir>' },
   {
     id: 'evidence.release',
     label: 'release evidence',
@@ -475,7 +477,7 @@ function readNpmLatestEvidence (file) {
 }
 
 function addEvidenceFileChecks () {
-  for (const evidence of EVIDENCE_FILES) {
+  for (const evidence of requiredEvidenceFiles()) {
     const existing = firstUsableEvidenceFile(evidence.files.map(file => path.join(bundleDir, file)))
     addItem({
       id: evidence.id,
@@ -495,8 +497,21 @@ function addEvidenceFileChecks () {
   }
 }
 
+function isStagedBundle () {
+  try { return isArtifactRelease(JSON.parse(fs.readFileSync(path.join(bundleDir, 'release-evidence.json'), 'utf8'))) } catch { return false }
+}
+
+function requiredEvidenceFiles () {
+  const staged = isStagedBundle()
+  // Later distribution has its own immutable authority and timestamps. The
+  // old checkpoint sidecars cannot describe that later operation.
+  return EVIDENCE_FILES.filter(row => staged
+    ? !['evidence.official-umbrel-pr', 'evidence.startos-registry'].includes(row.id)
+    : row.id !== 'evidence.stable-promotion')
+}
+
 function addReleaseVerifierChecks () {
-  const missing = EVIDENCE_FILES
+  const missing = requiredEvidenceFiles()
     .filter(evidence => !firstUsableEvidenceFile(evidence.files.map(file => path.join(bundleDir, file))).ok)
     .map(evidence => evidence.id)
 
@@ -523,6 +538,18 @@ function addReleaseVerifierChecks () {
       command: `GH_TOKEN=<token> npm run release:verify-closure-evidence -- --bundle-dir <dir> --live-github --expected-prerelease ${prerelease}`
     })
     return
+  }
+
+  if (isStagedBundle()) {
+    addCommandItem({
+      id: 'release.stable-promotion.verify',
+      passSummary: 'distinct stable promotion receipt and current distribution verify',
+      failSummary: 'artifact-only or unverified stable promotion cannot clear full release',
+      script: 'release-stages/promote.mjs',
+      argv: ['--bundle-dir', bundleDir, '--mode', 'verify'],
+      timeout: 600000,
+      command: 'node scripts/release-stages/promote.mjs --mode verify --bundle-dir <dir>'
+    })
   }
 
   addCommandItem({

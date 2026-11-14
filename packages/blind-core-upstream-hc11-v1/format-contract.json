@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "head": "ASCII hiverelay.private.hc11.head-identity.v1 NUL || u8(1) || key32 || fork_u64be || length_u64be || treeHash32; digest BLAKE2b-256",
+  "corpus": "HRHC11C1 || profileDigest32 || headIdentity || headFrame_bytes32be || count_u32be || ordered all-block frame_bytes32be[count]",
+  "bundle": "HRHC11P1 || profileDigest32 || headIdentity || headFrame_bytes32be || count_u32be || ascending selected frame_bytes32be[count]",
+  "bounds": {
+    "headBytes": 4096,
+    "proofBytes": 4194048,
+    "blockBytes": 1048576,
+    "corpusBytes": 67108864,
+    "blocks": 4096,
+    "samples": 16,
+    "nodesPerList": 64,
+    "signatureBytes": 1024
+  },
+  "upstream": "hypercore/messages wire.data; request=0; flags=24(head) or25(block); fork exact; upgrade start=0,length=exact,additionalNodes empty; manifest v1,flags0,blake2b,quorum1,one ed25519 signer; canonical compact uints; no patch/prologue/linked/userData",
+  "versions": {
+    "hypercore": "11.34.1",
+    "corestore": "7.11.1",
+    "compactEncoding": "3.3.0",
+    "hypercoreCrypto": "3.7.0",
+    "flatTree": "1.13.0"
+  }
+}

@@ -1,5 +1,7 @@
 import test from 'brittle'
 import { ArbitrationService } from 'p2p-hiveservices/builtin/arbitration-service.js'
+import { BandwidthReceipt } from 'p2p-hiverelay/core/protocol/bandwidth-receipt.js'
+import sodium from 'sodium-universal'
 
 function mockNode (opts = {}) {
   const slashed = []
@@ -51,6 +53,20 @@ test('ArbitrationService - manifest', async (t) => {
   t.ok(m.capabilities.includes('submit'))
   t.ok(m.capabilities.includes('vote'))
   t.ok(m.capabilities.includes('evidence'))
+})
+
+test('ArbitrationService - real receipt evidence preserves signature and malformed-input results', async t => {
+  const keyPair = { publicKey: Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES), secretKey: Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES) }
+  sodium.crypto_sign_keypair(keyPair.publicKey, keyPair.secretKey)
+  const issuer = new BandwidthReceipt(keyPair)
+  const receipt = issuer.createReceipt(Buffer.alloc(32, 1), 4096, Buffer.alloc(16, 2))
+  const changed = { ...receipt, bytesTransferred: 4097 }
+  t.is(BandwidthReceipt.verify(receipt), true)
+  const { svc } = createService()
+  const dispute = await svc.submit({ type: 'receipt-dispute', respondent: 'relay', receipts: [receipt, changed, {}, null] }, { remotePubkey: 'claimant' })
+  t.alike((await svc.evidence({ id: dispute.id })).receipts.map(row => row.valid), [true, false, false, false])
+  t.alike((await svc.evidence({ id: dispute.id })).receipts.map(row => row.valid), [true, false, false, false])
+  t.is((await svc.get({ id: dispute.id })).status, 'open')
 })
 
 test('ArbitrationService - submit dispute', async (t) => {

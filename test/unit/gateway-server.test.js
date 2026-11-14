@@ -2,10 +2,21 @@ import test from 'brittle'
 import http from 'http'
 import net from 'net'
 import { Readable } from 'stream'
+import sodium from 'sodium-universal'
 import {
   GatewayServer,
   assertHiveAppGatewayIsolation
 } from 'p2p-hiverelay/core/relay-node/gateway-server.js'
+import {
+  createAppCatalogExternalCursor,
+  createCanonicalCatalogRow
+} from 'p2p-hiverelay/core/relay-node/app-catalog-paged.js'
+
+const TEST_KEY_PAIR = {
+  publicKey: Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES),
+  secretKey: Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+}
+sodium.crypto_sign_seed_keypair(TEST_KEY_PAIR.publicKey, TEST_KEY_PAIR.secretKey, Buffer.alloc(32, 1))
 
 function mockNode () {
   const entries = [
@@ -13,12 +24,57 @@ function mockNode () {
     { appKey: '2'.repeat(64), type: 'drive', name: 'Drive Two' },
     { appKey: '3'.repeat(64), type: 'dataset', name: 'Dataset Three' }
   ]
+  const rows = entries.map(entry => createCanonicalCatalogRow({
+    appKey: entry.appKey,
+    appId: null,
+    type: entry.type,
+    parentKey: null,
+    mountPath: null,
+    version: null,
+    discoveryKey: null,
+    blind: false,
+    storageClass: 'persistent',
+    availabilityClass: 'always-on',
+    privacyTier: 'public',
+    seededAt: null,
+    redacted: false,
+    metadataVisibility: 'public',
+    blindContentId: null,
+    anchored: false,
+    maxStorageBytes: null,
+    publisherPubkey: null,
+    durability: 0,
+    revocable: true,
+    retainUntil: null
+  }))
+  const snapshot = {
+    snapshotId: 'a'.repeat(64),
+    highWater: 3,
+    rootDigest: 'b'.repeat(64),
+    entryCount: rows.length,
+    senderPubkey: TEST_KEY_PAIR.publicKey.toString('hex')
+  }
   return {
     config: { custody: { redactedCatalog: true } },
     store: null,
-    appRegistry: {
-      catalog () {
-        return entries
+    swarm: { keyPair: TEST_KEY_PAIR },
+    appCatalogStore: {
+      readExternalPage ({ cursor, limit }) {
+        const prior = cursor ? rows.findIndex(row => row[0] === cursor.lastRowKey) : -1
+        const page = rows.slice(prior + 1, prior + 1 + limit)
+        const complete = prior + 1 + page.length >= rows.length
+        return {
+          snapshot,
+          entries: page,
+          complete,
+          cursor: complete
+            ? null
+            : createAppCatalogExternalCursor({
+              highWater: snapshot.highWater,
+              rootDigest: snapshot.rootDigest,
+              lastRowKey: page[page.length - 1][0]
+            }, TEST_KEY_PAIR)
+        }
       }
     }
   }
@@ -85,27 +141,31 @@ async function startGateway (t, opts = {}) {
   return server
 }
 
-test('GatewayServer - catalog pagination uses strict bounded integer parsing', async (t) => {
+test('GatewayServer - catalog pagination is cursor-authoritative and strictly bounded', async (t) => {
   const server = await startGateway(t)
   const port = server.server.address().port
 
-  const paged = await request(port, '/catalog.json?page=2&pageSize=1')
-  t.is(paged.statusCode, 200, 'valid pagination succeeds')
-  t.is(paged.body.page, 2, 'valid page is honored')
-  t.is(paged.body.pageSize, 1, 'valid pageSize is honored')
-  t.is(paged.body.items.length, 1, 'single item returned')
-  t.is(paged.body.items[0].type, 'drive', 'second item selected')
+  const first = await request(port, '/catalog.json?page=1&limit=1')
+  t.is(first.statusCode, 200, 'page-one compatibility succeeds')
+  t.is(first.body.limit, 1)
+  t.is(first.body.items.length, 1)
+  t.is(first.body.items[0].type, 'app')
+  t.ok(first.body.cursor, 'bounded source page returns a signed next cursor')
+  t.is(first.body.entryCount, 3, 'entryCount is the unfiltered snapshot total')
 
-  const malformed = await request(port, '/catalog.json?page=2abc&pageSize=1e2')
-  t.is(malformed.statusCode, 200, 'malformed integers fall back safely')
-  t.is(malformed.body.page, 1, 'partial page integer is not accepted')
-  t.is(malformed.body.pageSize, 50, 'exponential pageSize is not accepted')
-  t.is(malformed.body.items.length, 3, 'default pageSize returns the full small catalog')
+  const second = await request(port, `/catalog.json?limit=1&cursor=${encodeURIComponent(JSON.stringify(first.body.cursor))}`)
+  t.is(second.statusCode, 200)
+  t.is(second.body.items[0].type, 'drive', 'cursor resumes after the first source row')
 
-  const oversized = await request(port, '/catalog.json?page=-99&pageSize=999999999999999999999999')
-  t.is(oversized.statusCode, 200, 'oversized integers are clamped')
-  t.is(oversized.body.page, 1, 'negative page is clamped to minimum')
-  t.is(oversized.body.pageSize, 200, 'unsafe oversized pageSize is clamped to maximum')
+  const offset = await request(port, '/catalog.json?page=2&limit=1')
+  t.is(offset.statusCode, 400, 'numeric offsets are rejected')
+  t.is(offset.body.error, 'CATALOG_CURSOR_REQUIRED')
+
+  const malformed = await request(port, '/catalog.json?page=2abc&limit=1e2')
+  t.is(malformed.statusCode, 400, 'malformed pagination is rejected')
+
+  const oversized = await request(port, '/catalog.json?limit=201')
+  t.is(oversized.statusCode, 400, 'status gateway rejects limits above 200')
 })
 
 test('GatewayServer - invalid catalog type filter returns 400 instead of broadening response', async (t) => {

@@ -33,6 +33,12 @@ npx p2p-hiverelay start --storage ./hiverelay-storage
 The CLI also exposes setup, federation, catalog, QVAC, and management helpers.
 Run `npx p2p-hiverelay --help` for the available commands.
 
+`testnet` is development tooling for a HiveRelay source workspace. From a
+checkout, run `npm ci`, then `node packages/core/cli/index.js testnet`.
+Use `--no-client` to start only the local DHT and relay nodes. Published
+packages do not include the testnet dependencies or sibling client source;
+the installed CLI reports this requirement before starting testnet resources.
+
 ## Main Surfaces
 
 - `p2p-hiverelay` exports the core relay runtime.

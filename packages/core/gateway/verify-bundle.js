@@ -60,6 +60,7 @@ import c from 'compact-encoding'
 import b4a from 'b4a'
 import { wire } from 'hypercore/lib/messages.js'
 import { parseRange } from './hyper-gateway.js'
+import { sharedGetBlobs } from '../core/shared-flight-registry.js'
 
 export const HC_BLOCK_ENVELOPE_VERSION = 1
 export const HC_BLOCK_MEDIA_TYPE = 'application/vnd.hiverelay.hc-block'
@@ -105,7 +106,10 @@ export async function serveVerifyBundle (gateway, res, drive, keyHex, filePath, 
   }
 
   const blobs = await gateway._withTimeout(
-    drive.getBlobs(),
+    sharedGetBlobs(drive, {
+      owner: gateway,
+      timeoutMs: gateway._driveOperationTimeout
+    }),
     gateway._driveOperationTimeout,
     'drive.getBlobs()',
     opts.signal

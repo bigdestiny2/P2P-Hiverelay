@@ -367,7 +367,7 @@ test('SeedProtocol handlers ignore decoded seed protocol errors without throwing
 })
 
 test('SeedProtocol handshake evaluator pins major-version negotiation policy', (t) => {
-  t.alike(SEED_PROTOCOL_VERSION, { major: 1, minor: 0 })
+  t.alike(SEED_PROTOCOL_VERSION, { major: 1, minor: 1 })
   t.is(MAX_PROTOCOL_HANDSHAKE_BYTES, 256)
   t.is(SEED_PROTOCOL_HANDSHAKE_MAX_BYTES, 256)
   t.is(SEED_PROTOCOL_HANDSHAKE_MAX_BYTES, MAX_PROTOCOL_HANDSHAKE_BYTES)
@@ -382,7 +382,7 @@ test('SeedProtocol handshake evaluator pins major-version negotiation policy', (
     {
       valid: true,
       action: 'accept',
-      local: { major: 1, minor: 0 },
+      local: { major: 1, minor: 1 },
       remote: { major: 1, minor: 0 },
       reason: null
     }
@@ -392,7 +392,7 @@ test('SeedProtocol handshake evaluator pins major-version negotiation policy', (
     {
       valid: true,
       action: 'accept',
-      local: { major: 1, minor: 0 },
+      local: { major: 1, minor: 1 },
       remote: { major: 1, minor: 99 },
       reason: null
     },
@@ -403,7 +403,7 @@ test('SeedProtocol handshake evaluator pins major-version negotiation policy', (
     {
       valid: false,
       action: 'close',
-      local: { major: 1, minor: 0 },
+      local: { major: 1, minor: 1 },
       remote: { major: 2, minor: 0 },
       reason: 'major version mismatch'
     },

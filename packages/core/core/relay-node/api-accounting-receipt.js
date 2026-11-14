@@ -39,9 +39,18 @@ export async function buildAccountingReceiptPayload ({ node, refresh = true } = 
 
   try {
     const receipt = await node.createAccountingReceipt({ refresh })
+    let resourceDiagnostics = null
+    try {
+      const snapshot = typeof node.getResourceDiagnostics === 'function'
+        ? node.getResourceDiagnostics()
+        : null
+      if (snapshot?.kind === 'HiveRelayResourceDiagnosticsV1' && snapshot.version === 1) {
+        resourceDiagnostics = snapshot
+      }
+    } catch {}
     return {
       status: 200,
-      payload: { receipt }
+      payload: resourceDiagnostics ? { receipt, resourceDiagnostics } : { receipt }
     }
   } catch (err) {
     return {

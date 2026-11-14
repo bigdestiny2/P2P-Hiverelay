@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
+import { RELEASE_ARTIFACT_STAGE, RELEASE_STABLE_STAGE, RELEASE_DEFERRED_STATUS } from './lib/release-evidence-contract.mjs'
 import { readEnvFile } from './lib/release-env-file.mjs'
 
 const FLEET_ROLLOUT_TIMEOUT_MIN_MS = 10 * 60 * 1000
@@ -12,7 +13,8 @@ Usage:
   node scripts/check-release-distribution-env.mjs --issue-120-repair --env-file <path>
 
 Defaults:
-  --channel defaults to both for full releases and none for prereleases when HIVERELAY_RELEASE_CHANNEL is unset.
+  --stage accepts artifact-v1, stable-v1 or historical legacy. Artifact defaults to channel none.
+  Historical/stable full-release credential checks default to both; prereleases default to none.
 
 Local candidate validation:
   --env-file reads NAME=value and NAME<<DELIM blocks so operators can validate
@@ -27,11 +29,13 @@ UMBREL_OFFICIAL_PR_TOKEN, UMBREL_OFFICIAL_FORK, and STARTOS_REGISTRY_URL.
 const args = parseArgs(process.argv.slice(2))
 if (args.issue120Repair && !args.envFile) die('--issue-120-repair requires --env-file so ambient secrets cannot mask the repair candidate.')
 const sourceEnv = args.envFile ? safeReadEnvFile(args.envFile) : process.env
+const stage = args.stage || sourceEnv.HIVERELAY_RELEASE_STAGE || 'legacy'
+if (!['legacy', RELEASE_ARTIFACT_STAGE, RELEASE_STABLE_STAGE].includes(stage)) die('Unknown release stage')
 const prerelease = args.issue120Repair ? false : readBoolean(args.prerelease ?? sourceEnv.HIVERELAY_RELEASE_PRERELEASE, '--prerelease')
 const publicGatewayRelease = args.issue120Repair
   ? false
   : readBoolean(args.publicGatewayRelease ?? sourceEnv.HIVERELAY_PUBLIC_GATEWAY_RELEASE_ENABLED, '--public-gateway-release')
-const channel = args.issue120Repair ? 'both' : (args.channel || sourceEnv.HIVERELAY_RELEASE_CHANNEL || (prerelease ? 'none' : 'both'))
+const channel = args.issue120Repair ? 'both' : (args.channel || sourceEnv.HIVERELAY_RELEASE_CHANNEL || (stage === RELEASE_ARTIFACT_STAGE || prerelease ? 'none' : 'both'))
 const githubEnv = args.githubEnv || process.env.GITHUB_ENV || ''
 const result = args.issue120Repair
   ? checkIssue120MaskedValueRepair({ env: sourceEnv })
@@ -56,6 +60,27 @@ if (result.skipped) {
 }
 
 function checkReleaseDistributionEnv ({ channel, prerelease, publicGatewayRelease, env }) {
+  if (stage === RELEASE_ARTIFACT_STAGE) {
+    const missing = []
+    if (channel !== 'none') missing.push('artifact phase channel must be none')
+    if (!isNpmToken(String(env.NPM_TOKEN || ''))) missing.push('NPM_TOKEN must be an npm automation token without whitespace or control characters')
+    // Signing the installable artifact uses this key when supplied. Registry,
+    // consumer, store and fleet credentials are deferred, not waived.
+    if ((!prerelease || env.STARTOS_DEVELOPER_KEY_PEM) && !isPrivateKeyBlock(env.STARTOS_DEVELOPER_KEY_PEM || '')) missing.push('STARTOS_DEVELOPER_KEY_PEM must be a private key block for GA artifact signing (optional for RC)')
+    return {
+      ok: missing.length === 0,
+      skipped: false,
+      missing,
+      successMessage: 'Artifact publication credential preflight passed; stable distribution remains deferred.',
+      envUpdates: {
+        HIVERELAY_RELEASE_EFFECTIVE_CHANNEL: channel,
+        HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: missing.length ? 'failed' : 'passed-artifact',
+        HIVERELAY_RELEASE_SURFACES_STATUS: RELEASE_DEFERRED_STATUS,
+        HIVERELAY_FLEET_ROLLOUT_STATUS: RELEASE_DEFERRED_STATUS
+      }
+    }
+  }
+
   if (!['canary', 'stable', 'both', 'none'].includes(channel)) {
     return {
       ok: false,
@@ -338,6 +363,10 @@ function parseArgs (argv) {
     }
     if (arg === '--public-gateway-release') {
       out.publicGatewayRelease = readValue(argv, ++i, arg)
+      continue
+    }
+    if (arg === '--stage') {
+      out.stage = readValue(argv, ++i, arg)
       continue
     }
     if (arg === '--github-env') {

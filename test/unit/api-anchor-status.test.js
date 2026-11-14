@@ -1,4 +1,5 @@
 import test from 'brittle'
+import sodium from 'sodium-universal'
 import {
   anchorProofAppKeyFromPath,
   anchorStatusEntries,
@@ -13,6 +14,76 @@ import {
   resolveAnchorProofRoute,
   resolveAnchorStatusRoute
 } from '../../packages/core/core/relay-node/api-anchor-status.js'
+import {
+  createAppCatalogExternalCursor,
+  createCanonicalCatalogRow
+} from '../../packages/core/core/relay-node/app-catalog-paged.js'
+
+const TEST_KEY_PAIR = {
+  publicKey: Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES),
+  secretKey: Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+}
+sodium.crypto_sign_seed_keypair(TEST_KEY_PAIR.publicKey, TEST_KEY_PAIR.secretKey, Buffer.alloc(32, 1))
+
+const SNAPSHOT = Object.freeze({
+  snapshotId: '1'.repeat(64),
+  highWater: 9,
+  rootDigest: '2'.repeat(64),
+  entryCount: 0,
+  senderPubkey: TEST_KEY_PAIR.publicKey.toString('hex')
+})
+
+function canonicalAnchorRow (entry) {
+  return createCanonicalCatalogRow({
+    appKey: entry.appKey,
+    appId: entry.appId || null,
+    type: entry.type,
+    parentKey: entry.parentKey || null,
+    mountPath: entry.mountPath || null,
+    version: entry.version || null,
+    discoveryKey: entry.discoveryKey || null,
+    blind: entry.blind === true,
+    storageClass: entry.storageClass || (entry.blind ? 'temporary' : 'persistent'),
+    availabilityClass: entry.availabilityClass || (entry.blind ? 'atomic-handoff' : 'always-on'),
+    privacyTier: entry.privacyTier || 'public',
+    seededAt: null,
+    redacted: false,
+    metadataVisibility: 'public',
+    blindContentId: null,
+    anchored: entry.anchored === true,
+    maxStorageBytes: null,
+    publisherPubkey: null,
+    durability: 0,
+    revocable: true,
+    retainUntil: null
+  })
+}
+
+function nodeWithAnchorCatalog (entries) {
+  const rows = entries.map(canonicalAnchorRow)
+  const node = {
+    swarm: { keyPair: TEST_KEY_PAIR },
+    appCatalogStore: {
+      readExternalPage (opts) {
+        node.lastReadOpts = opts
+        const page = rows.slice(0, opts.limit)
+        return {
+          snapshot: { ...SNAPSHOT, entryCount: rows.length },
+          entries: page,
+          complete: page.length === rows.length,
+          cursor: page.length === rows.length
+            ? null
+            : createAppCatalogExternalCursor({
+              highWater: SNAPSHOT.highWater,
+              rootDigest: SNAPSHOT.rootDigest,
+              lastRowKey: page[page.length - 1][0]
+            }, TEST_KEY_PAIR)
+        }
+      }
+    }
+  }
+  return node
+}
 
 test('api anchor status: detailed query parser is explicit', (t) => {
   t.ok(isDetailedAnchorStatusQuery('1'))
@@ -106,17 +177,13 @@ test('api anchor status: route payload helper dispatches aggregate status', (t) 
   const appRegistry = {
     anchorStats () {
       return { total: 1, anchored: 1, unanchored: 0, neverChecked: 0 }
-    },
-    catalog () {
-      return [{
-        appKey: 'a'.repeat(64),
-        type: 'drive',
-        anchored: true,
-        anchoredAt: 99,
-        anchoredLength: 123
-      }]
     }
   }
+  const node = nodeWithAnchorCatalog([{
+    appKey: 'a'.repeat(64),
+    type: 'drive',
+    anchored: true
+  }])
 
   const pub = buildAnchorStatusRoutePayload({
     route: { kind: 'anchor-status' },
@@ -127,6 +194,7 @@ test('api anchor status: route payload helper dispatches aggregate status', (t) 
   const detailed = buildAnchorStatusRoutePayload({
     route: { kind: 'anchor-status' },
     url: new URL('http://127.0.0.1/api/anchors?detailed=true'),
+    node,
     appRegistry,
     lastCheckedAt: 42
   })
@@ -148,6 +216,14 @@ test('api anchor status: route payload helper dispatches aggregate status', (t) 
   t.is(detailed.ok, true)
   t.is(detailed.payload.entries.length, 1)
   t.is(detailed.payload.entries[0].appKey, 'a'.repeat(64))
+  t.is(detailed.payload.pagination.limit, 200)
+  t.is(detailed.payload.entryCount, 1)
+  t.alike(detailed.payload.entrySchema, {
+    version: 2,
+    fields: ['appKey', 'type', 'anchored', 'blind', 'storageClass', 'availabilityClass'],
+    omittedLegacyFields: ['anchoredAt', 'anchoredLength', 'custodyIntentId']
+  })
+  t.is(node.lastReadOpts.status, true)
   t.is(contextOverride.payload.entries, null)
   t.is(unknown.status, 404)
   t.is(unknown.payload.error, 'unknown anchor status route')
@@ -333,45 +409,93 @@ test('api anchor status: detailed entries expose only custody diagnostics', (t) 
     appKey: 'a'.repeat(64),
     type: 'drive',
     anchored: false,
-    anchoredAt: null,
-    anchoredLength: 0,
-    custodyIntentId: 'b'.repeat(64),
     blind: true,
     storageClass: 'temporary',
     availabilityClass: 'atomic-handoff'
   })
+  t.absent(Object.prototype.hasOwnProperty.call(entry, 'anchoredAt'))
+  t.absent(Object.prototype.hasOwnProperty.call(entry, 'anchoredLength'))
+  t.absent(Object.prototype.hasOwnProperty.call(entry, 'custodyIntentId'))
   t.absent(Object.prototype.hasOwnProperty.call(entry, 'publisherPubkey'))
   t.absent(Object.prototype.hasOwnProperty.call(entry, 'retainUntil'))
   t.absent(Object.prototype.hasOwnProperty.call(entry, 'ciphertextRoot'))
   t.absent(Object.prototype.hasOwnProperty.call(entry, 'shareBundleKey'))
 })
 
-test('api anchor status: detailed payload maps catalog through public helper', (t) => {
+test('api anchor status: detailed payload maps only a bounded canonical snapshot page', (t) => {
   const appRegistry = {
     anchorStats () {
       return { total: 1, anchored: 0, unanchored: 1, neverChecked: 0 }
-    },
-    catalog () {
-      return [{
-        appKey: 'c'.repeat(64),
-        type: 'app',
-        anchored: undefined,
-        custodyIntentId: '',
-        blind: false
-      }]
     }
   }
-
-  t.alike(anchorStatusEntries(appRegistry), [{
+  const canonical = [{
     appKey: 'c'.repeat(64),
     type: 'app',
-    anchored: undefined,
-    anchoredAt: undefined,
-    anchoredLength: undefined,
-    custodyIntentId: null,
+    anchored: false,
+    blind: false
+  }]
+  const node = nodeWithAnchorCatalog(canonical)
+
+  t.alike(anchorStatusEntries(canonical), [{
+    appKey: 'c'.repeat(64),
+    type: 'app',
+    anchored: false,
     blind: false,
     storageClass: null,
     availabilityClass: null
   }])
-  t.is(buildAnchorStatusPayload({ appRegistry, detailed: true }).payload.entries.length, 1)
+  const result = buildAnchorStatusPayload({
+    node,
+    url: new URL('http://127.0.0.1/api/anchors?detailed=true&limit=1'),
+    appRegistry,
+    detailed: true
+  })
+  t.is(result.payload.entries.length, 1)
+  t.is(result.payload.pagination.limit, 1)
+  t.alike(result.payload.snapshot, { ...SNAPSHOT, entryCount: 1 })
+  t.is(result.payload.entryCount, 1)
+})
+
+test('api anchor status: detailed cursor expiry is 409 and the 200-row cap is pre-store', (t) => {
+  const appRegistry = {
+    anchorStats () {
+      return { total: 0, anchored: 0, unanchored: 0, neverChecked: 0 }
+    }
+  }
+  const node = nodeWithAnchorCatalog([])
+  let calls = 0
+  node.appCatalogStore.readExternalPage = () => {
+    calls++
+    return { snapshot: SNAPSHOT, entries: [], complete: true, cursor: null }
+  }
+  const oversized = buildAnchorStatusPayload({
+    node,
+    url: new URL('http://127.0.0.1/api/anchors?detailed=true&limit=201'),
+    appRegistry,
+    detailed: true
+  })
+  t.is(oversized.status, 400)
+  t.is(calls, 0)
+
+  const cursor = createAppCatalogExternalCursor({
+    highWater: 1,
+    rootDigest: '5'.repeat(64),
+    lastRowKey: '6'.repeat(64)
+  }, TEST_KEY_PAIR)
+  node.appCatalogStore.readExternalPage = () => {
+    const err = new Error('expired')
+    err.code = 'CURSOR_EXPIRED'
+    throw err
+  }
+  const expired = buildAnchorStatusPayload({
+    node,
+    url: new URL(`http://127.0.0.1/api/anchors?detailed=true&cursor=${encodeURIComponent(JSON.stringify(cursor))}`),
+    appRegistry,
+    detailed: true
+  })
+  t.alike(expired, {
+    ok: false,
+    status: 409,
+    payload: { error: 'CURSOR_EXPIRED' }
+  })
 })

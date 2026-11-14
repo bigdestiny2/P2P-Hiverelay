@@ -168,26 +168,29 @@ test('protocol-security: unseed replay detection drops duplicate signature', asy
   t.is(received.length, 1, 'still only one request recorded')
 })
 
-test('protocol-security: app catalog envelope fields are preserved', async (t) => {
+test('protocol-security: incoming legacy app catalog envelope fields are preserved', async (t) => {
   const registry = {
     catalog () { return [] },
     addRemoteServices () {},
     handleRequest: async () => ({ ok: true })
   }
   const proto = new ServiceProtocol(registry)
-  proto._getCatalogEnvelope = () => ({
+  let received = null
+  proto.on('app-catalog', (event) => { received = event })
+
+  await proto._onMessage('peer', {
+    type: 7,
     apps: [{ appKey: 'a'.repeat(64), version: '1.0.0' }],
     relayPubkey: 'b'.repeat(64),
     catalogTimestamp: 123456,
     signature: 'c'.repeat(128)
   })
 
-  const msg = proto._buildCatalogMessage()
-  t.is(msg.type, 7)
-  t.is(msg.apps.length, 1)
-  t.is(msg.relayPubkey, 'b'.repeat(64))
-  t.is(msg.catalogTimestamp, 123456)
-  t.is(msg.signature, 'c'.repeat(128))
+  t.is(received.remotePubkey, 'peer')
+  t.is(received.apps.length, 1)
+  t.is(received.relayPubkey, 'b'.repeat(64))
+  t.is(received.catalogTimestamp, 123456)
+  t.is(received.signature, 'c'.repeat(128))
 })
 
 test('protocol-security: peer service catalogs are sanitized before registry and events', async (t) => {
@@ -289,7 +292,7 @@ test('protocol-security: service RPC preserves fixed public control-plane errors
   t.alike(sent, [{ type: 3, id: 7, error: 'SERVICE_NOT_FOUND: missing' }])
 })
 
-test('protocol-security: app catalog broadcasts use deltas after initial full sync', async (t) => {
+test('protocol-security: sender catalog broadcast shim never materializes or sends app state', async (t) => {
   const registry = {
     catalog () { return [] },
     addRemoteServices () {},
@@ -297,16 +300,8 @@ test('protocol-security: app catalog broadcasts use deltas after initial full sy
   }
   const sent = []
   const proto = new ServiceProtocol(registry)
-  let apps = [
-    { appKey: 'a'.repeat(64), version: '1.0.0' },
-    { appKey: 'b'.repeat(64), version: '1.0.0' }
-  ]
-  proto._getCatalogEnvelope = (opts = {}) => ({
-    apps: Array.isArray(opts.apps) ? opts.apps : apps,
-    relayPubkey: 'f'.repeat(64),
-    catalogTimestamp: 123456,
-    signature: null
-  })
+  proto._getCatalogEnvelope = () => t.fail('legacy sender must not build a catalog envelope')
+  proto._getSeededApps = () => t.fail('legacy sender must not materialize seeded apps')
   proto.channels.set('peer', {
     channel: {
       cork () {},
@@ -315,29 +310,8 @@ test('protocol-security: app catalog broadcasts use deltas after initial full sy
     msgHandler: { send: (msg) => sent.push(msg) }
   })
 
-  proto.sendAppCatalog('peer')
-  t.is(sent[0].type, 7, 'initial sync sends full app catalog')
-  t.is(sent[0].apps.length, 2)
-
-  apps = [
-    { appKey: 'a'.repeat(64), version: '1.0.0' },
-    { appKey: 'b'.repeat(64), version: '1.0.0' },
-    { appKey: 'c'.repeat(64), version: '1.0.0' }
-  ]
-  proto.broadcastAppCatalog()
-  t.is(sent[1].type, 8, 'live update sends catalog delta')
-  t.alike(sent[1].added.map(app => app.appKey), ['c'.repeat(64)])
-  t.alike(sent[1].removed, [])
-  t.alike(sent[1].apps.map(app => app.appKey), ['c'.repeat(64)], 'signed apps payload is additions only')
-
-  apps = [
-    { appKey: 'b'.repeat(64), version: '1.0.0' },
-    { appKey: 'c'.repeat(64), version: '1.0.0' }
-  ]
-  proto.broadcastAppCatalog()
-  t.is(sent[2].type, 8)
-  t.alike(sent[2].added, [])
-  t.alike(sent[2].removed, ['a'.repeat(64)])
+  t.is(proto.broadcastAppCatalog(), false)
+  t.alike(sent, [])
 })
 
 test('protocol-security: incoming app catalog delta emits signed additions for relay sync', async (t) => {

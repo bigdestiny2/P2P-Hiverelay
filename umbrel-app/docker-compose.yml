@@ -47,11 +47,18 @@ services:
     # first start.
     volumes:
       - ${APP_DATA_DIR}/data:/data
+      # Provisioned by the reviewed offline generation ceremony. Keeping this
+      # mount separate and read-only prevents the relay storage writer from
+      # replacing its own receipt or pin.
+      - ${APP_DATA_DIR}/storage-generation:/config:ro
     environment:
       # Home for config + storage — everything persists on the data volume
       # (config.json, the corestore, the relay keypair).
       HOME: /data
       HIVERELAY_LOG_LEVEL: info
+      HIVERELAY_REQUIRE_GENERATION_RECEIPT: "1"
+      HIVERELAY_GENERATION_RECEIPT: /config/storage-generation-receipt.v1.json
+      HIVERELAY_GENERATION_RECEIPT_SHA256_FILE: /config/storage-generation-receipt.v1.sha256
 
       # Serve the single-page Blindspark appliance dashboard instead of the
       # full multi-tab operator UI. No Docs/GitHub, no payments/calculator/

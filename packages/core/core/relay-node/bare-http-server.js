@@ -68,7 +68,14 @@ export class BareHttpServer {
     const path = url.pathname
 
     if (path === '/health') {
-      return this._json(res, { ok: true, runtime: 'bare', uptime: this._uptime() })
+      return this._json(res, {
+        ok: true,
+        runtime: 'bare',
+        uptime: this._uptime(),
+        storageGeneration: typeof this.relay.getStorageGenerationStatus === 'function'
+          ? this.relay.getStorageGenerationStatus()
+          : null
+      })
     }
 
     if (path === '/status' || path === '/api/overview') {
@@ -131,6 +138,9 @@ export class BareHttpServer {
       },
       services: this.relay.serviceRegistry
         ? { count: this.relay.serviceRegistry.services.size }
+        : null,
+      appCatalogPaged: this.relay.appCatalogController
+        ? this.relay.appCatalogController.status()
         : null,
       errors: 0
     }

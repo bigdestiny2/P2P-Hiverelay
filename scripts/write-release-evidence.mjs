@@ -1,11 +1,18 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
+import { readJson as readStageJson } from './release-stages/io.mjs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import {
+  RELEASE_ARTIFACT_STAGE,
+  RELEASE_NPM_STAGING_TAG,
+  RELEASE_DEFERRED_SURFACES,
+  RELEASE_PROMOTION_EVIDENCE,
+  validateReleaseStage,
+  assertArtifactSurfaceState,
   RELEASE_CLOSURE_EVIDENCE,
   RELEASE_SYNC_WORKFLOW_SCOPE,
   isSuccessfulReleaseSyncEvidence,
@@ -56,6 +63,21 @@ const publicGateway = publicGatewayEvidence()
 const fleetChannelConfigPath = env('HIVERELAY_FLEET_CHANNEL_CONFIG') ||
   (env('HIVERELAY_RELEASE_CHANNEL') && env('HIVERELAY_RELEASE_CHANNEL') !== 'none' ? 'fleet/channels.json' : '')
 
+const stageName = env('HIVERELAY_RELEASE_STAGE')
+if (stageName && stageName !== RELEASE_ARTIFACT_STAGE) die('Release evidence writer accepts only the artifact-v1 stage')
+const stage = stageName && !candidate
+  ? {
+      schemaVersion: 1,
+      name: RELEASE_ARTIFACT_STAGE,
+      npmDistTag: RELEASE_NPM_STAGING_TAG,
+      packages: env('HIVERELAY_RELEASE_NPM_IDENTITY') ? readStageJson(env('HIVERELAY_RELEASE_NPM_IDENTITY')) : [],
+      githubLatest: false,
+      metadataBranch: env('HIVERELAY_RELEASE_MAINTENANCE_BRANCH') || 'main',
+      deferredSurfaces: RELEASE_DEFERRED_SURFACES,
+      promotionEvidence: RELEASE_PROMOTION_EVIDENCE
+    }
+  : null
+
 const evidence = {
   schemaVersion: 1,
   generatedAt: new Date().toISOString(),
@@ -65,6 +87,7 @@ const evidence = {
     channel: env('HIVERELAY_RELEASE_CHANNEL'),
     prerelease: env('HIVERELAY_RELEASE_PRERELEASE') === 'true',
     candidate,
+    ...(stage ? { stage } : {}),
     tagSha: releaseSha,
     metadataSha,
     ...(publicGateway ? { publicGateway } : {}),
@@ -318,6 +341,12 @@ async function validateSuccessfulRun (body) {
   requirePattern('successful release Umbrel package smoke evidence SHA-256', body.gates.umbrelPackageSmokeEvidence.sha256, /^[a-f0-9]{64}$/i)
   requireOneOf('successful release StartOS verify gate', body.gates.startosVerify, ['passed'])
   requireOneOf('successful release StartOS GitHub Release asset', body.surfaces.startosReleaseAsset, body.release.candidate ? ['skipped'] : ['uploaded'])
+
+  if (validateReleaseStage(body)) {
+    assertArtifactSurfaceState(body)
+    await verifyPresentEvidenceFiles(body, false)
+    return
+  }
 
   if (body.release.prerelease) {
     requireOneOf('successful prerelease channel', body.release.channel, ['none'])

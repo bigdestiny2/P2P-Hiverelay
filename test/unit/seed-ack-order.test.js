@@ -2,6 +2,7 @@ import test from 'brittle'
 import b4a from 'b4a'
 import { RelayNode } from '../../packages/core/core/relay-node/index.js'
 import { BareRelay } from '../../packages/core/core/relay-node/bare-relay.js'
+import { canonicalSeedDiscoveryHint } from '../../packages/core/core/protocol/seed-discovery-hints.js'
 
 const STORAGE_BOUND = 1024 * 1024
 
@@ -41,15 +42,12 @@ function protocol (events) {
   }
 }
 
-function nodeHarness ({ appPromise, corePromise, events }) {
+function nodeHarness ({ appPromise, events }) {
   return {
     config: { regions: ['test'], acceptMode: 'open' },
     seeder: {
       cores: new Map(),
-      async seedCore () {
-        events.push('core-start')
-        return corePromise
-      },
+      async seedCore () { throw new Error('discovery hints are not core keys') },
       async unseedCore () { events.push('core-rollback') }
     },
     swarm: { keyPair: { publicKey: b4a.alloc(32, 3) } },
@@ -57,6 +55,8 @@ function nodeHarness ({ appPromise, corePromise, events }) {
     _resolveAcceptMode: () => 'open',
     _decideAcceptance: () => 'accept',
     _storageAdmission: () => ({ allowed: true, availableBytes: STORAGE_BOUND }),
+    _informationalAvailableStorageBytes: () => STORAGE_BOUND,
+    storageAdmission: { canAcknowledge: () => true },
     leaseManager: null,
     seedingRegistry: null,
     async seedApp () {
@@ -68,15 +68,12 @@ function nodeHarness ({ appPromise, corePromise, events }) {
   }
 }
 
-function bareHarness ({ appPromise, corePromise, events }) {
+function bareHarness ({ appPromise, events }) {
   return {
     config: { enableSeeding: true, regions: ['test'], acceptMode: 'open', acceptAllowlist: [] },
     seeder: {
       cores: new Map(),
-      async seedCore () {
-        events.push('core-start')
-        return corePromise
-      },
+      async seedCore () { throw new Error('discovery hints are not core keys') },
       async unseedCore () { events.push('core-rollback') }
     },
     appLifecycle: {
@@ -89,6 +86,8 @@ function bareHarness ({ appPromise, corePromise, events }) {
     swarm: { keyPair: { publicKey: b4a.alloc(32, 3) } },
     _seedProtocol: protocol(events),
     _storageAdmission: () => ({ allowed: true, availableBytes: STORAGE_BOUND }),
+    _informationalAvailableStorageBytes: () => STORAGE_BOUND,
+    storageAdmission: { canAcknowledge: () => true },
     emit (name) { events.push('emit:' + name) }
   }
 }
@@ -97,50 +96,40 @@ for (const runtime of [
   { name: 'Node', handler: RelayNode.prototype._onSeedRequest, harness: nodeHarness },
   { name: 'Bare', handler: BareRelay.prototype._onSeedRequest, harness: bareHarness }
 ]) {
-  test(`${runtime.name} seed ACK follows durable drive and extra-core completion`, async (t) => {
+  test(`${runtime.name} seed ACK follows the one durable drive and never fans out discovery hints`, async (t) => {
     const events = []
     const app = deferred()
-    const core = deferred()
-    const extraCore = b4a.alloc(32, 4)
-    const relay = runtime.harness({ appPromise: app.promise, corePromise: core.promise, events })
+    const canonicalHint = canonicalSeedDiscoveryHint(b4a.alloc(32, 1))
+    const relay = runtime.harness({ appPromise: app.promise, events })
 
-    const pending = runtime.handler.call(relay, message({ discoveryKeys: [extraCore] }), {})
+    const pending = runtime.handler.call(relay, message({ discoveryKeys: [canonicalHint] }), {})
     t.alike(events, ['app-start'])
 
     app.resolve({ alreadySeeded: false })
     await turn()
-    t.alike(events, ['app-start', 'core-start'])
-    t.absent(events.find(event => event === 'accept'), 'drive persistence alone cannot ACK the full request')
-
-    core.resolve({})
     await pending
     const acceptIndex = events.indexOf('accept')
-    t.ok(acceptIndex > events.indexOf('core-start'))
+    t.ok(acceptIndex > events.indexOf('app-start'))
+    t.absent(events.find(event => event === 'core-start'))
     t.is(events[acceptIndex + 1], 'emit:seed-accepted', 'success is emitted only after the wire ACK')
   })
 
   test(`${runtime.name} seed durability failure denies without a false ACK`, async (t) => {
     const events = []
-    const app = Promise.resolve({ alreadySeeded: false })
-    const failure = new Error('injected durable core persistence failure')
-    const core = Promise.reject(failure)
-    // The handler attaches its rejection path in the same turn.
-    core.catch(() => {})
-    const relay = runtime.harness({ appPromise: app, corePromise: core, events })
+    const app = Promise.reject(new Error('injected durable drive persistence failure'))
+    const relay = runtime.harness({ appPromise: app, events })
 
-    await runtime.handler.call(relay, message({ discoveryKeys: [b4a.alloc(32, 5)] }), {})
+    await runtime.handler.call(relay, message(), {})
 
     t.absent(events.find(event => event === 'accept'))
-    t.ok(events.includes('app-rollback'), 'partially accepted drive is durably rolled back')
+    t.absent(events.find(event => event.endsWith('-rollback')), 'seedApp owns reservation rollback internally')
     t.ok(events.includes('deny:storage-admission-blocked'))
-    t.ok(events.indexOf('app-rollback') < events.indexOf('deny:storage-admission-blocked'), 'rollback finishes before denial')
   })
 
   test(`${runtime.name} post-ACK observer failure cannot revoke durable acceptance`, async (t) => {
     const events = []
     const relay = runtime.harness({
       appPromise: Promise.resolve({ alreadySeeded: false }),
-      corePromise: Promise.resolve({}),
       events
     })
     relay.emit = (name) => {

@@ -184,6 +184,8 @@ export class StorageAdmissionAuthority extends EventEmitter {
     this._keyMutationTails = new Map()
     this._ownedHandoffs = new WeakMap()
     this._ownedLeases = new Map()
+    this._retirementIntents = new Map()
+    this._retirementReleases = new Map()
     this.physicalEnforcer = opts.physicalEnforcer || null
     this._physicalLease = null
     this._physicalAttestation = null
@@ -566,6 +568,8 @@ export class StorageAdmissionAuthority extends EventEmitter {
   beginRecovery (kinds = ['drives', 'cores']) {
     this._clearRecords()
     this._ownedLeases.clear()
+    this._retirementIntents.clear()
+    this._retirementReleases.clear()
     this._recoveryPending = new Set(kinds)
     this._fatalReason = null
     this.openMutations()
@@ -681,6 +685,95 @@ export class StorageAdmissionAuthority extends EventEmitter {
     return !!record && record.state === 'committed' && record.boundBytes !== null
   }
 
+  /**
+   * Side-effect-free, reject-only capacity hint for schedulers and status.
+   *
+   * This method deliberately never refreshes statfs, walks storage, or returns
+   * `allowed: true`. A non-rejection means only that the caller may proceed to
+   * the real mutation boundary, where reserve() performs the exact proof.
+   */
+  cachedRejection (additionalBytes = 0, opts = {}) {
+    const additional = finiteNonNegativeInteger(additionalBytes)
+    const blocked = (reason, details = {}) => ({
+      reject: true,
+      exactRequired: false,
+      reason,
+      informationalAvailableBytes: 0,
+      ...details
+    })
+    const unresolved = (reason, details = {}) => ({
+      reject: false,
+      exactRequired: true,
+      reason,
+      informationalAvailableBytes: null,
+      ...details
+    })
+
+    if (additional === null) return blocked('storage-bound-invalid')
+    if (this._fatalReason) return blocked(this._fatalReason)
+    if (!this.recoveryReady) return blocked('storage-recovery-inventory-pending')
+    if (!this._acceptingMutations) return blocked(this._mutationStopReason || 'storage-mutations-stopping')
+
+    const snapshot = this.capacitySnapshot()
+    if (!snapshot || snapshot.valid !== true || snapshot.unknownCommitments !== 0) {
+      return blocked('storage-commitment-unknown')
+    }
+
+    const summary = opts.storageSummary
+    const measuredAt = finiteNonNegativeInteger(summary?.diskMeasuredAt)
+    const diskBytes = finiteNonNegativeInteger(summary?.diskBytes)
+    const totalBytes = finiteNonNegativeInteger(summary?.totalBytes)
+    if (!summary || summary.diskMeasurementComplete !== true || measuredAt === null ||
+        diskBytes === null || totalBytes === null) {
+      return unresolved('storage-measurement-incomplete')
+    }
+
+    const now = finiteNonNegativeInteger(opts.now) ?? Date.now()
+    const durationMs = finiteNonNegativeInteger(summary.diskMeasureDurationMs) || 0
+    const intervalMs = finiteNonNegativeInteger(summary.diskIntervalMs) || 0
+    const requestedMaxAge = finiteNonNegativeInteger(opts.measurementMaxAgeMs) || 5 * 60 * 1000
+    const maxAgeMs = Math.min(60 * 60 * 1000, Math.max(requestedMaxAge, 2 * durationMs + intervalMs))
+    if (measuredAt > now + 1000 || now - measuredAt > maxAgeMs) {
+      return unresolved('storage-measurement-stale', { measuredAt, maxAgeMs })
+    }
+
+    const effectiveCapBytes = finiteNonNegativeInteger(snapshot.effectiveCapBytes)
+    if (effectiveCapBytes === null || effectiveCapBytes <= 0) {
+      return blocked('storage-cap-unresolved')
+    }
+    const committedBytes = finiteNonNegativeInteger(snapshot.committedBytes)
+    const pendingBytes = finiteNonNegativeInteger(snapshot.pendingBytes)
+    if (committedBytes === null || pendingBytes === null) return blocked('storage-commitment-unknown')
+
+    const usedBytes = Math.max(diskBytes, totalBytes)
+    const accountedBytes = usedBytes + committedBytes + pendingBytes
+    const projectedBytes = accountedBytes + additional
+    if (!Number.isSafeInteger(accountedBytes) || !Number.isSafeInteger(projectedBytes)) {
+      return blocked('storage-usage-invalid')
+    }
+    const rawRatio = Number(opts.limitRatio)
+    const limitRatio = Number.isFinite(rawRatio) && rawRatio > 0 && rawRatio <= 1 ? rawRatio : 1
+    const rejectAtBytes = Math.floor(effectiveCapBytes * limitRatio)
+    const informationalAvailableBytes = Math.max(0, rejectAtBytes - accountedBytes)
+    if (projectedBytes >= rejectAtBytes) {
+      return blocked('storage-full', {
+        usedBytes: accountedBytes,
+        effectiveCapBytes,
+        limitRatio,
+        informationalAvailableBytes
+      })
+    }
+    return {
+      reject: false,
+      exactRequired: true,
+      reason: null,
+      usedBytes: accountedBytes,
+      effectiveCapBytes,
+      limitRatio,
+      informationalAvailableBytes
+    }
+  }
+
   /** Register durable state during startup without treating it as new adoption. */
   adoptRecovery (key, boundBytes, opts = {}) {
     const bound = positiveStorageBound(boundBytes)
@@ -766,6 +859,10 @@ export class StorageAdmissionAuthority extends EventEmitter {
 
     const committedRemainder = this._committedRemainder({ excluding: opts.excluding || null })
     if (committedRemainder === null) return admissionFailure('storage-commitment-unknown')
+    return this._evaluateMeasuredAdmission(additional, committedRemainder, sample)
+  }
+
+  _evaluateMeasuredAdmission (additional, committedRemainder, sample, physicalLimit = null) {
     const measuredUsed = finiteNonNegativeInteger(this.getUsedBytes())
     if (measuredUsed === null) return admissionFailure('storage-usage-invalid')
     // The exact tree walk may be long. Re-sample after it and bind both sides
@@ -781,8 +878,11 @@ export class StorageAdmissionAuthority extends EventEmitter {
     // Bind the ceiling to the same re-sampled filesystem the capacity terms
     // came from, so a mount swap mid-admission cannot pair one device's size
     // with another device's usage.
-    const ceiling = this.capacityCeiling(finalSample)
+    let ceiling = this.capacityCeiling(finalSample)
     if (ceiling && ceiling.invalid) return admissionFailure(ceiling.reason)
+    if (physicalLimit !== null && (!ceiling || physicalLimit < ceiling.bytes)) {
+      ceiling = { bytes: physicalLimit, source: 'physical-enforcement' }
+    }
     return evaluateStorageAdmission(this.config, {
       usedBytes,
       additionalBytes: additional,
@@ -791,6 +891,68 @@ export class StorageAdmissionAuthority extends EventEmitter {
       capCeilingBytes: ceiling ? ceiling.bytes : null,
       capCeilingSource: ceiling ? ceiling.source : null
     })
+  }
+
+  /**
+   * Restore the finite commitment proved by OutboxLog's local durable journal.
+   * The caller must first validate its owner, identity, bound and debt ledger.
+   * This is not fresh admission: only canonical serve-only drive/core recovery
+   * records may lack bounds. Their existing bytes remain in the exact tree
+   * measurement; every finite promise is still charged in full. Normal
+   * admission deliberately continues to reject those unknown commitments.
+   */
+  recoverOutboxJournal (key, boundBytes, actualBytes) {
+    const admission = this.mutationAdmission()
+    if (!admission.allowed) return admission
+    const bound = positiveStorageBound(boundBytes)
+    const actual = finiteNonNegativeInteger(actualBytes)
+    if (typeof key !== 'string' || !key.startsWith('outboxlog:') || key.length <= 10 ||
+        bound === null || actual === null || actual > bound) {
+      return admissionFailure('outboxlog-recovery-invalid')
+    }
+    if (!this.recoveryReady) return admissionFailure('storage-recovery-inventory-pending')
+    let physicalLimit = null
+    if (this.config?.requirePhysicalEnforcement === true || this.physicalEnforcer) {
+      const attestation = this.physicalEnforcementSnapshot()
+      if (!this.physicalEnforcementActive || !attestation ||
+          positiveStorageBound(attestation.hardLimitBytes) === null ||
+          !Number.isSafeInteger(attestation.usedAllocatedBytes) ||
+          attestation.usedAllocatedBytes >= attestation.hardLimitBytes) {
+        return admissionFailure('storage-physical-enforcement-unavailable')
+      }
+      physicalLimit = attestation.hardLimitBytes
+    }
+    if (this._records.has(key) || this._ownedLeases.has(key)) {
+      return admissionFailure('outboxlog-recovery-already-owned')
+    }
+    const sample = this.filesystemSample({ refresh: true })
+    if (sample.ok !== true) return sample
+    let commitments = 0
+    for (const [recordKey, record] of this._records) {
+      if (record.state === 'unknown-recovery' && record.recovery === true && record.boundBytes === null &&
+          (record.kind === 'drive' || record.kind === 'core') &&
+          new RegExp(`^${record.kind}:[0-9a-f]{64}$`).test(recordKey)) continue
+      const remaining = this._remainingBytes(recordKey, record)
+      if (remaining === null || !Number.isSafeInteger(commitments + remaining)) {
+        return admissionFailure('storage-commitment-unknown')
+      }
+      commitments += remaining
+    }
+    const capacity = this._evaluateMeasuredAdmission(bound, commitments, sample, physicalLimit)
+    if (!capacity.allowed) return capacity
+    // No await separates the exact proof and the installed debt. Concurrent
+    // recoveries and reservations must observe this whole promise immediately.
+    this._setRecord(key, {
+      key,
+      kind: 'outboxlog',
+      boundBytes: bound,
+      overheadBytes: 0,
+      state: 'committed',
+      recovery: true,
+      tokenId: null,
+      actualBytesOverride: actual
+    })
+    return { allowed: true, key, boundBytes: bound, actualBytes: actual, admission: capacity }
   }
 
   reserve (key, boundBytes, opts = {}) {
@@ -852,6 +1014,11 @@ export class StorageAdmissionAuthority extends EventEmitter {
       tokenId,
       measuredActualBytes: measuredActual
     }
+    // A completed retirement id is idempotent only until a genuinely new
+    // reservation generation is admitted for the same address. Do not let an
+    // old release receipt block (or release) that later generation.
+    this._retirementIntents.delete(key)
+    this._retirementReleases.delete(key)
     this._setRecord(key, record)
     return {
       allowed: true,
@@ -952,6 +1119,39 @@ export class StorageAdmissionAuthority extends EventEmitter {
     const handoff = this._ownedLeases.get(key)
     if (handoff) this.releaseOwnedHandoff(handoff)
     return this._deleteRecord(key)
+  }
+
+  beginRetirement (key, retirementId) {
+    if (typeof key !== 'string' || !/^[a-z]+:[0-9a-f]{64}$/.test(key) ||
+        typeof retirementId !== 'string' || !/^[0-9a-f]{32}$/.test(retirementId)) return false
+    const released = this._retirementReleases.get(key)
+    if (released) return released === retirementId && !this._records.has(key)
+    const intent = this._retirementIntents.get(key)
+    if (intent) return intent === retirementId && this._records.has(key)
+    const record = this._records.get(key)
+    if (!record || (record.state !== 'committed' && record.state !== 'unknown-recovery')) return false
+    this._retirementIntents.set(key, retirementId)
+    return true
+  }
+
+  releaseRetirement (key, retirementId) {
+    if (typeof key !== 'string' || !/^[a-z]+:[0-9a-f]{64}$/.test(key) ||
+        typeof retirementId !== 'string' || !/^[0-9a-f]{32}$/.test(retirementId)) return false
+    const released = this._retirementReleases.get(key)
+    if (released) return released === retirementId && !this._records.has(key)
+    if (this._retirementIntents.get(key) !== retirementId) return false
+    if (!this._records.has(key)) return false
+    if (!this.release(key)) return false
+    this._retirementIntents.delete(key)
+    this._retirementReleases.set(key, retirementId)
+    return true
+  }
+
+  completeRetirement (key, retirementId) {
+    if (typeof key !== 'string' || typeof retirementId !== 'string' ||
+        this._records.has(key) || this._retirementReleases.get(key) !== retirementId) return false
+    this._retirementReleases.delete(key)
+    return true
   }
 
   get (key) {

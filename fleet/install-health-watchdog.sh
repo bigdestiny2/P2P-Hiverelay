@@ -1,144 +1,133 @@
 #!/usr/bin/env bash
-# install-health-watchdog.sh — install local health restart timer on a relay box.
-# Run as root on the box, or via: ssh root@box 'bash -s' < fleet/install-health-watchdog.sh
+# Install the RC9 signed pidfd watchdog from an exact local release checkout.
+# Piped/embedded installation is intentionally unsupported: the shell, Node
+# policy helper, C pidfd helper, service and timer must be one tracked set.
 set -euo pipefail
+umask 077
 
-SCRIPT_SRC="${1:-}"
-if [ -n "$SCRIPT_SRC" ] && [ -f "$SCRIPT_SRC" ]; then
-  install -m 0755 "$SCRIPT_SRC" /usr/local/bin/hiverelay-health-watchdog.sh
-else
-  # Embedded install when piped over SSH without file args
-  cat > /usr/local/bin/hiverelay-health-watchdog.sh <<'WATCH'
-#!/usr/bin/env bash
-# health-watchdog.sh — local systemd timer target.
-# If HiveRelay is "active" but /health fails repeatedly, force-kill and restart.
-# Covers event-loop hangs (LISTEN on :9100, no response) that systemd cannot see.
-#
-# State: /run/hiverelay-health-watchdog.failcount
-# Env (optional drop-in):
-#   HIVERELAY_HEALTH_URL      default http://127.0.0.1:9100/health
-#   HIVERELAY_HEALTH_TIMEOUT  curl max-time seconds (default 5)
-#   HIVERELAY_HEALTH_FAILS    consecutive failures before restart (default 2)
-set -uo pipefail
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin
+export LANG=C
+export LC_ALL=C
 
-URL="${HIVERELAY_HEALTH_URL:-http://127.0.0.1:9100/health}"
-TIMEOUT="${HIVERELAY_HEALTH_TIMEOUT:-5}"
-NEED_FAILS="${HIVERELAY_HEALTH_FAILS:-2}"
-STATE_FILE="${HIVERELAY_HEALTH_STATE:-/run/hiverelay-health-watchdog.failcount}"
-UNIT="${HIVERELAY_UNIT:-hiverelay}"
-LOG_TAG="hiverelay-health-watchdog"
+readonly UNIT=hiverelay.service
+readonly WATCHDOG_UNIT=hiverelay-health-watchdog.service
+readonly TIMER=hiverelay-health-watchdog.timer
+readonly BIN_DIR=/usr/local/bin
+readonly LIBEXEC_DIR=/usr/local/libexec
+readonly SYSTEMD_DIR=/etc/systemd/system
+readonly CONFIG_DIR=/etc/hiverelay/watchdog
+readonly STATE_DIR=/var/lib/hiverelay-watchdog
+readonly RUNTIME_DIR=/run/hiverelay-watchdog
+readonly LOG_DIR=/var/log/hiverelay-watchdog
+readonly DIAGNOSTIC_DIR=${LOG_DIR}/diagnostics
 
-log() { logger -t "$LOG_TAG" -- "$*"; echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) $*"; }
+die () { printf 'watchdog install: %s\n' "$*" >&2; exit 1; }
 
-active=$(systemctl is-active "$UNIT" 2>/dev/null || echo inactive)
-if [ "$active" != "active" ] && [ "$active" != "activating" ]; then
-  # Unit not expected to answer health; clear streak
-  echo 0 >"$STATE_FILE" 2>/dev/null || true
-  exit 0
-fi
+[ "$(id -u)" = 0 ] || die 'root is required'
+[ -x /usr/bin/node ] || die '/usr/bin/node is required'
+[ -x /usr/bin/curl ] || die '/usr/bin/curl is required'
+[ -x /usr/bin/systemctl ] || die '/usr/bin/systemctl is required'
+[ -x /usr/bin/cc ] || [ -x /usr/bin/gcc ] || die 'a system C compiler is required'
 
-# Skip while still starting (boot grace)
-MainPID=$(systemctl show "$UNIT" -p MainPID --value 2>/dev/null || echo 0)
-if [ -n "$MainPID" ] && [ "$MainPID" != "0" ] && [ -r "/proc/$MainPID" ]; then
-  # seconds of process life
-  start_ticks=$(awk '{print $22}' /proc/"$MainPID"/stat 2>/dev/null || echo 0)
-  hz=$(getconf CLK_TCK 2>/dev/null || echo 100)
-  uptime_s=$(awk '{print int($1)}' /proc/uptime)
-  start_s=$(( start_ticks / hz ))
-  # approximate process age from boot - starttime is jiffies since boot
-  age=$(( uptime_s - start_s ))
-  if [ "$age" -ge 0 ] && [ "$age" -lt 90 ]; then
-    log "grace period age=${age}s pid=$MainPID — skip"
-    exit 0
+node_major=$(/usr/bin/node -p 'Number(process.versions.node.split(".")[0])')
+[[ "$node_major" =~ ^[0-9]+$ ]] && [ "$node_major" -ge 20 ] || die 'Node.js >=20 is required'
+active=$(/usr/bin/systemctl is-active "$UNIT" 2>/dev/null || true)
+[ "$active" = active ] || die "$UNIT must be exactly active for the non-restart installation proof"
+before_pid=$(/usr/bin/systemctl show "$UNIT" --property=MainPID --value --no-pager)
+before_restarts=$(/usr/bin/systemctl show "$UNIT" --property=NRestarts --value --no-pager)
+[[ "$before_pid" =~ ^[1-9][0-9]*$ ]] || die "$UNIT has no exact MainPID"
+[[ "$before_restarts" =~ ^[0-9]+$ ]] || die "$UNIT has no exact NRestarts counter"
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+for name in health-watchdog.sh health-watchdog-policy.mjs health-watchdog-helper.c \
+  hiverelay-health-watchdog.service hiverelay-health-watchdog.timer; do
+  [ -f "$script_dir/$name" ] && [ ! -L "$script_dir/$name" ] ||
+    die "tracked companion is missing or a symlink: $name"
+done
+
+/bin/bash -n "$script_dir/health-watchdog.sh"
+/usr/bin/node --check "$script_dir/health-watchdog-policy.mjs"
+
+for directory in "$CONFIG_DIR" "$STATE_DIR" "$RUNTIME_DIR" "$LOG_DIR" "$DIAGNOSTIC_DIR"; do
+  [ ! -L "$directory" ] || die "refusing symlink directory: $directory"
+  /usr/bin/install -d -o root -g root -m 0700 -- "$directory"
+  metadata=$(stat -Lc '%u:%g:%a:%F' -- "$directory")
+  [ "$metadata" = '0:0:700:directory' ] || die "directory authority mismatch: $directory"
+done
+/usr/bin/install -d -o root -g root -m 0755 -- "$LIBEXEC_DIR"
+
+build_dir=$(mktemp -d /var/tmp/hiverelay-watchdog-build.XXXXXXXX)
+cleanup () { rm -rf -- "$build_dir"; }
+trap cleanup EXIT HUP INT TERM
+compiler=/usr/bin/cc
+[ -x "$compiler" ] || compiler=/usr/bin/gcc
+"$compiler" -std=c11 -O2 -D_FORTIFY_SOURCE=2 -fstack-protector-strong \
+  -Wall -Wextra -Werror -Wformat=2 \
+  -o "$build_dir/hiverelay-health-watchdog-pidfd" "$script_dir/health-watchdog-helper.c"
+
+/usr/bin/install -o root -g root -m 0755 -- "$script_dir/health-watchdog.sh" \
+  "$BIN_DIR/hiverelay-health-watchdog.sh"
+/usr/bin/install -o root -g root -m 0755 -- "$script_dir/health-watchdog-policy.mjs" \
+  "$LIBEXEC_DIR/hiverelay-health-watchdog-policy.mjs"
+/usr/bin/install -o root -g root -m 0755 -- "$build_dir/hiverelay-health-watchdog-pidfd" \
+  "$LIBEXEC_DIR/hiverelay-health-watchdog-pidfd"
+/usr/bin/install -o root -g root -m 0644 -- "$script_dir/hiverelay-health-watchdog.service" \
+  "$SYSTEMD_DIR/hiverelay-health-watchdog.service"
+/usr/bin/install -o root -g root -m 0644 -- "$script_dir/hiverelay-health-watchdog.timer" \
+  "$SYSTEMD_DIR/hiverelay-health-watchdog.timer"
+
+sequence_file=$STATE_DIR/highest-restart-policy-sequence-v1.json
+if [ ! -e "$sequence_file" ]; then
+  sequence_temp=$(mktemp "$STATE_DIR/.highest-restart-policy-sequence-v1.XXXXXXXX")
+  printf '%s' '{"consumedAt":0,"kind":"HiveRelayWatchdogConsumedSequenceV1","policySha256":"0000000000000000000000000000000000000000000000000000000000000000","sequence":0,"version":1}' >"$sequence_temp"
+  chown root:root "$sequence_temp"
+  chmod 0600 "$sequence_temp"
+  sync -f "$sequence_temp"
+  if ! ln -- "$sequence_temp" "$sequence_file"; then
+    rm -f -- "$sequence_temp"
+    die 'consumed-sequence initialization raced or failed'
   fi
+  rm -f -- "$sequence_temp"
+  sync -f "$STATE_DIR"
 fi
 
-# NOTE: deliberately not `curl -f`. -f discards the response body on a non-2xx
-# status, and the relay answers 503 with {"ok":false,"reason":"disk-critical"}
-# as a DELIBERATE drain signal (PRODUCTION.md:433-436). Without the body this
-# watchdog cannot tell "draining on purpose" from "event-loop hung", so it
-# counted the drain as a failure and SIGKILLed — and since a restart frees no
-# disk, the box then looped every ~4 minutes forever.
-body=$(curl -sS --max-time "$TIMEOUT" "$URL" 2>/dev/null || true)
-if echo "$body" | grep -q '"ok"[[:space:]]*:[[:space:]]*true'; then
-  echo 0 >"$STATE_FILE"
-  exit 0
+for installed in \
+  "$BIN_DIR/hiverelay-health-watchdog.sh:0:0:755" \
+  "$LIBEXEC_DIR/hiverelay-health-watchdog-policy.mjs:0:0:755" \
+  "$LIBEXEC_DIR/hiverelay-health-watchdog-pidfd:0:0:755" \
+  "$SYSTEMD_DIR/hiverelay-health-watchdog.service:0:0:644" \
+  "$SYSTEMD_DIR/hiverelay-health-watchdog.timer:0:0:644" \
+  "$sequence_file:0:0:600"; do
+  path=${installed%%:*}
+  expected=${installed#*:}
+  metadata=$(stat -Lc '%u:%g:%a' -- "$path")
+  [ "$metadata" = "$expected" ] || die "installed authority mismatch: $path"
+done
+
+cmp -s -- "$script_dir/health-watchdog.sh" "$BIN_DIR/hiverelay-health-watchdog.sh" ||
+  die 'installed shell differs from tracked release bytes'
+cmp -s -- "$script_dir/health-watchdog-policy.mjs" "$LIBEXEC_DIR/hiverelay-health-watchdog-policy.mjs" ||
+  die 'installed policy helper differs from tracked release bytes'
+
+if [ -x /usr/bin/systemd-analyze ]; then
+  /usr/bin/systemd-analyze verify \
+    "$SYSTEMD_DIR/hiverelay-health-watchdog.service" \
+    "$SYSTEMD_DIR/hiverelay-health-watchdog.timer"
 fi
+/usr/bin/systemctl daemon-reload
+/usr/bin/systemctl enable --now "$TIMER"
+/usr/bin/systemctl start "$WATCHDOG_UNIT"
 
-# This watchdog exists for ONE failure mode: an event-loop hang that systemd
-# cannot see, where the unit is active and :9100 is listening but /health never
-# answers. A structured JSON answer — whatever it says — proves the loop is
-# turning, so it is by definition not the thing we are here to kill.
-#
-# Deliberate not-ok states (disk-critical drain, storage-fail-closed) are
-# reported precisely so an operator can act. SIGKILLing them destroys the signal
-# and fixes nothing: a restart frees no disk and does not clear a fail-closed
-# storage authority. Treat any reasoned reply as "responsive" and stand down.
-if echo "$body" | grep -q '"reason"[[:space:]]*:'; then
-  reason=$(echo "$body" | sed -n 's/.*"reason"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-  log "relay responsive but not ok (reason=${reason:-unknown}) — reporting, not a hang; not restarting"
-  echo 0 >"$STATE_FILE"
-  exit 0
-fi
+after_pid=$(/usr/bin/systemctl show "$UNIT" --property=MainPID --value --no-pager)
+after_restarts=$(/usr/bin/systemctl show "$UNIT" --property=NRestarts --value --no-pager)
+result=$(/usr/bin/systemctl show "$WATCHDOG_UNIT" --property=Result --value --no-pager)
+[ "$result" = success ] || die 'watchdog oneshot was not green'
+[ "$after_pid" = "$before_pid" ] || die 'green watchdog proof detected a relay PID change'
+[ "$after_restarts" = "$before_restarts" ] || die 'green watchdog proof detected a hidden restart'
 
-fails=0
-if [ -f "$STATE_FILE" ]; then
-  fails=$(cat "$STATE_FILE" 2>/dev/null || echo 0)
-fi
-fails=$((fails + 1))
-echo "$fails" >"$STATE_FILE"
-log "health FAIL $fails/$NEED_FAILS body=${body:0:80}"
-
-if [ "$fails" -lt "$NEED_FAILS" ]; then
-  exit 0
-fi
-
-log "forcing restart of $UNIT after $fails consecutive health failures"
-# Force-kill hung event loops (SIGTERM often does nothing when loop is stuck)
-systemctl kill -s SIGKILL "$UNIT" 2>/dev/null || true
-sleep 1
-fuser -k -9 9100/tcp 2>/dev/null || true
-sleep 1
-systemctl reset-failed "$UNIT" 2>/dev/null || true
-systemctl start "$UNIT" 2>/dev/null || systemctl restart "$UNIT" 2>/dev/null || true
-echo 0 >"$STATE_FILE"
-log "restart issued"
-exit 0
-WATCH
-  chmod 0755 /usr/local/bin/hiverelay-health-watchdog.sh
-fi
-
-cat > /etc/systemd/system/hiverelay-health-watchdog.service <<'EOF'
-[Unit]
-Description=HiveRelay health watchdog (one-shot probe)
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=oneshot
-ExecStart=/usr/local/bin/hiverelay-health-watchdog.sh
-Nice=10
-TimeoutStartSec=30
-EOF
-
-cat > /etc/systemd/system/hiverelay-health-watchdog.timer <<'EOF'
-[Unit]
-Description=HiveRelay health watchdog every 2 minutes
-Requires=hiverelay-health-watchdog.service
-
-[Timer]
-OnBootSec=3min
-OnUnitActiveSec=2min
-AccuracySec=30s
-Persistent=true
-Unit=hiverelay-health-watchdog.service
-
-[Install]
-WantedBy=timers.target
-EOF
-
-systemctl daemon-reload
-systemctl enable --now hiverelay-health-watchdog.timer
-systemctl start hiverelay-health-watchdog.service || true
-echo "installed hiverelay-health-watchdog.timer"
-systemctl list-timers --all | grep hiverelay-health || true
+shell_sha=$(/usr/bin/sha256sum -- "$BIN_DIR/hiverelay-health-watchdog.sh")
+shell_sha=${shell_sha%% *}
+policy_sha=$(/usr/bin/sha256sum -- "$LIBEXEC_DIR/hiverelay-health-watchdog-policy.mjs")
+policy_sha=${policy_sha%% *}
+printf 'installed %s; green oneshot kept pid=%s restarts=%s shell_sha256=%s policy_sha256=%s\n' \
+  "$TIMER" "$after_pid" "$after_restarts" "$shell_sha" "$policy_sha"

@@ -1416,3 +1416,31 @@ test('release evidence writer supports partial failed-run evidence', async (t) =
   t.is(body.surfaces.metadataCommit, 'pending')
   t.is(body.surfaces.fleetRollout, 'skipped')
 })
+
+test('artifact stage writer emits an immutable package-bound checkpoint and rejects stable claims', async t => {
+  const dir = await mkdtemp(path.join(tmpdir(), 'hiverelay-artifact-writer-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  const identity = path.join(dir, 'npm-identity.json')
+  await writeFile(identity, JSON.stringify(['p2p-hiverelay', 'p2p-hiverelay-client', 'p2p-hiverelay-verifier', 'p2p-hiveservices'].map(name => ({ name, version: '9.9.9', integrity: 'sha512-' + Buffer.alloc(64).toString('base64'), shasum: '0'.repeat(40) }))))
+  const env = completeFullReleaseEnv()
+  for (const key of Object.keys(env)) {
+    if (/^HIVERELAY_(FLEET_|STARTOS_REGISTRY_|UMBREL_OFFICIAL_PR_|UMBREL_COMMUNITY_STORE_)/.test(key)) env[key] = ''
+  }
+  Object.assign(env, { HIVERELAY_RELEASE_STAGE: 'artifact-v1', HIVERELAY_RELEASE_NPM_IDENTITY: identity, HIVERELAY_RELEASE_CHANNEL: 'none', HIVERELAY_RELEASE_DISTRIBUTION_PREFLIGHT_STATUS: 'passed-artifact', HIVERELAY_NPM_PUBLISH_STATUS: 'published-next' })
+  for (const key of ['HIVERELAY_RELEASE_SURFACES_STATUS', 'HIVERELAY_FLEET_ROLLOUT_STATUS', 'HIVERELAY_STARTOS_REGISTRY_STATUS', 'HIVERELAY_UMBREL_OFFICIAL_PR_STATUS', 'HIVERELAY_UMBREL_COMMUNITY_STORE_VALIDATE_STATUS', 'HIVERELAY_UMBREL_COMMUNITY_STORE_STATUS']) env[key] = 'deferred-stable-promotion'
+  const out = path.join(dir, 'artifact.json')
+  await runEvidence(out, env)
+  const body = JSON.parse(await readFile(out, 'utf8'))
+  t.is(body.release.stage.name, 'artifact-v1')
+  t.is(body.release.stage.packages.length, 4)
+  t.is(body.release.stage.githubLatest, false)
+  t.is(body.release.tagSha, SHA)
+  t.is(body.release.workflow.runAttempt, '2')
+  t.is(body.release.closure.status, 'pending-startos-0.4')
+  try {
+    await runEvidence(path.join(dir, 'invalid.json'), { ...env, HIVERELAY_RELEASE_SURFACES_STATUS: 'committed' })
+    t.fail('artifact checkpoint must reject a stable metadata claim')
+  } catch (error) { t.ok(error.stderr.includes('defer every stable distribution')) }
+  await runEvidence(path.join(dir, 'failed.json'), { ...env, HIVERELAY_RELEASE_NPM_IDENTITY: '', HIVERELAY_WORKFLOW_STATUS: 'failure' })
+  t.is(JSON.parse(await readFile(path.join(dir, 'failed.json'), 'utf8')).release.workflow.status, 'failure', 'failed run remains diagnostic evidence')
+})

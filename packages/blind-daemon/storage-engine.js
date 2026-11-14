@@ -629,6 +629,32 @@ function resultView (entry, status, replay) {
 }
 
 export class BlindCellStorageEngine {
+  // Rebuilt only by validated full-WAL replay; retirement never clears history.
+  #hasIrreversibleHistory = false
+
+  static async inspectGeneration (options, { lease, limits = {}, requiredAnchor = null }) {
+    const shadow = new BlindCellStorageEngine({ ...options, autoClock: false })
+    const { scanBlindWalV2FromGenesis } = await import('./wal-recovery-scan.js')
+    try {
+      const wal = await scanBlindWalV2FromGenesis({
+        ...limits,
+        requiredAnchor,
+        root: shadow.transactionStore.root,
+        lease,
+        mapGeneration: shadow.transactionStore.mapGeneration,
+        writerFenceTokenHash: shadow.transactionStore.ownerFenceTokenHash,
+        durabilityContinuityHash: shadow.transactionStore.durabilityContinuityHash,
+        maximumWalBytes: limits.maximumWalBytes ?? 256 * 1024 * 1024,
+        maximumWalFrames: limits.maximumWalFrames ?? 262144,
+        maximumWalPayloadBytes: shadow.transactionStore.maximumWalPayloadBytes,
+        applyShadowFrame: frame => shadow.#applyFrame(frame, true)
+      })
+      return { wal, hasIrreversibleState: shadow.#hasIrreversibleHistory }
+    } finally {
+      await shadow.transactionStore.close()
+    }
+  }
+
   constructor (options = {}) {
     if (options.durabilityProfileId != null && options.durabilityProfileId !== 1) {
       throw new BlindCellStorageError(
@@ -691,10 +717,12 @@ export class BlindCellStorageEngine {
       maximumOpaqueBodyBytes: CELL_SIZE_CLASS[5],
       maximumChunkBytes: options.maximumChunkBytes,
       walSegmentMaxBytes: options.walSegmentMaxBytes,
+      generationStartupHandoff: options.generationStartupHandoff,
       storeSessionContext: options.storeSessionContext,
       beforeRecovery: options.beforeRecovery,
       faultInjector: options.faultInjector
     })
+    this.generationAcknowledgmentFailure = null
     this.onBlindWriteAcknowledged = options.onBlindWriteAcknowledged || null
     if (this.onBlindWriteAcknowledged != null && typeof this.onBlindWriteAcknowledged !== 'function') {
       throw new TypeError('onBlindWriteAcknowledged must be a function')
@@ -769,7 +797,9 @@ export class BlindCellStorageEngine {
             await this.#sweepExpiredAtomicStaging()
             const readSweep = await this.#sweepExpiredChargedReadPins(4096)
             if (readSweep.moreDue) this.#scheduleChargedReadSweep()
-          }).catch(() => { this.readOnlyReason = this.readOnlyReason || 'CLOCK_TIMER_FAILED' })
+          }).catch(error => {
+            if (error !== this.generationAcknowledgmentFailure) this.readOnlyReason = this.readOnlyReason || 'CLOCK_TIMER_FAILED'
+          })
         }, 60000)
         if (typeof this.clockTimer.unref === 'function') this.clockTimer.unref()
       }
@@ -814,6 +844,7 @@ export class BlindCellStorageEngine {
 
   #assertWritable (leaseMutation = false) {
     this.#assertOpen()
+    this.#assertGenerationWritable()
     if (this.readOnlyReason) fail('INTERNAL', `store is read-only: ${this.readOnlyReason}`)
     if (leaseMutation && this.clockUnsafe) fail('BUSY', 'store clock is unsafe', true)
   }
@@ -920,6 +951,7 @@ export class BlindCellStorageEngine {
   }
 
   async #appendAndApply (type, transactionId, virtualBucket, value, prewriteFence = null) {
+    this.#assertGenerationWritable()
     const codec = WAL_PAYLOAD_CODEC.get(type)
     if (!codec) throw new BlindWalIntegrityError(`unknown cell WAL type ${type}`)
     const frame = await this.transactionStore.appendAndApply({
@@ -927,12 +959,52 @@ export class BlindCellStorageEngine {
       transactionId,
       virtualBucket,
       payload: encodeCanonical(codec, value)
-    }, frame => this.#applyFrame(frame, false), { prewriteFence })
-    if (this.onBlindWriteAcknowledged &&
-        (type === BLIND_CELL_WAL_TYPE.PUT_COMMITTED || type === BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED)) {
-      await this.onBlindWriteAcknowledged({ walSequence: frame.sequence, walHash: frame.walHash })
+    }, frame => this.#applyFrame(frame, false), {
+      prewriteFence: () => {
+        this.#assertGenerationWritable()
+        return prewriteFence ? prewriteFence() : undefined
+      }
+    })
+    if (type === BLIND_CELL_WAL_TYPE.PUT_COMMITTED || type === BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED) {
+      await this.#acknowledgeBlindWrite({ walSequence: frame.sequence, walHash: frame.walHash })
     }
+    this.#assertGenerationWritable()
     return frame
+  }
+
+  #assertGenerationWritable () {
+    if (this.generationAcknowledgmentFailure) throw this.generationAcknowledgmentFailure
+    try {
+      this.onBlindWriteAcknowledged?.assertWritable?.()
+    } catch (error) {
+      this.generationAcknowledgmentFailure = error
+      throw error
+    }
+  }
+
+  #writerQuarantineReason () {
+    return this.generationAcknowledgmentFailure
+      ? 'BLIND_GENERATION_ACKNOWLEDGMENT_FAILED'
+      : this.onBlindWriteAcknowledged?.quarantineReason?.() || null
+  }
+
+  async #acknowledgeBlindWrite (storeEvidence = null) {
+    this.#assertGenerationWritable()
+    if (!this.onBlindWriteAcknowledged) return false
+    if (storeEvidence == null) {
+      storeEvidence = {
+        walSequence: this.transactionStore.walSequence,
+        walHash: this.transactionStore.walHash
+      }
+    }
+    try {
+      const acknowledged = await this.onBlindWriteAcknowledged(storeEvidence)
+      this.#assertGenerationWritable()
+      return acknowledged
+    } catch (error) {
+      this.generationAcknowledgmentFailure = this.generationAcknowledgmentFailure || error
+      throw error
+    }
   }
 
   #applyFrame (frame, recovering) {
@@ -965,6 +1037,9 @@ export class BlindCellStorageEngine {
       default: throw new BlindWalIntegrityError(`unhandled cell WAL type ${frame.type}`)
     }
     this.#assertAccounting()
+    if (frame.type === BLIND_CELL_WAL_TYPE.PUT_COMMITTED || frame.type === BLIND_CELL_WAL_TYPE.PUT_ATOMIC_COMMITTED) {
+      this.#hasIrreversibleHistory = true
+    }
   }
 
   #verifyBucket (frame, storageSlot) {
@@ -1685,6 +1760,7 @@ export class BlindCellStorageEngine {
           this.epochFloor > record.leaseEpoch + EXPIRY_GRACE_EPOCHS) {
         fail('RETRY_TERMINAL', 'the committed result is no longer replayable')
       }
+      this.#assertGenerationWritable()
       return resultView(entry, 'stored', true)
     }
     if (entry.status === 'terminal') fail('RETRY_TERMINAL', 'the ingress reservation reached a terminal state')
@@ -1717,7 +1793,10 @@ export class BlindCellStorageEngine {
       const existingSpend = this.spends.get(hex(input.spendTag))
       if (existingSpend) {
         const replay = this.#spendReplay(existingSpend, input)
-        if (replay) return replay
+        if (replay) {
+          await this.#acknowledgeBlindWrite()
+          return replay
+        }
         const now = u64(this.nowUnixMillis(), 'nowUnixMillis')
         if (now > existingSpend.deadlineUnixMillis || existingSpend.remainingAttempts === 0) {
           const reason = now > existingSpend.deadlineUnixMillis
@@ -1774,7 +1853,10 @@ export class BlindCellStorageEngine {
     ], async () => {
       const entry = this.spends.get(hex(input.spendTag))
       const replay = this.#spendReplay(entry, input)
-      if (replay) return replay
+      if (replay) {
+        await this.#acknowledgeBlindWrite()
+        return replay
+      }
       if (entry.inFlight) fail('BUSY', 'an exact body attempt is already in flight', true)
       const now = u64(this.nowUnixMillis(), 'nowUnixMillis')
       if (now > entry.deadlineUnixMillis || entry.remainingAttempts === 0) {
@@ -2124,6 +2206,7 @@ export class BlindCellStorageEngine {
             ATOMIC_STAGED_PUTS.delete(input.authority)
             this.atomicStagedLeases.delete(input.authority)
             await this.#releaseAtomicStaging(retained, true)
+            await this.#acknowledgeBlindWrite()
             return replay
           }
         }
@@ -2187,10 +2270,11 @@ export class BlindCellStorageEngine {
           const result = resultView(committed, 'stored', false)
           retained.phase = 'committed'
           await this.#releaseAtomicStaging(retained, false)
+          this.#assertGenerationWritable()
           return result
         } catch (error) {
           retained.phase = 'ambiguous'
-          this.readOnlyReason = 'AMBIGUOUS_ATOMIC_PUBLISH_REQUIRES_RECOVERY'
+          if (error !== this.generationAcknowledgmentFailure) this.readOnlyReason = 'AMBIGUOUS_ATOMIC_PUBLISH_REQUIRES_RECOVERY'
           await this.#releaseAtomicStaging(retained, true).catch(() => {})
           throw error
         }
@@ -2279,6 +2363,7 @@ export class BlindCellStorageEngine {
       const replay = this.#spendReplay(current, input)
       if (replay) {
         await this.transactionStore.discardStaged(staged)
+        await this.#acknowledgeBlindWrite()
         return replay
       }
       if (current !== entry || this.cells.has(hex(entry.storageSlot))) {
@@ -2310,10 +2395,11 @@ export class BlindCellStorageEngine {
           resultIdentity: identity,
           committedEpoch: this.epochFloor
         })
+        this.#assertGenerationWritable()
         return resultView(entry, 'stored', false)
       } catch (error) {
         entry.inFlight = false
-        this.readOnlyReason = 'AMBIGUOUS_PUBLISH_REQUIRES_RECOVERY'
+        if (error !== this.generationAcknowledgmentFailure) this.readOnlyReason = 'AMBIGUOUS_PUBLISH_REQUIRES_RECOVERY'
         throw error
       }
     })
@@ -2534,8 +2620,10 @@ export class BlindCellStorageEngine {
   chargedCellReadState (input) {
     return this.#runOperation(async () => {
       this.#assertOpen()
+      this.#assertGenerationWritable()
       const authority = this.#chargedReadInput(input)
       return this.transactionStore.withLocks([`spend:${hex(authority.spendTag)}`], async () => {
+        this.#assertGenerationWritable()
         const entry = this.spends.get(hex(authority.spendTag))
         if (!entry) return { kind: 'fresh' }
         if (!equal(entry.requestCommitment, authority.requestCommitment)) {
@@ -2598,6 +2686,7 @@ export class BlindCellStorageEngine {
   }
 
   async #materializeChargedRead (entry) {
+    this.#assertGenerationWritable()
     if (!entry || (entry.status !== 'read-pinned' && entry.status !== 'read-finalized')) {
       fail('RETRY_TERMINAL', 'charged read retry pin is not live')
     }
@@ -2634,6 +2723,7 @@ export class BlindCellStorageEngine {
         pin: cloneChargedReadPinEntry(pinned)
       })
     }
+    this.#assertGenerationWritable()
     return {
       replay: entry.status === 'read-finalized',
       needsFinalize: entry.status === 'read-pinned',
@@ -2662,6 +2752,7 @@ export class BlindCellStorageEngine {
         ...initial.entries.map(entry => `cell:${hex(entry.storageSlot)}`)
       ]
       return this.transactionStore.withLocks(lockKeys, async () => {
+        this.#assertGenerationWritable()
         const entry = this.spends.get(hex(spendTag))
         if (!entry || (entry.status !== 'read-pinned' && entry.status !== 'read-finalized') ||
             !equal(entry.requestCommitment, requestCommitment)) {
@@ -2749,7 +2840,9 @@ export class BlindCellStorageEngine {
       this.chargedReadSweepTimer = null
       this.#runOperation(() => this.#sweepExpiredChargedReadPins(4096))
         .then(result => { if (result.moreDue) this.#scheduleChargedReadSweep() })
-        .catch(() => { this.readOnlyReason = this.readOnlyReason || 'CHARGED_READ_SWEEP_FAILED' })
+        .catch(error => {
+          if (error !== this.generationAcknowledgmentFailure) this.readOnlyReason = this.readOnlyReason || 'CHARGED_READ_SWEEP_FAILED'
+        })
     }, 0)
     if (typeof this.chargedReadSweepTimer.unref === 'function') this.chargedReadSweepTimer.unref()
   }
@@ -2777,6 +2870,7 @@ export class BlindCellStorageEngine {
   preparedCellOperationState (input) {
     return this.#runOperation(async () => {
       this.#assertOpen()
+      this.#assertGenerationWritable()
       if (!input || !input.preparedAdmission ||
           (input.operationId !== OPERATION.CELL.PUT && input.operationId !== OPERATION.CELL.RENEW)) {
         fail('BAD_ENCODING', 'prepared operation state requires admitted CELL.PUT or CELL.RENEW')
@@ -2784,6 +2878,7 @@ export class BlindCellStorageEngine {
       const spendTag = fixed(input.preparedAdmission.spendTag, 32, 'spendTag', true)
       const requestCommitment = fixed(input.requestCommitment, 32, 'requestCommitment', true)
       return this.transactionStore.withLocks([`spend:${hex(spendTag)}`], async () => {
+        this.#assertGenerationWritable()
         const entry = this.spends.get(hex(spendTag))
         if (!entry) return { kind: 'fresh' }
         if (!equal(entry.requestCommitment, requestCommitment)) return { kind: 'conflict' }
@@ -2800,10 +2895,12 @@ export class BlindCellStorageEngine {
   cellRequestResultState (requestCommitment) {
     return this.#runOperation(async () => {
       this.#assertOpen()
+      this.#assertGenerationWritable()
       requestCommitment = fixed(requestCommitment, 32, 'requestCommitment', true)
-      return this.transactionStore.withLocks([`result:${hex(requestCommitment)}`], async () => ({
-        kind: this.requestResults.has(hex(requestCommitment)) ? 'replay' : 'fresh'
-      }))
+      return this.transactionStore.withLocks([`result:${hex(requestCommitment)}`], async () => {
+        this.#assertGenerationWritable()
+        return { kind: this.requestResults.has(hex(requestCommitment)) ? 'replay' : 'fresh' }
+      })
     })
   }
 
@@ -2903,6 +3000,7 @@ export class BlindCellStorageEngine {
             this.epochFloor > current.leaseEpoch + EXPIRY_GRACE_EPOCHS) {
           fail('RETRY_TERMINAL', 'renew result visibility was revoked by a terminal cell transition')
         }
+        this.#assertGenerationWritable()
         return resultView(existing, 'renewed', true)
       }
       const priorCommitment = this.commitments.get(hex(commitment))
@@ -2942,6 +3040,7 @@ export class BlindCellStorageEngine {
           resultIdentity: identity,
           committedEpoch: this.epochFloor
         })
+      this.#assertGenerationWritable()
       return resultView(this.spends.get(hex(spendTag)), 'renewed', false)
     })
   }
@@ -2978,6 +3077,7 @@ export class BlindCellStorageEngine {
       const existing = this.requestResults.get(hex(commitment))
       if (existing) {
         if (!equal(existing.requestFingerprint, fingerprint)) fail('CONFLICT', 'drop request fields conflict')
+        this.#assertGenerationWritable()
         return resultView(existing, 'dropped', true)
       }
       if (record.objectState !== OBJECT_STATE.PRESENT) fail('NOT_FOUND', 'cell is not droppable')
@@ -3003,6 +3103,7 @@ export class BlindCellStorageEngine {
           committedEpoch: this.epochFloor
         })
       await this.transactionStore.removeOpaque(oldReference).catch(() => {})
+      this.#assertGenerationWritable()
       return resultView(this.requestResults.get(hex(commitment)), 'dropped', false)
     })
   }
@@ -3359,6 +3460,17 @@ export class BlindCellStorageEngine {
     return this.compactionWalHighWater
   }
 
+  storageGenerationEvidence () {
+    this.#assertOpen()
+    return Object.freeze({
+      storeEvidence: Object.freeze({
+        walSequence: this.transactionStore.walSequence,
+        walHash: b4a.from(this.transactionStore.walHash)
+      }),
+      hasIrreversibleState: this.#hasIrreversibleHistory
+    })
+  }
+
   status () {
     this.#assertOpen()
     const blockers = this.storeFormatAuthority == null
@@ -3375,6 +3487,7 @@ export class BlindCellStorageEngine {
     return {
       state: this.readOnlyReason ? 'READ_ONLY' : this.clockUnsafe ? 'CLOCK_UNSAFE' : 'READY',
       readOnlyReason: this.readOnlyReason,
+      writerQuarantineReason: this.#writerQuarantineReason(),
       epochFloor: this.epochFloor,
       walSequence: this.transactionStore.walSequence,
       walHash: b4a.from(this.transactionStore.walHash),

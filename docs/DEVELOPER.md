@@ -614,6 +614,11 @@ The relay must either advertise `retrievability-proof-http` in its capability do
 
 **Signature profiles (seed requests):** `app.seed()` keeps the legacy v2 signature preimage by default for mixed-version relay fleets. Pass `seedSignatureDomain: 'v3'` to sign the domain-separated `hiverelay.seed-request.v3` preimage against relays advertising `seed-signature-domain-v3`. Publisher-signed `/api/v1/seed` submissions can also use the replay-hardened `hiverelay.seed-request.replay-v1` profile (signs `issuedAt` + a 16-byte `requestNonce`); relays advertising `seed-request-replay-v1` reject stale replay-profile submissions and duplicate nonces.
 
+**Seed discovery hints:** protocol 1.1 treats `discoveryKeys` as signed routing
+hints for the one `appKey` drive. Omit the field or send up to 64 duplicates of
+the canonical Hypercore discovery key. Distinct values and genuine multi-core
+requests are rejected; they are not additional public keys to seed.
+
 ### Accounting Receipts
 
 #### `app.fetchAccountingReceipt(relayUrl, opts?)` → `Promise<{ ok, verified, receipt }>`

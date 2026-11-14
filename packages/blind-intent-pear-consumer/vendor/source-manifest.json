@@ -1,0 +1,47 @@
+[
+  {
+    "source": "packages/blind-intent-store-bare/index.js",
+    "path": "vendor/blind-intent-store-bare/index.js",
+    "sha256": "5160c29019abd61458e29e360d25fb24d2a873e2c0619eeb6b7ff58c4e0ec3db"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/runtime.js",
+    "path": "vendor/blind-intent-store-bare/runtime.js",
+    "sha256": "d6e70f3feca14ccb577f327554053f7b442a9fafb3c8a384ed0b7bcc4f5a3431"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/package.json",
+    "path": "vendor/blind-intent-store-bare/package.json",
+    "sha256": "be64a33ab7d13bd61e4d9ae36861e59647744475c9bfd2297b486432a3e84096"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/README.md",
+    "path": "vendor/blind-intent-store-bare/README.md",
+    "sha256": "ea3eb08e2dc72bfb078e1ecaa4c68acdc9367b6c614e0880b71016cbd99e0412"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/native/build.mjs",
+    "path": "vendor/blind-intent-store-bare/native/build.mjs",
+    "sha256": "5ea61dcc36b48b73326676f666d149a01748ae506a23a06cd601cd4a6fbb5cf4"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/native/flags-darwin-arm64.cjs",
+    "path": "vendor/blind-intent-store-bare/native/flags-darwin-arm64.cjs",
+    "sha256": "70f171c86b5443165f0df4f41f0ae916e5bc7a085131d0c8797f3d12a48c1749"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/native/flags-linux-x64.cjs",
+    "path": "vendor/blind-intent-store-bare/native/flags-linux-x64.cjs",
+    "sha256": "b0fbc8f5dcb2191f0454771c80dbbac21f9458dc781af7df7f22d09c5db38b70"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/native/flags.c",
+    "path": "vendor/blind-intent-store-bare/native/flags.c",
+    "sha256": "a3e47816a66a0121bf37f1c1dea3c1345fb549800a0909932b978cb6ab961caf"
+  },
+  {
+    "source": "packages/blind-intent-store-bare/native/targets.cjs",
+    "path": "vendor/blind-intent-store-bare/native/targets.cjs",
+    "sha256": "cded30f34aa703ebf8f9f6aa03890610f86bbb2bcdb22ced0b0b98010e70ee24"
+  }
+]

@@ -8,6 +8,7 @@ import { promisify } from 'node:util'
 import { pathToFileURL } from 'node:url'
 import { build } from 'esbuild'
 import { computeWireRuntimeVectors } from '../packages/blind-protocol/wire-runtime-vectors.js'
+import { privateVectorRuntime } from './lib/private-vector-runtime.mjs'
 
 const run = promisify(execFile)
 const root = process.cwd()
@@ -21,8 +22,8 @@ function same (left, right, label) {
 
 try {
   const nodeVectors = computeWireRuntimeVectors()
-  const bare = path.join(root, 'node_modules', 'bare', 'bin', 'bare')
-  const bareRun = await run(bare, [path.join(root, 'scripts', 'emit-blind-wire-runtime-vectors.mjs')], {
+  const bare = await privateVectorRuntime(root)
+  const bareRun = await run(bare.executable, [path.join(root, 'scripts', 'emit-blind-wire-runtime-vectors.mjs')], {
     cwd: root,
     maxBuffer: 1024 * 1024
   })
@@ -55,7 +56,7 @@ try {
       finalOuter.toString('hex') !== nodeVectors.outer) {
     throw new Error('cross-runtime framing bytes differ from final checked-in WIRE vectors')
   }
-  process.stdout.write(`blind public WIRE cross-runtime bytes verified (${Object.keys(nodeVectors).length} vectors; Node=Bare=browser)\n`)
+  process.stdout.write(`blind public WIRE cross-runtime bytes verified (${Object.keys(nodeVectors).length} vectors; Node=${process.version}, private Bare=${bare.version}, browser bundle; executable=${bare.executable})\n`)
 } finally {
   await fs.rm(temporary, { recursive: true, force: true })
 }

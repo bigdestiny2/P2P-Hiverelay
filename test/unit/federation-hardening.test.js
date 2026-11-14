@@ -25,6 +25,19 @@ function closeServer (server) {
   return new Promise((resolve) => server.close(resolve))
 }
 
+function installPeerCatalog (fed, url, version, apps) {
+  if (!fed._peerCatalogs.has(url)) fed._peerCatalogPopulation.insert(url)
+  fed._peerCatalogVersions.set(url, version)
+  fed._peerCatalogs.set(url, {
+    url,
+    pubkey: `peer-${version}`,
+    region: `region-${version}`,
+    operator: `operator-${version}`,
+    fetchedAt: Date.now(),
+    apps
+  })
+}
+
 // ─── URL scheme validation ────────────────────────────────────────────
 
 test('Federation.follow rejects javascript: scheme', async (t) => {
@@ -267,4 +280,82 @@ test('Federation JSON fetch rejects oversized content-length on generic pulls', 
   const fed = new Federation({ node: makeNode() })
   const data = await fed._fetchJson(`http://127.0.0.1:${server.address().port}`, '/api/forks/proofs')
   t.is(data, null, 'oversized generic JSON response is rejected from headers')
+})
+
+test('Federation AutoHeal pages charge peer selection and app inspection to a hard budget', (t) => {
+  const fed = new Federation({ node: makeNode() })
+  installPeerCatalog(fed, 'https://a.example', 1, [{ appKey: 'a0' }, { appKey: 'a1' }])
+  installPeerCatalog(fed, 'https://b.example', 2, [{ appKey: 'b0' }])
+  installPeerCatalog(fed, 'https://c.example', 3, [])
+
+  const seen = []
+  let state = null
+  let completedHighWater = null
+  for (let pass = 0; pass < 10; pass++) {
+    const page = fed.getAutoHealPage(state, 2)
+    t.ok(page.examined <= 2, `page ${pass + 1} stayed within budget`)
+    seen.push(...page.entries.map(item => item.app.appKey))
+    state = page.state
+    if (page.complete) {
+      completedHighWater = page.completedHighWater
+      break
+    }
+  }
+  t.alike(seen, ['a0', 'a1', 'b0'], 'every frozen peer/app entry visited without an eager snapshot')
+  t.is(completedHighWater, 3, 'cycle publishes its frozen peer high-water')
+
+  const revisited = []
+  state = null
+  for (let pass = 0; pass < 10; pass++) {
+    const page = fed.getAutoHealPage(state, 2)
+    revisited.push(...page.entries.map(item => item.app.appKey))
+    state = page.state
+    if (page.complete) break
+  }
+  t.alike(revisited, seen, 'unchanged membership is revisited on the next cycle')
+  t.ok(fed.releaseAutoHealCursor(), 'fixed cursor can be released')
+  t.is(fed._peerCatalogPopulation.consumerCount, 0, 'released cursor does not pin tombstone GC')
+})
+
+test('Federation AutoHeal pages reject ambiguous numeric budgets', async (t) => {
+  const fed = new Federation({ node: makeNode() })
+  for (const budget of [0, -1, 1.5, NaN, Infinity, '1', 65]) {
+    await t.exception.all(() => fed.getAutoHealPage(null, budget), /safe integer/, `rejects ${String(budget)}`)
+  }
+})
+
+test('Federation AutoHeal page never mixes a replaced peer catalog version', (t) => {
+  const fed = new Federation({ node: makeNode() })
+  const url = 'https://versioned.example'
+  installPeerCatalog(fed, url, 1, [{ appKey: 'old-0' }, { appKey: 'old-1' }])
+
+  const first = fed.getAutoHealPage(null, 2)
+  t.alike(first.entries.map(item => item.app.appKey), ['old-0'], 'first page starts the old version')
+  t.is(first.complete, false)
+  installPeerCatalog(fed, url, 2, [{ appKey: 'new-0' }])
+
+  const fenced = fed.getAutoHealPage(first.state, 2)
+  t.is(fenced.complete, true, 'replacement terminates the frozen peer slice')
+  t.is(fenced.entries.length, 0, 'no row from the new version leaks into the old cycle')
+
+  const next = fed.getAutoHealPage(null, 2)
+  t.alike(next.entries.map(item => item.app.appKey), ['new-0'], 'next cycle visits the replacement version')
+  t.is(next.complete, true)
+  fed.releaseAutoHealCursor()
+})
+
+test('Federation unfollow invalidates cached AutoHeal state and membership', (t) => {
+  const fed = new Federation({ node: makeNode() })
+  const url = 'https://removed.example'
+  fed.follow(url, { persist: false })
+  installPeerCatalog(fed, url, 1, [{ appKey: 'old-0' }, { appKey: 'old-1' }])
+  const first = fed.getAutoHealPage(null, 2)
+  t.is(first.complete, false)
+
+  t.ok(fed.unfollow(url, { persist: false }), 'follow relationship removed')
+  t.is(fed.peerCatalogCount, 0, 'cached peer count drops in O(1)')
+  const after = fed.getAutoHealPage(first.state, 2)
+  t.is(after.complete, true, 'active state terminates after removal')
+  t.is(after.entries.length, 0, 'removed peer contributes no more apps')
+  fed.releaseAutoHealCursor()
 })

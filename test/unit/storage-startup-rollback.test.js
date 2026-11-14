@@ -45,6 +45,11 @@ function minimalNodeForShutdown (serviceRegistry, events) {
     storageAdmission: admission,
     serviceRegistry,
     serviceProtocol: null,
+    appRegistry: {
+      async flush () {},
+      page: () => ({ entries: [], examined: 0, complete: true }),
+      releasePopulationConsumer: () => true
+    },
     appLifecycle: { seededApps: new Map() },
     bootstrapCache: { stop () {}, async save () {} },
     _catalogPeerThrottle: new Map(),
@@ -459,7 +464,7 @@ test('BareRelay terminal rollback blocks a second start until old writer settlem
   t.is(started.reason.code, 'STORAGE_MUTATION_DRAIN_TIMEOUT')
   t.is(stopped.status, 'rejected')
   t.is(relay._startupRollbackPending, true)
-  t.ok(relay.store, 'Corestore remains owned while the writer can settle')
+  t.absent(relay.store, 'shutdown fence prevents any post-fence Corestore open')
   const retry = await Promise.allSettled([relay.start()])
   t.is(retry[0].reason.code, 'STORAGE_STARTUP_ROLLBACK_PENDING')
   t.is(beginRecoveryCalls, 1)

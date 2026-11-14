@@ -1,0 +1,53 @@
+{
+  "schema": "hiverelay.checkpoint-compatibility.v1",
+  "candidate": {
+    "major": 2,
+    "minor": 0,
+    "runtime_enabled": false,
+    "package_exported": false,
+    "supersedes_private_candidate_commit": "699154da16a0be40b92134335bc0b113eb5c30a9",
+    "prior_candidate_hash": "826d83261c7eadd6f30f3246ea3e9f9234be914a80ebe621e58f8093d3934746",
+    "prior_candidate_selection": "refuse unknown hash; old private vectors remain in sealed predecessor commit/run"
+  },
+  "matrix": [
+    {
+      "input": "exact predecessor 1.2, full WAL",
+      "action": "delegate frozen authority/reader; candidate does not decode or mutate"
+    },
+    {
+      "input": "predecessor 1.2, pruned",
+      "action": "refuse"
+    },
+    {
+      "input": "exact candidate 2.0",
+      "action": "codec-only decode; no runtime authority"
+    },
+    {
+      "input": "unknown version/hash/role/schema",
+      "action": "refuse without mutation"
+    },
+    {
+      "input": "2.0 on frozen runtime",
+      "action": "refuse unsupported"
+    },
+    {
+      "input": "1.2 to 2.0 migration",
+      "action": "not implemented; explicit later offline full-WAL migration proof required"
+    },
+    {
+      "input": "2.0 pruned to 1.2 downgrade",
+      "action": "refuse"
+    }
+  ],
+  "D7": "legacy-only operation forbidden after first blind-only write; G05 dual-reader rollback/old-writer/rebind proof remains required",
+  "closed_copy_is_pruned_restore": false,
+  "copied_local_mac_is_external_freshness": false,
+  "runtime_and_devices_unproven": [
+    "real capture/hydration/pruning",
+    "joint blind/HC11 acknowledgement and restore",
+    "Bare/Pear packaged daemon",
+    "native power loss and filesystem devices",
+    "OS installation",
+    "production and fleet"
+  ]
+}

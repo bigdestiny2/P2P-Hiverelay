@@ -1,0 +1,31 @@
+{
+  "name": "@hiverelay/blind-intent-store-bare",
+  "version": "0.0.0-i02",
+  "private": true,
+  "type": "module",
+  "exports": "./index.js",
+  "files": [
+    "index.js",
+    "runtime.js",
+    "native",
+    "README.md"
+  ],
+  "scripts": {
+    "build:flags": "node native/build.mjs",
+    "test": "node test/run.mjs"
+  },
+  "dependencies": {
+    "bare-buffer": "3.6.1",
+    "bare-crypto": "1.15.3",
+    "bare-fs": "4.8.1",
+    "bare-path": "3.1.2",
+    "bare-posix": "1.0.1",
+    "fd-lock": "2.2.0"
+  },
+  "overrides": {
+    "fs-native-extensions": "1.5.1"
+  },
+  "devDependencies": {
+    "brittle": "4.1.0"
+  }
+}

@@ -10,9 +10,10 @@ const CONTROL_DIRECTORY = 'control'
 const WRITER_LOCK_FILE = 'writer.lock.v1'
 const RUNTIME_BINDING_FILE = 'runtime-binding.v1'
 const GENESIS_INTENT_FILE = 'genesis-intent.v1'
-const STORE_GENERATION_HEAD_FILE = 'blind-store-generation-head-v1.json'
-const STORE_GENERATION_RECORD = /^blind-store-generation-record-[0-9]{16}-v1\.json$/
-const STORE_GENERATION_TEMP = /^\.blind-store-generation-.*\.tmp-[0-9]+$/
+const STORE_GENERATION_HEAD_FILE = 'blind-store-generation-head-v2.json'
+const STORE_GENERATION_RECORD = /^blind-store-generation-record-[0-9]{16}-v2\.json$/
+const STORE_GENERATION_TEMP = /^\.blind-store-generation-(?:record|head)\.tmp-[0-9a-f]{32}$/
+const STORE_GENERATION_RECORD_TEMP = /^\.blind-store-generation-record\.tmp-[0-9a-f]{32}$/
 const MANIFEST_SLOT_FILES = Object.freeze(['manifest-a.v1', 'manifest-b.v1'])
 const ROOT_NAMES = new Set([CONTROL_DIRECTORY, RUNTIME_BINDING_FILE, 'blobs', 'staging'])
 const CONTROL_NAMES = new Set([
@@ -33,6 +34,7 @@ export const BLIND_STORE_ROOT_CLASSIFICATION = Object.freeze({
   PRISTINE: 'pristine',
   GENESIS_INCOMPLETE: 'genesis-incomplete',
   CURRENT_MANIFESTED: 'current-manifested',
+  CURRENT_WAL: 'current-wal',
   LEGACY_AMBIGUOUS: 'legacy-ambiguous'
 })
 
@@ -95,6 +97,16 @@ function privateFile (stat, expectedLinks = 1) {
     (stat.mode & 0o600) === 0o600 && (stat.mode & 0o077) === 0
 }
 
+async function boundedNames (directory) {
+  const names = []
+  const handle = await fs.opendir(directory)
+  for await (const entry of handle) {
+    if (names.length >= 4096) throw new BlindStoreSessionError('store namespace exceeds startup bound', 'BLIND_STORE_LAYOUT_BOUNDS')
+    names.push(entry.name)
+  }
+  return names.sort()
+}
+
 async function inspectRootDirectory (root) {
   const before = await fs.lstat(root)
   if (!privateDirectory(before) || await fs.realpath(root) !== root) {
@@ -103,9 +115,9 @@ async function inspectRootDirectory (root) {
       'BLIND_STORE_ROOT_INVALID'
     )
   }
-  const names = (await fs.readdir(root)).sort()
+  const names = await boundedNames(root)
   const after = await fs.lstat(root)
-  const namesAfter = (await fs.readdir(root)).sort()
+  const namesAfter = await boundedNames(root)
   if (!sameState(stateFor(before), stateFor(after)) || !sameNames(names, namesAfter)) {
     throw new BlindStoreSessionError('store root changed while it was classified', 'BLIND_STORE_LAYOUT_CHANGED')
   }
@@ -131,9 +143,9 @@ async function inspectPrivateDirectory (directory, label) {
   let namesAfter
   let after
   try {
-    names = (await fs.readdir(directory)).sort()
+    names = await boundedNames(directory)
     after = await fs.lstat(directory)
-    namesAfter = (await fs.readdir(directory)).sort()
+    namesAfter = await boundedNames(directory)
   } catch (error) {
     return { ok: false, reason: `${label} changed while it was inspected`, error }
   }
@@ -166,6 +178,44 @@ async function inspectEntry (target, expectedKind, label, options = {}) {
   return ok
     ? { ok: true, state: afterState }
     : { ok: false, state: afterState, reason: `${label} is not a private single-link ${expectedKind}` }
+}
+
+async function generationRecordPublicationLinks (controlDirectory, names) {
+  const candidates = names.filter(name =>
+    STORE_GENERATION_RECORD.test(name) || STORE_GENERATION_TEMP.test(name)
+  )
+  const linked = new Map()
+  for (const name of candidates) {
+    const inspected = await inspectEntry(
+      path.join(controlDirectory, name),
+      'file',
+      `store control entry ${name}`,
+      { expectedLinks: null }
+    )
+    if (!inspected.ok) return { ok: false, reason: inspected.reason }
+    if (inspected.state.nlink === 1) continue
+    if (inspected.state.nlink !== 2 ||
+        (!STORE_GENERATION_RECORD.test(name) && !STORE_GENERATION_RECORD_TEMP.test(name))) {
+      return { ok: false, reason: `store control entry ${name} has an unsupported hard-link topology` }
+    }
+    const inode = `${inspected.state.dev}:${inspected.state.ino}`
+    const group = linked.get(inode) || []
+    group.push({ name, state: inspected.state })
+    linked.set(inode, group)
+  }
+
+  const accepted = new Set()
+  for (const group of linked.values()) {
+    const finals = group.filter(entry => STORE_GENERATION_RECORD.test(entry.name))
+    const temporaries = group.filter(entry => STORE_GENERATION_RECORD_TEMP.test(entry.name))
+    if (group.length !== 2 || finals.length !== 1 || temporaries.length !== 1 ||
+        !sameState(finals[0].state, temporaries[0].state)) {
+      return { ok: false, reason: 'store generation record publication has an incomplete or ambiguous hard-link pair' }
+    }
+    accepted.add(finals[0].name)
+    accepted.add(temporaries[0].name)
+  }
+  return { ok: true, accepted }
 }
 
 function checkpointArtifact (name) {
@@ -210,7 +260,7 @@ function classificationFingerprint (value) {
   ].join('|')
 }
 
-export async function classifyBlindStoreRoot (configuredRoot) {
+export async function classifyBlindStoreRoot (configuredRoot, options = {}) {
   const root = canonicalRoot(configuredRoot)
   const inspectedRoot = await inspectRootDirectory(root)
   if (inspectedRoot.names.length === 0) {
@@ -277,11 +327,22 @@ export async function classifyBlindStoreRoot (configuredRoot) {
         entryStates
       })
   }
+  const generationPublicationLinks = await generationRecordPublicationLinks(controlDirectory, control.names)
+  if (!generationPublicationLinks.ok) {
+    return classification(BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS,
+      root, inspectedRoot.state, inspectedRoot.names, {
+        reason: generationPublicationLinks.reason,
+        controlState: control.state,
+        controlNames: control.names,
+        entryStates
+      })
+  }
   for (const name of control.names) {
     const inspected = await inspectEntry(
       path.join(controlDirectory, name),
       'file',
-      `store control entry ${name}`
+      `store control entry ${name}`,
+      generationPublicationLinks.accepted.has(name) ? { expectedLinks: 2 } : {}
     )
     if (!inspected.ok) {
       return classification(BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS,
@@ -327,13 +388,15 @@ export async function classifyBlindStoreRoot (configuredRoot) {
           entryStates
         })
     }
-    return classification(BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS,
-      root, inspectedRoot.state, inspectedRoot.names, {
-        reason: 'control directory has no manifest slot',
-        controlState: control.state,
-        controlNames: control.names,
-        entryStates
-      })
+    return classification(options.allowUnmanifestedWal === true
+      ? BLIND_STORE_ROOT_CLASSIFICATION.CURRENT_WAL
+      : BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS,
+    root, inspectedRoot.state, inspectedRoot.names, {
+      reason: 'control directory has no manifest slot',
+      controlState: control.state,
+      controlNames: control.names,
+      entryStates
+    })
   }
   return classification(BLIND_STORE_ROOT_CLASSIFICATION.CURRENT_MANIFESTED,
     root, inspectedRoot.state, inspectedRoot.names, {
@@ -356,6 +419,15 @@ async function assertOpenedLock (handle, lockPath) {
   const [opened, linked] = await Promise.all([handle.stat(), fs.lstat(lockPath)])
   if (!privateFile(opened) || !privateFile(linked) || opened.dev !== linked.dev || opened.ino !== linked.ino) {
     throw new BlindStoreSessionError('writer lock path and opened inode disagree', 'BLIND_STORE_LOCK_INVALID')
+  }
+  return stateFor(opened)
+}
+
+async function assertOpenedRootLock (handle, root) {
+  const [opened, linked] = await Promise.all([handle.stat(), fs.lstat(root)])
+  if (!privateDirectory(opened) || !privateDirectory(linked) ||
+      opened.dev !== linked.dev || opened.ino !== linked.ino) {
+    throw new BlindStoreSessionError('root ownership inode changed', 'BLIND_STORE_LOCK_INVALID')
   }
   return stateFor(opened)
 }
@@ -410,13 +482,26 @@ export async function verifyBlindStoreSessionTransactionLease (lease, expectedRo
   if (state.closing || state.closed || !state.opened || !state.lockHeld || !state.writerLockHandle) {
     throw new BlindStoreSessionError('store session transaction lease has no open writer authority', 'BLIND_STORE_SESSION_CLOSING')
   }
-  const observed = await assertOpenedLock(state.writerLockHandle, leaseState.writerLockPath)
+  const observed = state.rootOnly
+    ? await assertOpenedRootLock(state.writerLockHandle, root)
+    : await assertOpenedLock(state.writerLockHandle, leaseState.writerLockPath)
   if (observed.dev !== leaseState.lockState.dev || observed.ino !== leaseState.lockState.ino) {
     throw new BlindStoreSessionError('writer lock inode changed during transaction lease verification', 'BLIND_STORE_LOCK_INVALID')
   }
   if (state.activeTransactionLease !== leaseState || state.generation !== leaseState.generation ||
       state.closing || state.closed || !state.opened || !state.lockHeld) {
     throw new BlindStoreSessionError('store session changed while its transaction lease was verified', 'BLIND_STORE_SESSION_CLOSING')
+  }
+  return true
+}
+
+// Preparatory root ownership is intentionally weaker than the existing writer
+// inode. It must never be accepted by a mutable TransactionStore on its own.
+export async function verifyBlindStoreSessionWriterLease (lease, expectedRoot) {
+  await verifyBlindStoreSessionTransactionLease(lease, expectedRoot)
+  const leaseState = STORE_SESSION_TRANSACTION_LEASE_STATE.get(lease)
+  if (sessionPrivate(leaseState.session).rootOnly) {
+    throw new BlindStoreSessionError('startup root ownership has not acquired its writer inode', 'BLIND_STORE_WRITER_LEASE_REQUIRED')
   }
   return true
 }
@@ -428,7 +513,7 @@ export async function verifyBlindStoreSessionTransactionLease (lease, expectedRo
  */
 export async function transferBlindStoreSessionTransactionLease (lease, expectedRoot) {
   const root = canonicalRoot(expectedRoot)
-  await verifyBlindStoreSessionTransactionLease(lease, root)
+  await verifyBlindStoreSessionWriterLease(lease, root)
   const leaseState = STORE_SESSION_TRANSACTION_LEASE_STATE.get(lease)
   const state = sessionPrivate(leaseState.session)
   if (!leaseState.transferable || leaseState.lease !== lease || leaseState.released ||
@@ -516,6 +601,9 @@ export class BlindStoreSession {
     this.controlDirectory = path.join(this.root, CONTROL_DIRECTORY)
     this.writerLockPath = path.join(this.controlDirectory, WRITER_LOCK_FILE)
     this.allowPristineBootstrap = options.allowPristineBootstrap === true
+    this.validationOnly = options.validationOnly === true
+    this.allowUnmanifestedWal = options.allowUnmanifestedWal === true
+    this.rootLockHandle = null
     if (options.faultInjector != null && typeof options.faultInjector !== 'function') {
       throw new TypeError('faultInjector must be a function')
     }
@@ -542,6 +630,51 @@ export class BlindStoreSession {
     })
   }
 
+  async _classify () {
+    return classifyBlindStoreRoot(this.root, { allowUnmanifestedWal: this.allowUnmanifestedWal })
+  }
+
+  async _openRootLock () {
+    this.rootLockHandle = await fs.open(this.root, FS_CONSTANTS.O_RDONLY | FS_CONSTANTS.O_NOFOLLOW |
+      (FS_CONSTANTS.O_DIRECTORY || 0) | (FS_CONSTANTS.O_NONBLOCK || 0))
+    const [opened, linked] = await Promise.all([this.rootLockHandle.stat(), fs.lstat(this.root)])
+    if (!privateDirectory(opened) || !privateDirectory(linked) ||
+        opened.dev !== linked.dev || opened.ino !== linked.ino || await fs.realpath(this.root) !== this.root) {
+      throw new BlindStoreSessionError('root ownership inode is invalid', 'BLIND_STORE_ROOT_INVALID')
+    }
+    if (!tryExclusiveFileLock(this.rootLockHandle)) {
+      throw new BlindStoreSessionError('store root already has a startup owner', 'BLIND_STORE_LOCKED')
+    }
+  }
+
+  // Fresh preparation holds the existing root inode without creating files.
+  // Only the installation coordinator calls this after every root validates.
+  async assertUnchanged () {
+    if (classificationFingerprint(await this._classify()) !== classificationFingerprint(this.rootClassification)) {
+      throw new BlindStoreSessionError('store layout changed after startup validation', 'BLIND_STORE_LAYOUT_CHANGED')
+    }
+  }
+
+  async prepareMutation (lease) {
+    await verifyBlindStoreSessionTransactionLease(lease, this.root)
+    const state = sessionPrivate(this)
+    if (!state.rootOnly) return
+    const observed = await this._classify()
+    if (classificationFingerprint(observed) !== classificationFingerprint(this.rootClassification)) {
+      throw new BlindStoreSessionError('fresh root changed after validation', 'BLIND_STORE_LAYOUT_CHANGED')
+    }
+    // Drop only the synthetic writer fields; the root flock remains held.
+    this.writerLockHandle = null
+    state.writerLockHandle = null
+    this.lockHeld = false
+    state.lockHeld = false
+    state.rootOnly = false
+    if (observed.kind === BLIND_STORE_ROOT_CLASSIFICATION.PRISTINE) await this._openPristine(observed)
+    else await this._openGenesisControlShell(observed)
+    const leaseState = STORE_SESSION_TRANSACTION_LEASE_STATE.get(lease)
+    leaseState.lockState = state.lockState
+  }
+
   async _fault (point, context = {}) {
     if (this.faultInjector) await this.faultInjector(point, Object.freeze({ root: this.root, ...context }))
   }
@@ -563,7 +696,8 @@ export class BlindStoreSession {
     }
     ACTIVE_SESSION_ROOTS.add(this.root)
     try {
-      const initial = await classifyBlindStoreRoot(this.root)
+      if (this.validationOnly) await this._openRootLock()
+      const initial = await this._classify()
       await this._fault('store-session:after-classification', { classification: initial.kind })
       if (initial.kind === BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS) {
         throw new BlindStoreSessionError(
@@ -571,7 +705,18 @@ export class BlindStoreSession {
           'BLIND_STORE_LAYOUT_AMBIGUOUS'
         )
       }
-      if (initial.kind === BLIND_STORE_ROOT_CLASSIFICATION.PRISTINE) {
+      const freshWithoutLock = initial.kind === BLIND_STORE_ROOT_CLASSIFICATION.PRISTINE ||
+        (initial.kind === BLIND_STORE_ROOT_CLASSIFICATION.GENESIS_INCOMPLETE && initial.controlNames.length === 0)
+      if (this.validationOnly && freshWithoutLock && this.allowPristineBootstrap) {
+        this.writerLockHandle = this.rootLockHandle
+        this.lockHeld = true
+        const state = sessionPrivate(this)
+        state.writerLockHandle = this.rootLockHandle
+        state.lockHeld = true
+        state.rootOnly = true
+        state.lockState = stateFor(await this.rootLockHandle.stat())
+      } else if (initial.kind === BLIND_STORE_ROOT_CLASSIFICATION.PRISTINE) {
+        if (this.validationOnly) throw new BlindStoreSessionError('fresh startup is not authorized', 'BLIND_STORE_BOOTSTRAP_NOT_AUTHORIZED')
         await this._openPristine(initial)
       } else if (initial.kind === BLIND_STORE_ROOT_CLASSIFICATION.GENESIS_INCOMPLETE) {
         if (!this.allowPristineBootstrap) {
@@ -586,7 +731,7 @@ export class BlindStoreSession {
           await this._openGenesisControlShell(initial)
         }
       } else {
-        await this._openExisting(initial)
+        await this._openExisting(initial, initial.kind)
       }
       this.rootClassification = initial
       this.opened = true
@@ -600,7 +745,8 @@ export class BlindStoreSession {
         generation: state.generation,
         classification: this.rootClassification.kind,
         bootstrapCreated: this.bootstrapCreated,
-        ownsWriterLock: true,
+        ownsWriterLock: !state.rootOnly,
+        ownershipKind: state.rootOnly ? 'ROOT_PREPARATION' : 'WRITER_LOCK',
         transactionStoreLockOwnership: BLIND_STORE_SESSION_INTEGRATION_STATUS.transactionStoreLockOwnership,
         integrationBlocker: BLIND_STORE_SESSION_INTEGRATION_STATUS.blocker
       })
@@ -636,7 +782,7 @@ export class BlindStoreSession {
     this.lockHeld = true
     state.lockHeld = true
     await this._fault('store-session:after-lock-acquired', { classification: initial.kind })
-    const rechecked = await classifyBlindStoreRoot(this.root)
+    const rechecked = await this._classify()
     if (rechecked.kind !== expectedClassification ||
         classificationFingerprint(rechecked) !== classificationFingerprint(initial)) {
       throw new BlindStoreSessionError(
@@ -653,7 +799,7 @@ export class BlindStoreSession {
         'BLIND_STORE_BOOTSTRAP_NOT_AUTHORIZED'
       )
     }
-    const rechecked = await classifyBlindStoreRoot(this.root)
+    const rechecked = await this._classify()
     if (rechecked.kind !== BLIND_STORE_ROOT_CLASSIFICATION.PRISTINE ||
         classificationFingerprint(rechecked) !== classificationFingerprint(initial)) {
       throw new BlindStoreSessionError(
@@ -700,7 +846,7 @@ export class BlindStoreSession {
   }
 
   async _openGenesisControlShell (initial) {
-    const rechecked = await classifyBlindStoreRoot(this.root)
+    const rechecked = await this._classify()
     if (rechecked.kind !== BLIND_STORE_ROOT_CLASSIFICATION.GENESIS_INCOMPLETE ||
         rechecked.controlNames.length !== 0 ||
         classificationFingerprint(rechecked) !== classificationFingerprint(initial)) {
@@ -754,11 +900,20 @@ export class BlindStoreSession {
     state.writerLockHandle = null
     state.lockHeld = false
     state.lockState = null
-    if (!handle) return
+    const rootHandle = this.rootLockHandle
+    this.rootLockHandle = null
     try {
-      if (held) releaseExclusiveFileLock(handle)
+      if (handle && handle !== rootHandle) {
+        try {
+          if (held) releaseExclusiveFileLock(handle)
+        } finally {
+          await handle.close()
+        }
+      }
     } finally {
-      await handle.close()
+      if (rootHandle) {
+        try { releaseExclusiveFileLock(rootHandle) } finally { await rootHandle.close() }
+      }
     }
   }
 

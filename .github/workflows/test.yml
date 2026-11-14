@@ -61,6 +61,13 @@ jobs:
           packages/blind-client/test/policy.test.js
           packages/blind-client/test/cells.test.js
       - run: ./node_modules/.bin/brittle-node --timeout 120000 test/simulation/blind-capacity-lab.test.js
+      # Preserve the frozen predecessor and exercise current descriptor masks.
+      # Its old generator is an exact negative baseline, not the RC9 artifact
+      # builder; see docs/BLIND-BROWSER-GATE-SCOPE.md.
+      - run: >-
+          ./node_modules/.bin/brittle-node --timeout 120000
+          packages/blind-client/test/browser-artifact.test.js
+          packages/blind-client/test/describe.test.js
       - run: ./node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-client-public-browser-artifact.test.js
       - run: ./node_modules/.bin/brittle-node --timeout 120000 test/unit/blind-protocol-v1-compatibility-floor.test.js
       - run: node packages/blind-client-public-browser/scripts/generate-blind-client-public-browser-artifacts.mjs --check --ci-structural-only --require-release-evidence
@@ -75,6 +82,8 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Private intent profiles retain their independent locks and Bare 1.31.0.
+      - run: npm run test:integration:prepare
       - run: npm run test:integration
         # Integration tests spin up real Hyperswarm testnets + Hypercore
         # replication. The previous 5-minute cap killed the suite mid-run
@@ -101,6 +110,7 @@ jobs:
       # the pinned dep keeps the runtime version reproducible — no global install.
       - run: echo "$GITHUB_WORKSPACE/node_modules/bare/bin" >> "$GITHUB_PATH"
       - run: npm run test:bare
+      - run: npm run test:autobee:bare
 
   audit:
     runs-on: ubuntu-latest

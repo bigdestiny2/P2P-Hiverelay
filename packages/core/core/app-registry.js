@@ -18,6 +18,11 @@ import { EventEmitter } from 'events'
 import Hyperbee from 'hyperbee'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
+import { GenerationPopulation, MAX_POPULATION_RECORDS } from './generation-population.js'
+import {
+  compareCatalogAppWinners,
+  compareCatalogSemanticVersions
+} from './relay-node/app-catalog-paged.js'
 import { STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES } from '../config/storage-admission-authority.js'
 import {
   compareVersions,
@@ -41,6 +46,42 @@ const APP_REGISTRY_BEE_HEADER_MAX_BYTES = 1024
 const APP_REGISTRY_PLAN_MAX_ATTEMPTS = 8
 const CANONICAL_APP_KEY = /^[0-9a-f]{64}$/
 const RUNTIME_APP_KEY = /^[0-9a-f]{64}$/i
+const RETIREMENT_ID = /^[0-9a-f]{32}$/
+export const APP_RETIREMENT_STATE = Object.freeze({
+  LIVE: 'LIVE',
+  QUIESCED: 'QUIESCED',
+  RELEASE_PENDING: 'DELETE_COMMITTED_RELEASE_PENDING',
+  FORGOTTEN: 'FORGOTTEN'
+})
+const APP_POPULATION_CONSUMERS = Object.freeze([
+  'storage-accounting', 'eviction', 'anchor', 'repair', 'custody-expiry',
+  'custody-witness', 'acceptance-reconcile', 'p2p-catalog', 'auto-heal',
+  'catalog-api', 'anchor-api', 'lease-api', 'capability', 'status', 'replication',
+  'dedup-report', 'dedup-reclaim', 'bare-shutdown', 'node-shutdown'
+])
+
+function emptyCatalogAggregate () {
+  return {
+    total: 0,
+    anchored: 0,
+    unanchored: 0,
+    neverChecked: 0,
+    apps: 0,
+    drives: 0,
+    resources: 0,
+    datasets: 0,
+    media: 0
+  }
+}
+
+function emptyLeaseStatusSnapshot () {
+  return {
+    activeLeases: 0,
+    observedAt: null,
+    completedAt: null,
+    completedHighWater: 0
+  }
+}
 
 function canonicalRuntimeAppKey (appKey) {
   return typeof appKey === 'string' && RUNTIME_APP_KEY.test(appKey)
@@ -62,6 +103,74 @@ function migrationDigest (raw) {
   return b4a.toString(digest, 'hex')
 }
 
+function retirementAbsentRowProof (appKey, retirementId, retiredAt) {
+  return migrationDigest(`${appKey}\n${retirementId}\n${retiredAt}\nabsent`)
+}
+
+function validateRetirementTombstone (entry, appKey) {
+  const fields = [
+    'retirementId', 'retirementState', 'retiredAt',
+    'retirementBoundBytes', 'absentRowProof'
+  ]
+  const present = fields.filter(field => Object.prototype.hasOwnProperty.call(entry, field))
+  if (present.length === 0) return null
+  if (present.length !== fields.length || !RETIREMENT_ID.test(entry.retirementId) ||
+      (entry.retirementState !== APP_RETIREMENT_STATE.RELEASE_PENDING &&
+       entry.retirementState !== APP_RETIREMENT_STATE.FORGOTTEN) ||
+      !Number.isSafeInteger(entry.retiredAt) || entry.retiredAt <= 0 ||
+      (entry.retirementBoundBytes !== null &&
+       (!Number.isSafeInteger(entry.retirementBoundBytes) || entry.retirementBoundBytes <= 0)) ||
+      entry.absentRowProof !== retirementAbsentRowProof(appKey, entry.retirementId, entry.retiredAt)) {
+    throw registryInventoryError('bee-retirement-tombstone-invalid')
+  }
+  return {
+    appKey,
+    retirementId: entry.retirementId,
+    state: entry.retirementState,
+    retiredAt: entry.retiredAt,
+    boundBytes: entry.retirementBoundBytes,
+    absentRowProof: entry.absentRowProof,
+    evictedAt: Number.isSafeInteger(entry.evictedAt) && entry.evictedAt > 0
+      ? entry.evictedAt
+      : null
+  }
+}
+
+function retirementTombstoneShape (appKey, opts = {}) {
+  if (opts.retirementId == null) return null
+  const retiredAt = opts.retiredAt
+  const boundBytes = opts.retirementBoundBytes == null ? null : opts.retirementBoundBytes
+  const shape = {
+    appKey,
+    retirementId: opts.retirementId,
+    retirementState: opts.retirementState || APP_RETIREMENT_STATE.RELEASE_PENDING,
+    retiredAt,
+    retirementBoundBytes: boundBytes,
+    absentRowProof: retirementAbsentRowProof(appKey, opts.retirementId, retiredAt)
+  }
+  validateRetirementTombstone(shape, appKey)
+  return shape
+}
+
+function matchesRetirementTombstone (entry, appKey, expected) {
+  if (!entry || entry.storageDeleted !== true || !expected) return false
+  let actual
+  try {
+    actual = validateRetirementTombstone(entry, appKey)
+  } catch (_) {
+    return false
+  }
+  const expectedEvictedAt = Number.isSafeInteger(expected.evictedAt) && expected.evictedAt > 0
+    ? expected.evictedAt
+    : null
+  return actual?.retirementId === expected.retirementId &&
+    actual.state === expected.retirementState &&
+    actual.retiredAt === expected.retiredAt &&
+    actual.boundBytes === expected.retirementBoundBytes &&
+    actual.absentRowProof === expected.absentRowProof &&
+    actual.evictedAt === expectedEvictedAt
+}
+
 function safeCoreMetric (core, field) {
   const value = core?.[field]
   return Number.isSafeInteger(value) && value >= 0 ? value : null
@@ -80,6 +189,7 @@ function sumBlockBytes (blocks) {
 function validatedLegacyEntries (parsed) {
   if (!parsed || typeof parsed !== 'object') throw registryInventoryError('unsupported-json-shape')
   const entries = Array.isArray(parsed) ? parsed : Object.values(parsed)
+  if (entries.length > MAX_POPULATION_RECORDS) throw registryInventoryError('inventory-row-limit')
   const seen = new Set()
   for (const entry of entries) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -89,8 +199,15 @@ function validatedLegacyEntries (parsed) {
     if (typeof appKey !== 'string' || !CANONICAL_APP_KEY.test(appKey)) throw registryInventoryError('invalid-app-key')
     if (entry.appKey != null && entry.appKey !== appKey) throw registryInventoryError('app-key-mismatch')
     if (entry.driveKey != null && entry.driveKey !== appKey) throw registryInventoryError('app-key-mismatch')
-    validatePersistedStorageBound(entry)
-    validatePersistedStorageProof(entry)
+    if (entry.storageDeleted === true) {
+      validateRetirementTombstone(entry, appKey)
+      if (STORAGE_PROOF_FIELDS.some(field => entry[field] != null)) {
+        throw registryInventoryError('legacy-tombstone-invalid')
+      }
+    } else {
+      validatePersistedStorageBound(entry)
+      validatePersistedStorageProof(entry)
+    }
     validatePersistedMetadataBudget(entry)
     if (b4a.byteLength(JSON.stringify(entry)) + APP_REGISTRY_LEGACY_ROW_PREFLIGHT_MARGIN_BYTES >
         STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES) {
@@ -168,11 +285,118 @@ function dedupLatestByAppId (rows, idField = 'appId') {
     if (idx === undefined) {
       seen.set(id, out.length)
       out.push(r)
-    } else if (compareVersions(r.version || '0.0.0', out[idx].version || '0.0.0') > 0) {
+    } else if (catalogCandidateWins(r, out[idx])) {
       out[idx] = r
     }
   }
   return out
+}
+
+function catalogCandidateWins (candidate, current) {
+  const candidateKey = canonicalRuntimeAppKey(candidate?.appKey)
+  const currentKey = canonicalRuntimeAppKey(current?.appKey)
+  if (candidateKey === null) return false
+  if (currentKey === null) return true
+  return compareCatalogAppWinners(
+    [null, candidateKey, null, null, null, null, candidate?.version ?? null],
+    [null, currentKey, null, null, null, null, current?.version ?? null]
+  ) > 0
+}
+
+function catalogCandidateCompare (left, right) {
+  return compareCatalogAppWinners(
+    [null, left.appKey, null, null, null, null, left.version],
+    [null, right.appKey, null, null, null, null, right.version]
+  )
+}
+
+function avlHeight (node) { return node ? node.height : 0 }
+function avlSize (node) { return node ? node.size : 0 }
+
+function avlRefresh (node) {
+  node.height = 1 + Math.max(avlHeight(node.left), avlHeight(node.right))
+  node.size = 1 + avlSize(node.left) + avlSize(node.right)
+  return node
+}
+
+function avlRotateLeft (node) {
+  const root = node.right
+  node.right = root.left
+  root.left = avlRefresh(node)
+  return avlRefresh(root)
+}
+
+function avlRotateRight (node) {
+  const root = node.left
+  node.left = root.right
+  root.right = avlRefresh(node)
+  return avlRefresh(root)
+}
+
+function avlBalance (node) {
+  if (!node) return null
+  avlRefresh(node)
+  const balance = avlHeight(node.left) - avlHeight(node.right)
+  if (balance > 1) {
+    if (avlHeight(node.left.left) < avlHeight(node.left.right)) node.left = avlRotateLeft(node.left)
+    return avlRotateRight(node)
+  }
+  if (balance < -1) {
+    if (avlHeight(node.right.right) < avlHeight(node.right.left)) node.right = avlRotateRight(node.right)
+    return avlRotateLeft(node)
+  }
+  return node
+}
+
+function avlInsert (node, candidate) {
+  if (!node) return { candidate, left: null, right: null, height: 1, size: 1 }
+  const compared = catalogCandidateCompare(candidate, node.candidate)
+  if (compared < 0) node.left = avlInsert(node.left, candidate)
+  else if (compared > 0) node.right = avlInsert(node.right, candidate)
+  else node.candidate = candidate
+  return avlBalance(node)
+}
+
+function avlMinimum (node) {
+  while (node?.left) node = node.left
+  return node
+}
+
+function avlRemove (node, candidate) {
+  if (!node) return null
+  const compared = catalogCandidateCompare(candidate, node.candidate)
+  if (compared < 0) node.left = avlRemove(node.left, candidate)
+  else if (compared > 0) node.right = avlRemove(node.right, candidate)
+  else if (!node.left || !node.right) node = node.left || node.right
+  else {
+    const successor = avlMinimum(node.right)
+    node.candidate = successor.candidate
+    node.right = avlRemove(node.right, successor.candidate)
+  }
+  return avlBalance(node)
+}
+
+function avlMaximum (node) {
+  while (node?.right) node = node.right
+  return node
+}
+
+function avlCountVersionsGreaterThan (node, version) {
+  if (!node) return 0
+  const compared = compareCatalogSemanticVersions(node.candidate.version, version)
+  if (compared > 0) {
+    return 1 + avlSize(node.right) + avlCountVersionsGreaterThan(node.left, version)
+  }
+  return avlCountVersionsGreaterThan(node.right, version)
+}
+
+function avlCountVersionsGreaterThanOrEqual (node, version) {
+  if (!node) return 0
+  const compared = compareCatalogSemanticVersions(node.candidate.version, version)
+  if (compared >= 0) {
+    return 1 + avlSize(node.right) + avlCountVersionsGreaterThanOrEqual(node.left, version)
+  }
+  return avlCountVersionsGreaterThanOrEqual(node.right, version)
 }
 
 export class AppRegistry extends EventEmitter {
@@ -219,6 +443,13 @@ export class AppRegistry extends EventEmitter {
 
     // Primary state: appKey hex → entry
     this.apps = new Map()
+    this._appPopulation = this._createAppPopulation()
+    this._catalogAggregate = emptyCatalogAggregate()
+    this._catalogAppGroups = new Map()
+    this._publisherAppGroups = new Map()
+    this._leaseStatusComplete = Object.freeze(emptyLeaseStatusSnapshot())
+    this._leaseStatusBuild = null
+    this._catalogIngressValidator = null
 
     // Dedup index: appId string → appKey hex (only latest version per appId)
     this.byAppId = new Map()
@@ -245,6 +476,18 @@ export class AppRegistry extends EventEmitter {
     } else if (this.storageAdmission) {
       this._requirePhysicalEnforcement = true
     }
+  }
+
+  setCatalogIngressValidator (validator) {
+    if (validator !== null && typeof validator !== 'function') {
+      throw new TypeError('catalog ingress validator must be a function or null')
+    }
+    this._catalogIngressValidator = validator
+  }
+
+  _validateCatalogIngress (appKey, entry) {
+    if (this._catalogIngressValidator === null) return
+    this._catalogIngressValidator(appKey, entry)
   }
 
   _physicalEnforcementRequired () {
@@ -330,6 +573,32 @@ export class AppRegistry extends EventEmitter {
     appKeyHex = canonicalRuntimeAppKey(appKeyHex)
     if (appKeyHex === null) return false
     return this.evicted.has(appKeyHex)
+  }
+
+  retirementTombstone (appKeyHex) {
+    appKeyHex = canonicalRuntimeAppKey(appKeyHex)
+    if (appKeyHex === null) return null
+    const entry = this._metadataTombstoneEntries.get(appKeyHex)
+    if (!entry) return null
+    const retirement = validateRetirementTombstone(entry, appKeyHex)
+    return retirement ? { ...retirement } : null
+  }
+
+  retirementTombstones (state = null) {
+    if (state !== null && state !== APP_RETIREMENT_STATE.RELEASE_PENDING &&
+        state !== APP_RETIREMENT_STATE.FORGOTTEN) {
+      throw new Error('APP_REGISTRY_RETIREMENT_STATE_INVALID')
+    }
+    const rows = []
+    for (const [appKey, entry] of this._metadataTombstoneEntries) {
+      const retirement = validateRetirementTombstone(entry, appKey)
+      if (retirement && (state === null || retirement.state === state)) rows.push(retirement)
+    }
+    return rows
+  }
+
+  isRetirementPending (appKeyHex) {
+    return this.retirementTombstone(appKeyHex)?.state === APP_RETIREMENT_STATE.RELEASE_PENDING
   }
 
   clearEvicted (appKeyHex) {
@@ -477,6 +746,191 @@ export class AppRegistry extends EventEmitter {
 
   [Symbol.iterator] () { return this.apps[Symbol.iterator]() }
 
+  _createAppPopulation () {
+    return new GenerationPopulation({
+      name: 'app-registry-membership',
+      allowedConsumers: APP_POPULATION_CONSUMERS
+    })
+  }
+
+  _resetAppPopulation () {
+    this._appPopulation = this._createAppPopulation()
+    this._catalogAggregate = emptyCatalogAggregate()
+    this._catalogAppGroups = new Map()
+    this._publisherAppGroups = new Map()
+    this._leaseStatusComplete = Object.freeze(emptyLeaseStatusSnapshot())
+    this._leaseStatusBuild = null
+  }
+
+  _adjustCatalogAggregate (entry, direction) {
+    if (!entry || (direction !== 1 && direction !== -1)) return
+    const aggregate = this._catalogAggregate
+    aggregate.total += direction
+    aggregate.anchored += entry.anchored === true ? direction : 0
+    aggregate.unanchored += entry.anchored === true ? 0 : direction
+    aggregate.neverChecked += entry.lastAnchorCheck ? 0 : direction
+    const type = normalizeContentType(entry.type, 'app')
+    if (type === 'app') aggregate.apps += direction
+    else if (type === 'drive' && entry.parentKey) aggregate.resources += direction
+    else if (type === 'drive') aggregate.drives += direction
+    else if (type === 'dataset') aggregate.datasets += direction
+    else if (type === 'media') aggregate.media += direction
+  }
+
+  catalogStats () {
+    return { ...this._catalogAggregate }
+  }
+
+  page (consumer, budget) {
+    if (!this._appPopulation.isRegistered(consumer)) this._appPopulation.register(consumer)
+    return this._appPopulation.page(consumer, budget, key => this.apps.get(key))
+  }
+
+  releasePopulationConsumer (consumer) {
+    if (consumer === 'lease-api') this._leaseStatusBuild = null
+    return this._appPopulation.unregister(consumer)
+  }
+
+  advanceLeaseStatusSnapshot (budget = 64, now = Date.now()) {
+    if (!Number.isSafeInteger(now) || now < 0) throw new RangeError('lease status observation time is invalid')
+    if (!this._leaseStatusBuild) this._leaseStatusBuild = { activeLeases: 0, observedAt: now }
+    const page = this.page('lease-api', budget)
+    for (const item of page.entries) {
+      const entry = item.value
+      if (entry?.leaseManaged === true && Number.isFinite(entry.retainUntil) &&
+          entry.retainUntil > this._leaseStatusBuild.observedAt) {
+        this._leaseStatusBuild.activeLeases++
+      }
+    }
+    if (page.complete) {
+      this._leaseStatusComplete = Object.freeze({
+        activeLeases: this._leaseStatusBuild.activeLeases,
+        observedAt: this._leaseStatusBuild.observedAt,
+        completedAt: Date.now(),
+        completedHighWater: page.completedHighWater
+      })
+      this._leaseStatusBuild = null
+    }
+    return page
+  }
+
+  leaseStatusSnapshot () {
+    return this._leaseStatusComplete
+  }
+
+  _catalogCandidate (appKey, entry) {
+    if (!this._isAppIdIndexed(entry) || entry.blind === true) return null
+    const publisherPubkey = typeof entry.publisherPubkey === 'string' && RUNTIME_APP_KEY.test(entry.publisherPubkey)
+      ? entry.publisherPubkey.toLowerCase()
+      : null
+    return {
+      appKey,
+      appId: entry.appId,
+      version: typeof entry.version === 'string' ? entry.version : null,
+      publisherPubkey
+    }
+  }
+
+  _catalogPublisherGroupKey (appId, publisherPubkey) {
+    return JSON.stringify([appId, publisherPubkey])
+  }
+
+  _addCatalogGroupCandidate (groups, key, candidate) {
+    let group = groups.get(key)
+    if (!group) {
+      group = { root: null, winner: null }
+      groups.set(key, group)
+    }
+    group.root = avlInsert(group.root, candidate)
+    group.winner = avlMaximum(group.root)?.candidate || null
+  }
+
+  _removeCatalogGroupCandidate (groups, key, candidate) {
+    const group = groups.get(key)
+    if (!group) return false
+    group.root = avlRemove(group.root, candidate)
+    if (!group.root) {
+      groups.delete(key)
+      return true
+    }
+    group.winner = avlMaximum(group.root)?.candidate || null
+    return true
+  }
+
+  _indexCatalogCandidate (appKey, entry) {
+    const candidate = this._catalogCandidate(appKey, entry)
+    if (!candidate) return false
+    this._addCatalogGroupCandidate(this._catalogAppGroups, candidate.appId, candidate)
+    if (candidate.publisherPubkey) {
+      this._addCatalogGroupCandidate(
+        this._publisherAppGroups,
+        this._catalogPublisherGroupKey(candidate.appId, candidate.publisherPubkey),
+        candidate
+      )
+    }
+    return true
+  }
+
+  _unindexCatalogCandidate (appKey, entry) {
+    const candidate = this._catalogCandidate(appKey, entry)
+    if (!candidate) return false
+    this._removeCatalogGroupCandidate(this._catalogAppGroups, candidate.appId, candidate)
+    if (candidate.publisherPubkey) {
+      this._removeCatalogGroupCandidate(
+        this._publisherAppGroups,
+        this._catalogPublisherGroupKey(candidate.appId, candidate.publisherPubkey),
+        candidate
+      )
+    }
+    return true
+  }
+
+  /**
+   * O(1) winner lookup over an incrementally maintained AVL index.
+   * Valid SemVer outranks null/invalid; equal precedence selects the
+   * lexicographically smallest lowercase appKey. Supplying publisherPubkey
+   * scopes the group for deletion-safe dedup/reclaim decisions.
+   */
+  catalogWinner (appId, publisherPubkey = undefined) {
+    if (typeof appId !== 'string' || appId.length === 0) return null
+    let group
+    if (publisherPubkey === undefined) {
+      group = this._catalogAppGroups.get(appId)
+    } else {
+      const publisher = typeof publisherPubkey === 'string' && RUNTIME_APP_KEY.test(publisherPubkey)
+        ? publisherPubkey.toLowerCase()
+        : null
+      if (publisher === null) return null
+      group = this._publisherAppGroups.get(this._catalogPublisherGroupKey(appId, publisher))
+    }
+    const appKey = group?.winner?.appKey || null
+    const entry = appKey ? this.apps.get(appKey) : null
+    return entry ? { appKey, entry } : null
+  }
+
+  /**
+   * Return this entry's zero-based rank among strictly older semantic-version
+   * tiers for one publisher/appId group. The winner tier and equal-version
+   * peers are excluded, so retainVersions can preserve `rank < limit` without
+   * turning an equal-version tie into deletion authority.
+   */
+  catalogSupersededRank (appId, publisherPubkey, appKey) {
+    appKey = canonicalRuntimeAppKey(appKey)
+    const publisher = typeof publisherPubkey === 'string' && RUNTIME_APP_KEY.test(publisherPubkey)
+      ? publisherPubkey.toLowerCase()
+      : null
+    if (typeof appId !== 'string' || appId.length === 0 || publisher === null || appKey === null) return null
+    const entry = this.apps.get(appKey)
+    const candidate = this._catalogCandidate(appKey, entry)
+    if (!candidate || candidate.appId !== appId || candidate.publisherPubkey !== publisher) return null
+    const group = this._publisherAppGroups.get(this._catalogPublisherGroupKey(appId, publisher))
+    const winner = group?.winner
+    if (!winner || compareCatalogSemanticVersions(candidate.version, winner.version) >= 0) return null
+    const newer = avlCountVersionsGreaterThan(group.root, candidate.version)
+    const winnerTier = avlCountVersionsGreaterThanOrEqual(group.root, winner.version)
+    return Math.max(0, newer - winnerTier)
+  }
+
   /**
    * Attach process-local serving handles to an already validated durable row.
    * This cannot create a row or alter durable metadata, so serve-only recovery
@@ -520,6 +974,7 @@ export class AppRegistry extends EventEmitter {
 
   restoreSnapshot (snapshot = {}) {
     this.apps.clear()
+    this._resetAppPopulation()
     this.byAppId.clear()
     this.evicted.clear()
     this._metadataBudgets.clear()
@@ -527,7 +982,12 @@ export class AppRegistry extends EventEmitter {
     this._metadataTombstoneEntries.clear()
     this._durableEntries.clear()
     this._entryGenerations.clear()
-    for (const [key, value] of snapshot.apps || []) this.apps.set(key, value)
+    for (const [key, value] of snapshot.apps || []) {
+      this._appPopulation.insert(key)
+      this.apps.set(key, value)
+      this._indexCatalogCandidate(key, value)
+      this._adjustCatalogAggregate(value, 1)
+    }
     for (const [key, value] of snapshot.byAppId || []) this.byAppId.set(key, value)
     for (const [key, value] of snapshot.evicted || []) this.evicted.set(key, value)
     for (const [key, value] of snapshot.metadataBudgets || []) this._metadataBudgets.set(key, value)
@@ -573,18 +1033,109 @@ export class AppRegistry extends EventEmitter {
   _restoreDurableEntry (appKey, generation) {
     if (this._entryGenerations.get(appKey) !== generation) return false
     const current = this.apps.get(appKey)
+    if (current) {
+      this._unindexCatalogCandidate(appKey, current)
+      this._adjustCatalogAggregate(current, -1)
+    }
     if (this._isAppIdIndexed(current) && this.byAppId.get(current.appId) === appKey) {
       this.byAppId.delete(current.appId)
     }
     const durable = this._durableEntries.get(appKey)
     if (!durable) {
+      this._appPopulation.delete(appKey)
       this.apps.delete(appKey)
+      this._emitSafely('change', { type: 'delete', appKey, rollback: true })
       return true
     }
     const restored = this._normalizeEntry({ ...durable })
+    this._appPopulation.insert(appKey)
     this.apps.set(appKey, restored)
+    this._indexCatalogCandidate(appKey, restored)
+    this._adjustCatalogAggregate(restored, 1)
     if (this._isAppIdIndexed(restored)) this.byAppId.set(restored.appId, appKey)
+    this._emitSafely('change', { type: 'update', appKey, entry: restored, rollback: true })
     return true
+  }
+
+  _removeLiveEntryForCommittedRetirement (appKey) {
+    const live = this.apps.get(appKey)
+    if (!live) return false
+    if (this._isAppIdIndexed(live) && this.byAppId.get(live.appId) === appKey) {
+      this.byAppId.delete(live.appId)
+    }
+    this._unindexCatalogCandidate(appKey, live)
+    this._adjustCatalogAggregate(live, -1)
+    this._advanceEntryGeneration(appKey)
+    this._appPopulation.delete(appKey)
+    this.apps.delete(appKey)
+    this._emitSafely('change', { type: 'delete', appKey })
+    return true
+  }
+
+  _adoptCommittedRetirementTombstone (appKey, entry) {
+    const budget = validatePersistedMetadataBudget(entry)
+    const previousBudget = this._metadataBudgets.get(appKey) || null
+    const journal = this._registryJournal
+    const core = this._bee?.core || this._bee?.feed
+
+    // A flush may append successfully and still reject while reporting its
+    // post-write settlement. Reconcile the in-memory journal from the exact
+    // durable row so the same process does not retain a pre-delete ledger.
+    if (journal && core) {
+      const priorBytes = previousBudget?.bytes || 0
+      const chargedBytes = journal.chargedBytes - priorBytes + budget.bytes
+      const byteLength = safeCoreMetric(core, 'byteLength')
+      const length = safeCoreMetric(core, 'length')
+      const fork = safeCoreMetric(core, 'fork')
+      if (Number.isSafeInteger(chargedBytes) && chargedBytes >= 0 &&
+          byteLength !== null && length !== null && fork !== null &&
+          journal.baselineBytes + chargedBytes === byteLength) {
+        journal.chargedBytes = chargedBytes
+        if (!previousBudget) journal.distinctKeys++
+        journal.expectedByteLength = byteLength
+        journal.expectedLength = length
+        journal.expectedFork = fork
+        journal.reservedBytes = 0
+      }
+    }
+
+    this._metadataBudgets.set(appKey, budget)
+    this._metadataTombstones.add(appKey)
+    this._metadataTombstoneEntries.set(appKey, entry)
+    if (Number.isSafeInteger(entry.evictedAt) && entry.evictedAt > 0) {
+      this.evicted.set(appKey, entry.evictedAt)
+    } else {
+      this.evicted.delete(appKey)
+    }
+    this._removeLiveEntryForCommittedRetirement(appKey)
+    this._durableEntries.delete(appKey)
+  }
+
+  async _readCommittedBeeRetirement (appKey, expected) {
+    try {
+      const node = await this._bee.get(appKey)
+      return {
+        checked: true,
+        entry: matchesRetirementTombstone(node?.value, appKey, expected) ? node.value : null
+      }
+    } catch (cause) {
+      return { checked: false, entry: null, cause }
+    }
+  }
+
+  async _readCommittedJsonRetirement (appKey, expected) {
+    try {
+      const raw = await readFile(this._filePath, 'utf8')
+      const parsed = JSON.parse(raw)
+      const entries = validatedLegacyEntries(parsed)
+      const entry = entries.find(candidate =>
+        (candidate.appKey || candidate.driveKey) === appKey &&
+        matchesRetirementTombstone(candidate, appKey, expected)
+      ) || null
+      return { checked: true, entry }
+    } catch (cause) {
+      return { checked: false, entry: null, cause }
+    }
   }
 
   _normalizeEntry (entry = {}) {
@@ -673,6 +1224,11 @@ export class AppRegistry extends EventEmitter {
   set (appKey, entry, opts = {}) {
     appKey = canonicalRuntimeAppKey(appKey)
     if (appKey === null) throw new Error('Invalid app key: must be 64 hex characters')
+    if (this.isRetirementPending(appKey)) {
+      const err = new Error('retired drive key cannot be resurrected')
+      err.code = 'APP_REGISTRY_KEY_RETIRED'
+      throw err
+    }
     this._assertPhysicalWritesAvailable()
     const trackedBudget = this._metadataBudgets.get(appKey)
     const normalized = this._normalizeEntry(trackedBudget
@@ -682,8 +1238,17 @@ export class AppRegistry extends EventEmitter {
           storageMetadataRevision: entry.storageMetadataRevision ?? trackedBudget.revision
         }
       : entry)
+    this._validateCatalogIngress(appKey, normalized)
+    const previous = this.apps.get(appKey)
+    if (previous) {
+      this._unindexCatalogCandidate(appKey, previous)
+      this._adjustCatalogAggregate(previous, -1)
+    }
     this._advanceEntryGeneration(appKey)
+    this._appPopulation.insert(appKey)
     this.apps.set(appKey, normalized)
+    this._indexCatalogCandidate(appKey, normalized)
+    this._adjustCatalogAggregate(normalized, 1)
 
     // Update dedup index if entry has an appId
     if (this._isAppIdIndexed(normalized)) {
@@ -703,11 +1268,17 @@ export class AppRegistry extends EventEmitter {
     const entry = this.apps.get(appKey)
     if (!entry) return false
     this._assertPhysicalWritesAvailable()
+    const normalized = this._normalizeEntry({ ...entry, ...updates })
+    this._validateCatalogIngress(appKey, normalized)
     this._advanceEntryGeneration(appKey)
 
     const hadIndexedAppId = this._isAppIdIndexed(entry)
     const previousAppId = entry.appId
-    Object.assign(entry, this._normalizeEntry({ ...entry, ...updates }))
+    this._unindexCatalogCandidate(appKey, entry)
+    this._adjustCatalogAggregate(entry, -1)
+    Object.assign(entry, normalized)
+    this._indexCatalogCandidate(appKey, entry)
+    this._adjustCatalogAggregate(entry, 1)
 
     // Update dedup index when app identity changed
     if (hadIndexedAppId && previousAppId && this.byAppId.get(previousAppId) === appKey) {
@@ -737,7 +1308,13 @@ export class AppRegistry extends EventEmitter {
     if (this._isAppIdIndexed(entry) && this.byAppId.get(entry.appId) === appKey) {
       this.byAppId.delete(entry.appId)
     }
+    this._unindexCatalogCandidate(appKey, entry)
+    this._adjustCatalogAggregate(entry, -1)
 
+    // Membership deletion consumes its own generation fence before the
+    // caller-owned Map changes. Ordinary metadata updates above retain the
+    // original insertion generation and remain visible in the same cycle.
+    this._appPopulation.delete(appKey)
     this.apps.delete(appKey)
     if (opts.persist !== false) this._scheduleSave(appKey, { deleted: true })
     this._emitSafely('change', { type: 'delete', appKey })
@@ -766,14 +1343,17 @@ export class AppRegistry extends EventEmitter {
     const entry = this.apps.get(appKey)
     if (!entry) return false
     this._assertPhysicalWritesAvailable()
+    this._validateCatalogIngress(appKey, { ...entry, anchored: true })
 
     this._advanceEntryGeneration(appKey)
+    this._adjustCatalogAggregate(entry, -1)
     const wasAnchored = entry.anchored === true
     const now = Date.now()
     entry.anchored = true
     entry.anchoredLength = Math.max(entry.anchoredLength || 0, length || 0)
     entry.lastAnchorCheck = now
     if (!wasAnchored) entry.anchoredAt = now
+    this._adjustCatalogAggregate(entry, 1)
 
     this._scheduleSave(appKey)
     if (!wasAnchored) {
@@ -798,7 +1378,9 @@ export class AppRegistry extends EventEmitter {
     if (!entry) return false
     if (entry.anchored !== true) return false
     this._assertPhysicalWritesAvailable()
+    this._validateCatalogIngress(appKey, { ...entry, anchored: false })
     this._advanceEntryGeneration(appKey)
+    this._adjustCatalogAggregate(entry, -1)
     entry.anchored = false
     entry.anchoredLength = 0
     entry.storageProvedDriveVersion = null
@@ -808,6 +1390,7 @@ export class AppRegistry extends EventEmitter {
     entry.storageProvedMetaFork = null
     entry.storageProvedBlobFork = null
     entry.lastAnchorCheck = Date.now()
+    this._adjustCatalogAggregate(entry, 1)
     this._scheduleSave(appKey)
     this._emitSafely('change', { type: 'unanchored', appKey, entry, reason })
     return true
@@ -822,7 +1405,9 @@ export class AppRegistry extends EventEmitter {
     if (appKey === null) return false
     const entry = this.apps.get(appKey)
     if (!entry) return false
+    this._adjustCatalogAggregate(entry, -1)
     entry.lastAnchorCheck = Date.now()
+    this._adjustCatalogAggregate(entry, 1)
     // Health cadence is telemetry, not durable state. Persisting every
     // periodic check would append unbounded Hyperbee history beneath a fixed
     // per-pin metadata allowance. The timestamp is included opportunistically
@@ -836,16 +1421,7 @@ export class AppRegistry extends EventEmitter {
    * "accepted" and "actually serving."
    */
   anchorStats () {
-    let total = 0
-    let anchored = 0
-    let unanchored = 0
-    let neverChecked = 0
-    for (const entry of this.apps.values()) {
-      total++
-      if (entry.anchored === true) anchored++
-      else unanchored++
-      if (!entry.lastAnchorCheck) neverChecked++
-    }
+    const { total, anchored, unanchored, neverChecked } = this._catalogAggregate
     return { total, anchored, unanchored, neverChecked }
   }
 
@@ -936,7 +1512,7 @@ export class AppRegistry extends EventEmitter {
         name: entry.name || entry.appId || 'Unknown App',
         description: entry.description || '',
         author: entry.author || 'anonymous',
-        version: entry.version || '1.0.0',
+        version: typeof entry.version === 'string' ? entry.version : null,
         driveKey: appKey,
         discoveryKey: entry.discoveryKey
           ? (typeof entry.discoveryKey === 'string' ? entry.discoveryKey : entry.discoveryKey.toString('hex'))
@@ -991,7 +1567,7 @@ export class AppRegistry extends EventEmitter {
         const existingIdx = seen.get(appId)
         if (existingIdx !== undefined) {
           const existing = items[existingIdx]
-          if (compareVersions(catalogEntry.version, existing.version) > 0) {
+          if (catalogCandidateWins(catalogEntry, existing)) {
             items[existingIdx] = catalogEntry
           }
         } else {
@@ -1160,8 +1736,16 @@ export class AppRegistry extends EventEmitter {
   async _readBeeInventory () {
     const inventory = []
     const seen = new Set()
-    for await (const node of this._bee.createReadStream()) {
-      const entry = node.value
+    // The existing per-drive metadata allowance also bounds recovery decoding.
+    // Check raw bytes before JSON can expand an oversized persisted row.
+    for await (const node of this._bee.createReadStream({ valueEncoding: 'binary' })) {
+      if (inventory.length >= MAX_POPULATION_RECORDS) throw registryInventoryError('inventory-row-limit')
+      if (!b4a.isBuffer(node.value)) throw registryInventoryError('bee-row-encoding-invalid')
+      if (node.value.byteLength + APP_REGISTRY_LEGACY_ROW_PREFLIGHT_MARGIN_BYTES >
+          STORAGE_COMMITMENT_METADATA_OVERHEAD_BYTES) {
+        throw registryInventoryError('storage-metadata-row-exceeds-commitment')
+      }
+      const entry = JSON.parse(b4a.toString(node.value, 'utf8'))
       const appKey = node.key
       if (!entry || typeof entry !== 'object' || Array.isArray(entry) ||
           typeof appKey !== 'string' || !CANONICAL_APP_KEY.test(appKey) ||
@@ -1176,7 +1760,12 @@ export class AppRegistry extends EventEmitter {
             STORAGE_PROOF_FIELDS.some(field => entry[field] != null)) {
           throw registryInventoryError('bee-tombstone-invalid')
         }
+        validateRetirementTombstone(entry, appKey)
       } else {
+        if (entry.retirementId != null || entry.retirementState != null ||
+            entry.absentRowProof != null) {
+          throw registryInventoryError('bee-live-row-has-retirement-state')
+        }
         validatePersistedStorageBound(entry)
         validatePersistedStorageProof(entry)
       }
@@ -1349,6 +1938,18 @@ export class AppRegistry extends EventEmitter {
       const appKey = entry.appKey || entry.driveKey
       if (!appKey) continue
       const current = inventoryByKey.get(appKey)
+      if (entry.storageDeleted === true) {
+        const retirement = validateRetirementTombstone(entry, appKey)
+        if (current?.entry?.retirementId === retirement?.retirementId &&
+            current.entry.retirementState === retirement?.state) continue
+        items.push({
+          appKey,
+          shape: { ...entry, appKey },
+          priorBudget: this._metadataBudgets.get(appKey) || { bytes: 0, revision: 0 },
+          tombstone: true
+        })
+        continue
+      }
       // An eviction tombstone is authoritative over a stale legacy registry
       // row. Replaying that JSON row would immediately undo the deliberate
       // shed during the same startup that migrated the tombstone.
@@ -1415,6 +2016,7 @@ export class AppRegistry extends EventEmitter {
           this._recoverRegistryJournal(inventory)
           if (inventory.length === 0) return this._loadLegacyJsonReadOnly()
           this.apps.clear()
+          this._resetAppPopulation()
           this.byAppId.clear()
           this._durableEntries.clear()
           this._entryGenerations.clear()
@@ -1445,6 +2047,7 @@ export class AppRegistry extends EventEmitter {
         // Hydrate only after every row validated so a corrupt tail cannot leave
         // a partially adopted in-memory inventory.
         this.apps.clear()
+        this._resetAppPopulation()
         this.byAppId.clear()
         this._durableEntries.clear()
         this._entryGenerations.clear()
@@ -1477,15 +2080,29 @@ export class AppRegistry extends EventEmitter {
     let data
     try { data = JSON.parse(raw) } catch (err) { throw registryInventoryError('json-corrupt', err) }
     const entries = validatedLegacyEntries(data)
-    const activeEntries = entries.filter(entry =>
+    const tombstones = entries.filter(entry => entry.storageDeleted === true)
+    const activeEntries = entries.filter(entry => entry.storageDeleted !== true &&
       !this.evicted.has(entry.appKey || entry.driveKey)
     )
 
     // Populate in-memory state only after the complete inventory validates.
     this.apps.clear()
+    this._resetAppPopulation()
     this.byAppId.clear()
     this._durableEntries.clear()
     this._entryGenerations.clear()
+    this._metadataBudgets.clear()
+    this._metadataTombstones.clear()
+    this._metadataTombstoneEntries.clear()
+    for (const entry of tombstones) {
+      const appKey = entry.appKey || entry.driveKey
+      this._metadataTombstones.add(appKey)
+      this._metadataTombstoneEntries.set(appKey, entry)
+      this._metadataBudgets.set(appKey, validatePersistedMetadataBudget(entry))
+      if (Number.isSafeInteger(entry.evictedAt) && entry.evictedAt > 0) {
+        this.evicted.set(appKey, entry.evictedAt)
+      }
+    }
     for (const entry of activeEntries) {
       const appKey = entry.appKey || entry.driveKey
       this._hydrateEntry(appKey, entry)
@@ -1507,13 +2124,27 @@ export class AppRegistry extends EventEmitter {
     let data
     try { data = JSON.parse(raw) } catch (err) { throw registryInventoryError('json-corrupt', err) }
     const entries = validatedLegacyEntries(data)
-    const activeEntries = entries.filter(entry =>
+    const tombstones = entries.filter(entry => entry.storageDeleted === true)
+    const activeEntries = entries.filter(entry => entry.storageDeleted !== true &&
       !this.evicted.has(entry.appKey || entry.driveKey)
     )
     this.apps.clear()
+    this._resetAppPopulation()
     this.byAppId.clear()
     this._durableEntries.clear()
     this._entryGenerations.clear()
+    this._metadataBudgets.clear()
+    this._metadataTombstones.clear()
+    this._metadataTombstoneEntries.clear()
+    for (const entry of tombstones) {
+      const appKey = entry.appKey || entry.driveKey
+      this._metadataTombstones.add(appKey)
+      this._metadataTombstoneEntries.set(appKey, entry)
+      this._metadataBudgets.set(appKey, validatePersistedMetadataBudget(entry))
+      if (Number.isSafeInteger(entry.evictedAt) && entry.evictedAt > 0) {
+        this.evicted.set(appKey, entry.evictedAt)
+      }
+    }
     for (const entry of activeEntries) {
       const appKey = entry.appKey || entry.driveKey
       this._hydrateEntry(appKey, entry)
@@ -1575,7 +2206,10 @@ export class AppRegistry extends EventEmitter {
       drive: null,
       discoveryKey: null
     }
+    this._appPopulation.insert(appKey)
     this.apps.set(appKey, hydrated)
+    this._indexCatalogCandidate(appKey, hydrated)
+    this._adjustCatalogAggregate(hydrated, 1)
     this._durableEntries.set(appKey, { ...hydrated })
     this._entryGenerations.set(appKey, 0)
     this._metadataBudgets.set(appKey, metadataBudget)
@@ -2010,6 +2644,24 @@ export class AppRegistry extends EventEmitter {
         for (const [appKey, entry] of this.apps) {
           entries.push(this._persistShape(appKey, entry))
         }
+        for (const [appKey, entry] of this._metadataTombstoneEntries) {
+          if (this.apps.has(appKey)) continue
+          const metadataBytes = Number.isSafeInteger(entry.storageMetadataBytesWritten) &&
+            entry.storageMetadataBytesWritten > 0
+            ? entry.storageMetadataBytesWritten
+            : 1
+          const metadataRevision = Number.isSafeInteger(entry.storageMetadataRevision) &&
+            entry.storageMetadataRevision > 0
+            ? entry.storageMetadataRevision
+            : 1
+          entries.push({
+            ...entry,
+            appKey,
+            storageDeleted: true,
+            storageMetadataBytesWritten: metadataBytes,
+            storageMetadataRevision: metadataRevision
+          })
+        }
 
         const tmpPath = this._filePath + '.tmp'
         try {
@@ -2135,6 +2787,15 @@ export class AppRegistry extends EventEmitter {
         if (strict) throw new Error('APP_REGISTRY_PERSISTENCE_AUTHORITY_CHANGED')
         return
       }
+      const requestedRetirement = retirementTombstoneShape(appKey, opts)
+      const expectedRetirement = requestedRetirement
+        ? {
+            ...requestedRetirement,
+            evictedAt: Number.isSafeInteger(opts.evictedAt) && opts.evictedAt > 0
+              ? opts.evictedAt
+              : null
+          }
+        : null
       try {
         const priorBudget = this._metadataBudgets.get(appKey) || { bytes: 0, revision: 0 }
         const evictedAt = Number.isSafeInteger(opts.evictedAt) && opts.evictedAt > 0
@@ -2142,13 +2803,45 @@ export class AppRegistry extends EventEmitter {
           : null
         await this._appendMeasuredBeeShapes([{
           appKey,
-          shape: { appKey, evictedAt },
+          shape: { appKey, evictedAt, ...(requestedRetirement || {}) },
           priorBudget,
           tombstone: true
-        }])
+        }], { recovery: opts.recovery === true })
         this._durableEntries.delete(appKey)
       } catch (err) {
-        this._restoreDurableEntry(appKey, generation)
+        let committed = requestedRetirement
+          ? this._metadataTombstoneEntries.get(appKey)
+          : null
+        let deleteCommitted = matchesRetirementTombstone(
+          committed,
+          appKey,
+          expectedRetirement
+        )
+        let durableCheck = { checked: true, entry: committed }
+        if (requestedRetirement && !deleteCommitted) {
+          durableCheck = await this._readCommittedBeeRetirement(appKey, expectedRetirement)
+          committed = durableCheck.entry
+          deleteCommitted = committed !== null
+        }
+        if (deleteCommitted) {
+          // batch.flush() can commit the absent-row tombstone and only then
+          // discover that the registry-journal accounting authority could not
+          // settle. The drive row is durably absent at that point. Retain that
+          // truth and tell AppLifecycle to advance only to release-pending;
+          // restoring the prior row here would manufacture a resurrection.
+          this._adoptCommittedRetirementTombstone(appKey, committed)
+          err.durableDeleteCommitted = true
+          err.retirementId = requestedRetirement.retirementId
+        } else if (requestedRetirement && durableCheck.checked === false) {
+          // A failed durable read cannot prove that rollback is safe. Keep the
+          // process fail-closed and the live row absent; startup will resolve
+          // the durable truth instead of this process manufacturing a row.
+          this._removeLiveEntryForCommittedRetirement(appKey)
+          err.durableDeleteCommitUnknown = true
+          err.durableCheckCause = durableCheck.cause
+        } else {
+          this._restoreDurableEntry(appKey, generation)
+        }
         this._emitSafely('error', { context: 'delete-bee', appKey, error: err })
         throw err
       }
@@ -2173,6 +2866,11 @@ export class AppRegistry extends EventEmitter {
       if (!this._filePath) throw new Error('APP_REGISTRY_PERSISTENCE_UNAVAILABLE')
       this._clearSaveDebounce()
       await this.save({ throwOnError: true })
+      if (this.apps.has(appKey)) {
+        this._metadataTombstones.delete(appKey)
+        this._metadataTombstoneEntries.delete(appKey)
+        this.evicted.delete(appKey)
+      }
     } catch (err) {
       if (throwOnError || err?.code === 'APP_REGISTRY_PHYSICAL_ENFORCEMENT_UNAVAILABLE') throw err
     }
@@ -2186,16 +2884,138 @@ export class AppRegistry extends EventEmitter {
       if (this._persistenceMode === 'bee') {
         await this._deleteEntryFromBee(appKey, {
           strict: true,
-          evictedAt: opts.evictedAt
+          evictedAt: opts.evictedAt,
+          retirementId: opts.retirementId,
+          retirementState: opts.retirementState,
+          retiredAt: opts.retiredAt,
+          retirementBoundBytes: opts.retirementBoundBytes,
+          recovery: opts.recovery === true
         })
         return
       }
       if (!this._filePath) throw new Error('APP_REGISTRY_PERSISTENCE_UNAVAILABLE')
       this._clearSaveDebounce()
+      const retirement = retirementTombstoneShape(appKey, opts)
+      if (retirement) {
+        const live = this.apps.get(appKey) || null
+        const previousTombstone = this._metadataTombstoneEntries.get(appKey) || null
+        const previousBudget = this._metadataBudgets.get(appKey) || null
+        if (live) this.delete(appKey, { persist: false })
+        const shape = {
+          ...retirement,
+          evictedAt: Number.isSafeInteger(opts.evictedAt) && opts.evictedAt > 0 ? opts.evictedAt : null,
+          storageDeleted: true,
+          storageMetadataBytesWritten: 1,
+          storageMetadataRevision: 1
+        }
+        this._metadataTombstones.add(appKey)
+        this._metadataTombstoneEntries.set(appKey, shape)
+        this._metadataBudgets.set(appKey, {
+          bytes: shape.storageMetadataBytesWritten,
+          revision: shape.storageMetadataRevision
+        })
+        if (shape.evictedAt) this.evicted.set(appKey, shape.evictedAt)
+        try {
+          await this.save({ throwOnError: true })
+          this._durableEntries.delete(appKey)
+        } catch (err) {
+          const durableCheck = await this._readCommittedJsonRetirement(appKey, shape)
+          if (durableCheck.entry) {
+            this._adoptCommittedRetirementTombstone(appKey, durableCheck.entry)
+            err.durableDeleteCommitted = true
+            err.retirementId = retirement.retirementId
+            throw err
+          }
+          if (durableCheck.checked === false) {
+            this._removeLiveEntryForCommittedRetirement(appKey)
+            err.durableDeleteCommitUnknown = true
+            err.durableCheckCause = durableCheck.cause
+            throw err
+          }
+          if (previousTombstone) {
+            this._metadataTombstones.add(appKey)
+            this._metadataTombstoneEntries.set(appKey, previousTombstone)
+          } else {
+            this._metadataTombstones.delete(appKey)
+            this._metadataTombstoneEntries.delete(appKey)
+          }
+          if (previousBudget) this._metadataBudgets.set(appKey, previousBudget)
+          else this._metadataBudgets.delete(appKey)
+          if (previousTombstone?.evictedAt) this.evicted.set(appKey, previousTombstone.evictedAt)
+          else this.evicted.delete(appKey)
+          if (live && !this.apps.has(appKey)) this.set(appKey, live, { persist: false })
+          throw err
+        }
+        return
+      }
       await this.save({ throwOnError: true })
     } catch (err) {
       if (throwOnError || err?.code === 'APP_REGISTRY_PHYSICAL_ENFORCEMENT_UNAVAILABLE') throw err
     }
+  }
+
+  async persistRetirementState (appKey, opts = {}) {
+    appKey = canonicalRuntimeAppKey(appKey)
+    if (appKey === null) throw new Error('Invalid app key: must be 64 hex characters')
+    const current = this._metadataTombstoneEntries.get(appKey) || null
+    const retirementId = opts.retirementId || current?.retirementId
+    const retiredAt = opts.retiredAt || current?.retiredAt
+    const retirementBoundBytes = Object.prototype.hasOwnProperty.call(opts, 'retirementBoundBytes')
+      ? opts.retirementBoundBytes
+      : (current?.retirementBoundBytes ?? null)
+    if (current?.retirementId && current.retirementId !== retirementId) {
+      throw new Error('APP_REGISTRY_RETIREMENT_ID_MISMATCH')
+    }
+    const retirement = retirementTombstoneShape(appKey, {
+      retirementId,
+      retirementState: opts.retirementState,
+      retiredAt,
+      retirementBoundBytes
+    })
+    const evictedAt = Number.isSafeInteger(opts.evictedAt) && opts.evictedAt > 0
+      ? opts.evictedAt
+      : (current?.evictedAt ?? null)
+    if (this._persistenceMode === 'bee') {
+      await this._deleteEntryFromBee(appKey, {
+        strict: true,
+        ...retirement,
+        evictedAt,
+        recovery: opts.recovery === true
+      })
+      return this.retirementTombstone(appKey)
+    }
+
+    const previous = current
+    const previousBudget = this._metadataBudgets.get(appKey) || null
+    const shape = {
+      ...retirement,
+      evictedAt,
+      storageDeleted: true,
+      storageMetadataBytesWritten: previousBudget?.bytes || 1,
+      storageMetadataRevision: (previousBudget?.revision || 0) + 1
+    }
+    this._metadataTombstones.add(appKey)
+    this._metadataTombstoneEntries.set(appKey, shape)
+    this._metadataBudgets.set(appKey, {
+      bytes: shape.storageMetadataBytesWritten,
+      revision: shape.storageMetadataRevision
+    })
+    try {
+      if (this._filePath) {
+        this._clearSaveDebounce()
+        await this.save({ throwOnError: true })
+      }
+    } catch (err) {
+      if (previous) this._metadataTombstoneEntries.set(appKey, previous)
+      else {
+        this._metadataTombstones.delete(appKey)
+        this._metadataTombstoneEntries.delete(appKey)
+      }
+      if (previousBudget) this._metadataBudgets.set(appKey, previousBudget)
+      else this._metadataBudgets.delete(appKey)
+      throw err
+    }
+    return this.retirementTombstone(appKey)
   }
 
   /**

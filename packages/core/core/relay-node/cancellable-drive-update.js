@@ -27,6 +27,8 @@
  * `.destroy()` cancels the underlying block requests.
  */
 
+import { sharedGetBlobs } from '../shared-flight-registry.js'
+
 const DEFAULT_UPDATE_TIMEOUT_MS = 30_000
 const DEFAULT_DOWNLOAD_TIMEOUT_MS = 120_000
 
@@ -202,7 +204,7 @@ export async function downloadWithTimeout (drive, path = '/', opts = {}) {
     return // download() returned nothing awaitable; nothing to wait on
   }
 
-  return _runNewPromiseDownload(drive, path, timeoutMs, signal)
+  return _runNewPromiseDownload(drive, path, timeoutMs, signal, opts.flightOwner ?? drive)
 }
 
 // ─── Fallback: race the bare download() Promise ─────────────────────
@@ -294,7 +296,7 @@ async function _runOldTrackerDownload (dl, timeoutMs, signal) {
 }
 
 // ─── New Promise API (hyperdrive 11.x) ──────────────────────────────
-async function _runNewPromiseDownload (drive, path, timeoutMs, signal) {
+async function _runNewPromiseDownload (drive, path, timeoutMs, signal, flightOwner) {
   // We re-implement drive.download(path) here so we control the inner
   // trackers. Mirrors hyperdrive's own implementation (entry vs folder
   // dispatch, blob extent calculation, allSettled on per-blob trackers)
@@ -353,7 +355,10 @@ async function _runNewPromiseDownload (drive, path, timeoutMs, signal) {
       if (entry) {
         const b = entry.value && entry.value.blob
         if (b) {
-          const blobs = await drive.getBlobs()
+          const blobs = await sharedGetBlobs(drive, {
+            owner: flightOwner,
+            timeoutMs
+          })
           if (aborted) throw abortReason
           const tracker = blobs.core.download({ start: b.blockOffset, length: b.blockLength })
           activeTrackers.push(tracker)
@@ -365,7 +370,10 @@ async function _runNewPromiseDownload (drive, path, timeoutMs, signal) {
     }
 
     // Folder path: walk entries, start a tracker per blob.
-    const blobs = await drive.getBlobs()
+    const blobs = await sharedGetBlobs(drive, {
+      owner: flightOwner,
+      timeoutMs
+    })
     if (aborted) throw abortReason
 
     for await (const entry of drive.list(path)) {
@@ -427,21 +435,21 @@ export async function getDriveSize (drive, opts = {}) {
   const metaCore = drive && drive.db && drive.db.core
   let blobs = drive && drive.blobs
   if (!blobs && drive && typeof drive.getBlobs === 'function') {
-    let blobsTimer = null
     try {
-      blobs = await Promise.race([
-        drive.getBlobs(),
-        new Promise((_resolve, reject) => {
-          blobsTimer = setTimeout(() => reject(new Error('get-blobs timeout')), timeoutMs)
-        })
-      ])
+      blobs = await sharedGetBlobs(drive, {
+        owner: opts.flightOwner ?? drive,
+        timeoutMs
+      })
     } catch (err) {
       if (requireAuthoritative) throw err
-    } finally {
-      if (blobsTimer) clearTimeout(blobsTimer)
     }
   }
   const blobCore = blobs && blobs.core
+  if (opts.flightOwner?.sharedEntities instanceof Set) {
+    const driveEntity = drive?.core || drive?.db?.core
+    if (driveEntity) opts.flightOwner.sharedEntities.add(driveEntity)
+    if (blobCore) opts.flightOwner.sharedEntities.add(blobCore)
+  }
 
   // Helper to update a raw hypercore with a cancellable timeout.
   // Mirrors updateWithTimeout but for a core (not a drive).

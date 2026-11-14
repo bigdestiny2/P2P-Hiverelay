@@ -4,6 +4,7 @@ import { join } from 'path'
 import { tmpdir } from 'os'
 import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
 import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
+import { closeSharedDriveEntity } from 'p2p-hiverelay/core/shared-flight-registry.js'
 
 const REPAIR_BOUND = 16 * 1024 * 1024
 
@@ -224,6 +225,43 @@ test('runRepairPass: skips entries without drive', async (t) => {
   t.is(result.checked, 1, 'only entry with drive checked')
 })
 
+test('runRepairPass: rejects every ambiguous budget and worker value', async (t) => {
+  const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
+  const lifecycle = new AppLifecycle(mockNode(new AppRegistry(dir)))
+  const invalid = [0, -1, 1.5, NaN, Infinity, '1', 33]
+  for (const budget of invalid) {
+    await t.exception.all(() => lifecycle.runRepairPass({ budget }), /repair budget/)
+  }
+  for (const maxConcurrent of [0, -1, 1.5, NaN, Infinity, '1', 4]) {
+    await t.exception.all(() => lifecycle.runRepairPass({ maxConcurrent }), /repair maxConcurrent/)
+  }
+})
+
+test('repairUnanchored: periodic and targeted callers share one app flight', async (t) => {
+  const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
+  const registry = new AppRegistry(dir)
+  const key = appKey('singleflight')
+  registry.set(key, { type: 'app', drive: mockDrive(), discoveryKey: Buffer.alloc(32) })
+  const lifecycle = new AppLifecycle(mockNode(registry))
+  let release
+  let calls = 0
+  const gate = new Promise(resolve => { release = resolve })
+  lifecycle._repairUnanchoredOwned = async () => {
+    calls++
+    await gate
+    return true
+  }
+
+  const first = lifecycle.repairUnanchored(key)
+  const second = lifecycle.repairUnanchored(key)
+  t.is(first, second, 'callers receive the same owned promise')
+  t.is(calls, 1)
+  release()
+  t.is(await first, true)
+  await Promise.resolve()
+  t.is(lifecycle._repairFlights.size, 0, 'settlement releases the owner record')
+})
+
 test('repair: refuses to anchor when an exact core snapshot is unavailable', async (t) => {
   const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
   const reg = new AppRegistry(dir)
@@ -314,6 +352,35 @@ test('_isDriveFullyReplicated: drive without blob layer is not anchored', async 
   drive.blobs = null // simulate hyperdrive whose blob layer never loaded
   const ok = await lifecycle._isDriveFullyReplicated(drive)
   t.is(ok, false, 'cannot serve content we have no blob core for')
+})
+
+test('_isDriveFullyReplicated: repeated timeout retains one raw getBlobs flight', async (t) => {
+  const { dir, cleanup } = tmpDir(); t.teardown(cleanup)
+  const reg = new AppRegistry(dir)
+  const lifecycle = new AppLifecycle(mockNode(reg))
+  const physicalCore = {}
+  let calls = 0
+  const drive = {
+    core: physicalCore,
+    closed: false,
+    closing: false,
+    blobs: null,
+    getBlobs () {
+      calls++
+      return new Promise(() => {})
+    }
+  }
+
+  t.absent(await lifecycle._isDriveFullyReplicated(drive, { timeoutMs: 1 }))
+  let allFalse = true
+  for (let i = 0; i < 1_000; i++) {
+    if (await lifecycle._isDriveFullyReplicated(drive, { timeoutMs: 1 })) allFalse = false
+  }
+  t.ok(allFalse)
+  t.is(calls, 1, 'orphaned raw flight cannot attach or restart')
+
+  drive.closed = true
+  t.is(closeSharedDriveEntity(drive, 'test drive close completed'), 1)
 })
 
 test('runRepairPass: re-queues entries the periodic check downgraded from anchored', async (t) => {

@@ -68,18 +68,33 @@ test('bare http server: anchors route reuses bounded public anchor payload', (t)
 
 test('bare http server: catalog route reuses bounded relay catalog helper', (t) => {
   const relay = fakeRelay()
-  const entries = [
-    { type: 'drive', key: 'drive-1', name: 'Drive 1', categories: ['docs'] },
-    { type: 'drive', key: 'drive-2', name: 'Drive 2', categories: ['docs'] },
-    { type: 'drive', key: 'mounted-1', parentKey: 'drive-1', name: 'Mounted resource' },
-    { type: 'app', key: 'app-1', name: 'Filtered app' }
-  ]
-  let catalogOpts = null
   relay.publicKey = Buffer.alloc(32, 9)
+  relay.keyPair = { publicKey: relay.publicKey, secretKey: Buffer.alloc(64) }
   relay.config.operator = 'operator-one'
-  relay.appRegistry.catalog = function (opts) {
-    catalogOpts = opts
-    return entries
+  relay.appRegistry.catalog = function () {
+    t.fail('Bare public catalog route must not enumerate AppRegistry')
+  }
+  let readOpts = null
+  relay.appCatalogStore = {
+    readExternalPage (opts) {
+      readOpts = opts
+      return {
+        snapshot: {
+          snapshotId: 'a'.repeat(64),
+          highWater: 7,
+          rootDigest: 'b'.repeat(64),
+          entryCount: 1,
+          senderPubkey: '09'.repeat(32)
+        },
+        entries: [[
+          'c'.repeat(64), 'd'.repeat(64), null, 'drive', null, null, null,
+          'e'.repeat(64), false, 'persistent', 'always-on', 'public', 123,
+          false, 'public', null, true, 1024, null, 0, true, null
+        ]],
+        complete: true,
+        cursor: null
+      }
+    }
   }
 
   const server = new BareHttpServer(relay)
@@ -89,32 +104,31 @@ test('bare http server: catalog route reuses bounded relay catalog helper', (t) 
 
   const body = JSON.parse(res.body)
   t.is(res.statusCode, 200)
-  t.is(body.version, 2)
+  t.is(body.version, 3)
   t.is(body.relayKey, '09'.repeat(32))
   t.is(body.region, 'test')
   t.is(body.operator, 'operator-one')
   t.alike(body.filters, { type: 'drive', parent: null, category: null })
   t.alike(body.pagination, {
-    page: 1,
-    pageSize: 1,
-    total: 3,
-    totalPages: 3,
-    hasNext: true,
-    hasPrev: false
+    limit: 1,
+    nextCursor: null,
+    complete: true
   })
-  t.alike(body.count, {
-    total: 3,
+  t.alike(body.pageCount, {
+    total: 1,
     apps: 0,
-    drives: 2,
-    resources: 1,
+    drives: 1,
+    resources: 0,
     datasets: 0,
     media: 0
   })
-  t.alike(body.entries, [entries[0]])
-  t.alike(body.drives, [entries[0]])
+  t.is(body.entryCount, 1)
+  t.is(body.entries.length, 1)
+  t.is(body.entries[0].appKey, 'd'.repeat(64))
+  t.alike(body.drives, body.entries)
   t.alike(body.resources, [])
-  t.alike(catalogOpts, { redactPrivate: true })
-  t.absent(res.body.includes('app-1'))
+  t.is(readOpts.limit, 1)
+  t.is(readOpts.status, false)
 })
 
 test('bare http server: catalog route rejects invalid type filters', (t) => {
@@ -142,9 +156,11 @@ test('bare http server: 404 responses use the same hardened JSON path', (t) => {
 })
 
 function fakeRelay () {
+  const publicKey = Buffer.alloc(32, 1)
   return {
     startedAt: Date.now() - 1000,
     publicKey: null,
+    keyPair: { publicKey, secretKey: Buffer.alloc(64) },
     config: {
       regions: ['test'],
       maxStorageBytes: 123,
@@ -159,6 +175,22 @@ function fakeRelay () {
       },
       catalog () {
         return []
+      }
+    },
+    appCatalogStore: {
+      readExternalPage () {
+        return {
+          snapshot: {
+            snapshotId: 'a'.repeat(64),
+            highWater: 0,
+            rootDigest: 'b'.repeat(64),
+            entryCount: 0,
+            senderPubkey: publicKey.toString('hex')
+          },
+          entries: [],
+          complete: true,
+          cursor: null
+        }
       }
     },
     serviceRegistry: null

@@ -129,6 +129,46 @@ test('StoreSession opens only an existing manifested lock and owns it until clos
   releaseExclusiveFileLock(competing)
 })
 
+test('StoreSession accepts exact random generation temps left by a crashed floor writer', async t => {
+  const state = await createManifestedLayout(t)
+  const recordTemp = path.join(state.control, `.blind-store-generation-record.tmp-${'a1'.repeat(16)}`)
+  const headTemp = path.join(state.control, `.blind-store-generation-head.tmp-${'b2'.repeat(16)}`)
+  await fs.writeFile(recordTemp, b4a.from('{'), { mode: 0o600 })
+  await fs.writeFile(headTemp, b4a.from('{'), { mode: 0o600 })
+  const classified = await classifyBlindStoreRoot(state.root)
+  t.is(classified.kind, BLIND_STORE_ROOT_CLASSIFICATION.CURRENT_MANIFESTED)
+  const session = new BlindStoreSession({ root: state.root })
+  await session.open()
+  await session.close()
+  t.ok((await fs.readdir(state.control)).includes(path.basename(recordTemp)))
+  t.ok((await fs.readdir(state.control)).includes(path.basename(headTemp)))
+
+  await fs.writeFile(path.join(state.control, '.blind-store-generation-record.tmp-1234'), b4a.from('{'), { mode: 0o600 })
+  const malformed = await classifyBlindStoreRoot(state.root)
+  t.is(malformed.kind, BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS)
+  t.ok(malformed.reason.includes('unrecognized control entry'))
+})
+
+test('StoreSession admits only the exact linked record publication crash topology', async t => {
+  const state = await createManifestedLayout(t)
+  const record = path.join(state.control, 'blind-store-generation-record-0000000000000000-v2.json')
+  const recordTemp = path.join(state.control, `.blind-store-generation-record.tmp-${'c3'.repeat(16)}`)
+  await fs.writeFile(record, b4a.from('{'), { mode: 0o600 })
+  await fs.link(record, recordTemp)
+
+  const recoverable = await classifyBlindStoreRoot(state.root)
+  t.is(recoverable.kind, BLIND_STORE_ROOT_CLASSIFICATION.CURRENT_MANIFESTED)
+  const session = new BlindStoreSession({ root: state.root })
+  await session.open()
+  await session.close()
+
+  const ambiguousTemp = path.join(state.control, `.blind-store-generation-record.tmp-${'d4'.repeat(16)}`)
+  await fs.link(record, ambiguousTemp)
+  const ambiguous = await classifyBlindStoreRoot(state.root)
+  t.is(ambiguous.kind, BLIND_STORE_ROOT_CLASSIFICATION.LEGACY_AMBIGUOUS)
+  t.ok(ambiguous.reason.includes('unsupported hard-link topology'))
+})
+
 test('StoreSession detects a parent-directory path swap after opening the old lock inode', async t => {
   const state = await createManifestedLayout(t)
   const displaced = path.join(state.root, 'control-displaced')

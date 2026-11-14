@@ -26,7 +26,7 @@
     ],
     "circuitRelay": true,
     "proofSignatureProfile": "retrievability-proof-v1",
-    "accountingReceiptKind": "hiverelay-accounting-receipt"
+    "accountingReceiptKind": "hiverelay-accounting-receipt-v2"
   },
   "profile": {
     "kind": "hiverelay-relaykernel-profile",
@@ -68,7 +68,7 @@
       {
         "name": "os-accounting",
         "status": "present",
-        "receiptKind": "hiverelay-accounting-receipt"
+        "receiptKind": "hiverelay-accounting-receipt-v2"
       }
     ],
     "compatibility": {
@@ -83,7 +83,7 @@
     },
     "security": {
       "proofSignatureProfile": "retrievability-proof-v1",
-      "accountingReceiptKind": "hiverelay-accounting-receipt",
+      "accountingReceiptKind": "hiverelay-accounting-receipt-v2",
       "appModulesExcludedFromKernel": false
     },
     "transports": [

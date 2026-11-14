@@ -9,7 +9,12 @@
 
 import { EventEmitter } from 'node:events'
 import Hypercore from 'hypercore'
+import { createHash } from 'node:crypto'
+import { constants as fsConstants, openSync, fstatSync, readSync, closeSync } from 'node:fs'
+import { isAbsolute } from 'node:path'
 import { positiveStorageBound } from 'p2p-hiverelay/config/storage-cap.js'
+import { sharedCoreInfo, sharedOperationFlights } from 'p2p-hiverelay/core/shared-flight-registry.js'
+import { normalizeJournalEntry } from './outbox-log.js'
 
 export const OUTBOXLOG_HYPERCORE_JOURNAL_NAME = 'outboxlog/operations'
 export const OUTBOXLOG_HYPERCORE_APPEND_TIMEOUT_MS = 5000
@@ -18,12 +23,17 @@ export const OUTBOXLOG_OUTBOX_CORE_PREFIX = 'outboxlog/outboxes/'
 export const OUTBOXLOG_PARTITIONED_INDEX_VERSION = 1
 export const OUTBOXLOG_STORAGE_OPERATION_OVERHEAD_BYTES = 1024 * 1024
 const OUTBOXLOG_STORAGE_LEDGER_KEY = 'outboxlog/storage-consumed-v1'
+export const OUTBOXLOG_STORAGE_COMMITMENT_KEY = 'outboxlog/storage-commitment-v1'
+const MAX_COMMITMENT_RECORD_BYTES = 16 * 1024
 
 class JournalStorageController {
-  constructor ({ authority, maxStorageBytes, key }) {
+  constructor ({ authority, maxStorageBytes, key, identity }) {
     this.authority = authority || null
     this.maxStorageBytes = positiveStorageBound(maxStorageBytes)
     this.key = key
+    this.identity = identity
+    this.durableCommitment = null
+    this.recoveryIdentityVerified = false
     this.consumedBytes = 0
     this.actualBytes = 0
     this.cores = new Set()
@@ -39,9 +49,8 @@ class JournalStorageController {
   initialize (actualBytes = 0) {
     if (!this.enabled) throw new Error('OutboxLog journal storage admission unavailable')
     const actual = Number(actualBytes)
-    if (!Number.isSafeInteger(actual) || actual < 0 || actual > this.maxStorageBytes) {
-      throw new Error('OutboxLog recovered storage exceeds aggregate bound')
-    }
+    this.validateRecoveredBytes(actual)
+    const recover = this.durableCommitment && this.recoveryIdentityVerified
     const current = this.authority.get(this.key)
     if (current) {
       if (current.state !== 'committed' || current.boundBytes !== this.maxStorageBytes) {
@@ -51,17 +60,19 @@ class JournalStorageController {
         throw new Error('OutboxLog recovered storage reconciliation failed')
       }
     } else {
-      const reservation = this.authority.reserve(this.key, this.maxStorageBytes, {
-        kind: 'outboxlog',
-        measuredActualBytes: actual
-      })
+      const reservation = recover
+        ? this.authority.recoverOutboxJournal(this.key, this.maxStorageBytes, actual)
+        : this.authority.reserve(this.key, this.maxStorageBytes, {
+          kind: 'outboxlog',
+          measuredActualBytes: actual
+        })
       if (!reservation.allowed) {
         const err = new Error('OutboxLog storage admission blocked: ' + (reservation.reason || 'unknown'))
         err.code = 'STORAGE_ADMISSION_BLOCKED'
         err.storageAdmission = reservation
         throw err
       }
-      if (!this.authority.commit(reservation, { actualBytes: actual })) {
+      if (!recover && !this.authority.commit(reservation, { actualBytes: actual })) {
         this.authority.failClosed('outboxlog-aggregate-commitment-failed')
         const err = new Error('OutboxLog aggregate storage commitment failed')
         err.code = 'STORAGE_RESERVATION_COMMIT_FAILED'
@@ -72,6 +83,15 @@ class JournalStorageController {
     this.consumedBytes = Math.max(this.consumedBytes, actual)
     this.ownershipHandoff = this.authority.issueOwnedHandoff(this.key)
     if (!this.ownershipHandoff) throw new Error('OutboxLog owned-core handoff unavailable')
+  }
+
+  validateRecoveredBytes (actual) {
+    if (!Number.isSafeInteger(actual) || actual < 0 || actual > this.maxStorageBytes) {
+      throw new Error('OutboxLog recovered storage exceeds aggregate bound')
+    }
+    if (this.durableCommitment && actual > this.consumedBytes) {
+      throw new Error('OutboxLog recovered storage exceeds durable debt')
+    }
   }
 
   reserve (encodedBytes, opts = {}) {
@@ -102,11 +122,43 @@ class JournalStorageController {
       const raw = await core.getUserData(OUTBOXLOG_STORAGE_LEDGER_KEY)
       if (raw) {
         const value = Number(Buffer.from(raw).toString('utf8'))
-        if (!Number.isSafeInteger(value) || value < 0 || value > this.maxStorageBytes) {
+        if (!Number.isSafeInteger(value) || value < 0 || value > this.maxStorageBytes ||
+            Buffer.from(raw).toString('utf8') !== String(value)) {
           throw new Error('OutboxLog storage ledger is corrupt')
         }
         this.consumedBytes = Math.max(this.consumedBytes, value)
       }
+      const commitment = await core.getUserData(OUTBOXLOG_STORAGE_COMMITMENT_KEY)
+      if (commitment) {
+        const bytes = Buffer.from(commitment)
+        if (bytes.byteLength > MAX_COMMITMENT_RECORD_BYTES) throw new Error('OutboxLog storage commitment is corrupt')
+        let record
+        try { record = JSON.parse(bytes.toString('utf8')) } catch (_) {
+          throw new Error('OutboxLog storage commitment is corrupt')
+        }
+        const expected = this.commitmentRecord(record?.consumedBytes)
+        if (!Number.isSafeInteger(record?.consumedBytes) || record.consumedBytes < 0 ||
+            record.consumedBytes > this.maxStorageBytes ||
+            bytes.toString('utf8') !== JSON.stringify(expected) || !raw ||
+            record.consumedBytes !== this.consumedBytes) {
+          throw new Error('OutboxLog storage commitment mismatch or incomplete ledger')
+        }
+        this.durableCommitment = record
+      }
+    }
+  }
+
+  commitmentRecord (consumedBytes = this.consumedBytes) {
+    return {
+      version: 1,
+      kind: 'outboxlog-aggregate',
+      authorityKey: this.key,
+      mode: this.identity.mode,
+      name: this.identity.name,
+      coreNamePrefix: this.identity.coreNamePrefix,
+      coreKey: coreKeyHex(this.ledgerCore),
+      boundBytes: this.maxStorageBytes,
+      consumedBytes
     }
   }
 
@@ -122,7 +174,19 @@ class JournalStorageController {
     if (!this.ledgerCore || typeof this.ledgerCore.setUserData !== 'function') {
       throw new Error('OutboxLog durable storage ledger unavailable')
     }
-    await this.ledgerCore.setUserData(OUTBOXLOG_STORAGE_LEDGER_KEY, Buffer.from(String(this.consumedBytes)))
+    const record = this.commitmentRecord()
+    const encoded = Buffer.from(JSON.stringify(record))
+    if (encoded.byteLength > MAX_COMMITMENT_RECORD_BYTES) throw new Error('OutboxLog storage commitment is too large')
+    try {
+      // Keep the old ledger conservative for older readers. A crash between
+      // these writes leaves a detectable mismatch, never reusable capacity.
+      await this.ledgerCore.setUserData(OUTBOXLOG_STORAGE_LEDGER_KEY, Buffer.from(String(this.consumedBytes)))
+      await this.ledgerCore.setUserData(OUTBOXLOG_STORAGE_COMMITMENT_KEY, encoded)
+      this.durableCommitment = record
+    } catch (err) {
+      this.authority.failClosed('outboxlog-storage-ledger-persistence-failed')
+      throw err
+    }
   }
 
   markDispatched (operation) {
@@ -180,26 +244,31 @@ class JournalStorageController {
   async measureExact () {
     let actual = 0
     for (const core of this.cores) {
-      if (!core || typeof core.info !== 'function') throw new Error('OutboxLog exact core storage info unavailable')
-      const info = await core.info({ storage: true })
-      if (!info) throw new Error('OutboxLog exact core storage info unavailable')
-      if (!info.storage) {
-        // corestore 7 / RocksDB-backed storage no longer exposes per-core
-        // physical file usage — core.info({ storage: true }) yields
-        // storage: null there. Fall back to the deterministic on-disk
-        // content size derived from the core itself.
-        actual += deriveCoreStorageBytes(core)
-        if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
-        continue
-      }
-      for (const value of Object.values(info.storage)) {
-        const bytes = Number(value)
-        if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('OutboxLog exact core storage info invalid')
-        actual += bytes
-        if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
-      }
+      actual += await this.measureCore(core)
+      if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
     }
     return actual
+  }
+
+  async measureCore (core) {
+    if (!core || typeof core.info !== 'function') throw new Error('OutboxLog exact core storage info unavailable')
+    const contentBytes = deriveCoreStorageBytes(core)
+    const info = await sharedCoreInfo(core, {
+      owner: this,
+      timeoutMs: OUTBOXLOG_HYPERCORE_APPEND_TIMEOUT_MS
+    })
+    if (!info) throw new Error('OutboxLog exact core storage info unavailable')
+    // RocksDB reports storage:null. Its logical content size is not an OS
+    // allocation quota; whole-tree admission independently charges allocation.
+    if (!info.storage) return contentBytes
+    let actual = 0
+    for (const value of Object.values(info.storage)) {
+      const bytes = Number(value)
+      if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('OutboxLog exact core storage info invalid')
+      actual += bytes
+      if (!Number.isSafeInteger(actual)) throw new Error('OutboxLog exact core storage exceeds safe integer range')
+    }
+    return Math.max(actual, contentBytes)
   }
 
   async complete () {
@@ -235,6 +304,7 @@ class JournalStorageController {
   }
 
   close () {
+    sharedOperationFlights.invalidateOwner(this, { retire: true })
     if (!this.ownershipHandoff) return false
     const released = this.authority.releaseOwnedHandoff(this.ownershipHandoff)
     this.ownershipHandoff = null
@@ -252,10 +322,12 @@ export async function createHypercoreOutboxJournal ({
   maxJournalStorageBytes = null,
   storageKey = null
 } = {}) {
+  assertJournalIdentity(name, storageKey, null)
   const storageController = new JournalStorageController({
     authority: storageAdmission,
     maxStorageBytes: maxJournalStorageBytes,
-    key: storageKey || `outboxlog:${name}`
+    key: storageKey || `outboxlog:${name}`,
+    identity: { mode: 'hypercore', name, coreNamePrefix: null }
   })
   if (!storageController.enabled) throw new Error('OutboxLogHypercoreJournal: storage admission required')
   let openedSuccessfully = false
@@ -265,17 +337,24 @@ export async function createHypercoreOutboxJournal ({
     }
     if (core) {
       if (typeof core.ready === 'function') await core.ready()
+      storageController.recoveryIdentityVerified = await assertOwnedCore(core, store, name)
       storageController.registerCore(core)
       await storageController.bindLedgerCore(core)
-      storageController.initialize(await storageController.measureExact())
-    } else {
-      storageController.initialize()
     }
+    // Validate every recovered block before installing ownership or writing a
+    // commitment. A corrupt pre-existing core must not acquire recovery rights.
+    const entries = []
+    if (core) storageController.validateRecoveredBytes(await storageController.measureExact())
+    const length = core && Number.isSafeInteger(core.length) && core.length > 0 ? core.length : 0
+    for (let i = 0; i < length; i++) entries.push(parseBlock(await localJournalBlock(core, i), i))
+    validateJournalEntries(entries)
+    storageController.initialize(core ? await storageController.measureExact() : 0)
     if (!core) {
       if (!store || typeof store.get !== 'function') throw new Error('OutboxLogHypercoreJournal: store required')
       core = await storageController.create(async () => {
         const opened = store.get({ name })
         if (typeof opened.ready === 'function') await opened.ready()
+        await assertOwnedCore(opened, store, name)
         return opened
       })
     }
@@ -289,12 +368,6 @@ export async function createHypercoreOutboxJournal ({
     }
     await storageController.persistDebt()
 
-    const entries = []
-    const length = Number.isSafeInteger(core.length) && core.length > 0 ? core.length : 0
-    for (let i = 0; i < length; i++) {
-      const block = await core.get(i)
-      entries.push(parseBlock(block, i))
-    }
     await storageController.complete()
 
     openedSuccessfully = true
@@ -311,6 +384,131 @@ export async function createHypercoreOutboxJournal ({
   }
 }
 
+/** Stable binding of the complete recovered authority inventory, including debt. */
+export function outboxRecoveryInventoryDigest (authority) {
+  const records = authority.snapshot().records
+    .sort((a, b) => a.key < b.key ? -1 : a.key > b.key ? 1 : 0)
+    .map(record => Object.fromEntries(Object.keys(record).sort().map(key => [key, record[key]])))
+  return createHash('sha256').update(JSON.stringify(records)).digest('hex')
+}
+
+/**
+ * Explicit offline operator migration only. Normal startup never calls this.
+ * The caller verifies backup/held-writer/source/config/empty legacy snapshot
+ * proofs, selects the immutable plan, then durably records an external intent.
+ * Here we independently bind those selected files and the current complete
+ * authority/root/owner before installing debt and allocating any journal.
+ */
+export async function bootstrapEmptyLegacyOutboxJournal ({
+  store,
+  storageAdmission,
+  name = OUTBOXLOG_HYPERCORE_JOURNAL_NAME,
+  maxJournalStorageBytes,
+  authorizationPath,
+  authorizationSha256
+}) {
+  assertJournalIdentity(name, null, null)
+  const bound = positiveStorageBound(maxJournalStorageBytes)
+  const authorization = readPinnedOperatorJson(authorizationPath, authorizationSha256)
+  if (!store || typeof store.createKeyPair !== 'function' || !storageAdmission || bound === null ||
+      authorization.schema !== 'HiveRelayOfflineEmptyOutboxAuthorizationV1' ||
+      authorization.action !== 'initialize-exact-empty-single-outbox-journal' ||
+      !/^[0-9a-f]{40}$/.test(authorization.sourceCommit) ||
+      typeof authorization.sourceRoot !== 'string' || !isAbsolute(authorization.sourceRoot)) {
+    throw new Error('OutboxLog offline bootstrap authorization invalid')
+  }
+  readPinnedOperatorJson(authorization.selectedPlan?.path, authorization.selectedPlan?.sha256)
+  const intent = readPinnedOperatorJson(authorization.irreversibleIntent?.path, authorization.irreversibleIntent?.sha256)
+  if (intent.selectedPlanSha256 !== authorization.selectedPlan.sha256) {
+    throw new Error('OutboxLog offline bootstrap intent mismatch')
+  }
+  const keyPair = await store.createKeyPair(name)
+  const manifest = { version: store.manifestVersion || 1, signers: [{ publicKey: keyPair.publicKey }] }
+  const coreKey = Hypercore.key(manifest).toString('hex')
+  const expectedJournal = { mode: 'hypercore', name, coreKey, boundBytes: bound }
+  if (!authorization.journal || Object.keys(authorization.journal).length !== 4 ||
+      Object.keys(expectedJournal).some(key => authorization.journal[key] !== expectedJournal[key])) {
+    throw new Error('OutboxLog offline bootstrap journal mismatch')
+  }
+  const authorityKey = `outboxlog:${name}`
+  if (storageAdmission.get(authorityKey)) throw new Error('OutboxLog offline bootstrap commitment already exists')
+  const existing = await tryOpenExistingCore(store, { name })
+  if (existing) {
+    await assertOwnedCore(existing, store, name)
+    if (existing.length !== 0 || existing.byteLength !== 0 ||
+        await existing.getUserData(OUTBOXLOG_STORAGE_LEDGER_KEY) ||
+        await existing.getUserData(OUTBOXLOG_STORAGE_COMMITMENT_KEY)) {
+      throw new Error('OutboxLog offline bootstrap journal is not pristine empty state')
+    }
+  }
+  const sample = storageAdmission.filesystemSample({ refresh: true })
+  const snapshot = storageAdmission.snapshot()
+  const inventoryBefore = outboxRecoveryInventoryDigest(storageAdmission)
+  if (sample.ok !== true || !snapshot.recoveryReady || snapshot.activeMutations !== 0 ||
+      snapshot.activePhysicalMutations !== 0 || !snapshot.acceptingMutations || snapshot.fatalReason ||
+      !authorization.rootIdentity ||
+      ['storagePath', 'realpath', 'device', 'inode'].some(key =>
+        typeof authorization.rootIdentity[key] !== 'string' || authorization.rootIdentity[key] !== String(sample[key])) ||
+      authorization.operatorCapBytes !== storageAdmission.config.maxStorageBytes ||
+      authorization.authorityRecordsSha256 !== inventoryBefore) {
+    throw new Error('OutboxLog offline bootstrap current authority or storage identity mismatch')
+  }
+  // This is the separately selected migration grant, not an empty-core shortcut
+  // in the runtime loader. Install its entire finite promise before allocation.
+  const granted = storageAdmission.recoverOutboxJournal(authorityKey, bound, 0)
+  if (!granted.allowed) {
+    const error = new Error('OutboxLog offline bootstrap storage admission blocked: ' + granted.reason)
+    error.code = 'STORAGE_ADMISSION_BLOCKED'
+    error.storageAdmission = granted
+    throw error
+  }
+  const journal = await createHypercoreOutboxJournal({ store, core: existing, name, storageAdmission, maxJournalStorageBytes: bound })
+  return {
+    journal,
+    receipt: {
+      schema: 'HiveRelayOfflineEmptyOutboxBootstrapReceiptV1',
+      authorizationSha256,
+      selectedPlanSha256: authorization.selectedPlan.sha256,
+      irreversibleIntentSha256: authorization.irreversibleIntent.sha256,
+      coreKey,
+      boundBytes: bound,
+      consumedBytes: journal.storageController.consumedBytes,
+      authorityRecordsBeforeSha256: inventoryBefore,
+      authorityRecordsAfterSha256: outboxRecoveryInventoryDigest(storageAdmission)
+    }
+  }
+}
+
+function readPinnedOperatorJson (filename, expectedHash) {
+  if (typeof filename !== 'string' || !isAbsolute(filename) || typeof expectedHash !== 'string' || !/^[0-9a-f]{64}$/.test(expectedHash)) {
+    throw new Error('OutboxLog offline bootstrap file pin invalid')
+  }
+  const fd = openSync(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW | fsConstants.O_NONBLOCK)
+  try {
+    const stat = fstatSync(fd, { bigint: true })
+    if (!stat.isFile() || stat.nlink !== 1n || stat.size <= 0n || stat.size > 4n * 1024n * 1024n || (stat.mode & 0o022n) !== 0n) {
+      throw new Error('OutboxLog offline bootstrap file invalid')
+    }
+    const bytes = Buffer.alloc(Number(stat.size))
+    let offset = 0
+    while (offset < bytes.byteLength) {
+      const count = readSync(fd, bytes, offset, bytes.byteLength - offset, null)
+      if (count === 0) break
+      offset += count
+    }
+    const extra = readSync(fd, Buffer.alloc(1), 0, 1, null)
+    const after = fstatSync(fd, { bigint: true })
+    if (offset !== bytes.byteLength || extra !== 0 ||
+        ['dev', 'ino', 'size', 'mode', 'nlink', 'uid', 'gid', 'mtimeNs', 'ctimeNs'].some(key => stat[key] !== after[key]) ||
+        createHash('sha256').update(bytes).digest('hex') !== expectedHash) {
+      throw new Error('OutboxLog offline bootstrap file pin mismatch')
+    }
+    return JSON.parse(bytes.toString('utf8'))
+  } finally {
+    closeSync(fd)
+  }
+}
+
 export async function createPartitionedHypercoreOutboxJournal ({
   store = null,
   indexCore = null,
@@ -323,10 +521,12 @@ export async function createPartitionedHypercoreOutboxJournal ({
   storageKey = null
 } = {}) {
   if (!store || typeof store.get !== 'function') throw new Error('OutboxLogPartitionedHypercoreJournal: store required')
+  assertJournalIdentity(indexName, storageKey, coreNamePrefix)
   const storageController = new JournalStorageController({
     authority: storageAdmission,
     maxStorageBytes: maxJournalStorageBytes,
-    key: storageKey || `outboxlog:${indexName}`
+    key: storageKey || `outboxlog:${indexName}`,
+    identity: { mode: 'hypercore-outboxes', name: indexName, coreNamePrefix }
   })
   if (!storageController.enabled) throw new Error('OutboxLogPartitionedHypercoreJournal: storage admission required')
   let openedSuccessfully = false
@@ -339,21 +539,28 @@ export async function createPartitionedHypercoreOutboxJournal ({
         const core = store.get({ name: indexName })
         assertJournalCore(core, 'index core')
         await readyCore(core)
+        await assertOwnedCore(core, store, indexName)
         return core
       })
     }
     assertJournalCore(indexCore, 'index core')
     await readyCore(indexCore)
+    storageController.recoveryIdentityVerified = await assertOwnedCore(indexCore, store, indexName)
     storageController.registerCore(indexCore)
     await storageController.bindLedgerCore(indexCore)
 
     const outboxes = new Map()
+    let recoveredBytes = recovering ? await storageController.measureExact() : 0
+    if (recovering) storageController.validateRecoveredBytes(recoveredBytes)
     const indexLength = Number.isSafeInteger(indexCore.length) && indexCore.length > 0 ? indexCore.length : 0
     for (let i = 0; i < indexLength; i++) {
-      const meta = parseIndexBlock(await indexCore.get(i), i)
+      const meta = parseIndexBlock(await localJournalBlock(indexCore, i), i)
+      if (meta.coreName !== coreNameForOutbox(meta.appId, coreNamePrefix)) {
+        throw new Error('OutboxLogPartitionedHypercoreJournal: indexed outbox name mismatch')
+      }
       const existing = outboxes.get(meta.appId)
       if (existing) {
-        if (existing.name !== meta.coreName) {
+        if (existing.name !== meta.coreName || existing.inviteKey !== meta.inviteKey || existing.firstSeq !== meta.firstSeq) {
           throw new Error('OutboxLogPartitionedHypercoreJournal: conflicting index block ' + i + ' for ' + meta.appId)
         }
         continue
@@ -364,7 +571,13 @@ export async function createPartitionedHypercoreOutboxJournal ({
       if (!core) throw new Error('OutboxLogPartitionedHypercoreJournal: indexed outbox core missing for ' + meta.appId)
       assertJournalCore(core, 'outbox core ' + meta.appId)
       await readyCore(core)
+      await assertOwnedCore(core, store, meta.coreName)
+      await readyCore(core)
       storageController.registerCore(core)
+      if (recovering) {
+        recoveredBytes += await storageController.measureCore(core)
+        storageController.validateRecoveredBytes(recoveredBytes)
+      }
       assertJournalCore(core, 'outbox core ' + meta.appId)
       outboxes.set(meta.appId, {
         appId: meta.appId,
@@ -380,11 +593,17 @@ export async function createPartitionedHypercoreOutboxJournal ({
     for (const [appId, outbox] of outboxes) {
       await readyCore(outbox.core)
       const length = Number.isSafeInteger(outbox.core.length) && outbox.core.length > 0 ? outbox.core.length : 0
+      if (length === 0) throw new Error('OutboxLogPartitionedHypercoreJournal: indexed outbox has no entries')
       for (let i = 0; i < length; i++) {
-        entries.push(parseOutboxBlock(await outbox.core.get(i), appId, i))
+        const entry = parseOutboxBlock(await localJournalBlock(outbox.core, i), appId, i)
+        if (i === 0 && entry.seq !== outbox.firstSeq) {
+          throw new Error('OutboxLogPartitionedHypercoreJournal: indexed first sequence mismatch')
+        }
+        entries.push(entry)
       }
     }
     entries.sort((a, b) => a.seq - b.seq)
+    validateJournalEntries(entries)
     if (recovering) storageController.initialize(await storageController.measureExact())
     await storageController.persistDebt()
     await storageController.complete()
@@ -634,6 +853,7 @@ export class PartitionedHypercoreOutboxJournal extends EventEmitter {
       assertJournalCore(outbox.core, 'outbox core ' + entry.appId)
     }
     await readyCore(outbox.core)
+    await assertOwnedCore(outbox.core, this.store, outbox.name)
     this.storageController.registerCore(outbox.core)
     if (!outbox.indexed) {
       await appendWithTimeout(this.indexCore, indexMetadataFor(outbox, entry), this.appendTimeoutMs, this.storageController, storageOperation)
@@ -700,6 +920,14 @@ async function appendWithTimeout (core, entry, timeoutMs, storageController, ope
 
 function parseBlock (block, index) {
   return parseJsonBlock(block, index, 'OutboxLogHypercoreJournal: corrupt block ')
+}
+
+function validateJournalEntries (entries) {
+  for (let i = 0; i < entries.length; i++) {
+    if (!normalizeJournalEntry(entries[i], i + 1)) {
+      throw new Error('OutboxLog journal corrupt operation or sequence at ' + (i + 1))
+    }
+  }
 }
 
 function parseIndexBlock (block, index) {
@@ -774,6 +1002,39 @@ async function readyCore (core) {
   if (core && typeof core.ready === 'function') await core.ready()
 }
 
+async function localJournalBlock (core, index) {
+  const block = await core.get(index, { wait: false })
+  if (!block) throw new Error('OutboxLog journal local block missing')
+  return block
+}
+
+function assertJournalIdentity (name, storageKey, coreNamePrefix) {
+  const valid = value => typeof value === 'string' && value.length > 0 &&
+    Buffer.byteLength(value) <= 1024 && !value.includes('\0')
+  if (!valid(name) || (coreNamePrefix !== null && !valid(coreNamePrefix)) ||
+      (storageKey !== null && (!valid(storageKey) || !storageKey.startsWith('outboxlog:') || storageKey.length <= 10))) {
+    throw new Error('OutboxLog journal identity invalid')
+  }
+}
+
+async function assertOwnedCore (core, store, name) {
+  const key = coreKeyHex(core)
+  if (core?.writable !== true || !key || !/^[0-9a-f]{64}$/.test(key)) {
+    throw new Error('OutboxLog journal requires a local writable owner')
+  }
+  if (store && typeof store.createKeyPair === 'function') {
+    const keyPair = await store.createKeyPair(name)
+    const manifest = { version: store.manifestVersion || 1, signers: [{ publicKey: keyPair.publicKey }] }
+    if (key !== Hypercore.key(manifest).toString('hex')) {
+      throw new Error('OutboxLog journal named owner mismatch')
+    }
+    return true
+  }
+  // An injected writable core may be freshly admitted, but it cannot claim
+  // durable recovery without the selected store's namespace/name proof.
+  return false
+}
+
 async function tryOpenExistingCore (store, opts) {
   // Corestore 7 session semantics: a store.get({ createIfMissing: false })
   // that misses storage fails the core's opening with STORAGE_EMPTY, and
@@ -815,9 +1076,11 @@ async function tryOpenExistingCore (store, opts) {
 // plus the merkle tree (40 bytes per node, ~2 nodes per block) and the
 // bitfield (1 bit per block).
 function deriveCoreStorageBytes (core) {
-  const length = Number.isSafeInteger(core.length) && core.length > 0 ? core.length : 0
-  const byteLength = Number.isSafeInteger(core.byteLength) && core.byteLength > 0 ? core.byteLength : 0
-  return byteLength + (2 * length * 40) + Math.ceil(length / 8)
+  const { length, byteLength } = core
+  const bytes = byteLength + (2 * length * 40) + Math.ceil(length / 8)
+  if (!Number.isSafeInteger(length) || length < 0 || !Number.isSafeInteger(byteLength) ||
+      byteLength < 0 || !Number.isSafeInteger(bytes)) throw new Error('OutboxLog core storage metrics invalid')
+  return bytes
 }
 
 function coreKeyHex (core) {

@@ -16,8 +16,12 @@ import { evaluateSeedLease } from '../../incentive/lease/gate.js'
 import { custodyDisabledResult } from './api-custody-disabled.js'
 import { validatePositiveInt } from './api-validation.js'
 import { positiveStorageBound } from '../../config/storage-cap.js'
+import {
+  MAX_SEED_DISCOVERY_HINTS,
+  validateSeedDiscoveryHints
+} from '../protocol/seed-discovery-hints.js'
 
-export const MAX_DISCOVERY_KEYS = 100
+export const MAX_DISCOVERY_KEYS = MAX_SEED_DISCOVERY_HINTS
 export const MAX_REGISTRY_GEO_ITEMS = 64
 export const MAX_REGISTRY_GEO_BYTES = 2048
 export const MAX_REGISTRY_TTL_DAYS = 3650
@@ -259,13 +263,15 @@ function buildRegistryPublishRequest (body, node) {
   const mountError = validateMountFields({ parentKey, mountPath, type: contentType })
   if (mountError) return { ok: false, result: mountError }
 
-  const dks = body.discoveryKeys || []
+  const dks = body.discoveryKeys === undefined ? [] : body.discoveryKeys
   if (!Array.isArray(dks) || dks.length > MAX_DISCOVERY_KEYS) {
     return { ok: false, result: badRequest(`discoveryKeys must be an array of at most ${MAX_DISCOVERY_KEYS} items`) }
   }
   for (const dk of dks) {
     if (!isValidHexKey(dk, 64)) return { ok: false, result: badRequest('Each discoveryKey must be 64 hex characters') }
   }
+  const hintCheck = validateSeedDiscoveryHints(body.appKey, dks)
+  if (!hintCheck.ok) return { ok: false, result: badRequest(hintCheck.reason) }
 
   const privacyTier = body.privacyTier === undefined
     ? 'public'

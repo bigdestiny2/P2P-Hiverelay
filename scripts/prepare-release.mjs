@@ -34,7 +34,7 @@ Usage:
   node scripts/prepare-release.mjs vX.Y.Z --image-digest sha256:<digest> [options]
 
 Options:
-  --channel <canary|stable|both|none>  Fleet channel to bump (default: both; prereleases: none)
+  --channel <canary|stable|both|none>  Must be none; fleet changes use fleet:publish-channel
   --image-digest <sha256:...>          Multi-arch GHCR image digest for app-store pins
   --release-notes <text>               Release notes for Umbrel/StartOS metadata
   --release-notes-file <path>          Read release notes from a file
@@ -101,6 +101,8 @@ if (!['local', 'npm-latest', 'npm-range'].includes(ecosystemDependencyMode)) {
   die(`Invalid --ecosystem-dependency-mode "${ecosystemDependencyMode}". Expected local, npm-latest, or npm-range.`)
 }
 
+if (channel !== 'none') die('Release preparation cannot change fleet channels; use the signed fleet:publish-channel entry point.')
+
 syncPackageVersions()
 syncEcosystemConsumerDefaults()
 syncFleetChannel()
@@ -162,8 +164,8 @@ function normalizeVersion (input) {
   return match[1]
 }
 
-function defaultChannelForVersion (semver) {
-  return semver.includes('-') ? 'none' : 'both'
+function defaultChannelForVersion () {
+  return 'none'
 }
 
 function readPublicGatewayReleaseControl () {
@@ -307,15 +309,7 @@ function syncPackageVersions () {
 }
 
 function syncFleetChannel () {
-  if (channel === 'none') return
-  updateJson(path.join(repoRoot, 'fleet', 'channels.json'), (json) => {
-    if (channel === 'both') {
-      json.stable = tag
-      json.canary = tag
-    } else {
-      json[channel] = tag
-    }
-  })
+  // Fleet authority requires a separately signed channels-only commit.
 }
 
 function syncEcosystemConsumerDefaults () {
@@ -433,8 +427,8 @@ function syncTrueNas () {
   replaceTrueNasImageVersion(imageValues)
   replaceInFile(
     appReadme,
-    /Upstream HiveRelay release:\s*`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`/,
-    `Upstream HiveRelay release: \`${version}\``,
+    /(?:Upstream HiveRelay release|Target HiveRelay version):\s*`\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?`/,
+    `Target HiveRelay version: \`${version}\``,
     'TrueNAS app README upstream version'
   )
   if (needsCatalogRevision) replaceYamlScalar(appManifest, 'version', bumpPatchVersion(oldCatalogVersion))
@@ -516,7 +510,7 @@ function readTrueNasImageVersion (file) {
 }
 
 function readTrueNasReadmeVersion (file) {
-  const match = read(file).match(/Upstream HiveRelay release:\s*`(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`/)
+  const match = read(file).match(/(?:Upstream HiveRelay release|Target HiveRelay version):\s*`(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)`/)
   if (!match) die(`Could not find upstream HiveRelay release in ${relative(file)}.`)
   return match[1]
 }

@@ -13,10 +13,12 @@ function keypairFromSeed (byte) {
 }
 
 function makeReceipt (keyPair = keypairFromSeed(8)) {
+  const completedAt = Date.now() - 100
   return createAccountingReceipt(keyPair, {
-    periodStart: 100,
-    periodEnd: 200,
-    measuredAt: 201,
+    periodStart: completedAt - 100,
+    periodEnd: completedAt,
+    observedAt: completedAt - 100,
+    completedAt,
     storageBytes: 4096,
     diskBytes: 3072,
     perEntryBytes: 2048,

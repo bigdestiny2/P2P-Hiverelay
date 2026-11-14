@@ -229,19 +229,19 @@ test('a slow archive walk widens the freshness window instead of being permanent
   t.ok(status.measurements.fresh, 'a sample one walk-cycle old is as fresh as this hardware can be')
   t.ok(status.measurements.derivedWindow)
   t.is(status.measurements.durationMs, walkMs)
-  t.is(status.measurements.maxAgeMs, 2 * walkMs + 60_000)
+  t.is(status.measurements.maxAgeMs, 2 * walkMs + 1_980_000)
   t.is(status.measurements.floorMs, 5 * 60 * 1000, 'the strict floor is still reported')
   t.absent(status.advertisement.blockReasons.includes('capacity-measurement-stale'))
 
   const older = buildCapacityStatus({
     ...archive,
-    storage: { ...archive.storage, diskMeasuredAt: NOW - 3 * walkMs }
+    storage: { ...archive.storage, diskMeasuredAt: NOW - 5 * walkMs }
   })
   t.absent(older.measurements.fresh, 'the widened window is still a window')
   t.ok(older.advertisement.blockReasons.includes('capacity-measurement-stale'))
 })
 
-test('a fast host keeps the strict freshness budget', (t) => {
+test('a fast host uses the fixed accounting cadence allowance', (t) => {
   const status = buildCapacityStatus({
     config: { capacityProfile: 'seeder-standard', maxStorageBytes: 100 * GiB },
     disk: { totalBytes: TiB, freeBytes: 500 * GiB, checkedAt: NOW - 1000 },
@@ -257,14 +257,14 @@ test('a fast host keeps the strict freshness budget', (t) => {
     now: NOW
   })
 
-  t.is(status.measurements.maxAgeMs, 5 * 60 * 1000, 'a sub-second walk earns no extra allowance')
-  t.absent(status.measurements.derivedWindow)
-  t.absent(status.measurements.fresh)
-  t.ok(status.advertisement.blockReasons.includes('capacity-measurement-stale'))
+  t.is(status.measurements.maxAgeMs, 2 * 120 + 1_980_000)
+  t.ok(status.measurements.derivedWindow)
+  t.ok(status.measurements.fresh)
+  t.absent(status.advertisement.blockReasons.includes('capacity-measurement-stale'))
 })
 
 test('a storage root too slow to measure never buys an unbounded freshness window', (t) => {
-  const walkMs = 90 * 60 * 1000
+  const walkMs = 13 * 60 * 60 * 1000
   const status = buildCapacityStatus({
     config: { capacityProfile: 'archive-storage', maxStorageBytes: 30 * TiB },
     disk: { totalBytes: 40 * TiB, freeBytes: 20 * TiB, checkedAt: NOW - 1000 },
@@ -280,7 +280,7 @@ test('a storage root too slow to measure never buys an unbounded freshness windo
     now: NOW
   })
 
-  t.is(status.measurements.maxAgeMs, 60 * 60 * 1000, 'capped at the hard ceiling')
+  t.is(status.measurements.maxAgeMs, 24 * 60 * 60 * 1000, 'capped at the hard ceiling')
   t.ok(status.measurements.windowCapped)
   t.absent(status.measurements.fresh, 'an unmeasurable root stays fail-closed')
   t.ok(status.advertisement.blockReasons.includes('capacity-measurement-stale'))

@@ -1,3 +1,7 @@
+# Current staged release policy
+
+Ordinary release triggers now publish the versioned artifact phase only. Stable pointers, fleet and deferred distribution require the separately authenticated promotion workflow and receipt. See [RELEASE_STAGING.md](RELEASE_STAGING.md) for the current commands, proof contract and final acceptance gate. Historical monolithic workflow descriptions below do not authorize stable publication from artifact success.
+
 # Release Automation
 
 HiveRelay release surfaces are synchronized by `scripts/prepare-release.mjs`
@@ -375,10 +379,14 @@ metadata, roll the selected fleet channels, and attach evidence. A full release
 with no channel override defaults to `both`; a prerelease defaults to `none`.
 
 `release-surfaces.yml` is the only workflow that publishes release image tags.
-The older `docker-publish.yml` workflow is snapshot-only: pushes to `main`
-publish `latest` and `main-<sha>` for canary testing, but `vX.Y.Z` tags are
-reserved for the release workflow so the GHCR digest, fleet channels, Umbrel
-metadata, and StartOS package move together.
+The `docker-publish.yml` workflow is snapshot-only: pushes to `main` publish
+`main` and `main-<sha>` for canary testing. Manual runs at other branches publish
+`branch-<branch>` and `branch-<sha>`; runs at tags are skipped. The branch prefix
+also prevents branches named `latest` or `vX.Y.Z` from claiming release tags.
+Snapshots never move `latest`, even when the source package version is stable.
+Versioned image publication belongs to `release-surfaces.yml`; moving stable
+`latest` requires the separate protected qualification and promotion process
+in [RELEASE_STAGING.md](RELEASE_STAGING.md).
 
 ## What Updates Automatically
 

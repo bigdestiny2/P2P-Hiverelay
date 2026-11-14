@@ -1,9 +1,13 @@
 import Hyperswarm from 'hyperswarm'
-import { openCorestore } from '../persistence/storage-root-restore.js'
+import {
+  corestoreGenerationHealth,
+  corestoreGenerationParticipantOptions,
+  openCorestore
+} from '../persistence/storage-root-restore.js'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
 import { EventEmitter } from 'events'
-import { readFile, writeFile, rename, unlink, mkdir, chmod } from 'fs/promises'
+import { readFile, writeFile, rename, unlink, mkdir, chmod, realpath } from 'fs/promises'
 import { join, dirname } from 'path'
 import { Seeder } from './seeder.js'
 import { Relay } from './relay.js'
@@ -12,6 +16,7 @@ import { RelayAPI } from './api.js'
 import { DistributedDriveBridge } from './distributed-drive-bridge.js'
 import { WebSocketTransport } from '../../transports/websocket/index.js'
 import { DHTRelayWS } from '../../transports/dht-relay-ws/index.js'
+import { PearBlindRelayTransport } from '../../transports/pear-blind-relay/index.js'
 import { TorTransport } from '../../transports/tor/index.js'
 import { OnionPeerListener } from '../../transports/tor/peer-listener.js'
 import { completeOnionEnrollment } from '../../transports/tor/enrollment.js'
@@ -24,6 +29,7 @@ import { AutoHeal } from '../auto-heal.js'
 import { ManifestStore } from '../manifest-store.js'
 import { resolveAcceptMode, decideAcceptance } from '../accept-mode.js'
 import { SeedProtocol } from '../protocol/seed-request.js'
+import { validateSeedDiscoveryHints } from '../protocol/seed-discovery-hints.js'
 import { AnchorProtocol } from '../protocol/anchor-channel.js'
 import { CustodyProtocol } from '../protocol/custody-channel.js'
 import { PublishProtocol } from '../protocol/publish-channel.js'
@@ -79,14 +85,17 @@ import {
 import { SwarmFirewall } from './swarm-firewall.js'
 import { PolicyGuard } from '../policy-guard.js'
 import { AppLifecycle } from './app-lifecycle.js'
+import { createRetainedReadController } from '../retained-read-capability.js'
 import { GatewayServer, assertHiveAppGatewayIsolation } from './gateway-server.js'
 import { hasActiveExactGateway } from '../../gateway/exact-app-context.js'
 import { LifecycleScope, isAbortError } from './lifecycle-scope.js'
-import { buildDedupReport } from './dedup-report.js'
+import { CompletionScheduler, strictPositiveInteger } from '../completion-scheduler.js'
+import { BoundedDedupReport } from './dedup-report.js'
 import { encodeRelayRecord, relayRecordHasContent } from './relay-record.js'
 import { hashHex } from '../custody-signing.js'
 import {
   copyStorageCapProvenance,
+  evaluateStorageAdmission,
   getStorageCapProvenance,
   markStorageCapDefault,
   markStorageCapExplicit,
@@ -97,6 +106,11 @@ import {
 import { StorageAdmissionAuthority } from '../../config/storage-admission-authority.js'
 import { isCapacityProfile, normalizeCapacityProfile } from '../../config/capacity-plan.js'
 import { buildCapacityStatus } from './capacity-status.js'
+import { ResourceDiagnostics } from './resource-diagnostics.js'
+import { AppCatalogController } from './app-catalog-controller.js'
+import { AppCatalogDiskStageFactory } from './app-catalog-paged-stage.js'
+import { catalogRowToLegacyApp } from './app-catalog-source.js'
+import HyperDHT from 'hyperdht'
 
 // z32-encoded 32-byte key (the Hypercore/Autobase z-base-32 alphabet), 52 chars.
 // Used to validate the index-room pointer published by the sidecar.
@@ -107,6 +121,8 @@ const DEFAULT_CONFIG = {
   capacityProfile: null,
   capacityProfileConfigured: false,
   storage: './storage',
+  hiverelayGeneration: null,
+  retainedReadCapability: null,
   maxStorageBytes: 50 * 1024 * 1024 * 1024, // 50 GB
   maxConnections: 256,
   maxRelayBandwidthMbps: 100,
@@ -138,6 +154,34 @@ const DEFAULT_CONFIG = {
   },
   custodyExpiryInterval: 60_000,
   custodyExpiryGraceMs: 0,
+  storageAccounting: {
+    tickMs: 5000,
+    batchSize: 25,
+    operationsPerSecond: 32,
+    javascriptSliceMs: 10,
+    maxOpenDirectories: 64,
+    maxPathBytes: 4096,
+    maxDepth: 256,
+    maxQueuedPathBytes: 32 * 1024 * 1024,
+    maxBookkeepingBytes: 64 * 1024 * 1024,
+    maxEntries: 250_000,
+    maxDirectories: 50_000
+  },
+  resourceDiagnostics: {
+    sampleIntervalMs: 5_000,
+    fileReadBytes: 32 * 1024,
+    fdScanLimit: 4_096,
+    heapSpaceLimit: 32,
+    healthSampleLimit: 256,
+    schedulerLimit: 16
+  },
+  appCatalogPaged: {
+    sourceIntervalMs: 60_000,
+    sourceBudget: 64,
+    digestBudget: 128,
+    sweepIntervalMs: 1_000,
+    actionLimit: 10
+  },
   gatewayPublicOnlyPrivacyTier: true,
   gatewayPort: null,
   gatewayHost: '127.0.0.1',
@@ -248,11 +292,27 @@ const DEFAULT_CONFIG = {
     enabled: false
   },
   replicationCheckInterval: 60_000,
+  registryScanBudget: 64,
+  replicationCheckBudget: 64,
+  anchorCheckBudget: 32,
+  repairBudget: 32,
+  repairMaxConcurrent: 3,
+  custodyExpiryBudget: 32,
+  custodyWitnessBudget: 32,
+  acceptanceReconcileBudget: 32,
+  autoHeal: {
+    enabled: false,
+    localRefreshBudget: 64,
+    federationRefreshBudget: 64,
+    decisionBudget: 64,
+    proofScanBudget: 64
+  },
   replicationRepairEnabled: true,
   targetReplicaFloor: 2,
   bootstrapNodes: null, // null = use HyperDHT defaults
   dhtFlushTimeoutMs: 1000,
   shutdownTimeoutMs: 10_000,
+  driveCloseTimeoutMs: 10_000,
   // Legacy seed-time "evict oldest" behavior is disabled. The reviewed
   // EvictionManager remains independently opt-in via eviction.enabled.
   enableEviction: false,
@@ -441,6 +501,19 @@ function buildConfig (mode, opts) {
   if (!preset) {
     throw new Error('Invalid mode: ' + mode + ' (expected one of: ' + Object.keys(MODE_PRESETS).join(', ') + ')')
   }
+  for (const section of [preset.autoHeal, opts.autoHeal]) {
+    if (section != null && (typeof section !== 'object' || Array.isArray(section))) {
+      throw new TypeError('autoHeal must be an object')
+    }
+  }
+  for (const section of [preset.appCatalogPaged, opts.appCatalogPaged]) {
+    if (section == null) continue
+    const prototype = typeof section === 'object' ? Object.getPrototypeOf(section) : null
+    if (typeof section !== 'object' || Array.isArray(section) ||
+        (prototype !== Object.prototype && prototype !== null)) {
+      throw new TypeError('appCatalogPaged must be a plain object')
+    }
+  }
 
   const config = {
     ...DEFAULT_CONFIG,
@@ -465,6 +538,26 @@ function buildConfig (mode, opts) {
       ...DEFAULT_CONFIG.custody,
       ...(preset.custody || {}),
       ...(opts.custody || {})
+    },
+    storageAccounting: {
+      ...DEFAULT_CONFIG.storageAccounting,
+      ...(preset.storageAccounting || {}),
+      ...(opts.storageAccounting || {})
+    },
+    resourceDiagnostics: {
+      ...DEFAULT_CONFIG.resourceDiagnostics,
+      ...(preset.resourceDiagnostics || {}),
+      ...(opts.resourceDiagnostics || {})
+    },
+    appCatalogPaged: {
+      ...DEFAULT_CONFIG.appCatalogPaged,
+      ...(preset.appCatalogPaged || {}),
+      ...(opts.appCatalogPaged || {})
+    },
+    autoHeal: {
+      ...DEFAULT_CONFIG.autoHeal,
+      ...(preset.autoHeal || {}),
+      ...(opts.autoHeal || {})
     },
     signedDirectory: {
       ...DEFAULT_CONFIG.signedDirectory,
@@ -503,12 +596,64 @@ function buildConfig (mode, opts) {
     }
   }
 
+  config.autoHeal.localRefreshBudget = strictPositiveInteger(
+    config.autoHeal.localRefreshBudget,
+    'autoHeal.localRefreshBudget',
+    64
+  )
+  config.autoHeal.federationRefreshBudget = strictPositiveInteger(
+    config.autoHeal.federationRefreshBudget,
+    'autoHeal.federationRefreshBudget',
+    64
+  )
+  config.autoHeal.decisionBudget = strictPositiveInteger(
+    config.autoHeal.decisionBudget,
+    'autoHeal.decisionBudget',
+    64
+  )
+  config.autoHeal.proofScanBudget = strictPositiveInteger(
+    config.autoHeal.proofScanBudget,
+    'autoHeal.proofScanBudget',
+    64
+  )
+  config.appCatalogPaged.sourceIntervalMs = strictPositiveInteger(
+    config.appCatalogPaged.sourceIntervalMs,
+    'appCatalogPaged.sourceIntervalMs'
+  )
+  config.appCatalogPaged.sourceBudget = strictPositiveInteger(
+    config.appCatalogPaged.sourceBudget,
+    'appCatalogPaged.sourceBudget',
+    64
+  )
+  config.appCatalogPaged.digestBudget = strictPositiveInteger(
+    config.appCatalogPaged.digestBudget,
+    'appCatalogPaged.digestBudget',
+    128
+  )
+  config.appCatalogPaged.sweepIntervalMs = strictPositiveInteger(
+    config.appCatalogPaged.sweepIntervalMs,
+    'appCatalogPaged.sweepIntervalMs',
+    30_000
+  )
+  config.appCatalogPaged.actionLimit = strictPositiveInteger(
+    config.appCatalogPaged.actionLimit,
+    'appCatalogPaged.actionLimit',
+    10
+  )
+
   if ((mode === 'public-t1-gateway' || config.productProfile === 'public-t1-gateway') &&
       config.requirePhysicalEnforcement !== true) {
     throw new Error('public-t1-gateway requires requirePhysicalEnforcement to be true')
   }
 
   return mode === 'relaykernel' ? enforceRelayKernelProfile(config) : config
+}
+
+function createBootstrapCache (config) {
+  return new BootstrapCache(config.storage, {
+    enabled: config.bootstrapCacheEnabled !== false,
+    maxPeers: config.bootstrapCachePeers
+  })
 }
 
 function enforceRelayKernelProfile (config) {
@@ -570,9 +715,12 @@ function isRelayKernelProfile (node) {
 // sequential teardown steps. Late steps would otherwise inherit only the
 // crumbs left by earlier ones (observed in CI: "swarm.destroy timed out
 // after 21ms", "relayDiscovery.destroy timed out after 3818ms" with zero
-// real work attempted). Every owner-serialized operation gets at least
-// this much of its own budget once it actually starts.
+// real work attempted). Each wait gets at least this budget; a timeout keeps
+// the underlying owner operation retained until it actually settles.
 const MIN_OWNER_OPERATION_BUDGET_MS = 10_000
+const NODE_SHUTDOWN_POPULATION_CONSUMER = 'node-shutdown'
+const NODE_SHUTDOWN_PAGE_BUDGET = 64
+const NODE_SHUTDOWN_MAX_PAGE_CALLS = 4_097
 
 function withTimeout (promise, ms, label) {
   let timer
@@ -601,6 +749,19 @@ function identityTempPath (keyPath) {
   return keyPath + '.tmp-' + Date.now() + '-' + b4a.toString(suffix, 'hex')
 }
 
+function runtimePassBudgets (config) {
+  return Object.freeze({
+    registry: strictPositiveInteger(config.registryScanBudget, 'registryScanBudget', 64),
+    replication: strictPositiveInteger(config.replicationCheckBudget, 'replicationCheckBudget', 64),
+    anchor: strictPositiveInteger(config.anchorCheckBudget, 'anchorCheckBudget', 32),
+    repair: strictPositiveInteger(config.repairBudget, 'repairBudget', 32),
+    repairWorkers: strictPositiveInteger(config.repairMaxConcurrent, 'repairMaxConcurrent', 3),
+    custodyExpiry: strictPositiveInteger(config.custodyExpiryBudget, 'custodyExpiryBudget', 32),
+    custodyWitness: strictPositiveInteger(config.custodyWitnessBudget, 'custodyWitnessBudget', 32),
+    acceptance: strictPositiveInteger(config.acceptanceReconcileBudget, 'acceptanceReconcileBudget', 32)
+  })
+}
+
 export class RelayNode extends EventEmitter {
   constructor (opts = {}) {
     super()
@@ -620,6 +781,7 @@ export class RelayNode extends EventEmitter {
       : (opts.mode || opts.productProfile || 'relay-core')
     this._storagePathExplicit = Object.prototype.hasOwnProperty.call(opts, 'storage')
     this.config = buildConfig(this.mode, opts)
+    this._runtimePassBudgets = runtimePassBudgets(this.config)
     if (this.config.capacityProfile != null) {
       if (!isCapacityProfile(this.config.capacityProfile)) {
         throw new TypeError('capacityProfile must be one of the supported bounded-capacity profiles')
@@ -686,8 +848,10 @@ export class RelayNode extends EventEmitter {
     this.metrics = null
     this.api = null
     this.gatewayServer = null
+    this.retainedReadController = null
     this.wsTransport = null
     this.dhtRelayWs = null
+    this.pearBlindRelay = null
     this.torTransport = null
     this.paymentManager = null
     this.settlementInterval = null
@@ -710,6 +874,9 @@ export class RelayNode extends EventEmitter {
       ? this.config.indexSidecarUrl.replace(/\/+$/, '')
       : null
     this.appRegistry = new AppRegistry(this.config.storage)
+    this.appCatalogController = null
+    this.appCatalogStore = null
+    this._appCatalogStageFactory = null
     // AppRegistry emits 'error' via _emitSafely, which no-ops without a
     // listener — writes stop with no attribution (N-6). Route to a logged
     // event instead, same contract as storageAccounting and eviction.
@@ -733,10 +900,7 @@ export class RelayNode extends EventEmitter {
     }
     this.connections = new Map() // conn -> { lastActivity }
     this._healthCheckInterval = null
-    this.bootstrapCache = new BootstrapCache(this.config.storage, {
-      enabled: this.config.bootstrapCacheEnabled !== false,
-      maxPeers: this.config.bootstrapCachePeers || 50
-    })
+    this.bootstrapCache = createBootstrapCache(this.config)
     this.reputation = new ReputationSystem()
     this._proofOfRelay = null
     this._anchorProtocol = null
@@ -753,6 +917,7 @@ export class RelayNode extends EventEmitter {
     this.healthMonitor = null
     this.diskMonitor = null
     this.storageAccounting = null
+    this._dedupReport = null
     this.storageAdmission = new StorageAdmissionAuthority(this.config, {
       getUsedBytes: () => this._storageUsedBytes(),
       getActualBytes: (key, record) => this._storageActualBytes(key, record),
@@ -773,6 +938,7 @@ export class RelayNode extends EventEmitter {
     this.distributedDriveBridge = null
     this._registryScanInterval = null
     this._registryInitialScanTimer = null
+    this._completionSchedulers = new Map()
     this._acceptanceReconcileTimer = null
     this._coldStartPrimerTimer = null
     this.serviceRegistry = null
@@ -799,16 +965,22 @@ export class RelayNode extends EventEmitter {
     this._catalogThrottleCleanup = null
     this._replicationCheckInterval = null
     this._replicationHealth = new Map() // appKey -> { state, current, target, missing }
+    this._replicationHealthBuild = new Map()
+    this._replicationHealthBuildUnder = 0
     this._lastReplicationCheckAt = null
     this._anchorCheckInterval = null
     this._anchorInitialTimer = null
     this._lastAnchorCheckAt = null
+    this._anchorCheckAggregate = Object.freeze({ anchored: 0, unanchored: 0, checked: 0, completedAt: null })
+    this._anchorCheckBuild = { anchored: 0, unanchored: 0, checked: 0 }
     this._repairInterval = null
     this._repairInitialTimer = null
     this._lastRepairAt = null
     this._custodyExpiryInterval = null
     this._custodyExpiryInitialTimer = null
     this._lastCustodyExpiryAt = null
+    this._custodyWitnessProofCursor = new Map()
+    this._custodyWitnessActiveIntent = null
     // LifecycleScope — cancellation contract for fire-and-forget loops and
     // event handlers (see lifecycle-scope.js). Recreated by every start()
     // call so post-stop+start sequences get a fresh signal. stop()'s
@@ -829,6 +1001,14 @@ export class RelayNode extends EventEmitter {
     this._stopRequested = false
     this._startupRollbackPending = false
     this._storageIngressReady = false
+    this.resourceDiagnostics = new ResourceDiagnostics(this, {
+      sampleIntervalMs: this.config.resourceDiagnostics.sampleIntervalMs,
+      fileReadBytes: this.config.resourceDiagnostics.fileReadBytes,
+      fdScanLimit: this.config.resourceDiagnostics.fdScanLimit,
+      heapSpaceLimit: this.config.resourceDiagnostics.heapSpaceLimit,
+      healthSampleLimit: this.config.resourceDiagnostics.healthSampleLimit,
+      schedulerLimit: this.config.resourceDiagnostics.schedulerLimit
+    })
   }
 
   // Backwards compat: expose the seeded apps Map owned by AppLifecycle.
@@ -906,6 +1086,9 @@ export class RelayNode extends EventEmitter {
   }
 
   async applyMode (mode, overrides = {}) {
+    if (Object.prototype.hasOwnProperty.call(overrides, 'retainedReadCapability')) {
+      throw new Error('Retained local read authority is selected only at process launch')
+    }
     if (hasActiveExactGateway(this)) {
       throw new Error('Runtime mode changes are forbidden while an exact app-host GatewayServer is active; stop and perform a reviewed restart')
     }
@@ -951,6 +1134,7 @@ export class RelayNode extends EventEmitter {
       ...overrides,
       mode
     })
+    const nextRuntimePassBudgets = runtimePassBudgets(nextConfig)
 
     // The physical storage ceiling is installed against an exact storage-root
     // identity during startup. A live mode change cannot safely add, remove, or
@@ -985,6 +1169,7 @@ export class RelayNode extends EventEmitter {
     this.mode = mode
     this._operatingMode = mode
     this.config = nextConfig
+    this._runtimePassBudgets = nextRuntimePassBudgets
     this.storageAdmission.setConfig(nextConfig)
     this.storageAdmission.refreshFilesystem()
     if (this.seeder) this.seeder.maxStorageBytes = nextConfig.maxStorageBytes
@@ -1008,13 +1193,15 @@ export class RelayNode extends EventEmitter {
       config: this.config,
       mode: this.mode,
       operatingMode: this._operatingMode,
-      seederMaxStorageBytes: this.seeder ? this.seeder.maxStorageBytes : null
+      seederMaxStorageBytes: this.seeder ? this.seeder.maxStorageBytes : null,
+      runtimePassBudgets: this._runtimePassBudgets
     }
   }
 
   async _restoreModeState (state, opts = {}) {
     if (!state || !state.config) throw new Error('mode rollback state unavailable')
     this.config = state.config
+    this._runtimePassBudgets = state.runtimePassBudgets || runtimePassBudgets(state.config)
     this.mode = state.mode
     this._operatingMode = state.operatingMode
     if (this.storageAdmission) {
@@ -1260,6 +1447,7 @@ export class RelayNode extends EventEmitter {
     }
     this._stopRequested = false
     this._storageIngressReady = false
+    this._storageWritersQuiesced = false
 
     assertHiveAppGatewayIsolation({
       hiveAppHostSuffix: this.config.hiveAppHostSuffix,
@@ -1300,6 +1488,7 @@ export class RelayNode extends EventEmitter {
     // aborted + drained by stop(). Recreated here so a stop()/start()
     // cycle (e.g. self-heal restart) gets a clean signal.
     this._scope = new LifecycleScope()
+    let bootstrapCacheOpened = false
 
     try {
       // Bind every runtime (including direct embedders) to the exact storage
@@ -1324,7 +1513,10 @@ export class RelayNode extends EventEmitter {
 
       // Re-create store if it was closed (e.g. after self-heal restart)
       if (!this.store || this.store.closed) {
-        this.store = openCorestore(this.config.storage)
+        this.store = openCorestore(
+          this.config.storage,
+          corestoreGenerationParticipantOptions(this.config.hiverelayGeneration, 'relay-node')
+        )
         // The registry's Hyperbee is backed by the OLD (now-closed) store.
         // Drop it so setStore()/load() below reopen the bee on the fresh
         // store; otherwise reseedFromRegistry reads a closed core, gets
@@ -1363,7 +1555,11 @@ export class RelayNode extends EventEmitter {
       this.servedAccounting = new ServedAccounting({ store: this.store })
       this.servedAccounting.start()
 
+      if (!this.bootstrapCache || this.bootstrapCache.getStats?.().stopped) {
+        this.bootstrapCache = createBootstrapCache(this.config)
+      }
       await this.bootstrapCache.load()
+      bootstrapCacheOpened = true
       const bootstrap = this.bootstrapCache.merge(this.config.bootstrapNodes)
 
       const keyPair = await this._loadOrCreateKeyPair()
@@ -1615,9 +1811,8 @@ export class RelayNode extends EventEmitter {
         })
       }
 
-      if (this.config.enableMetrics) {
-        this.metrics = new Metrics(this)
-      }
+      await this.resourceDiagnostics.start()
+      if (this.config.enableMetrics) this.metrics = new Metrics(this)
 
       if (this.config.enableAPI) {
         this.api = new RelayAPI(this, {
@@ -1688,11 +1883,23 @@ export class RelayNode extends EventEmitter {
         throw err
       }
 
+      // Optional local-read authority is externally selected, protected and
+      // bound to this guarded generation. It never changes storage admission.
+      this.retainedReadController = await createRetainedReadController(this)
+
+      // The dedicated catalog channel is usable only after durable registry
+      // recovery and one bounded source/digest completion. Its no-follow disk
+      // stage is rooted under the canonical storage mount, never an unresolved
+      // operator path.
+      await this._startAppCatalogController()
+      if (this._stopRequested) throw new Error('START_CANCELLED_BY_STOP')
+      this._startCoreServiceProtocol()
+
       // No externally reachable storage-producing ingress exists before both
       // inventories seal. The connection dispatcher is already attached (since
       // swarm creation) and rejects peers via the _storageIngressReady guard;
       // HTTP listeners attach only after the shared authority is recovered.
-      this._storageIngressReady = true
+      this._openStorageIngress()
       const ingressStartups = []
       if (this.api) ingressStartups.push(this.api.start())
       if (this.gatewayServer) ingressStartups.push(this.gatewayServer.start())
@@ -1734,6 +1941,40 @@ export class RelayNode extends EventEmitter {
         })
         this.dhtRelayWs.on('relay-error', (info) => this.emit('dht-relay-error', info))
         await this.dhtRelayWs.start()
+      }
+
+      // Pear 3.4 native blind-relay protocol. This is an opt-in, in-memory
+      // UDX fallback only: it never bypasses HiveRelay storage admission.
+      if (this.config.transports && this.config.transports.pearBlindRelay) {
+        const relayCfg = this.config.pearBlindRelay || {}
+        const relaySeed = b4a.alloc(32)
+        sodium.crypto_generichash(relaySeed, b4a.concat([
+          this.swarm.keyPair.secretKey,
+          b4a.from('hiverelay/pear-3.4-blind-relay')
+        ]))
+        const relayKeyPair = HyperDHT.keyPair(relaySeed)
+        relaySeed.fill(0)
+        this.pearBlindRelay = new PearBlindRelayTransport({
+          dht: this.swarm.dht,
+          keyPair: relayKeyPair,
+          maxSessions: relayCfg.maxSessions,
+          keepAliveMs: relayCfg.keepAliveMs,
+          maxPendingPairings: relayCfg.maxPendingPairings,
+          maxPendingPerSession: relayCfg.maxPendingPerSession,
+          maxActiveLinks: relayCfg.maxActiveLinks,
+          maxActiveLinksPerSession: relayCfg.maxActiveLinksPerSession,
+          pairingTimeoutMs: relayCfg.pairingTimeoutMs,
+          idleTimeoutMs: relayCfg.idleTimeoutMs,
+          maxLinkLifetimeMs: relayCfg.maxLinkLifetimeMs,
+          stopTimeoutMs: relayCfg.stopTimeoutMs
+        })
+        this.pearBlindRelay.on('started', ({ publicKey }) => {
+          this.emit('pear-blind-relay-ready', { publicKey })
+        })
+        this.pearBlindRelay.on('refused', ({ reason }) => {
+          this.emit('pear-blind-relay-refused', { reason })
+        })
+        await this.pearBlindRelay.start()
       }
 
       if (this.config.transports && this.config.transports.tor) {
@@ -1835,10 +2076,6 @@ export class RelayNode extends EventEmitter {
       // Services tab; applied on this restart). Overrides config when present.
       await this._loadServicesOverride()
       if (this.config.enableServices !== false && this.config.plugins) {
-        this.serviceRegistry = new ServiceRegistry()
-        this.serviceProtocol = new ServiceProtocol(this.serviceRegistry, {
-          defaultPeerRole: this.config.serviceDefaultPeerRole || 'anonymous'
-        })
         this.pluginLoader = new PluginLoader()
 
         const providers = await this.pluginLoader.load(this.config.plugins, {
@@ -1856,8 +2093,7 @@ export class RelayNode extends EventEmitter {
         this._serviceContext = this._buildServiceContext()
         const startupResult = await this.serviceRegistry.startAll(this._serviceContext)
         if (startupResult.failed.length > 0 && this.config.servicesFailOpen !== true) {
-          const names = startupResult.failed.map(s => s.name).join(', ')
-          throw new Error(`SERVICE_START_FAILED: ${names}`)
+          throw this.serviceRegistry.startupError(startupResult.failed)
         }
         this._startServiceSupervision()
 
@@ -1878,30 +2114,6 @@ export class RelayNode extends EventEmitter {
           })
         }
 
-        // Set up seeded apps callback for catalog broadcast
-        this.serviceProtocol._getSeededApps = () => this.appRegistry.catalogForBroadcast()
-        this.serviceProtocol._getCatalogEnvelope = (opts = {}) => {
-          const apps = Array.isArray(opts.apps)
-            ? opts.apps
-            : this.appRegistry.catalogForBroadcast()
-          const relayPubkey = this.swarm
-            ? b4a.toString(this.swarm.keyPair.publicKey, 'hex')
-            : null
-          const catalogTimestamp = Date.now()
-          if (!relayPubkey) {
-            return { apps, relayPubkey: null, catalogTimestamp, signature: null }
-          }
-          const payload = b4a.from(JSON.stringify({ apps, relayPubkey, catalogTimestamp }))
-          const signature = b4a.alloc(sodium.crypto_sign_BYTES)
-          sodium.crypto_sign_detached(signature, payload, this.swarm.keyPair.secretKey)
-          return {
-            apps,
-            relayPubkey,
-            catalogTimestamp,
-            signature: b4a.toString(signature, 'hex')
-          }
-        }
-
         this.emit('services-started', { count: this.serviceRegistry.services.size })
 
         // ─── Application-Layer Router ─────────────────────────────────
@@ -1917,196 +2129,6 @@ export class RelayNode extends EventEmitter {
           for (const evt of ['connection', 'connection-closed', 'seeding', 'unseeded', 'circuit-closed', 'seed-accepted']) {
             this.on(evt, (data) => this.router?.pubsub?.publish(`events/${evt}`, data))
           }
-
-          // Broadcast app catalog to clients when apps change (debounced)
-          this.on('seeding', () => this._scheduleCatalogBroadcast())
-          this.on('unseeded', () => this._scheduleCatalogBroadcast())
-
-          // Handle incoming app catalogs from other relays.
-          //
-          // Auto-syncing every catalog event made operators answer for content
-          // they never approved. The new model: only auto-seed apps whose
-          // *source relay* is on the operator's mirror list. For every other
-          // peer, the catalog is funneled through the local accept-mode
-          // (Review queues; Allowlist filters; Open auto-accepts; Closed drops).
-          this.serviceProtocol.on('app-catalog', ({
-            apps,
-            remotePubkey,
-            relayPubkey,
-            catalogTimestamp,
-            signature
-          }) => {
-            if (!this.config.enableSeeding || !apps || !Array.isArray(apps)) return
-            const peerKey = remotePubkey || null
-
-            if (!this._verifyCatalogEnvelope({
-              apps,
-              remotePubkey,
-              relayPubkey,
-              catalogTimestamp,
-              signature
-            })) {
-              this.emit('catalog-sync-error', {
-                source: remotePubkey,
-                error: 'invalid or stale catalog signature'
-              })
-              return
-            }
-
-            // Per-peer throttle: max 1 catalog event per peer per 30 seconds
-            if (peerKey) {
-              const now = Date.now()
-              const lastTime = this._catalogPeerThrottle.get(peerKey)
-              if (lastTime && (now - lastTime) < 30_000) {
-                this.emit('debug', { msg: 'catalog-sync throttled for peer', peerKey })
-                return
-              }
-              this._catalogPeerThrottle.set(peerKey, now)
-            }
-
-            const isMirrored = !!this.federation && this.federation.isMirroredPubkey(relayPubkey || peerKey)
-            const acceptMode = this._resolveAcceptMode()
-
-            // Follow-anchored mode: when enabled, the relay treats anchored=true
-            // entries from peers as if they came from a mirrored peer (auto-seed).
-            // This makes the network behave as a converged cache — every drive
-            // anchored anywhere gets pulled everywhere. Off by default because
-            // it consumes storage from arbitrary peer claims; opt-in via config.
-            const followAnchored = this.config.followAnchoredFromPeers === true
-            const peerScore = (this.reputation && peerKey)
-              ? (this.reputation.getRecord(peerKey)?.score ?? 0)
-              : null
-            const peerScoreOk = peerScore === null
-              ? true
-              : peerScore >= (this.config.followAnchoredMinReputation ?? 0)
-            const storagePctUsed = (this.config.maxStorageBytes > 0)
-              ? (this._storageUsedBytes() / this.config.maxStorageBytes)
-              : 0
-            const hasHeadroom = storagePctUsed < (this.config.followAnchoredStorageCeiling ?? 0.8)
-
-            // Cap at max 10 new apps acted on per catalog event
-            const MAX_NEW_APPS = 10
-            let acted = 0
-            const now = Date.now()
-            for (const app of apps) {
-              const appKey = app.appKey || app.driveKey
-              if (!appKey) continue
-
-              // Cross-relay self-heal: if the peer says they have this drive
-              // anchored AND we have it (but unanchored), kick a targeted
-              // repair pass. The peer is right there on the swarm — the pull
-              // should succeed quickly.
-              if (app.anchored === true && this.appRegistry.has(appKey)) {
-                const existing = this.appRegistry.get(appKey)
-                if (existing && existing.anchored !== true) {
-                  this._scheduleTargetedRepair(appKey)
-                }
-              }
-
-              if (this.appRegistry.has(appKey)) continue
-              const appBound = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
-              if (appBound === null) {
-                this.emit('catalog-sync-rejected', { appKey, source: 'remote-catalog', reason: 'storage-bound-invalid' })
-                continue
-              }
-              if (app.seededAt && this.config.catalogMaxAppAgeMs > 0) {
-                if ((now - app.seededAt) > this.config.catalogMaxAppAgeMs) continue
-              }
-              if (acted >= MAX_NEW_APPS) {
-                this.emit('debug', { msg: 'catalog cap reached, skipping remaining apps', total: apps.length, acted })
-                break
-              }
-
-              // Follow-anchored: peer claims to have blocks, we have storage,
-              // peer's reputation is acceptable. Treat as mirror-grade trust
-              // for this drive only. The repair loop will validate replication
-              // worked; if it doesn't, the drive stays unanchored (and shows
-              // up that way in our catalog and capability doc).
-              const followThisAnchored = followAnchored && app.anchored === true && peerScoreOk && hasHeadroom
-
-              if (isMirrored || followThisAnchored) {
-                // Trusted partner OR auto-followed anchored content.
-                acted++
-                this._trackFireAndForget(this.seedApp(appKey, {
-                  appId: app.id || app.appId || null,
-                  name: app.name || null,
-                  version: app.version || null,
-                  type: app.type || 'app',
-                  parentKey: app.parentKey || null,
-                  mountPath: app.mountPath || null,
-                  privacyTier: app.privacyTier || null,
-                  blind: app.blind || false,
-                  storageClass: app.storageClass || null,
-                  availabilityClass: app.availabilityClass || null,
-                  author: app.author || null,
-                  description: app.description || '',
-                  maxStorage: appBound
-                }).then(() => {
-                  this.emit('catalog-sync', {
-                    appKey,
-                    source: isMirrored ? 'mirror' : 'follow-anchored',
-                    sourceRelay: relayPubkey
-                  })
-                }).catch((err) => {
-                  if (isAbortError(err)) return
-                  this.emit('catalog-sync-error', { appKey, error: err.message })
-                }))
-                continue
-              }
-
-              // Not mirrored — apply accept-mode.
-              const synthRequest = {
-                appKey,
-                publisherPubkey: app.author || app.publisherPubkey || null,
-                contentType: app.type || 'app',
-                privacyTier: app.privacyTier || 'public',
-                blind: app.blind === true,
-                storageClass: app.storageClass || null,
-                availabilityClass: app.availabilityClass || null,
-                maxStorageBytes: appBound
-              }
-              const decision = this._decideAcceptance(synthRequest, acceptMode)
-              if (decision === 'reject') {
-                this.emit('catalog-sync-rejected', { appKey, source: 'remote-catalog', mode: acceptMode })
-                continue
-              }
-              if (decision === 'accept') {
-                acted++
-                this._trackFireAndForget(this.seedApp(appKey, {
-                  appId: app.id || app.appId || null,
-                  name: app.name || null,
-                  version: app.version || null,
-                  type: synthRequest.contentType,
-                  parentKey: app.parentKey || null,
-                  mountPath: app.mountPath || null,
-                  privacyTier: synthRequest.privacyTier,
-                  blind: synthRequest.blind,
-                  storageClass: synthRequest.storageClass,
-                  availabilityClass: synthRequest.availabilityClass,
-                  author: synthRequest.publisherPubkey,
-                  description: app.description || '',
-                  maxStorage: appBound
-                }).then(() => {
-                  this.emit('catalog-sync', { appKey, source: 'remote-catalog', mode: acceptMode })
-                }).catch((err) => {
-                  if (isAbortError(err)) return
-                  this.emit('catalog-sync-error', { appKey, error: err.message })
-                }))
-                continue
-              }
-              // 'review' — queue for operator approval.
-              const inserted = this._addPendingRequest(appKey, {
-                ...synthRequest,
-                source: 'remote-catalog',
-                sourceRelay: relayPubkey || peerKey,
-                discoveredAt: Date.now(),
-                mode: acceptMode
-              })
-              if (inserted) {
-                this.emit('registry-pending', { appKey, publisher: synthRequest.publisherPubkey, source: 'remote-catalog' })
-              }
-            }
-          })
 
           this.emit('router-started', { routes: this.router.routes().length })
         }
@@ -2268,17 +2290,32 @@ export class RelayNode extends EventEmitter {
 
           // Periodic scan for matching seed requests
           const scanInterval = this.config.registryScanInterval || 60_000 // 1 min default
-          this._registryScanInterval = setInterval(() => {
-            this._trackFireAndForget(this._scanRegistry().catch((err) => {
-              if (isAbortError(err)) return
-              this.emit('registry-error', { error: err })
-            }))
-          }, scanInterval)
-          if (this._registryScanInterval.unref) this._registryScanInterval.unref()
+          const registryScheduler = this._installCompletionScheduler('registry-scan', {
+            intervalMs: scanInterval,
+            run: async () => {
+              try {
+                return await this._scanRegistry()
+              } catch (err) {
+                if (isAbortError(err)) return
+                this.emit('registry-error', { error: err })
+                throw err
+              }
+            }
+          })
+          registryScheduler.start({ immediate: false })
+
+          if (this.config.enableAPI !== false &&
+              typeof this.seedingRegistry.advanceRequestStatusSnapshot === 'function') {
+            const registryStatusScheduler = this._installCompletionScheduler('registry-status', {
+              intervalMs: scanInterval,
+              run: () => this.seedingRegistry.advanceRequestStatusSnapshot(64)
+            })
+            registryStatusScheduler.start()
+          }
 
           // Run initial scan after a short delay to let the registry sync
           this._setLifecycleTimer('_registryInitialScanTimer', 5000, () => {
-            this._trackFireAndForget(this._scanRegistry().catch(() => {}))
+            registryScheduler.trigger('initial')
           })
 
           this._startReplicationMonitor()
@@ -2294,8 +2331,23 @@ export class RelayNode extends EventEmitter {
           // and repair reason over real replica counts. Paced; safe to
           // re-run (skips entries already recorded).
           if (this.config.acceptanceReconcile !== false) {
+            const acceptanceScheduler = this._installCompletionScheduler('acceptance-reconcile', {
+              intervalMs: Number.isSafeInteger(this.config.acceptanceReconcileInterval)
+                ? this.config.acceptanceReconcileInterval
+                : 300_000,
+              run: async () => {
+                try {
+                  return await this._reconcileAcceptances()
+                } catch (err) {
+                  if (isAbortError(err)) return { complete: true }
+                  this.emit('acceptance-reconcile-error', { error: err.message || String(err) })
+                  throw err
+                }
+              }
+            })
+            acceptanceScheduler.start({ immediate: false })
             this._setLifecycleTimer('_acceptanceReconcileTimer', 15_000, () => {
-              this._trackFireAndForget(this._reconcileAcceptances().catch(() => {}))
+              acceptanceScheduler.trigger('initial')
             })
           }
 
@@ -2415,6 +2467,10 @@ export class RelayNode extends EventEmitter {
           thresholds: this.config.autoHeal.thresholds,
           maxRecruitsPerTick: this.config.autoHeal.maxRecruitsPerTick,
           maxCapacityChecksPerTick: this.config.autoHeal.maxCapacityChecksPerTick,
+          localRefreshBudget: this.config.autoHeal.localRefreshBudget,
+          federationRefreshBudget: this.config.autoHeal.federationRefreshBudget,
+          decisionBudget: this.config.autoHeal.decisionBudget,
+          proofScanBudget: this.config.autoHeal.proofScanBudget,
           // Cryptographic peer verification — peers count as live replicas
           // only when their /api/anchors/<appKey>/proof endpoint produces a
           // recently-verified Ed25519 signature. Default ON for archive tier.
@@ -2494,7 +2550,7 @@ export class RelayNode extends EventEmitter {
         storagePath: this.config.storage,
         tickMs: this.config.storageAccounting?.tickMs,
         batchSize: this.config.storageAccounting?.batchSize,
-        diskIntervalMs: this.config.storageAccounting?.diskIntervalMs
+        epochLimits: this.config.storageAccounting
       })
       // An 'error' emit with no listener crashes the process — route to
       // a logged event instead (v0.15.6).
@@ -2503,6 +2559,18 @@ export class RelayNode extends EventEmitter {
         this.storageAccounting.registerExternalSource('seeded-cores', () => this.seeder.totalBytesStored || 0)
       }
       this.storageAccounting.start()
+
+      // Status reads only the prior complete aggregate. The completion
+      // scheduler advances one finite AppRegistry page per turn and immediately
+      // coalesces incomplete cycles without overlapping them.
+      this._dedupReport = new BoundedDedupReport(this.appRegistry, this.storageAccounting)
+      const dedupReportScheduler = this._installCompletionScheduler('dedup-report', {
+        intervalMs: this.config.storageAccounting?.tickMs || 5_000,
+        run: () => this._dedupReport
+          ? this._dedupReport.advance()
+          : { complete: true, stopped: true, examined: 0 }
+      })
+      dedupReportScheduler.start()
 
       // Over-replication eviction (Phase A). Off by default — sheds
       // surplus replicas under disk pressure. See eviction.js for the
@@ -2563,6 +2631,15 @@ export class RelayNode extends EventEmitter {
           payTo
         })
         await this.leaseManager.start()
+
+        if (this.config.enableAPI !== false &&
+            typeof this.appRegistry.advanceLeaseStatusSnapshot === 'function') {
+          const leaseStatusScheduler = this._installCompletionScheduler('lease-status', {
+            intervalMs: this.config.registryScanInterval || 60_000,
+            run: () => this.appRegistry.advanceLeaseStatusSnapshot(64)
+          })
+          leaseStatusScheduler.start()
+        }
       }
 
       // Start alert manager (if configured) — wires to health monitor + subsystems
@@ -2603,6 +2680,9 @@ export class RelayNode extends EventEmitter {
         }
       }
       if (this._serviceSupervisionInterval) { clearInterval(this._serviceSupervisionInterval); this._serviceSupervisionInterval = null }
+      await stopRollbackOwner('appCatalogController', 'stop')
+      this.appCatalogStore = null
+      this._appCatalogStageFactory = null
       await stopRollbackOwner('router', 'stop')
       await stopRollbackOwner('serviceProtocol', 'destroy')
       try {
@@ -2638,14 +2718,23 @@ export class RelayNode extends EventEmitter {
       await stopRollbackOwner('networkDiscovery', 'stop')
       await stopRollbackOwner('federation', 'stop')
       await stopRollbackOwner('autoHeal', 'stop')
+      try {
+        await this._stopCompletionSchedulers()
+      } catch (stopErr) {
+        if (!writerQuiesceError) writerQuiesceError = stopErr
+      }
+      await stopRollbackOwner('eviction', 'stop')
+      await stopRollbackOwner('storageAccounting', 'stop')
       await stopRollbackOwner('subsidyAccrual', 'destroy')
       await stopRollbackOwner('leaseManager', 'destroy')
       await stopRollbackOwner('holesailTransport', 'stop')
       await stopRollbackOwner('torTransport', 'stop')
       await stopRollbackOwner('wsTransport', 'stop')
       await stopRollbackOwner('dhtRelayWs', 'stop')
+      await stopRollbackOwner('pearBlindRelay', 'stop')
       await stopRollbackOwner('gatewayServer', 'stop')
       await stopRollbackOwner('api', 'stop')
+      await stopRollbackOwner('retainedReadController', 'stop')
       await stopRollbackOwner('distributedDriveBridge', 'stop')
       await stopRollbackOwner('relay', 'stop')
 
@@ -2665,7 +2754,11 @@ export class RelayNode extends EventEmitter {
           if (!writerQuiesceError) writerQuiesceError = stopErr
         }
       }
-      await stopRollbackOwner('seedingRegistry', 'stop')
+      if (this.seedingRegistry) {
+        try { await this._quiesceSeedingRegistry(this.config.shutdownTimeoutMs || 30_000) } catch (stopErr) {
+          if (!writerQuiesceError) writerQuiesceError = stopErr
+        }
+      }
       if (this.appLifecycle && typeof this.appLifecycle.drainRetiringDrives === 'function') {
         try {
           await this._awaitOwnerOperation(
@@ -2721,7 +2814,11 @@ export class RelayNode extends EventEmitter {
         }
       }
       try {
-        await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
+        if (!writerQuiesceError) {
+          this._storageWritersQuiesced = true
+          await this._stopSeedingRegistry(this.config.shutdownTimeoutMs || 30_000)
+          await this._destroyDiscoveryHandles(this.config.shutdownTimeoutMs || 30_000)
+        }
       } catch (discoveryErr) {
         if (!writerQuiesceError) writerQuiesceError = discoveryErr
       }
@@ -2735,7 +2832,10 @@ export class RelayNode extends EventEmitter {
         this._startupRollbackPending = true
         throw rollbackErr
       }
-      this.bootstrapCache.stop()
+      // A failure before load() means the configured storage root may not
+      // exist. Do not let final cache persistence create an operator mount
+      // path that startup deliberately rejected as unresolved.
+      if (bootstrapCacheOpened) await this.bootstrapCache.stop()
       if (this._epochDiscoveryTimer) { clearInterval(this._epochDiscoveryTimer); this._epochDiscoveryTimer = null }
       if (this._catalogThrottleCleanup) { clearInterval(this._catalogThrottleCleanup); this._catalogThrottleCleanup = null }
       if (this._reputationSaveInterval) { clearInterval(this._reputationSaveInterval); this._reputationSaveInterval = null }
@@ -2751,9 +2851,11 @@ export class RelayNode extends EventEmitter {
       if (this.torTransport) { try { await this.torTransport.stop() } catch (_) {} this.torTransport = null }
       if (this.wsTransport) { try { await this.wsTransport.stop() } catch (_) {} this.wsTransport = null }
       if (this.dhtRelayWs) { try { await this.dhtRelayWs.stop() } catch (_) {} this.dhtRelayWs = null }
+      if (this.pearBlindRelay) { try { await this.pearBlindRelay.stop() } catch (_) {} this.pearBlindRelay = null }
       if (this.gatewayServer) { try { await this.gatewayServer.stop() } catch (_) {} this.gatewayServer = null }
       if (this.api) { try { await this.api.stop() } catch (_) {} this.api = null }
       if (this.metrics) { this.metrics.stop(); this.metrics = null }
+      if (this.resourceDiagnostics) await this.resourceDiagnostics.stop()
       if (this.distributedDriveBridge) { try { await this.distributedDriveBridge.stop() } catch (_) {} this.distributedDriveBridge = null }
       if (this.relay) { try { await this.relay.stop() } catch (_) {} this.relay = null }
       if (this.seeder) { await this.seeder.stop(); this.seeder = null }
@@ -2812,6 +2914,118 @@ export class RelayNode extends EventEmitter {
     return this
   }
 
+  async _startAppCatalogController () {
+    if (this.appCatalogController && !this.appCatalogController.stopped) {
+      return this.appCatalogController.start()
+    }
+    const canonicalStorage = await realpath(this.config.storage)
+    const stageFactory = new AppCatalogDiskStageFactory({
+      rootDir: join(canonicalStorage, 'app-catalog-paged')
+    })
+    const catalogConfig = this.config.appCatalogPaged
+    const controller = new AppCatalogController({
+      appRegistry: this.appRegistry,
+      keyPair: this.swarm.keyPair,
+      stageFactory,
+      sourceIntervalMs: catalogConfig.sourceIntervalMs,
+      sourceBudget: catalogConfig.sourceBudget,
+      digestBudget: catalogConfig.digestBudget,
+      sweepIntervalMs: catalogConfig.sweepIntervalMs,
+      actionLimit: catalogConfig.actionLimit,
+      onCatalogComplete: completed => this._emitSafely('app-catalog-paged', {
+        peerPubkey: completed.peerPubkey,
+        snapshotId: completed.snapshot.snapshotId,
+        highWater: completed.snapshot.highWater,
+        entryCount: completed.snapshot.entryCount
+      }),
+      onCatalogActionPage: action => this._applyPagedCatalogAction(action),
+      onLegacyFallback: event => this._emitSafely('catalog-legacy-fallback', event),
+      onError: event => this._emitSafely('catalog-paged-error', {
+        phase: event.phase,
+        peer: event.peer,
+        error: event.error?.message || String(event.error)
+      })
+    })
+    this._appCatalogStageFactory = stageFactory
+    this.appCatalogController = controller
+    this.appCatalogStore = controller.store
+    const readiness = await controller.start()
+    if (readiness?.fatal) {
+      this._emitSafely('catalog-paged-error', {
+        phase: 'source-startup',
+        peer: null,
+        error: readiness.fatal.error,
+        code: readiness.fatal.code
+      })
+    }
+    return readiness
+  }
+
+  _startCoreServiceProtocol () {
+    if (this.serviceProtocol && this.serviceRegistry) return this.serviceProtocol
+    if (this.serviceProtocol || this.serviceRegistry) {
+      throw new Error('core service protocol ownership is inconsistent')
+    }
+    this.serviceRegistry = new ServiceRegistry()
+    const protocol = new ServiceProtocol(this.serviceRegistry, {
+      defaultPeerRole: this.config.serviceDefaultPeerRole || 'anonymous',
+      scheduleLegacyAppCatalog: request => this._scheduleLegacyAppCatalog(request)
+    })
+    protocol.on('app-catalog', envelope => this._handleLegacyAppCatalog(envelope))
+    this.serviceProtocol = protocol
+    return protocol
+  }
+
+  _openStorageIngress () {
+    if (!this.appCatalogController || !this.serviceProtocol) {
+      const err = new Error('catalog transports must exist before storage ingress opens')
+      err.code = 'CATALOG_INGRESS_PROTOCOLS_NOT_READY'
+      throw err
+    }
+    this._storageIngressReady = true
+  }
+
+  _scheduleLegacyAppCatalog ({ remotePubkey, send }) {
+    const controller = this.appCatalogController
+    if (this._stopRequested || !this._storageIngressReady ||
+        !controller || controller.stopped || typeof send !== 'function') return null
+    const scheduled = controller.scheduleLegacyFallback(remotePubkey, () => {
+      return send(controller.legacyEnvelope())
+    })
+    if (!scheduled) return null
+    return () => controller.cancelLegacyFallback(remotePubkey)
+  }
+
+  _handleLegacyAppCatalog ({ apps, remotePubkey, relayPubkey, catalogTimestamp, signature }) {
+    if (this._stopRequested || !this._storageIngressReady ||
+        !this.config.enableSeeding || !Array.isArray(apps)) return false
+    const peerKey = remotePubkey || null
+    if (!this._verifyCatalogEnvelope({
+      apps,
+      remotePubkey,
+      relayPubkey,
+      catalogTimestamp,
+      signature
+    })) {
+      this.emit('catalog-sync-error', {
+        source: remotePubkey,
+        error: 'invalid or stale catalog signature'
+      })
+      return false
+    }
+    if (peerKey) {
+      const now = Date.now()
+      const lastTime = this._catalogPeerThrottle.get(peerKey)
+      if (lastTime && (now - lastTime) < 30_000) {
+        this.emit('debug', { msg: 'catalog-sync throttled for peer', peerKey })
+        return false
+      }
+      this._catalogPeerThrottle.set(peerKey, now)
+    }
+    this._applyCatalogActions({ apps, peerKey, relayPubkey, maxActions: 10 })
+    return true
+  }
+
   async _reseedFromRegistry () {
     return this.appLifecycle.reseedFromRegistry()
   }
@@ -2864,7 +3078,7 @@ export class RelayNode extends EventEmitter {
     const disk = this.diskMonitor ? this.diskMonitor.getInfo() : null
     const storageSummary = this.storageAccounting ? this.storageAccounting.getSummary() : null
     const storage = storageSummary
-      ? { ...storageSummary, dedup: buildDedupReport(this.appRegistry, this.storageAccounting) }
+      ? { ...storageSummary, dedup: this._dedupReport ? this._dedupReport.snapshot() : null }
       : null
     const stats = {
       running: this.running,
@@ -2877,6 +3091,7 @@ export class RelayNode extends EventEmitter {
       tor: this.torTransport ? this.torTransport.getInfo() : null,
       holesail: this.holesailTransport ? this.holesailTransport.getInfo() : null,
       dhtRelayWs: this.dhtRelayWs ? this.dhtRelayWs.getStats() : null,
+      pearBlindRelay: this.pearBlindRelay ? this.pearBlindRelay.getStats() : null,
       reputation: {
         trackedRelays: this.reputation ? Object.keys(this.reputation.export()).length : 0
       },
@@ -2950,7 +3165,8 @@ export class RelayNode extends EventEmitter {
             registeredDrives: 0,
             peers: 0,
             lastError: null
-          }
+          },
+      appCatalogPaged: this.appCatalogController ? this.appCatalogController.status() : null
     }
 
     if (!includeSecrets) {
@@ -3011,7 +3227,6 @@ export class RelayNode extends EventEmitter {
     const fields = accountingFieldsFromStorageSummary(summary, {
       periodStart: opts.periodStart,
       periodEnd: opts.periodEnd,
-      measuredAt: opts.measuredAt,
       bytesServed: receiptCounter(opts.bytesServed, served?.totalBytesServed ?? seeder?.totalBytesServed ?? 0, 'bytesServed'),
       bytesReceived: receiptCounter(opts.bytesReceived, 0, 'bytesReceived'),
       leaseCount: receiptCounter(opts.leaseCount, lease?.leaseCount ?? 0, 'leaseCount'),
@@ -3098,6 +3313,14 @@ export class RelayNode extends EventEmitter {
     return this.healthMonitor ? this.healthMonitor.getStatus() : null
   }
 
+  getStorageGenerationStatus () {
+    return corestoreGenerationHealth(this.config.hiverelayGeneration, this.store)
+  }
+
+  getResourceDiagnostics () {
+    return this.resourceDiagnostics ? this.resourceDiagnostics.snapshot() : null
+  }
+
   /**
    * Auto-enable holesail if the API port is not publicly reachable.
    * Waits for the first peer connection to learn our public IP, then
@@ -3138,7 +3361,7 @@ export class RelayNode extends EventEmitter {
     if (!publicIp) {
       try {
         const data = await new Promise((resolve, reject) => {
-          const req = http.get('http://ifconfig.me/ip', { timeout: 5000 }, (res) => {
+          const req = http.get('http://ifconfig.me/ip', { timeout: 5000, signal: scope?.signal }, (res) => {
             let body = ''
             res.on('data', (c) => { body += c })
             res.on('end', () => resolve(body.trim()))
@@ -3155,7 +3378,7 @@ export class RelayNode extends EventEmitter {
     // Try to reach our own API from the public IP
     const apiPort = this.config.apiPort || 9100
     const reachable = await new Promise((resolve) => {
-      const req = http.get(`http://${publicIp}:${apiPort}/health`, { timeout: 5000 }, (res) => {
+      const req = http.get(`http://${publicIp}:${apiPort}/health`, { timeout: 5000, signal: scope?.signal }, (res) => {
         let body = ''
         res.on('data', (c) => { body += c })
         res.on('end', () => {
@@ -3169,13 +3392,13 @@ export class RelayNode extends EventEmitter {
       req.on('timeout', () => { req.destroy(); resolve(false) })
     })
 
+    if (this.config.enableHolesail === false || this._stopRequested || scope?.aborted ||
+        !this.running || this.holesailTransport) return
+
     if (reachable) {
       this.emit('nat-check', { publicIp, reachable: true })
       return // API is publicly reachable, no need for holesail
     }
-
-    if (this.config.enableHolesail === false || this._stopRequested || scope?.aborted ||
-        !this.running || this.holesailTransport) return
 
     // API is behind NAT — auto-enable holesail
     this.emit('nat-check', { publicIp, reachable: false, action: 'enabling holesail' })
@@ -3230,24 +3453,6 @@ export class RelayNode extends EventEmitter {
     }
   }
 
-  async _evictOldestApp () {
-    let oldestKey = null
-    let oldestTime = Infinity
-
-    for (const [appKey, entry] of this.seededApps) {
-      if (entry.startedAt < oldestTime) {
-        oldestTime = entry.startedAt
-        oldestKey = appKey
-      }
-    }
-
-    if (!oldestKey) return null
-
-    await this.unseedApp(oldestKey)
-    this.emit('evicted', { appKey: oldestKey, reason: 'storage full' })
-    return oldestKey
-  }
-
   _onConnection (conn, info) {
     if (!this._storageIngressReady) {
       // Guard the destroy: the remote can reset while it lands, and a Noise
@@ -3276,6 +3481,14 @@ export class RelayNode extends EventEmitter {
 
     // Replicate all cores in our store over this connection
     this.store.replicate(conn)
+
+    // Dedicated negotiated catalog channel is independent of the optional
+    // services layer. Bind its claimed peer to the Noise-authenticated key.
+    if (this.appCatalogController && remotePubKeyBuf) {
+      try { this.appCatalogController.attach(conn, remotePubKeyBuf) } catch (err) {
+        this.emit('protocol-error', { protocol: 'app-catalog-paged', error: err })
+      }
+    }
 
     // Optional Ghost Drive-compatible drive RPC bridge
     if (this.distributedDriveBridge) {
@@ -3384,6 +3597,144 @@ export class RelayNode extends EventEmitter {
     return null
   }
 
+  _applyPagedCatalogAction (action) {
+    const apps = action.entries.map(catalogRowToLegacyApp)
+    return this._applyCatalogActions({
+      apps,
+      peerKey: action.peerPubkey,
+      relayPubkey: action.peerPubkey,
+      maxActions: Math.min(action.remainingActions, 10)
+    })
+  }
+
+  _applyCatalogActions ({ apps, peerKey = null, relayPubkey = null, maxActions = 10 }) {
+    if (this._stopRequested || !this._storageIngressReady ||
+        !this.config.enableSeeding || !Array.isArray(apps)) return { acted: 0, stop: true }
+    const actionLimit = strictPositiveInteger(maxActions, 'catalog action limit', 10)
+    const isMirrored = !!this.federation && this.federation.isMirroredPubkey(relayPubkey || peerKey)
+    const acceptMode = this._resolveAcceptMode()
+    const followAnchored = this.config.followAnchoredFromPeers === true
+    const peerScore = (this.reputation && peerKey)
+      ? (this.reputation.getRecord(peerKey)?.score ?? 0)
+      : null
+    const peerScoreOk = peerScore === null
+      ? true
+      : peerScore >= (this.config.followAnchoredMinReputation ?? 0)
+    let acted = 0
+    const now = Date.now()
+
+    for (const app of apps) {
+      if (this._stopRequested || !this._storageIngressReady || acted >= actionLimit) break
+      const appKey = app.appKey || app.driveKey
+      if (!appKey) continue
+
+      if (app.anchored === true && this.appRegistry.has(appKey)) {
+        const existing = this.appRegistry.get(appKey)
+        if (existing && existing.anchored !== true) {
+          this._scheduleTargetedRepair(appKey)
+          acted++
+        }
+      }
+
+      if (this.appRegistry.has(appKey)) continue
+      const appBound = positiveStorageBound(app.maxStorageBytes ?? app.maxStorage)
+      if (appBound === null) {
+        this.emit('catalog-sync-rejected', { appKey, source: 'remote-catalog', reason: 'storage-bound-invalid' })
+        continue
+      }
+      if (app.seededAt && this.config.catalogMaxAppAgeMs > 0 &&
+          (now - app.seededAt) > this.config.catalogMaxAppAgeMs) continue
+
+      const cachedCapacity = this._cachedStorageRejection(appBound, {
+        limitRatio: this.config.followAnchoredStorageCeiling ?? 0.8
+      })
+      const followThisAnchored = followAnchored && app.anchored === true && peerScoreOk && !cachedCapacity.reject
+
+      if (isMirrored || followThisAnchored) {
+        acted++
+        this._trackFireAndForget(this.seedApp(appKey, {
+          appId: app.id || app.appId || null,
+          name: app.name || null,
+          version: app.version || null,
+          type: app.type || 'app',
+          parentKey: app.parentKey || null,
+          mountPath: app.mountPath || null,
+          privacyTier: app.privacyTier || null,
+          blind: app.blind || false,
+          storageClass: app.storageClass || null,
+          availabilityClass: app.availabilityClass || null,
+          author: app.author || app.publisherPubkey || null,
+          description: app.description || '',
+          maxStorage: appBound
+        }).then(() => {
+          this.emit('catalog-sync', {
+            appKey,
+            source: isMirrored ? 'mirror' : 'follow-anchored',
+            sourceRelay: relayPubkey
+          })
+        }).catch((err) => {
+          if (isAbortError(err)) return
+          this.emit('catalog-sync-error', { appKey, error: err.message })
+        }))
+        continue
+      }
+
+      const synthRequest = {
+        appKey,
+        publisherPubkey: app.author || app.publisherPubkey || null,
+        contentType: app.type || 'app',
+        privacyTier: app.privacyTier || 'public',
+        blind: app.blind === true,
+        storageClass: app.storageClass || null,
+        availabilityClass: app.availabilityClass || null,
+        maxStorageBytes: appBound
+      }
+      const decision = this._decideAcceptance(synthRequest, acceptMode)
+      if (decision === 'reject') {
+        this.emit('catalog-sync-rejected', { appKey, source: 'remote-catalog', mode: acceptMode })
+        continue
+      }
+      if (decision === 'accept') {
+        acted++
+        this._trackFireAndForget(this.seedApp(appKey, {
+          appId: app.id || app.appId || null,
+          name: app.name || null,
+          version: app.version || null,
+          type: synthRequest.contentType,
+          parentKey: app.parentKey || null,
+          mountPath: app.mountPath || null,
+          privacyTier: synthRequest.privacyTier,
+          blind: synthRequest.blind,
+          storageClass: synthRequest.storageClass,
+          availabilityClass: synthRequest.availabilityClass,
+          author: synthRequest.publisherPubkey,
+          description: app.description || '',
+          maxStorage: appBound
+        }).then(() => {
+          this.emit('catalog-sync', { appKey, source: 'remote-catalog', mode: acceptMode })
+        }).catch((err) => {
+          if (isAbortError(err)) return
+          this.emit('catalog-sync-error', { appKey, error: err.message })
+        }))
+        continue
+      }
+
+      const inserted = this._addPendingRequest(appKey, {
+        ...synthRequest,
+        source: 'remote-catalog',
+        sourceRelay: relayPubkey || peerKey,
+        discoveredAt: Date.now(),
+        mode: acceptMode
+      })
+      if (inserted) {
+        acted++
+        this.emit('registry-pending', { appKey, publisher: synthRequest.publisherPubkey, source: 'remote-catalog' })
+      }
+    }
+
+    return { acted, stop: acted >= actionLimit }
+  }
+
   /**
    * Apply settings collected by the first-run setup wizard. Called by
    * the API when the operator clicks "Done" on the wizard's final step.
@@ -3462,22 +3813,46 @@ export class RelayNode extends EventEmitter {
   // below current usage blocks NEW adoption immediately, but never silently
   // enables eviction: serving, inspection, manual unseed and any explicitly
   // configured eviction policy remain available for operator-led recovery.
-  async applyStorageDesignation (maxStorageBytes) {
+  async applyStorageDesignation (maxStorageBytes, opts = {}) {
     const cap = positiveStorageBound(maxStorageBytes)
     if (cap === null) return { ok: false, error: 'maxStorageBytes must be a positive safe integer' }
     if (!this.storageAdmission) return { ok: false, error: 'storage admission authority unavailable' }
 
     this.config.maxStorageBytes = cap
     markStorageCapExplicit(this.config, 'management-api')
-    resolveStorageCap(this.config)
+    // `storageProof` is a narrow test/operator-proof injection seam. The
+    // normal management path supplies no overrides and therefore executes the
+    // real identity-bound filesystem walk exactly once.
+    resolveStorageCap(this.config, opts.storageProof || {})
     this.storageAdmission.setConfig(this.config)
-    this.storageAdmission.refreshFilesystem()
     // Live adoption cap: the seeder cached this at construction, so update it
     // in place — otherwise new content keeps being adopted against the old cap.
     if (this.seeder) this.seeder.maxStorageBytes = cap
 
-    const usedBytes = this._storageUsedBytes()
-    const admission = this._storageAdmission()
+    // resolveStorageCap() just completed the explicit operator proof: one
+    // identity-bound tree walk plus statfs. Reuse that proof instead of
+    // immediately walking the same tree twice more via _storageUsedBytes()
+    // and admission(). The next real reserve still obtains its own proof.
+    const proof = getStorageCapProvenance(this.config)
+    const usedBytes = Number.isSafeInteger(proof?.currentStorageBytes) ? proof.currentStorageBytes : 0
+    const snapshot = this.storageAdmission.capacitySnapshot()
+    const committedBytes = Number.isSafeInteger(snapshot?.committedBytes) ? snapshot.committedBytes : 0
+    const pendingBytes = Number.isSafeInteger(snapshot?.pendingBytes) ? snapshot.pendingBytes : 0
+    const ceiling = this.storageAdmission.capacityCeiling({
+      ok: proof?.status === 'resolved',
+      totalBytes: proof?.totalBytes
+    })
+    const admission = evaluateStorageAdmission(this.config, {
+      usedBytes: usedBytes + committedBytes + pendingBytes,
+      additionalBytes: 0,
+      committedBytes: committedBytes + pendingBytes,
+      diskInfo: {
+        totalBytes: proof?.totalBytes,
+        freeBytes: proof?.availableBytes
+      },
+      capCeilingBytes: ceiling?.invalid ? NaN : (ceiling ? ceiling.bytes : null),
+      capCeilingSource: ceiling && !ceiling.invalid ? ceiling.source : null
+    })
 
     // A declared capacity profile narrows the enforced cap below the operator
     // designation. Report both: without the effective value an operator sees
@@ -3719,31 +4094,37 @@ export class RelayNode extends EventEmitter {
     return 0
   }
 
-  /**
-   * Admission state for NEW storage only. Existing pins, serving, health and
-   * unseed/config management do not pass through this gate, so a node that is
-   * already over cap remains recoverable. The logical operator cap and the
-   * live physical reserve are both enforced; neither path enables eviction.
-   */
-  _storageAdmission (additionalBytes = 0) {
-    if (!this.storageAdmission) {
-      return { allowed: false, reason: 'storage-admission-unavailable', availableBytes: 0 }
+  _cachedStorageRejection (additionalBytes = 0, opts = {}) {
+    if (!this.storageAdmission || typeof this.storageAdmission.cachedRejection !== 'function') {
+      return { reject: true, exactRequired: false, reason: 'storage-admission-unavailable', informationalAvailableBytes: 0 }
     }
-    return this.storageAdmission.admission(additionalBytes, { refresh: true })
+    let storageSummary = null
+    try { storageSummary = this.storageAccounting?.getSummary?.() || null } catch (_) {}
+    return this.storageAdmission.cachedRejection(additionalBytes, { ...opts, storageSummary })
+  }
+
+  _informationalAvailableStorageBytes () {
+    const hint = this._cachedStorageRejection(0)
+    return Number.isSafeInteger(hint.informationalAvailableBytes) && hint.informationalAvailableBytes >= 0
+      ? hint.informationalAvailableBytes
+      : 0
   }
 
   async _scanRegistry () {
     if (!this.seedingRegistry || !this.seeder) return
 
     const region = (this.config.regions && this.config.regions[0]) || null
-    let admission = this._storageAdmission()
-    let availableBytes = admission.availableBytes
     const acceptMode = this._resolveAcceptMode()
 
-    const requests = await this.seedingRegistry.getActiveRequests({
-      region,
-      maxStorageBytes: availableBytes
+    if (typeof this.seedingRegistry.getActiveRequestsPage !== 'function') {
+      throw new TypeError('registry scan requires bounded SeedingRegistry.getActiveRequestsPage')
+    }
+    const requestPage = this.seedingRegistry.getActiveRequestsPage({
+      consumer: 'relay-registry-scan',
+      budget: this._runtimePassBudgets.registry,
+      filter: { region }
     })
+    const requests = requestPage.entries
 
     const myPubkey = this.swarm ? b4a.toString(this.swarm.keyPair.publicKey, 'hex') : null
 
@@ -3753,9 +4134,6 @@ export class RelayNode extends EventEmitter {
         this.emit('registry-skipped-storage', { appKey: req.appKey, reason: 'storage-bound-invalid' })
         continue
       }
-      admission = this._storageAdmission(requestBound)
-      availableBytes = admission.availableBytes
-      if (!admission.allowed) continue
       const reqTier = normalizePrivacyTier(req.privacyTier, 'public')
 
       // If a delegation cert is attached, verify the chain before accepting.
@@ -3797,6 +4175,8 @@ export class RelayNode extends EventEmitter {
       if (alreadyAccepted) {
         // If we accepted before but aren't currently seeding (e.g. after restart), re-seed
         if (!this.seededApps.has(req.appKey)) {
+          const cachedCapacity = this._cachedStorageRejection(requestBound)
+          if (cachedCapacity.reject) continue
           try {
             await this.seedApp(req.appKey, {
               publisherPubkey: typeof req.publisherPubkey === 'string' ? req.publisherPubkey : null,
@@ -3820,9 +4200,6 @@ export class RelayNode extends EventEmitter {
       // Check if replication factor is already met
       if (relays.length >= req.replicationFactor) continue
 
-      // Check storage capacity
-      if (req.maxStorageBytes > 0 && req.maxStorageBytes > availableBytes) continue
-
       const decision = this._decideAcceptance(req, acceptMode)
 
       if (decision === 'reject') {
@@ -3837,6 +4214,8 @@ export class RelayNode extends EventEmitter {
       }
 
       if (decision === 'accept') {
+        const cachedCapacity = this._cachedStorageRejection(requestBound)
+        if (cachedCapacity.reject) continue
         const publisherHex = typeof req.publisherPubkey === 'string'
           ? req.publisherPubkey
           : (req.publisherPubkey ? b4a.toString(req.publisherPubkey, 'hex') : null)
@@ -3891,6 +4270,7 @@ export class RelayNode extends EventEmitter {
         }
       }
     }
+    return requestPage
   }
 
   // Insert into the pending-approval queue, enforcing `config.maxPendingRequests`.
@@ -3991,16 +4371,10 @@ export class RelayNode extends EventEmitter {
       deny('storage-bound-invalid', 'maxStorageBytes must be a positive safe integer')
       return
     }
-    const existingApp = this.appRegistry?.has(appKeyHex) === true
-    const admission = existingApp && this.storageAdmission?.recoveryReady && !this.storageAdmission?.fatalReason
-      ? { allowed: true, availableBytes: this._storageAdmission(0).availableBytes }
-      : this._storageAdmission(maxStorageBytes)
-    const availableBytes = admission.availableBytes
-
-    // Check capacity
-    if (!admission.allowed) {
-      this.emit('seed-rejected', { appKey: appKeyHex, reason: 'insufficient storage' })
-      deny('insufficient-storage', 'relay has ' + Math.max(0, availableBytes) + ' bytes available, request asked for ' + msg.maxStorageBytes + ' (' + admission.reason + ')')
+    const discoveryHints = validateSeedDiscoveryHints(msg.appKey, msg.discoveryKeys || [])
+    if (!discoveryHints.ok) {
+      this.emit('seed-rejected', { appKey: appKeyHex, reason: discoveryHints.reason })
+      deny('unsupported-discovery-key-set', discoveryHints.reason)
       return
     }
 
@@ -4117,10 +4491,8 @@ export class RelayNode extends EventEmitter {
     // publisher-signature coverage) or an in-process caller supplies an
     // enriched msg. The authenticated, canonical custody path remains the
     // publish channel; this closes the latent drop so the two paths agree.
-    let appResult = null
-    const newCoreKeys = []
     try {
-      appResult = await this.seedApp(appKeyHex, {
+      await this.seedApp(appKeyHex, {
         publisherPubkey: effectivePublisher || publisherHex,
         maxStorage: maxStorageBytes,
         revocable: msg.revocable !== false,
@@ -4131,21 +4503,7 @@ export class RelayNode extends EventEmitter {
         availabilityClass: msg.availabilityClass || null,
         ...custodyOpts
       })
-
-      for (const dk of (msg.discoveryKeys || [])) {
-        const keyHex = b4a.toString(dk, 'hex')
-        if (keyHex === appKeyHex) continue
-        const existed = this.seeder.cores.has(keyHex)
-        await this.seeder.seedCore(keyHex, { maxStorageBytes })
-        if (!existed) newCoreKeys.push(keyHex)
-      }
     } catch (err) {
-      for (const keyHex of newCoreKeys.reverse()) {
-        try { await this.seeder.unseedCore(keyHex) } catch (_) {}
-      }
-      if (appResult && appResult.alreadySeeded !== true) {
-        try { await this.unseedApp(appKeyHex) } catch (_) {}
-      }
       this.emit('seed-error', { appKey: appKeyHex, error: err })
       deny('storage-admission-blocked', err && err.message ? err.message : 'durable storage admission failed')
       return
@@ -4154,12 +4512,16 @@ export class RelayNode extends EventEmitter {
     // Delivery is deliberately outside the storage rollback transaction.
     // Once this point is reached, retry may re-deliver an ACK but no delivery,
     // observer or partial-channel exception may revoke durable state.
+    if (!this.storageAdmission?.canAcknowledge?.(`drive:${appKeyHex}`)) {
+      this.emit('seed-ack-error', { appKey: appKeyHex, error: new Error('storage commitment is not acknowledgeable') })
+      return
+    }
     try {
       this._seedProtocol.acceptSeedRequest(
         msg.appKey,
         this.swarm.keyPair.publicKey,
         (this.config.regions && this.config.regions[0]) || 'unknown',
-        this._storageAdmission(0).availableBytes
+        this._informationalAvailableStorageBytes()
       )
     } catch (err) {
       try { this.emit('seed-ack-error', { appKey: appKeyHex, error: err }) } catch (_) {}
@@ -4245,12 +4607,14 @@ export class RelayNode extends EventEmitter {
    * Paced (~20/s) to keep autobase append pressure negligible.
    */
   async _reconcileAcceptances () {
-    if (!this.seedingRegistry || !this.appRegistry || !this.swarm) return
+    if (!this.seedingRegistry || !this.appRegistry || !this.swarm) return { complete: true, examined: 0 }
     const myPubkey = b4a.toString(this.swarm.keyPair.publicKey, 'hex')
     const region = (this.config.regions && this.config.regions[0]) || 'unknown'
     let backfilled = 0
-    for (const appKey of [...this.appRegistry.keys()]) {
-      if (this._scope && this._scope.aborted) return
+    const page = this.appRegistry.page('acceptance-reconcile', this._runtimePassBudgets.acceptance)
+    for (const item of page.entries) {
+      const appKey = item.key
+      if (this._scope && this._scope.aborted) return { ...page, complete: false, backfilled }
       try {
         const relays = await this.seedingRegistry.getRelaysForApp(appKey)
         const counted = (relays || []).some(r => r.relayPubkey === myPubkey)
@@ -4264,6 +4628,7 @@ export class RelayNode extends EventEmitter {
       }
     }
     if (backfilled > 0) this.emit('acceptance-reconciled', { backfilled })
+    return { ...page, backfilled }
   }
 
   _setLifecycleTimer (field, delayMs, run) {
@@ -4278,6 +4643,48 @@ export class RelayNode extends EventEmitter {
     }, delayMs)
     this[field] = timer
     return timer
+  }
+
+  _installCompletionScheduler (name, opts) {
+    const existing = this._completionSchedulers.get(name)
+    if (existing) return existing
+    const scheduler = new CompletionScheduler({ name, ...opts })
+    this._completionSchedulers.set(name, scheduler)
+    return scheduler
+  }
+
+  async _stopCompletionSchedulers () {
+    if (!this._completionSchedulers || typeof this._completionSchedulers.values !== 'function') return
+    const schedulers = [...this._completionSchedulers.values()]
+    this._completionSchedulers.clear()
+    await Promise.all(schedulers.map(scheduler => scheduler.stop()))
+    this._releaseRuntimePopulationConsumers()
+  }
+
+  _releaseRuntimePopulationConsumers () {
+    if (this._dedupReport) {
+      this._dedupReport.stop()
+      this._dedupReport = null
+    }
+    if (this.appRegistry && typeof this.appRegistry.releasePopulationConsumer === 'function') {
+      for (const consumer of [
+        'acceptance-reconcile', 'anchor', 'repair', 'custody-expiry',
+        'p2p-catalog', 'auto-heal', 'catalog-api', 'anchor-api', 'lease-api',
+        'capability', 'status', 'replication', 'dedup-report', 'dedup-reclaim'
+      ]) {
+        this.appRegistry.releasePopulationConsumer(consumer)
+      }
+    }
+    if (this.seedingRegistry && typeof this.seedingRegistry.releasePopulationConsumer === 'function') {
+      for (const consumer of ['relay-registry-scan', 'registry-status', 'replication-monitor', 'acceptance-reconcile']) {
+        this.seedingRegistry.releasePopulationConsumer('requests', consumer)
+      }
+      for (const consumer of ['custody-snapshot', 'custody-expiry', 'custody-witness']) {
+        this.seedingRegistry.releasePopulationConsumer('custody-intents', consumer)
+      }
+    }
+    this._custodyWitnessProofCursor.clear()
+    this._custodyWitnessActiveIntent = null
   }
 
   _clearLifecycleTimers () {
@@ -4309,15 +4716,19 @@ export class RelayNode extends EventEmitter {
     }
 
     const intervalMs = Math.max(10_000, Number(this.config.replicationCheckInterval) || 60_000)
-    this._replicationCheckInterval = setInterval(() => {
-      this._trackFireAndForget(this._checkReplicationHealth().catch((err) => {
-        if (isAbortError(err)) return
-        this.emit('replication-error', { error: err.message || String(err) })
-      }))
-    }, intervalMs)
-    if (this._replicationCheckInterval.unref) this._replicationCheckInterval.unref()
-
-    this._trackFireAndForget(this._checkReplicationHealth().catch(() => {}))
+    const scheduler = this._installCompletionScheduler('replication-health', {
+      intervalMs,
+      run: async () => {
+        try {
+          return await this._checkReplicationHealth()
+        } catch (err) {
+          if (isAbortError(err)) return { complete: true }
+          this.emit('replication-error', { error: err.message || String(err) })
+          throw err
+        }
+      }
+    })
+    scheduler.start()
   }
 
   _startAnchorMonitor () {
@@ -4329,16 +4740,22 @@ export class RelayNode extends EventEmitter {
     // (5s after start to give the seeder time to attach) so the registry
     // gets its first honest verification right away.
     const intervalMs = Math.max(30_000, Number(this.config.anchorCheckInterval) || 300_000)
-    this._anchorCheckInterval = setInterval(() => {
-      this._trackFireAndForget(this._runAnchorCheck().catch((err) => {
-        if (isAbortError(err)) return
-        this.emit('anchor-check-error', { error: err.message || String(err) })
-      }))
-    }, intervalMs)
-    if (this._anchorCheckInterval.unref) this._anchorCheckInterval.unref()
+    const scheduler = this._installCompletionScheduler('anchor-check', {
+      intervalMs,
+      run: async () => {
+        try {
+          return await this._runAnchorCheck()
+        } catch (err) {
+          if (isAbortError(err)) return { complete: true }
+          this.emit('anchor-check-error', { error: err.message || String(err) })
+          throw err
+        }
+      }
+    })
+    scheduler.start({ immediate: false })
 
     this._setLifecycleTimer('_anchorInitialTimer', 5000, () => {
-      this._trackFireAndForget(this._runAnchorCheck().catch(() => {}))
+      scheduler.trigger('initial')
     })
   }
 
@@ -4359,18 +4776,24 @@ export class RelayNode extends EventEmitter {
     // eager-replicate retry loop in app-lifecycle covers the first ~2
     // min after seedApp; this monitor takes over for the long tail.
     const intervalMs = Math.max(60_000, Number(this.config.repairInterval) || 300_000)
-    this._repairInterval = setInterval(() => {
-      this._trackFireAndForget(this._runRepairPass().catch((err) => {
-        if (isAbortError(err)) return
-        this.emit('repair-error', { error: err.message || String(err) })
-      }))
-    }, intervalMs)
-    if (this._repairInterval.unref) this._repairInterval.unref()
+    const scheduler = this._installCompletionScheduler('repair-pass', {
+      intervalMs,
+      run: async () => {
+        try {
+          return await this._runRepairPass()
+        } catch (err) {
+          if (isAbortError(err)) return { complete: true }
+          this.emit('repair-error', { error: err.message || String(err) })
+          throw err
+        }
+      }
+    })
+    scheduler.start({ immediate: false })
 
     // First pass shortly after startup so we attempt to recover ghost
     // entries from the previous run.
     this._setLifecycleTimer('_repairInitialTimer', 30_000, () => {
-      this._trackFireAndForget(this._runRepairPass().catch(() => {}))
+      scheduler.trigger('initial')
     })
   }
 
@@ -4378,10 +4801,12 @@ export class RelayNode extends EventEmitter {
     if (!this.appLifecycle || typeof this.appLifecycle.runRepairPass !== 'function') return
     if (!this.config.enableRepair && this.config.enableRepair !== undefined) return
     const result = await this.appLifecycle.runRepairPass({
-      maxConcurrent: Number(this.config.repairMaxConcurrent) || 3
+      maxConcurrent: this._runtimePassBudgets.repairWorkers,
+      budget: this._runtimePassBudgets.repair
     })
     this._lastRepairAt = Date.now()
     this.emit('repair-pass', { ...result, at: this._lastRepairAt })
+    return result
   }
 
   // ─── Lightweight service supervision ─────────────────────────────
@@ -4529,7 +4954,8 @@ export class RelayNode extends EventEmitter {
     const runBoth = async () => {
       // Expiry pass first — unseeds locally-owned expired entries and
       // auto-emits non-serving-proofs about our own deletions.
-      try { await this._runCustodyExpiryPass() } catch (err) {
+      let expiry = { complete: true }
+      try { expiry = await this._runCustodyExpiryPass() } catch (err) {
         if (!isAbortError(err)) {
           this.emit('custody-expiry-error', { error: err.message || String(err) })
         }
@@ -4537,20 +4963,23 @@ export class RelayNode extends EventEmitter {
       // Witness pass second — observes peer relays' non-serving-proofs
       // and signs independent witness attestations. Disabled via
       // config.custodyWitnessEnabled = false.
-      if (this.config.custodyWitnessEnabled === false) return
-      try { await this._runCustodyExpiryWitnessPass() } catch (err) {
+      if (this.config.custodyWitnessEnabled === false) return expiry
+      let witness = { complete: true }
+      try { witness = await this._runCustodyExpiryWitnessPass() } catch (err) {
         if (!isAbortError(err)) {
           this.emit('custody-witness-error', { error: err.message || String(err) })
         }
       }
+      return { complete: expiry?.complete !== false && witness?.complete !== false, expiry, witness }
     }
-    this._custodyExpiryInterval = setInterval(() => {
-      this._trackFireAndForget(runBoth())
-    }, intervalMs)
-    if (this._custodyExpiryInterval.unref) this._custodyExpiryInterval.unref()
+    const scheduler = this._installCompletionScheduler('custody-expiry-witness', {
+      intervalMs,
+      run: runBoth
+    })
+    scheduler.start({ immediate: false })
 
     this._setLifecycleTimer('_custodyExpiryInitialTimer', 5000, () => {
-      this._trackFireAndForget(runBoth())
+      scheduler.trigger('initial')
     })
   }
 
@@ -4579,33 +5008,43 @@ export class RelayNode extends EventEmitter {
     const intent = this.seedingRegistry && typeof this.seedingRegistry.getCustodyIntent === 'function'
       ? this.seedingRegistry.getCustodyIntent(intentId)
       : null
-    entry.custodyIntentId = intentId
+    const updates = { custodyIntentId: intentId }
     if (entry.retainUntil == null && intent && Number.isFinite(intent.retainUntil)) {
-      entry.retainUntil = intent.retainUntil
+      updates.retainUntil = intent.retainUntil
     }
     if (!entry.blindContentId && intent && intent.blindContentId) {
-      entry.blindContentId = intent.blindContentId
+      updates.blindContentId = intent.blindContentId
     }
     try {
       if (this.appRegistry && typeof this.appRegistry.update === 'function') {
-        this.appRegistry.update(appKey, {
-          custodyIntentId: entry.custodyIntentId,
-          retainUntil: entry.retainUntil,
-          blindContentId: entry.blindContentId
-        })
+        return this.appRegistry.update(appKey, updates)
       }
-    } catch (_) { /* persistence is best-effort; in-memory linkage already set */ }
+    } catch (err) {
+      // Catalog ingress validation is a pre-mutation fence. Surface the
+      // bounded failure without partially changing the live registry entry.
+      try {
+        this.emit('custody-linkage-error', {
+          appKey,
+          intentId,
+          error: err?.message || String(err)
+        })
+      } catch {}
+    }
+    return false
   }
 
   async _runCustodyExpiryPass (now = Date.now()) {
-    if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0, attested: 0 }
+    if (!this.appRegistry) return { checked: 0, expired: 0, skipped: 0, attested: 0, complete: true }
 
     const graceMs = Math.max(0, Number(this.config.custodyExpiryGraceMs) || 0)
     const expiredKeys = []
     let checked = 0
     let skipped = 0
+    const page = this.appRegistry.page('custody-expiry', this._runtimePassBudgets.custodyExpiry)
 
-    for (const [appKey, entry] of this.appRegistry.apps) {
+    for (const item of page.entries) {
+      const appKey = item.key
+      const entry = item.value
       if (!this._isTemporaryCustodyEntry(entry)) {
         skipped++
         continue
@@ -4714,7 +5153,7 @@ export class RelayNode extends EventEmitter {
     }
 
     this._lastCustodyExpiryAt = now
-    const result = { checked, expired, skipped, attested }
+    const result = { ...page, checked, expired, skipped, attested }
     this.emit('custody-expiry-pass', { ...result, at: now })
     return result
   }
@@ -4882,47 +5321,77 @@ export class RelayNode extends EventEmitter {
     let skipped = 0
     let errors = 0
 
-    // Enumerate all known intents (replicated via registry gossip).
-    // Direct access to _custodyIntents is the only enumeration path
-    // today — a public iterator on SeedingRegistry would be nicer but
-    // adding one is out of scope for this pass.
-    const intentIds = this.seedingRegistry._custodyIntents
-      ? [...this.seedingRegistry._custodyIntents.keys()]
-      : []
+    const totalBudget = this._runtimePassBudgets.custodyWitness
+    let remaining = totalBudget
+    let outerCompletedHighWater = null
+    let cycleComplete = false
 
-    for (const intentId of intentIds) {
-      const status = this.seedingRegistry.getCustodyStatus(intentId)
-      if (!status?.intent) { skipped++; continue }
+    // Own only one child intent cursor. At budget one a pass selects the
+    // intent and the next pass inspects its first proof, so neither the outer
+    // page nor an eager child array can hide uncharged work.
+    while (remaining > 0 && !cycleComplete) {
+      if (!this._custodyWitnessActiveIntent) {
+        const page = this.seedingRegistry.getCustodyIntentPage({
+          consumer: 'custody-witness',
+          budget: 1
+        })
+        remaining -= page.examined
+        if (page.complete) outerCompletedHighWater = page.completedHighWater
+        const item = page.entries[0]
+        if (!item) {
+          if (page.complete) cycleComplete = true
+          continue
+        }
+        this._custodyWitnessActiveIntent = {
+          intentId: item.key,
+          outerCycleComplete: page.complete,
+          completedHighWater: page.complete ? page.completedHighWater : null,
+          counted: false
+        }
+        if (remaining === 0) break
+      }
 
-      const retainUntil = Number(status.intent.retainUntil)
-      const retainElapsed = Number.isFinite(retainUntil) && (retainUntil + graceMs) <= now
-      // Claim path: an intent whose source the publisher has retired can be
-      // witnessed before retainUntil, mirroring _runCustodyExpiryPass. This
-      // is what lets a peer relay's "I observed relay-X delete its copy"
-      // attestation materialize for a *claimed* drop instead of waiting for
-      // the (often weeks-long) retain window. Outside it, nothing to witness
-      // until the window lapses.
-      if (!retainElapsed && !status.sourceRetirement) {
+      const active = this._custodyWitnessActiveIntent
+      const cursor = this._custodyWitnessProofCursor.get(active.intentId) || 0
+      const work = this.seedingRegistry.getCustodyWitnessWork(active.intentId, {
+        witnessPubkey: myPubkey,
+        cursor,
+        budget: remaining
+      })
+      remaining -= work.examined
+      const intent = work.intent
+      if (!intent) {
         skipped++
+        this._custodyWitnessProofCursor.delete(active.intentId)
+        this._custodyWitnessActiveIntent = null
+        if (active.outerCycleComplete) {
+          outerCompletedHighWater = active.completedHighWater
+          cycleComplete = true
+        }
         continue
       }
 
-      checked++
+      const retainUntil = Number(intent.retainUntil)
+      const retainElapsed = Number.isFinite(retainUntil) && (retainUntil + graceMs) <= now
+      if (!retainElapsed && !work.sourceRetirement) {
+        skipped++
+        this._custodyWitnessProofCursor.delete(active.intentId)
+        this._custodyWitnessActiveIntent = null
+        if (active.outerCycleComplete) {
+          outerCompletedHighWater = active.completedHighWater
+          cycleComplete = true
+        }
+        continue
+      }
 
-      for (const proof of status.nonServingProofs || []) {
-        // Skip our own proofs; we'd just be witnessing ourselves.
-        if (proof.relayPubkey === myPubkey) continue
-        // Skip if we've already witnessed this (intent, relay) pair.
-        const alreadyWitnessed = (status.expiryWitnesses || []).some(w =>
-          w.witnessPubkey === myPubkey &&
-          w.relayPubkey === proof.relayPubkey &&
-          w.intentId === intentId
-        )
-        if (alreadyWitnessed) continue
-
+      if (!active.counted) {
+        checked++
+        active.counted = true
+      }
+      for (const proof of work.candidates) {
         try {
-          await this.createCustodyExpiryWitness(intentId, proof.relayPubkey, {
-            blindContentId: status.intent.blindContentId,
+          await this.createCustodyExpiryWitness(active.intentId, proof.relayPubkey, {
+            blindContentId: intent.blindContentId,
             nonServingProofHash: hashHex(proof),
             catalogPresent: false,
             gatewayServing: false,
@@ -4930,19 +5399,38 @@ export class RelayNode extends EventEmitter {
           })
           witnessed++
           this.emit('custody-witness-attested', {
-            intentId, relayPubkey: proof.relayPubkey, at: now
+            intentId: active.intentId, relayPubkey: proof.relayPubkey, at: now
           })
         } catch (err) {
           errors++
           this.emit('custody-witness-attest-error', {
-            intentId, relayPubkey: proof.relayPubkey, error: err.message || String(err)
+            intentId: active.intentId, relayPubkey: proof.relayPubkey, error: err.message || String(err)
           })
         }
+      }
+
+      if (!work.complete) {
+        this._custodyWitnessProofCursor.set(active.intentId, work.nextCursor)
+        break
+      }
+      this._custodyWitnessProofCursor.delete(active.intentId)
+      this._custodyWitnessActiveIntent = null
+      if (active.outerCycleComplete) {
+        outerCompletedHighWater = active.completedHighWater
+        cycleComplete = true
       }
     }
 
     this._lastCustodyWitnessPassAt = now
-    const result = { checked, witnessed, skipped, errors }
+    const result = {
+      examined: totalBudget - remaining,
+      complete: cycleComplete && this._custodyWitnessActiveIntent === null,
+      completedHighWater: cycleComplete ? outerCompletedHighWater : null,
+      checked,
+      witnessed,
+      skipped,
+      errors
+    }
     this.emit('custody-witness-pass', { ...result, at: now })
     return result
   }
@@ -5036,12 +5524,14 @@ export class RelayNode extends EventEmitter {
   }
 
   async _checkReplicationHealth () {
-    if (!this.seedingRegistry) return
+    if (!this.seedingRegistry) return { complete: true, examined: 0 }
 
-    const requests = await this.seedingRegistry.getActiveRequests()
+    const page = this.seedingRegistry.getActiveRequestsPage({
+      consumer: 'replication-monitor',
+      budget: this._runtimePassBudgets.replication
+    })
+    const requests = page.entries
     const targetFloor = Math.max(1, Number(this.config.targetReplicaFloor) || 1)
-    const nextHealth = new Map()
-    let underReplicated = 0
 
     for (const req of requests) {
       const relays = await this.seedingRegistry.getRelaysForApp(req.appKey)
@@ -5049,9 +5539,9 @@ export class RelayNode extends EventEmitter {
       const current = relays.length
       const missing = Math.max(0, target - current)
       const state = missing > 0 ? 'under-replicated' : 'healthy'
-      if (state === 'under-replicated') underReplicated++
+      if (state === 'under-replicated') this._replicationHealthBuildUnder++
 
-      nextHealth.set(req.appKey, {
+      this._replicationHealthBuild.set(req.appKey, {
         state,
         current,
         target,
@@ -5064,13 +5554,19 @@ export class RelayNode extends EventEmitter {
       }
     }
 
-    this._replicationHealth = nextHealth
-    this._lastReplicationCheckAt = Date.now()
-    this.emit('replication-health', {
-      trackedApps: nextHealth.size,
-      underReplicated,
-      checkedAt: this._lastReplicationCheckAt
-    })
+    if (page.complete) {
+      this._replicationHealth = this._replicationHealthBuild
+      this._replicationHealthBuild = new Map()
+      this._lastReplicationCheckAt = Date.now()
+      this.emit('replication-health', {
+        trackedApps: this._replicationHealth.size,
+        underReplicated: this._replicationHealthBuildUnder,
+        checkedAt: this._lastReplicationCheckAt,
+        completedHighWater: page.completedHighWater
+      })
+      this._replicationHealthBuildUnder = 0
+    }
+    return page
   }
 
   // ─── Anchor verification ───────────────────────────────────────
@@ -5081,17 +5577,16 @@ export class RelayNode extends EventEmitter {
   // never gets the data — historically these stayed in the registry as
   // ghosts that the catalog claimed to serve. Now they get flagged.
   async _runAnchorCheck () {
-    if (!this.appRegistry) return
-    if (this.appRegistry.physicalReadOnly === true) return
-    const driveMap = (this.appRegistry.apps && typeof this.appRegistry.apps.values === 'function')
-      ? this.appRegistry.apps
-      : null
-    if (!driveMap) return
+    if (!this.appRegistry) return { complete: true, examined: 0 }
+    if (this.appRegistry.physicalReadOnly === true) return { complete: true, examined: 0 }
+    const page = this.appRegistry.page('anchor', this._runtimePassBudgets.anchor)
 
     let anchored = 0
     let unanchored = 0
     let checked = 0
-    for (const [appKey, entry] of driveMap) {
+    for (const item of page.entries) {
+      const appKey = item.key
+      const entry = item.value
       const drive = entry.drive
       if (!drive) continue
       checked++
@@ -5105,10 +5600,14 @@ export class RelayNode extends EventEmitter {
         // so the contract lives in one place. See
         // docs/AUTO-HEAL-ROOT-CAUSE-2026-05-22.md.
         const length = drive.version || 0
+        const driveOwner = typeof this.appLifecycle._driveOwner === 'function'
+          ? this.appLifecycle._driveOwner(entry, appKey)
+          : drive
         const fullyReplicated = length > 0 &&
           this.appLifecycle &&
           typeof this.appLifecycle._isDriveFullyReplicated === 'function' &&
-          await this.appLifecycle._isDriveFullyReplicated(drive)
+          driveOwner?.accepting !== false &&
+          await this.appLifecycle._isDriveFullyReplicated(drive, { owner: driveOwner })
         if (fullyReplicated) {
           // A completeness scan alone is not a durable storage proof. Fresh
           // anchors must pass repairUnanchored(), which pins both core forks,
@@ -5138,13 +5637,23 @@ export class RelayNode extends EventEmitter {
         this.emit('anchor-check-error', { appKey, error: err.message })
       }
     }
-    this._lastAnchorCheckAt = Date.now()
-    this.emit('anchor-health', {
-      checked,
-      anchored,
-      unanchored,
-      checkedAt: this._lastAnchorCheckAt
-    })
+    this._anchorCheckBuild.checked += checked
+    this._anchorCheckBuild.anchored += anchored
+    this._anchorCheckBuild.unanchored += unanchored
+    if (page.complete) {
+      this._lastAnchorCheckAt = Date.now()
+      this._anchorCheckAggregate = Object.freeze({
+        ...this._anchorCheckBuild,
+        completedHighWater: page.completedHighWater,
+        completedAt: this._lastAnchorCheckAt
+      })
+      this._anchorCheckBuild = { anchored: 0, unanchored: 0, checked: 0 }
+      this.emit('anchor-health', {
+        ...this._anchorCheckAggregate,
+        checkedAt: this._lastAnchorCheckAt
+      })
+    }
+    return page
   }
 
   async _attemptReplicationRepair (request, status) {
@@ -5199,16 +5708,9 @@ export class RelayNode extends EventEmitter {
       await this.appRegistry.clearEvicted(request.appKey) // genuinely under floor — we're needed again
     }
 
-    // Storage guard on REAL bytes (Phase 0), via _storageUsedBytes() — the
-    // measured on-disk corestore footprint. seeder.totalBytesStored only counts
-    // Seeder.seedCore traffic (~0 on registry-driven relays), so the old guard
-    // never bound and adoption was effectively uncapped (how the fleet's disks
-    // filled, 2026-06). Also reject when the budget is simply exhausted, not
-    // only when the request declares a size.
     const requestBound = positiveStorageBound(request.maxStorageBytes)
     if (requestBound === null) return false
-    const admission = this._storageAdmission(requestBound)
-    if (!admission.allowed) return false
+    if (this._cachedStorageRejection(requestBound).reject) return false
 
     // Paid pin-lease: don't auto-adopt a non-exempt publisher's registry
     // request for free here. The MVP charges each relay individually (no
@@ -5332,7 +5834,39 @@ export class RelayNode extends EventEmitter {
     )
   }
 
+  _cancelDiscoveryTransport () {
+    const dht = this.swarm?.dht
+    if (!dht || typeof dht.destroy !== 'function') return Promise.resolve()
+    if (this._discoveryTransportStop?.dht === dht) return this._discoveryTransportStop.promise
+    // HyperDHT force-destroy cancels network I/O without waiting for a server
+    // announce. Otherwise discovery.destroy -> swarm.listen can wait forever
+    // on unreachable bootstrap nodes. Keep storage and exact cleanup owners.
+    const entry = { dht, promise: Promise.resolve().then(() => dht.destroy({ force: true })) }
+    this._discoveryTransportStop = entry
+    entry.promise.catch(() => {
+      if (this._discoveryTransportStop === entry) this._discoveryTransportStop = null
+    })
+    return entry.promise
+  }
+
+  async _quiesceSeedingRegistry (timeout) {
+    const registry = this.seedingRegistry
+    if (!registry) return
+    const method = typeof registry.quiesce === 'function' ? 'quiesce' : 'stop'
+    await this._awaitOwnerOperation(registry, `seedingRegistry.${method}`, () => registry[method](), timeout)
+    if (method === 'stop' && this.seedingRegistry === registry) this.seedingRegistry = null
+  }
+
+  async _stopSeedingRegistry (timeout) {
+    await withTimeout(this._cancelDiscoveryTransport(), Math.max(MIN_OWNER_OPERATION_BUDGET_MS, this._remainingOwnerBudget(timeout)), 'discovery transport cancellation')
+    const registry = this.seedingRegistry
+    if (!registry) return
+    await this._awaitOwnerOperation(registry, 'seedingRegistry.stop', () => registry.stop(), timeout)
+    if (this.seedingRegistry === registry) this.seedingRegistry = null
+  }
+
   async _destroyDiscoveryHandles (timeout) {
+    await withTimeout(this._cancelDiscoveryTransport(), Math.max(MIN_OWNER_OPERATION_BUDGET_MS, this._remainingOwnerBudget(timeout)), 'discovery transport cancellation')
     const destroy = async (handle, label) => {
       if (!handle || typeof handle.destroy !== 'function') return
       await this._awaitOwnerOperation(handle, label, () => handle.destroy(), timeout)
@@ -5382,16 +5916,14 @@ export class RelayNode extends EventEmitter {
   }
 
   _awaitOwnerOperation (owner, label, run, timeout) {
-    // Arm the timeout when the owner-serialized operation actually STARTS,
-    // not when it is queued behind an in-flight operation on the same owner,
-    // and floor the budget so event-loop stalls between queueing and
-    // execution cannot consume it before run() begins (one-process unit
-    // suite on a loaded CI runner).
-    return this._ownerOperation(owner, label, () => withTimeout(
-      Promise.resolve().then(run),
+    // A timeout stops this caller waiting, not the owner's underlying work.
+    // Retain the exact promise until settlement so a retry cannot reenter a
+    // partially destroyed discovery session and release its storage early.
+    return withTimeout(
+      this._ownerOperation(owner, label, run),
       Math.max(MIN_OWNER_OPERATION_BUDGET_MS, this._remainingOwnerBudget(timeout)),
       label
-    ))
+    )
   }
 
   _remainingOwnerBudget (timeout) {
@@ -5400,8 +5932,57 @@ export class RelayNode extends EventEmitter {
     return budget
   }
 
+  async _drainSeededAppsForShutdown (timeout) {
+    const registry = this.appRegistry
+    if (!registry || typeof registry.page !== 'function' ||
+        typeof registry.releasePopulationConsumer !== 'function') {
+      const err = new Error('Relay shutdown requires bounded registry paging')
+      err.code = 'APP_REGISTRY_BOUNDED_PAGE_REQUIRED'
+      throw err
+    }
+    let pageCalls = 0
+    try {
+      let page
+      do {
+        page = registry.page(NODE_SHUTDOWN_POPULATION_CONSUMER, NODE_SHUTDOWN_PAGE_BUDGET)
+        pageCalls++
+        if (!page || !Array.isArray(page.entries) ||
+            page.entries.length > NODE_SHUTDOWN_PAGE_BUDGET ||
+            typeof page.complete !== 'boolean' ||
+            (!page.complete && (!Number.isSafeInteger(page.examined) || page.examined < 1))) {
+          const err = new Error('Relay shutdown received an invalid registry page')
+          err.code = 'APP_REGISTRY_BOUNDED_PAGE_INVALID'
+          throw err
+        }
+        if (pageCalls > NODE_SHUTDOWN_MAX_PAGE_CALLS) {
+          const err = new Error('Relay shutdown registry population bound was exceeded')
+          err.code = 'APP_REGISTRY_BOUNDED_PAGE_EXHAUSTED'
+          throw err
+        }
+        for (const item of page.entries) {
+          const appKeyHex = item?.key
+          if (typeof appKeyHex !== 'string') {
+            const err = new Error('Relay shutdown received an invalid registry key')
+            err.code = 'APP_REGISTRY_BOUNDED_PAGE_INVALID'
+            throw err
+          }
+          await withTimeout(
+            this.unseedApp(appKeyHex, { forget: false }),
+            this._remainingOwnerBudget(timeout),
+            `unseedApp(${appKeyHex.slice(0, 8)})`
+          )
+        }
+      } while (!page.complete)
+    } finally {
+      registry.releasePopulationConsumer(NODE_SHUTDOWN_POPULATION_CONSUMER)
+    }
+  }
+
   async _quiesceStorageWriters (timeout) {
     if (!this._ownerDeadline) this._ownerDeadline = Date.now() + (timeout || 30_000)
+    if (this.appLifecycle && typeof this.appLifecycle.beginShutdown === 'function') {
+      this.appLifecycle.beginShutdown()
+    }
     let firstError = null
     this._clearLifecycleTimers()
     const settle = async (run) => {
@@ -5422,8 +6003,13 @@ export class RelayNode extends EventEmitter {
     await stopAsync('torTransport', 'torTransport.stop')
     await stopAsync('wsTransport', 'wsTransport.stop')
     await stopAsync('dhtRelayWs', 'dhtRelayWs.stop')
+    await stopAsync('pearBlindRelay', 'pearBlindRelay.stop')
     await stopAsync('gatewayServer', 'gatewayServer.stop')
     await stopAsync('api', 'api.stop')
+    await stopAsync('retainedReadController', 'retainedReadController.stop')
+    await stopAsync('appCatalogController', 'appCatalogController.stop')
+    this.appCatalogStore = null
+    this._appCatalogStageFactory = null
     await stopAsync('router', 'router.stop')
     if (this.serviceProtocol) {
       await settle(async () => { this.serviceProtocol.destroy(); this.serviceProtocol = null })
@@ -5442,6 +6028,7 @@ export class RelayNode extends EventEmitter {
     ]))
 
     // Quiesce timer-driven producers before taking the mutation gate away.
+    await settle(() => this._stopCompletionSchedulers())
     for (const field of [
       '_relayRecordTimer', '_catalogBroadcastTimer', '_catalogThrottleCleanup',
       '_healthCheckInterval', 'settlementInterval', '_replicationCheckInterval',
@@ -5459,8 +6046,9 @@ export class RelayNode extends EventEmitter {
       clearTimeout(this[field])
       this[field] = null
     }
-    if (this.eviction) { this.eviction.stop(); this.eviction = null }
-    if (this.storageAccounting) { this.storageAccounting.stop(); this.storageAccounting = null }
+    await stopAsync('eviction', 'eviction.stop')
+    await stopAsync('storageAccounting', 'storageAccounting.stop')
+    await stopAsync('bootstrapCache', 'bootstrapCache.stop')
     if (this.servedAccounting) { this.servedAccounting.stop(); this.servedAccounting = null }
 
     // Abort and settle contract-aware loops, then stop every provider that can
@@ -5496,11 +6084,7 @@ export class RelayNode extends EventEmitter {
     }
     this._serviceContext = null
     if (this.seedingRegistry) {
-      const registry = this.seedingRegistry
-      await settle(async () => {
-        await this._awaitOwnerOperation(registry, 'seedingRegistry.stop', () => registry.stop(), timeout)
-        if (this.seedingRegistry === registry) this.seedingRegistry = null
-      })
+      await settle(() => this._quiesceSeedingRegistry(timeout))
     }
     if (this.networkDiscovery) {
       const discovery = this.networkDiscovery
@@ -5552,8 +6136,7 @@ export class RelayNode extends EventEmitter {
     }
     if (this.bootstrapCache) {
       const cache = this.bootstrapCache
-      cache.stop()
-      await settle(() => this._awaitOwnerOperation(cache, 'bootstrapCache.save', () => cache.save(), timeout))
+      await settle(() => this._awaitOwnerOperation(cache, 'bootstrapCache.stop', () => cache.stop(), timeout))
     }
     if (this.appRegistry) {
       const registry = this.appRegistry
@@ -5620,6 +6203,10 @@ export class RelayNode extends EventEmitter {
     if (!this.running && !this._starting && !this._startupRollbackPending) return
     this._stopRequested = true
     this._storageIngressReady = false
+    if (this.appCatalogController) this.appCatalogController.beginShutdown()
+    if (this.appLifecycle && typeof this.appLifecycle.beginShutdown === 'function') {
+      this.appLifecycle.beginShutdown()
+    }
     const timeout = this.config.shutdownTimeoutMs
     this._ownerDeadline = Date.now() + (timeout || 30_000)
 
@@ -5668,7 +6255,10 @@ export class RelayNode extends EventEmitter {
     }
 
     try {
-      await this._quiesceStorageWriters(timeout)
+      if (!this._storageWritersQuiesced) {
+        await this._quiesceStorageWriters(timeout)
+        this._storageWritersQuiesced = true
+      }
     } catch (err) {
       if (this.storageAdmission) {
         this.storageAdmission.closeMutations('storage-writer-quiesce-failed')
@@ -5692,6 +6282,9 @@ export class RelayNode extends EventEmitter {
     if (this.storageAdmission) {
       await this.storageAdmission.drainMutations({ timeoutMs: this._remainingOwnerBudget(timeout) })
     }
+    // Data producers are settled and admission stays sealed on retries. Network
+    // cancellation cannot turn a pending append into success or release storage.
+    await this._stopSeedingRegistry(timeout)
 
     // Stop the relay-record republish timer.
     if (this._relayRecordTimer) {
@@ -5712,15 +6305,23 @@ export class RelayNode extends EventEmitter {
     if (this._publisherSeedReplayCache) this._publisherSeedReplayCache.clear()
 
     // Bootstrap persistence was quiesced before admission closed.
-    this.bootstrapCache.stop()
+    if (this.bootstrapCache) await this.bootstrapCache.stop()
 
     // Stop health checks, settlement, WebSocket, API, and metrics first
     if (this.selfHeal) { this.selfHeal.stop(); this.selfHeal = null }
     if (this.alertManager) { this.alertManager.stop(); this.alertManager = null }
     if (this.healthMonitor) { this.healthMonitor.stop(); this.healthMonitor = null }
     if (this.diskMonitor) { this.diskMonitor.stop(); this.diskMonitor = null }
-    if (this.eviction) { this.eviction.stop(); this.eviction = null }
-    if (this.storageAccounting) { this.storageAccounting.stop(); this.storageAccounting = null }
+    if (this.eviction) {
+      const eviction = this.eviction
+      await eviction.stop()
+      if (this.eviction === eviction) this.eviction = null
+    }
+    if (this.storageAccounting) {
+      const accounting = this.storageAccounting
+      await accounting.stop()
+      if (this.storageAccounting === accounting) this.storageAccounting = null
+    }
     if (this.servedAccounting) { this.servedAccounting.stop(); this.servedAccounting = null }
     if (this.subsidyAccrual) { await this.subsidyAccrual.destroy(); this.subsidyAccrual = null }
     if (this.leaseManager) { await this.leaseManager.destroy(); this.leaseManager = null }
@@ -5751,6 +6352,10 @@ export class RelayNode extends EventEmitter {
       try { await withTimeout(this.dhtRelayWs.stop(), timeout, 'dhtRelayWs.stop') } catch (_) {}
       this.dhtRelayWs = null
     }
+    if (this.pearBlindRelay) {
+      try { await withTimeout(this.pearBlindRelay.stop(), timeout, 'pearBlindRelay.stop') } catch (_) {}
+      this.pearBlindRelay = null
+    }
     if (this.gatewayServer) {
       try { await withTimeout(this.gatewayServer.stop(), timeout, 'gatewayServer.stop') } catch (_) {}
       this.gatewayServer = null
@@ -5760,6 +6365,7 @@ export class RelayNode extends EventEmitter {
       this.api = null
     }
     if (this.metrics) { this.metrics.stop(); this.metrics = null }
+    if (this.resourceDiagnostics) await this.resourceDiagnostics.stop()
 
     // Stop services layer
     if (this.router) {
@@ -5817,13 +6423,7 @@ export class RelayNode extends EventEmitter {
     // reseedFromRegistry on the next start() (operator restart, SIGTERM,
     // or in-process self-heal). Using forget:true here was a data-loss bug
     // that wiped all seeded content on every restart.
-    for (const appKeyHex of this.seededApps.keys()) {
-      await withTimeout(
-        this.unseedApp(appKeyHex, { forget: false }),
-        this._remainingOwnerBudget(timeout),
-        `unseedApp(${appKeyHex.slice(0, 8)})`
-      )
-    }
+    await this._drainSeededAppsForShutdown(timeout)
 
     if (this.distributedDriveBridge) {
       const bridge = this.distributedDriveBridge

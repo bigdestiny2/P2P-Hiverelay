@@ -6,7 +6,9 @@
 
 import test from 'brittle'
 import http from 'http'
+import sodium from 'sodium-universal'
 import { RelayAPI } from 'p2p-hiverelay/core/relay-node/api.js'
+import { AppCatalogMvccStore } from 'p2p-hiverelay/core/relay-node/app-catalog-paged-runtime.js'
 import {
   normalizeSeedCoreKey,
   resolveSeedCoreRoute,
@@ -19,6 +21,13 @@ const HEX64 = 'a'.repeat(64)
 const STORAGE_BOUND = 1024 * 1024
 
 function mockRelayNode (seeder, opts = {}) {
+  const keyPair = {
+    publicKey: Buffer.alloc(sodium.crypto_sign_PUBLICKEYBYTES),
+    secretKey: Buffer.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+  }
+  sodium.crypto_sign_seed_keypair(keyPair.publicKey, keyPair.secretKey, Buffer.alloc(32, 19))
+  const appCatalogStore = new AppCatalogMvccStore()
+  appCatalogStore.beginDigest({ senderPubkey: keyPair.publicKey }).step()
   return {
     running: true,
     config: { storage: null },
@@ -32,7 +41,8 @@ function mockRelayNode (seeder, opts = {}) {
     async seedApp () { return { ok: true } },
     async unseedApp () {},
     seeder,
-    swarm: null,
+    swarm: { keyPair },
+    appCatalogStore,
     federation: null,
     _resolveAcceptMode () { return 'open' },
     catalogBeeKey: opts.catalogBeeKey || null,
@@ -66,6 +76,7 @@ async function makeServer (t, seeder, nodeOpts) {
   await api.start()
   const port = api.server.address().port
   t.teardown(async () => {
+    node.appCatalogStore.stop()
     if (api._rateLimitCleanup) clearInterval(api._rateLimitCleanup)
     if (api._dashboardFeed) { try { api._dashboardFeed.stop() } catch (_) {} }
     await new Promise(resolve => api.server.close(resolve))

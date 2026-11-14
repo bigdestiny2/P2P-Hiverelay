@@ -46,6 +46,7 @@ function mockNode (opts = {}) {
     async start () {},
     serviceRegistry: opts.registry || null,
     _servicesConfigCalls: [],
+    _persistedConfigs: [],
     async setServicesConfig (cfg) {
       this._servicesConfigCalls.push(cfg)
       // mimic the real one: filter to a known builtin
@@ -70,8 +71,14 @@ function request (port, method, path, body, headers = {}) {
   })
 }
 
-async function server (t, node) {
+async function server (t, node, { persistError = null } = {}) {
   const api = new RelayAPI(node, { apiPort: 0, apiHost: '127.0.0.1', apiKey: API_KEY })
+  // These route tests capture the exact persisted payload without touching
+  // the runner's home. Real filesystem persistence is covered by loader tests.
+  api._persistConfig = async () => {
+    if (persistError) throw persistError
+    node._persistedConfigs.push(structuredClone(api._getSafeConfig()))
+  }
   await api.start()
   const port = api.server.address().port
   t.teardown(async () => {
@@ -153,6 +160,21 @@ test('POST /api/manage/services/config: persists opt-in, restartRequired', async
   // The opt-in is persisted by mutating node.config (then api._persistConfig()).
   t.is(node.config.enableServices, true)
   t.alike(node.config.plugins, ['ai'])
+  t.is(node._persistedConfigs.length, 1)
+  t.is(node._persistedConfigs[0].enableServices, true)
+  t.alike(node._persistedConfigs[0].plugins, ['ai'])
+})
+
+test('services config persistence failure rolls back configuration and returns no success', async (t) => {
+  const node = mockNode({ plugins: ['storage'] })
+  node.config.enableServices = false
+  const port = await server(t, node, { persistError: new Error('fixture persistence failure') })
+  const res = await request(port, 'POST', '/api/manage/services/config', { enabled: true, plugins: ['ai'] }, AUTH)
+  t.is(res.statusCode, 500)
+  t.not(res.body.ok, true)
+  t.is(node.config.enableServices, false)
+  t.alike(node.config.plugins, ['storage'])
+  t.is(node._persistedConfigs.length, 0)
 })
 
 test('config endpoint requires auth', async (t) => {

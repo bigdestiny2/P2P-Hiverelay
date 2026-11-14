@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import hypercoreCrypto from 'hypercore-crypto'
+import createTestnet from '@hyperswarm/testnet'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 class FakeSwarm extends EventEmitter {
@@ -115,8 +116,13 @@ test('client owns share-bundle core and discovery until destroy', async (t) => {
 })
 
 test('client-owned swarm and store are nulled so restart creates fresh owners', async (t) => {
+  const testnet = await createTestnet(2, t)
   const storage = await mkdtemp(join(tmpdir(), 'hiverelay-client-restart-'))
-  const client = new HiveRelayClient(storage, { autoDiscover: false })
+  const client = new HiveRelayClient(storage, {
+    autoDiscover: false,
+    bootstrap: testnet.bootstrap,
+    bootstrapCacheEnabled: false
+  })
   t.teardown(async () => {
     try { await client.destroy() } catch (_) {}
     await rm(storage, { recursive: true, force: true })
@@ -337,6 +343,44 @@ test('client failed drive close retains drive and fork listeners for retry', asy
   t.absent(client._driveForkListeners.has(key))
   t.is(removals, 2)
   await client.destroy()
+})
+
+test('client discovery cleanup timeout retains exact owners and retry joins the same cleanup', async (t) => {
+  let releaseDiscovery
+  const discoveryGate = new Promise(resolve => { releaseDiscovery = resolve })
+  let destroys = 0
+  let closes = 0
+  const handle = {
+    async destroy () {
+      destroys++
+      await discoveryGate
+    }
+  }
+  const client = readerHarness(() => handle)
+  client._destroyTimeout = 5
+  const key = 'a'.repeat(64)
+  const drive = { async close () { closes++ } }
+  client.drives.set(key, drive)
+  client._joinDriveDiscovery(key, Buffer.alloc(32, 10), { server: true, client: true })
+  t.teardown(async () => {
+    releaseDiscovery()
+    await client.destroy()
+  })
+
+  await t.exception(client.closeDrive(key), { code: 'CLIENT_TEARDOWN_TIMEOUT' })
+  t.is(client.drives.get(key), drive, 'timed-out close retains the exact drive')
+  t.is(client._driveDiscoveryHandles.get(key), handle, 'timed-out close retains the exact discovery')
+  t.is(closes, 0, 'drive stays open while discovery cleanup is unsettled')
+  t.is(destroys, 1, 'one discovery cleanup owns the pending operation')
+
+  client._destroyTimeout = 1000
+  const retry = client.closeDrive(key)
+  releaseDiscovery()
+  await retry
+  t.is(destroys, 1, 'retry awaits the original cleanup instead of destroying twice')
+  t.is(closes, 1, 'drive closes exactly once after discovery settles')
+  t.absent(client.drives.has(key))
+  t.absent(client._driveDiscoveryHandles.has(key))
 })
 
 test('client late ready-listener failure rolls back every upper owner before shared dependencies', async (t) => {

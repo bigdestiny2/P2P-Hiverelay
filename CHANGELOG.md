@@ -11,6 +11,104 @@ The npm packages are versioned in lockstep. The blind-* workspaces
 
 ## [Unreleased]
 
+- Verify arbitration bandwidth receipts through the declared public core
+  package, so installed services can validate authentic signatures.
+- Classify `testnet` as source-workspace development tooling. Installed core
+  reports checkout guidance; source `--no-client` avoids loading the sibling
+  client. This does not add published testnet support or production dependencies.
+
+## [0.27.0-rc.1] — 2026-11-14 (candidate; live rollout pending)
+
+Draft release notes for the November 12–14 refresh of the existing candidate.
+This entry does not announce a published tag, npm release, GA, or completed
+production rollout. Full scope, inherited RC features, exact dependency
+checkpoints and outstanding gates are in
+[the complete candidate notes](docs/releases/0.27.0-rc.1.md).
+
+### Upstream and runtime
+- Refresh the public cohort to Hypercore 11.40.4, Corestore 7.16.1,
+  hypercore-storage 3.4.0, HyperDHT 6.36.0, Protomux 3.13.1 and public
+  compact-encoding 3.7.0. Update public Bare tooling to 1.37.1, experimental
+  Autobee to 2.13.6, and Holesail to 2.4.4.
+- Adopt compatible Bare helpers, Hyperblobs and Paparam updates, followed by
+  RocksDB native 3.19.5, Bare Buffer 3.7.2 and Bare URL 2.5.7. Final Linux images
+  use Node 22.23.5. No measured fleet speed or memory improvement is claimed.
+- Refresh supported gRPC, ip-address and x402 dependencies; retain process-local
+  payment replay protection and explicit financial-activation holds.
+
+### Correctness and migration
+- Avoid replaying removed registry entries; release closed-core telemetry
+  monitors; cancel pending HTTP probes on shutdown; preserve ownership across
+  asynchronous Holesail start, stop and cleanup retry.
+- Bind x402 replay reservations to verified authorization nonce domains and
+  strengthen globally routable IPv6 validation.
+- Add bounded, source-preserving offline raw-CS7 import with native Linux
+  shared read locking, signed receipts and fresh-target device rebinding.
+  Preserve CS6 migration, exact storage-patch checks and existing authority gates.
+- Recover already owned bounded OutboxLog journals across cold restart using
+  durable namespace/core/bound/debt records and complete local history checks.
+  Preserve full capacity accounting and fresh-admission refusal for unknown debt.
+- Add a separate explicitly authorized empty single-journal bootstrap API with
+  pinned plan/intent, complete inventory and central capacity checks. The normal
+  loader never migrates implicitly; nonempty, partial or conflicting state refuses.
+- Preserve every existing registry metadata field when internal storage recovery
+  attaches a runtime to an unchanged bound. Fresh pins, external re-pins and
+  changed-bound admission keep their existing paths.
+- Preserve service choices, budgets, identity and original snapshots. The
+  selected operational transition still requires stopped-state emptiness,
+  ordinary cold-loader verification and actual first/cold service acceptance.
+
+### Production packaging
+- Preserve locked workspace-local dependencies in Linux images instead of
+  copying only the root dependency tree. Verify 10 local lock slots and 47
+  consuming-owner bindings, including actual native signing from all three
+  product workspace owners; staged deployment checks the same qualified graph.
+- Final qualified runtime is `1a7f6085`, including the complete compatible public dependency graph and regenerated browser evidence. Earlier `4691ef9c` and `59028621` images remain checkpoint evidence.
+- Adopt fs-native-extensions 1.5.3, streamx 2.28.1, protomux-rpc 1.10.1, rache 1.0.1 and public sodium-native 5.2.1; bring older aliases/nested Bare packages to their compatible current releases and verify the complete consuming graph.
+
+### Browser, operations and publication
+- Advance public browser metadata/observations to V2 while regenerating current
+  v1 bundles under b4a 1.9 and keeping archived RC9 predecessor bytes immutable. Regenerate
+  current Chromium/container evidence without claiming release readiness.
+- Keep all private profile locks and ABI authorities unchanged; explicitly
+  select and verify private Bare 1.31.0 for its frozen cross-runtime vectors.
+- Reconcile nine active relays within 22 provider servers. Improve inventory
+  selection, exclusions, safe SSH diagnostics and observed health-version
+  reporting; retained rollback checkouts no longer determine reported versions.
+- Keep snapshot images within main/branch namespaces. They cannot claim
+  `latest` or versioned release labels; protected stable promotion is unchanged.
+- Refresh the canonical Brain's bounded Holepunch/Pear research and distinguish
+  the npm Pear wrapper, published CLI and development source versions. Final
+  Brain validation waits for the completed deployment record.
+
+### Qualification and holds
+- Initial runtime baseline `a6f60ffe`: unit suite reports 4,349 tests / 26,444 assertions;
+  integration reports 164 cases / 1,731 assertions with five explicit skips:
+  TLS SNI, 15-minute soak, legacy fresh-outbox bootstrap and two live Tor cases.
+  Separate signed-outbox full-node checks passed.
+- Actual browser, cross-runtime, old/new storage interoperability, Linux native
+  regressions and signed restore/rebind checks passed within their recorded
+  scopes. AMD64 container checks are emulated, not physical-host qualification.
+- Corrected `4691ef9c` integration passes 164 reported cases / 1,739 assertions;
+  four skips remain: TLS SNI, 15-minute soak and two live Tor cases. The legacy
+  fresh-outbox case is now executed. The final full-unit rerun passes 4,372 tests /
+  26,696 assertions on the unchanged `4691ef9c` runtime plus a test-only cache
+  interleaving correction; the original single-assertion failure remains recorded.
+- Both corrected Linux architectures pass 163 focused tests / 895 assertions,
+  two full-node composition tests / 38 assertions, 22 independent runtime and
+  11 explicit-bootstrap boundary groups, plus signed restore/rebind and restart.
+- All seven GitHub CI jobs and nine PR checks passed at `1a7f6085`. Fresh ARM64 and AMD64 images passed retained-content, native lock/RPC/crypto, public Bare, recovery, signed restore and cold-restart checks.
+- Nine- and ten-service migration rehearsals passed first/cold HTTP and data-preservation checks on both architectures. Explicit selections account for known empty internal startup records; unexpected additions remain rejected.
+- Fix inherited promotion-workflow validation by assigning runner temporary paths in a setup step. The protected promotion checks remain unchanged; no promotion was dispatched.
+- The real Singapore pilot remains held. Its selected offline outbox transition
+  passed; fresh stopped inspection preserved 388 active raw rows and 259 tombstones
+  after the latest attempted start. First/cold service and retained-content
+  acceptance remain pending. No relay has completed this upgrade; synthetic
+  qualification is not a live cutover receipt.
+- Live rollout and the Utah-US memory/restart issue remain pending. Private
+  product/ABI activation, nonempty outbox conversion, distributed-drive 1.x,
+  broader consumer/appliance acceptance and GA promotion remain separate gates.
+
 ## [0.26.0-rc.8] — 2026-08-28
 
 StartOS 0.4 package-provenance repair candidate. RC7 built and signed the

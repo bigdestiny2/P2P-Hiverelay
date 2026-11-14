@@ -16,6 +16,7 @@
 
 import minimist from 'minimist'
 import gracedown from 'pear-gracedown'
+import { loadTestnetDependencies } from './testnet-workspace.js'
 import { RelayNode } from '../core/relay-node/index.js'
 import { createLogger } from '../core/logger.js'
 import { isValidHexKey } from '../core/constants.js'
@@ -39,7 +40,7 @@ import {
 } from '../config/public-hive-gateway-env.js'
 import b4a from 'b4a'
 import { existsSync, mkdirSync, cpSync, readFileSync } from 'fs'
-import { join, dirname } from 'path'
+import { join, dirname, resolve } from 'path'
 import { homedir } from 'os'
 import { fileURLToPath } from 'url'
 import {
@@ -50,6 +51,14 @@ import {
   CAPACITY_PROFILE_IDS,
   normalizeCapacityProfile
 } from '../config/capacity-plan.js'
+import {
+  parseGenerationReceiptRequiredEnvironment,
+  resolveCorestoreGenerationReceiptLaunch
+} from '../core/persistence/storage-generation-receipt.js'
+import {
+  MAX_SEED_DISCOVERY_HINTS,
+  validateSeedDiscoveryHints
+} from '../core/protocol/seed-discovery-hints.js'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8'))
@@ -58,7 +67,7 @@ const SKILL_SRC = join(__dirname, '..', 'skills', 'SKILL.md')
 const VALID_ACCEPT_MODES = ['open', 'review', 'allowlist', 'closed']
 
 const args = minimist(process.argv.slice(2), {
-  boolean: ['version', 'auto-heal', 'autoheal'],
+  boolean: ['version', 'auto-heal', 'autoheal', 'require-generation-receipt'],
   // Keep identity-like values as exact strings. In particular, an app key
   // containing only decimal digits must never be coerced through Number.
   string: [
@@ -70,7 +79,12 @@ const args = minimist(process.argv.slice(2), {
     'gateway-max-in-flight-per-app',
     'hive-app-host-suffix',
     'hive-app-public-key',
-    'hive-app-public-version'
+    'hive-app-public-version',
+    'generation-receipt',
+    'generation-receipt-sha256',
+    'generation-receipt-sha256-file',
+    'retained-read-capability',
+    'retained-read-capability-sha256-file'
   ]
 })
 const command = args._[0]
@@ -434,6 +448,14 @@ async function start () {
     }
   }
 
+  // Pear 3.4's native UDX hole-punch fallback. This exposes no HiveRelay
+  // storage surface and remains off unless the operator explicitly enables it.
+  if (args['pear-blind-relay'] === true || process.env.HIVERELAY_PEAR_BLIND_RELAY === '1' ||
+      process.env.HIVERELAY_PEAR_BLIND_RELAY === 'true') {
+    if (!cliOverrides.transports) cliOverrides.transports = {}
+    cliOverrides.transports.pearBlindRelay = true
+  }
+
   // ─── Reverse-proxy / self-hosting-platform UI auth ─────────────────
   // HIVERELAY_UI_EXPOSE_TOKEN=1 embeds the management token into the
   // served dashboard/wizard HTML so the browser UI can authenticate when
@@ -528,6 +550,39 @@ async function start () {
   }
 
   const config = loadConfig(cliOverrides)
+  // This authority is launch-selected only; ordinary persisted config and
+  // management updates cannot opt a relay into a different retained snapshot.
+  delete config.retainedReadCapability
+  const retainedManifest = args['retained-read-capability'] || process.env.HIVERELAY_RETAINED_READ_CAPABILITY
+  const retainedPin = args['retained-read-capability-sha256-file'] || process.env.HIVERELAY_RETAINED_READ_CAPABILITY_SHA256_FILE
+  if (retainedManifest || retainedPin) {
+    if (!retainedManifest || !retainedPin) throw new Error('Retained local reads require both an external capability and pin file')
+    config.retainedReadCapability = { manifestPath: retainedManifest, pinPath: retainedPin }
+  }
+  let generationLaunch = null
+  try {
+    const requiredByEnvironment = parseGenerationReceiptRequiredEnvironment(
+      process.env.HIVERELAY_REQUIRE_GENERATION_RECEIPT
+    )
+    const storageRoot = resolve(config.storage)
+    generationLaunch = resolveCorestoreGenerationReceiptLaunch({
+      required: args['require-generation-receipt'] === true || requiredByEnvironment,
+      receiptPath: args['generation-receipt'] || process.env.HIVERELAY_GENERATION_RECEIPT,
+      expectedSha256: args['generation-receipt-sha256'] || process.env.HIVERELAY_GENERATION_RECEIPT_SHA256,
+      expectedSha256File: args['generation-receipt-sha256-file'] || process.env.HIVERELAY_GENERATION_RECEIPT_SHA256_FILE,
+      participant: 'relay-node',
+      storageRoot
+    })
+    if (generationLaunch) {
+      // The accepted envelope API itself requires a canonical absolute root.
+      // Resolve only after the external receipt and pin have both closed.
+      config.storage = storageRoot
+      config.hiverelayGeneration = generationLaunch.hiverelayGeneration
+    }
+  } catch (err) {
+    console.error(`Storage generation startup blocked: ${err && err.message ? err.message : String(err)}`)
+    process.exit(1)
+  }
   try {
     assertPublicHiveGatewayConcurrency(config)
     assertPublicHiveGatewayFiniteLimits(config)
@@ -570,6 +625,7 @@ async function start () {
     log.info({ publicKey: pubHex, port: config.apiPort }, 'relay node started')
     console.log(`  Public Key: ${pubHex}`)
     console.log(`  Storage:    ${config.storage}`)
+    if (generationLaunch) console.log(`  Generation: HC11 (${generationLaunch.receiptSha256})`)
     console.log(`  Max Store:  ${formatBytes(config.maxStorageBytes)}`)
     console.log(`  Relay:      ${config.enableRelay ? 'enabled' : 'disabled'}`)
     console.log(`  Seeding:    ${config.enableSeeding ? 'enabled' : 'disabled'}`)
@@ -595,6 +651,11 @@ async function start () {
   node.on('holesail-ready', ({ connectionKey }) => {
     log.info({ connectionKey }, 'holesail tunnel active')
     console.log(`  Holesail:   ${connectionKey}`)
+  })
+
+  node.on('pear-blind-relay-ready', ({ publicKey }) => {
+    log.info({ publicKey }, 'Pear 3.4 blind relay active')
+    console.log(`  Pear relay: ${publicKey}`)
   })
 
   node.on('nat-check', ({ publicIp, reachable, action }) => {
@@ -743,8 +804,8 @@ async function start () {
 // ─── testnet ────────────────────────────────────────────────────────
 
 async function startTestnet () {
-  const createTestnet = (await import('@hyperswarm/testnet')).default
-  const { HiveRelayClient } = await import('../../client/index.js')
+  const runClient = args.client !== false
+  const { createTestnet, HiveRelayClient } = await loadTestnetDependencies({ runClient })
   const Hyperswarm = (await import('hyperswarm')).default
   const { mkdirSync, rmSync } = await import('fs')
   const { tmpdir } = await import('os')
@@ -752,7 +813,6 @@ async function startTestnet () {
 
   const nodeCount = parseInt(args.nodes) || 3
   const basePort = parseInt(args.port) || 19100
-  const runClient = args.client !== false
   const testId = randomBytes(4).toString('hex')
   const baseDir = join(tmpdir(), `hiverelay-testnet-${testId}`)
   mkdirSync(baseDir, { recursive: true })
@@ -1291,10 +1351,17 @@ function collectRegistryOptions (argv, appKey, metadata = {}) {
   if (argv['max-storage'] !== undefined) body.maxStorageBytes = parseBytes(String(argv['max-storage']))
   if (argv['discovery-key'] !== undefined) {
     const discoveryKeys = parseCsvValues(argv['discovery-key']).map(v => v.toLowerCase())
+    if (discoveryKeys.length > MAX_SEED_DISCOVERY_HINTS) {
+      throw new Error(`discovery-key accepts at most ${MAX_SEED_DISCOVERY_HINTS} routing hints`)
+    }
     for (const key of discoveryKeys) {
       if (!isValidHexKey(key, 64)) {
         throw new Error('discovery-key entries must be 64 hex characters')
       }
+    }
+    const hints = validateSeedDiscoveryHints(appKey, discoveryKeys)
+    if (!hints.ok) {
+      throw new Error('discovery-key must be the canonical routing hint derived from the app key')
     }
     body.discoveryKeys = discoveryKeys
   }
@@ -1597,7 +1664,7 @@ Usage:
   p2p-hiverelay manage [options]    Live management console (same as tui)
   p2p-hiverelay init [options]      Initialize config + install agent skills
   p2p-hiverelay start [options]     Start a relay node
-  p2p-hiverelay testnet [options]   Spin up a local testnet (DHT + relays + client)
+  p2p-hiverelay testnet [options]   Source-workspace development testnet
   p2p-hiverelay seed <key>          Seed a key on a relay (optional registry publish)
   p2p-hiverelay ghostdrive ...      Ghost Drive pin/publish/discover workflows
   p2p-hiverelay catalog ...         Operator catalog control (mode/allowlist/approve/reject/remove/pending)
@@ -1615,6 +1682,12 @@ Start Options:
   --storage <path>              Storage directory
   --max-storage <size>          Max storage (e.g., 50GB, 100GB)
   --capacity-profile <id>       Hardware plan: ${CAPACITY_PROFILE_IDS.join(' | ')}
+  --require-generation-receipt  Refuse legacy/null storage startup
+  --generation-receipt <path>   Canonical external HC11 ceremony receipt
+  --generation-receipt-sha256 <sha256:...>
+                                Separately transported exact receipt pin
+  --generation-receipt-sha256-file <path>
+                                External file containing the exact receipt pin
   --seed-max-storage <size>     Required finite bound for each --seed app
   --max-connections <n>         Max peer connections (default: 256)
   --max-bandwidth <mbps>        Max relay bandwidth in Mbps (default: 100)
@@ -1648,6 +1721,7 @@ Start Options:
   --tor-socks-port <n>           Tor SOCKS5 port (default: 9050)
   --tor-control-port <n>         Tor control port (default: 9051)
   --holesail                     Enable Holesail API tunnel (NAT traversal)
+  --pear-blind-relay             Enable Pear 3.4 native UDX relay fallback
   --quiet                       Suppress periodic status output
 
 Manage Options:
@@ -1674,7 +1748,7 @@ Seed / Ghost Drive Options:
   --replicas <n>                Replication target (default: 3)
   --geo <region>                Geo preference (e.g. NA,EU,AS)
   --ttl <days>                  Registry TTL days (default: 30)
-  --discovery-key <hex>         Extra discovery keys for registry publish (repeatable)
+  --discovery-key <hex>         Canonical app routing hint (repeatable, max 64; one unique value)
 
 Testnet Options:
   --nodes <n>                   Number of relay nodes (default: 3)
@@ -1713,6 +1787,13 @@ Environment:
   HIVERELAY_ACCEPT_MODE         Catalog mode: open, review, allowlist, or closed
   HIVERELAY_STORAGE             Storage path used when --storage is absent
   HIVERELAY_MAX_STORAGE         Storage cap until maxStorageBytes is persisted
+  HIVERELAY_REQUIRE_GENERATION_RECEIPT
+                                Production fail-closed gate (1/true or 0/false)
+  HIVERELAY_GENERATION_RECEIPT  Canonical absolute external receipt path
+  HIVERELAY_GENERATION_RECEIPT_SHA256
+                                Separately injected exact receipt pin
+  HIVERELAY_GENERATION_RECEIPT_SHA256_FILE
+                                Canonical absolute external receipt pin-file path
   HIVERELAY_API_HOST            API bind host used when --api-host is absent
   HIVERELAY_API_PORT            API port used when --port is absent
   HIVERELAY_HOLESAIL            Set 1/true to enable the Holesail API tunnel
@@ -1723,7 +1804,7 @@ Examples:
   p2p-hiverelay start --region NA --max-storage 100GB   # Start relay
   p2p-hiverelay tui                                     # Live management TUI
   p2p-hiverelay tui --port 9200 --api-key $HIVERELAY_API_KEY
-  p2p-hiverelay testnet                                 # Local testnet (3 relays + client)
+  node packages/core/cli/index.js testnet               # Source checkout: 3 relays + client
   p2p-hiverelay seed <key> --publish --replicas 3       # Seed + publish registry request
   p2p-hiverelay ghostdrive pin <driveKey>               # Pin Ghost Drive key on relay
   p2p-hiverelay ghostdrive publish <driveKey>           # Pin + registry publish
@@ -1833,6 +1914,10 @@ function hasPersistedOutboxlogNamespace () {
 }
 
 main().catch((err) => {
+  if (err.code === 'HIVERELAY_TESTNET_SOURCE_ONLY') {
+    console.error(err.message)
+    process.exit(1)
+  }
   log.fatal({ err }, 'fatal startup error')
   process.exit(1)
 })

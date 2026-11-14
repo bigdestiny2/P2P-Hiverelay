@@ -54,13 +54,10 @@ function mockRelayNode ({ manifestStore, forkDetector } = {}) {
     metrics: { getSummary () { return { uptime: 100 } }, startedAt: Date.now() - 60000 },
     appRegistry: {
       apps: new Map(),
-      catalog () {
-        return [
-          { type: 'app' },
-          { type: 'drive' },
-          { type: 'dataset' }
-        ]
+      catalogStats () {
+        return { total: 3, anchored: 0, apps: 1, drives: 1, resources: 0, datasets: 1, media: 0 }
       },
+      catalog () { throw new Error('capability routes must use bounded catalog metadata') },
       catalogForBroadcast () { return [] },
       has () { return false },
       get () { return null }

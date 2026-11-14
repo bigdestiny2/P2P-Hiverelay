@@ -1,13 +1,16 @@
 # Fleet management
 
-The current channel boundary is deliberate: `stable` and `hold` target
-`v0.24.3`, while `canary` targets `v0.26.0-rc.3`. The `1.0.0-rc.1` blind
+The current channel boundary is deliberate: `stable` and `canary` target
+`v0.24.6`, while `hold` targets `v0.24.3`. The `1.0.0-rc.1` blind
 substrate work on `main` is a separate development track and is not a fleet
 stable claim. A channel pointer is desired state, not proof that each relay has
 converged. See [Stable HiveRelay v0.24.4](../docs/STABLE-0.24.4.md).
 
 Tooling for the **raw systemd fleet** — the relay boxes we operate
-directly (utah, utah-us, utah-2gb-a, utah-0.5gb, utah-8gb, sing-1, sing-2, bern, dubai). The Umbrel and StartOS
+directly (utah, utah-us, utah-2gb-a, dallas, sing-1, sing-2, sydney, amsterdam, dubai).
+This nine-relay set was reconciled with the 22-server Cloudzy estate on
+2026-11-14. Retired relays and servers assigned to other applications are
+recorded separately and are excluded from active deployment. The Umbrel and StartOS
 packaged relays auto-update through their own registries and are *not*
 managed here.
 
@@ -284,7 +287,44 @@ For a quick table without waiting for convergence, run:
 
 ```bash
 bash fleet/fleet-status.sh
+# Choose a reviewed inventory explicitly (paths with spaces are supported):
+bash fleet/fleet-status.sh --inventory /path/to/relays.json
 ```
+
+The table prefers the ignored `fleet/relays.local.json` when it exists, then
+falls back to tracked `fleet/relays.json`. `--inventory FILE` (or
+`--inventory=FILE`) overrides both; `--help` works before or after that option.
+A missing, unreadable or malformed selected inventory stops the command before
+network probes; an invalid local override never silently falls back to tracked
+addresses. Supply the same object format as `relays.json`: a `relays` array with
+`name`, `publicIp` or `tailnet`, optional `sshKey` (`default` or a readable path),
+and optional `channel` (defaults to `stable`). Tailnet names take precedence.
+
+Rows with `role: "retired"`, `status: "retired"`, or a nonempty `retiredAt`, plus
+objects in `retiredRelays`, are shown separately and never probed. `otherHosts`
+(and `otherRelays`) are also excluded; their `disposition` or `reason` explains
+why. Excluded names override matching active entries. These records only need
+`name` and an optional `retirementReason`, `reason` or `disposition`. Keep local
+inventory private and reviewed: copying it does not establish host readiness or
+rollout authorization. This status tool does not alter other deployment tools'
+inventory selection.
+
+`SSH` and `HEALTH` are separate: a missing key, authentication failure, timeout,
+network failure or host trust failure leaves service health **unobserved**. The
+fixed diagnostic suggests what to check without printing raw SSH errors or key
+material. `accept-new` accepts unknown host keys but rejects changed keys; verify
+the host fingerprint before repairing `known_hosts`. An SSH success can still
+show `STOPPED`, `HEALTH-UNAVAILABLE` or `HEALTH-INVALID`; check the remote service,
+localhost `/health` and its API key. `VERSION` preserves prerelease and build
+suffixes. `VERSION-SOURCE=HEALTH` identifies a validated version observed in the
+localhost health response. If that version is missing or invalid, `SERVICE-PACKAGE`
+reads the package in the service's configured `WorkingDirectory`; this does not
+prove the running version. Without either valid source, the version is `?` and
+`VERSION-SOURCE=UNOBSERVED`. A retained rollback checkout at `~/hiverelay` is never
+used implicitly. The table is read-only and exits successfully after a completed probe
+pass even when individual hosts fail; it is not a machine readiness gate.
+`TARGET` is an informational channel hint, not signed rollout evidence. Use the
+rollout checker above for qualification of the exact release and commit.
 
 To **hold** a box, point its channel at the version it already runs. To
 **roll a whole channel back**, use an explicit reviewed recovery procedure;
@@ -376,8 +416,9 @@ sudo bash fleet/tailscale-enroll.sh        # interactive login, or export TS_AUT
 ```
 
 Then add the printed tailnet name to the box's `tailnet` field in
-`relays.json`. `fleet-status.sh` and any manual SSH prefer the tailnet
-name automatically.
+`relays.local.json` (or the reviewed inventory selected with `--inventory`).
+`fleet-status.sh` prefers the tailnet name automatically; select that name
+explicitly for manual SSH.
 
 ## First rollout (one-time)
 

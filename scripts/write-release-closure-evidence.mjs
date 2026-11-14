@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import fs from 'node:fs'
+import { validateReleaseStage, assertArtifactSurfaceState } from './lib/release-evidence-contract.mjs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
@@ -15,6 +16,8 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 
 try {
   if (Boolean(args.out) === Boolean(args.verify)) throw new Error('Exactly one of --out or --verify is required')
+  const stageBody = JSON.parse(fs.readFileSync(required(args, 'releaseEvidence'), 'utf8'))
+  if (validateReleaseStage(stageBody)) assertArtifactSurfaceState(stageBody)
   const binding = resolveStartos04ReleaseBinding({
     repoRoot,
     tag: required(args, 'tag'),

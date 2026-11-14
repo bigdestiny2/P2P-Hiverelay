@@ -3,6 +3,7 @@ import path from 'node:path'
 import test from 'brittle'
 import b4a from 'b4a'
 import sodium from 'sodium-universal'
+import { inspectEngineHistory } from './generation-history-fixture.js'
 import {
   INBOX_APPEND_AUTH_MODE,
   INBOX_APPEND_RESULT,
@@ -332,6 +333,39 @@ test('Inbox engine persists CREATE/APPEND and recovers exact immutable frame/rep
   t.is(page.entries.length, 1)
   t.ok(b4a.equals(page.entries[0].frame, appended.request.frame))
   t.ok(b4a.equals(inboxEntriesCommitment(page.entries), inboxEntriesCommitment(page.entries)))
+  await engine.close()
+})
+
+test('Inbox CREATE replay re-establishes the generation floor after callback failure and restart', async t => {
+  const root = await temporaryRoot(t)
+  const time = clock()
+  const created = createFixture({ spendByte: 0xd8 })
+  let failedCallbacks = 0
+  let engine = new BlindInboxStorageEngine(engineOptions(root, time, {
+    async onBlindWriteAcknowledged () {
+      failedCallbacks++
+      throw new Error('generation floor append failed before durability')
+    }
+  }))
+  await engine.open()
+  await t.exception(engine.createInbox({ ...created, resultBinding: binding() }), /generation floor append failed/)
+  t.is(failedCallbacks, 1)
+  t.is(engine.status().inboxCount, 1, 'the committed WAL state survived the refused response')
+  t.is(engine.storageGenerationEvidence().hasIrreversibleState, true, 'valid committed history precedes the failed external acknowledgment')
+  await engine.close()
+
+  const replayEvidence = []
+  engine = new BlindInboxStorageEngine(engineOptions(root, time, {
+    onBlindWriteAcknowledged (evidence) {
+      replayEvidence.push({ walSequence: evidence.walSequence, walHash: b4a.from(evidence.walHash) })
+    }
+  }))
+  await engine.open()
+  const replay = await engine.createInbox({ ...created, resultBinding: binding(2n) })
+  t.is(replay.inbox.stateRevision, 0n)
+  t.is(replayEvidence.length, 1, 'the externally returned replay proves the floor again')
+  t.is(replayEvidence[0].walSequence, engine.transactionStore.walSequence)
+  t.alike(replayEvidence[0].walHash, engine.transactionStore.walHash)
   await engine.close()
 })
 
@@ -691,6 +725,7 @@ test('APPEND remains non-releasable until exact ACK finalization and replays aft
   const appended = appendFixture(created, 0x6b)
   let engine = new BlindInboxStorageEngine(engineOptions(root, time))
   await engine.open()
+  t.is(engine.storageGenerationEvidence().hasIrreversibleState, false, 'fresh INBOX has no committed history')
   await engine.createInbox({ ...created, resultBinding: binding() })
 
   const provisional = await engine.appendFrame({ ...appended, resultBinding: binding() })
@@ -734,6 +769,7 @@ test('APPEND remains non-releasable until exact ACK finalization and replays aft
   await engine.advanceEpochFloor(133)
   await engine.sweepExpired()
   t.is(engine.inspectInboxState(created.request.physicalTopic), null, 'inbox lease GC makes new traffic absent')
+  t.is(engine.storageGenerationEvidence().hasIrreversibleState, true, 'payload retirement cannot erase semantic history')
   const tombstoneReplay = await engine.appendFrame({ ...appended, resultBinding: binding(5n) })
   t.alike(tombstoneReplay.ackSignature, finalized.ackSignature,
     'long-lived spent state replays the exact ACK after inbox GC')
@@ -744,6 +780,7 @@ test('APPEND remains non-releasable until exact ACK finalization and replays aft
   }
   t.ok(checkpointEntries.length > 0, 'expired APPEND compact spend enters the bounded checkpoint authority')
   await engine.close()
+  t.is(await inspectEngineHistory(BlindInboxStorageEngine, engineOptions(root, time)), true, 'read-only full replay retains INBOX history')
 
   engine = new BlindInboxStorageEngine(engineOptions(root, time))
   await engine.open()
@@ -751,6 +788,7 @@ test('APPEND remains non-releasable until exact ACK finalization and replays aft
   t.alike(restartReplay.ackSignature, finalized.ackSignature)
   t.alike(restartReplay.resultCommitment, finalized.resultCommitment)
   t.is(engine.status().frameCount, 0)
+  t.is(engine.storageGenerationEvidence().hasIrreversibleState, true, 'reopen retains history and the supported spent rows')
   await engine.close()
 })
 

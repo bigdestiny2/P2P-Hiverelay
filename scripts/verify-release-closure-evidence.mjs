@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import crypto from 'node:crypto'
+import { validateReleaseStage, assertArtifactSurfaceState } from './lib/release-evidence-contract.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -221,6 +222,8 @@ function verifyBundleStructure (bundleDir) {
     [STARTOS_EVIDENCE_NAME]: path.join(bundleDir, STARTOS_EVIDENCE_NAME),
     'release-closure-evidence.json': path.join(bundleDir, 'release-closure-evidence.json')
   }
+  const stageBody = readJson(files['release-evidence.json'], 'release evidence')
+  if (validateReleaseStage(stageBody)) assertArtifactSurfaceState(stageBody)
   const release = readIdentity(files['release-evidence.json'])
   const binding = resolveStartos04ReleaseBinding({
     repoRoot,

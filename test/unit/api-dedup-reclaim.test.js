@@ -75,13 +75,15 @@ test('api dedup reclaim: rejects malformed body and integer options before recla
   const cases = [
     [null, 'JSON body object required'],
     [[], 'JSON body object required'],
-    [{ retainVersions: -1 }, 'retainVersions must be a non-negative integer'],
-    [{ retainVersions: 1.5 }, 'retainVersions must be a non-negative integer'],
-    [{ retainVersions: '1' }, 'retainVersions must be a non-negative integer'],
-    [{ max: 0 }, 'max must be a positive integer'],
-    [{ max: 2.5 }, 'max must be a positive integer'],
-    [{ max: '2' }, 'max must be a positive integer'],
-    [{ max: Number.MAX_SAFE_INTEGER + 1 }, 'max must be a positive integer']
+    [{ retainVersions: -1 }, 'retainVersions must be a safe integer within 0..64'],
+    [{ retainVersions: 1.5 }, 'retainVersions must be a safe integer within 0..64'],
+    [{ retainVersions: '1' }, 'retainVersions must be a safe integer within 0..64'],
+    [{ retainVersions: 65 }, 'retainVersions must be a safe integer within 0..64'],
+    [{ max: 0 }, 'max must be a safe integer within 1..64'],
+    [{ max: 2.5 }, 'max must be a safe integer within 1..64'],
+    [{ max: '2' }, 'max must be a safe integer within 1..64'],
+    [{ max: 65 }, 'max must be a safe integer within 1..64'],
+    [{ max: Number.MAX_SAFE_INTEGER + 1 }, 'max must be a safe integer within 1..64']
   ]
 
   for (const [body, message] of cases) {

@@ -234,7 +234,7 @@ test('operator pulse renders management overview and escapes namespace names', (
     '  suppress: document.getElementById("statSuppress").textContent,',
     '  writers: document.getElementById("statOutboxWriters").textContent,',
     '  privacy: document.getElementById("statPrivacy").textContent,',
-    '  nsAssigned: document.getElementById("namespacesBody").innerHTMLAssignments[0] || "",',
+    '  nsAssigned: document.getElementById("namespacesBody").innerHTML,',
     '  nsDisplay: document.getElementById("namespacesPanel").style.display,',
     '  compDisplay: document.getElementById("compliancePanel").style.display,',
     '  walDisplay: document.getElementById("walPanel").style.display,',
@@ -244,7 +244,7 @@ test('operator pulse renders management overview and escapes namespace names', (
     '  shardDisplay: document.getElementById("shardPanel").style.display,',
     '  shardPut: document.getElementById("shardPut").textContent,',
     '  armed: document.getElementById("compAdminArmed").textContent,',
-    '  attentionAssigned: (document.getElementById("attentionList").innerHTMLAssignments || []).join("")',
+    '  attentionAssigned: document.getElementById("attentionList").innerHTML',
     '})'
   ].join('\n')))
 
@@ -263,7 +263,6 @@ test('operator pulse renders management overview and escapes namespace names', (
   t.is(out.shardDisplay, '')
   t.is(out.shardPut, '10')
   t.is(out.armed, 'ARMED')
-  // Use the raw assignment (FakeElement re-escapes on get).
   t.ok(out.nsAssigned.includes('&lt;img src=x onerror=alert(1)&gt;'))
   t.ok(out.nsAssigned.includes('blind'))
   t.absent(out.nsAssigned.includes('<img'))
@@ -394,7 +393,8 @@ function renderDomWith (body) {
 function renderOperatorPulseWith (body) {
   const elements = {}
   const source = [
-    extractFunction('escapeHtml'),
+    extractFunction('clearNode'),
+    extractFunction('appendEl'),
     extractFunction('formatBytes'),
     extractFunction('formatCount'),
     extractFunction('setText'),
@@ -408,6 +408,7 @@ function renderOperatorPulseWith (body) {
     Math,
     isNaN,
     document: {
+      createElement (tag) { return new FakeElement(tag) },
       getElementById (id) {
         if (!elements[id]) {
           const el = new FakeElement('div')
@@ -603,3 +604,32 @@ function escapeText (value) {
     return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
   })
 }
+
+test('operator namespace counters and attention use text nodes even for malformed payloads', t => {
+  const payload = '<img src=x onerror=alert(1)>'
+  const out = JSON.parse(renderOperatorPulseWith([
+    `updateOperatorPulse(${JSON.stringify({
+      namespaces: { namespaces: [{ name: payload, writers: payload, blind: true, bytes24h: 9, capBytes24h: 10 }] }
+    })})`,
+    'JSON.stringify({',
+    '  namespaces: document.getElementById("namespacesBody").innerHTML,',
+    '  attention: document.getElementById("attentionList").innerHTML,',
+    '  namespaceAssignments: document.getElementById("namespacesBody").innerHTMLAssignments,',
+    '  attentionAssignments: document.getElementById("attentionList").innerHTMLAssignments',
+    '})'
+  ].join('\n')))
+  t.ok(out.namespaces.includes('&lt;img src=x onerror=alert(1)&gt; writers'))
+  t.ok(out.attention.includes('Namespace &lt;img src=x onerror=alert(1)&gt; near daily byte cap'))
+  t.absent(out.namespaces.includes('<img'))
+  t.absent(out.attention.includes('<img'))
+  t.alike(out.namespaceAssignments, [])
+  t.alike(out.attentionAssignments, [])
+
+  const empty = JSON.parse(renderOperatorPulseWith([
+    'updateOperatorPulse({ namespaces: { namespaces: [{ name: "old", writers: 2 }] } })',
+    'updateOperatorPulse({ namespaces: { namespaces: [] } })',
+    'JSON.stringify({ text: document.getElementById("namespacesBody").textContent, assignments: document.getElementById("namespacesBody").innerHTMLAssignments })'
+  ].join('\n')))
+  t.is(empty.text, 'No namespaces configured')
+  t.alike(empty.assignments, [])
+})

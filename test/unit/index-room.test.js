@@ -18,6 +18,7 @@ import { join } from 'path'
 import { buildCapabilityDoc, verifyCapabilityDoc } from 'p2p-hiverelay/core/capability-doc.js'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
 import { RelayAPI } from 'p2p-hiverelay/core/relay-node/api.js'
+import { AppCatalogMvccStore } from 'p2p-hiverelay/core/relay-node/app-catalog-paged-runtime.js'
 
 const API_KEY = 'index-room-test-key'
 const ROOM = z32.encode(b4a.alloc(32, 7)) // a valid 52-char z32 key
@@ -84,6 +85,13 @@ test('setIndexRoom persists + _loadIndexRoom restores; rejects bad z32', async (
 
 // ── API: envelope + proxy + publish ─────────────────────────────────────
 function mockNode (opts = {}) {
+  const keyPair = {
+    publicKey: b4a.alloc(sodium.crypto_sign_PUBLICKEYBYTES),
+    secretKey: b4a.alloc(sodium.crypto_sign_SECRETKEYBYTES)
+  }
+  sodium.crypto_sign_seed_keypair(keyPair.publicKey, keyPair.secretKey, b4a.alloc(32, 23))
+  const appCatalogStore = new AppCatalogMvccStore()
+  appCatalogStore.beginDigest({ senderPubkey: keyPair.publicKey }).step()
   return {
     running: true,
     config: { storage: null },
@@ -95,7 +103,8 @@ function mockNode (opts = {}) {
     async stop () {},
     async start () {},
     seeder: null,
-    swarm: null,
+    swarm: { keyPair },
+    appCatalogStore,
     federation: null,
     catalogBeeKey: null,
     indexRoom: opts.indexRoom || null,
@@ -126,6 +135,7 @@ async function server (t, node, events = null) {
   await api.start()
   const port = api.server.address().port
   t.teardown(async () => {
+    node.appCatalogStore.stop()
     if (api._rateLimitCleanup) clearInterval(api._rateLimitCleanup)
     if (api._dashboardFeed) { try { api._dashboardFeed.stop() } catch (_) {} }
     await new Promise(resolve => api.server.close(resolve))
@@ -136,9 +146,11 @@ async function server (t, node, events = null) {
 test('catalog.json surfaces indexRoom (and null when no sidecar)', async (t) => {
   const p1 = await server(t, mockNode({ indexRoom: ROOM }))
   const r1 = await request(p1, 'GET', '/catalog.json')
+  t.is(r1.statusCode, 200)
   t.is(r1.body.indexRoom, ROOM)
   const p2 = await server(t, mockNode())
   const r2 = await request(p2, 'GET', '/catalog.json')
+  t.is(r2.statusCode, 200)
   t.is(r2.body.indexRoom, null)
 })
 

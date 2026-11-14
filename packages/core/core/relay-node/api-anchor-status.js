@@ -1,7 +1,21 @@
 import { isValidHexKey } from '../constants.js'
+import { GATEWAY_CATALOG_PAGE_SIZE_MAX, readExternalCatalogPage } from './api-catalog-read.js'
 
 const ANCHOR_PROOF_PREFIX = '/api/anchors/'
 const ANCHOR_PROOF_SUFFIX = '/proof'
+const ANCHOR_DETAIL_FIELDS = Object.freeze([
+  'appKey',
+  'type',
+  'anchored',
+  'blind',
+  'storageClass',
+  'availabilityClass'
+])
+const ANCHOR_DETAIL_OMITTED_LEGACY_FIELDS = Object.freeze([
+  'anchoredAt',
+  'anchoredLength',
+  'custodyIntentId'
+])
 
 const ANCHOR_STATUS_ROUTES = Object.freeze({
   'GET /api/anchors': Object.freeze({ kind: 'anchor-status' })
@@ -68,6 +82,7 @@ export function buildAnchorStatusRoutePayload ({
   route,
   context = null,
   url,
+  node,
   appRegistry,
   lastCheckedAt = null
 } = {}) {
@@ -81,6 +96,8 @@ export function buildAnchorStatusRoutePayload ({
 
   const routeContext = context || buildAnchorStatusRouteContext(url)
   return buildAnchorStatusPayload({
+    node,
+    url,
     appRegistry,
     detailed: routeContext.detailed,
     lastCheckedAt
@@ -125,6 +142,8 @@ export async function buildAnchorProofPayload ({
 }
 
 export function buildAnchorStatusPayload ({
+  node,
+  url,
   appRegistry,
   detailed = false,
   lastCheckedAt = null
@@ -138,9 +157,18 @@ export function buildAnchorStatusPayload ({
   }
 
   const stats = appRegistry.anchorStats()
-  const entries = detailed
-    ? anchorStatusEntries(appRegistry)
-    : null
+  let details = null
+  if (detailed) {
+    const read = readExternalCatalogPage({
+      node,
+      url,
+      maxPageSize: GATEWAY_CATALOG_PAGE_SIZE_MAX,
+      defaultLimit: GATEWAY_CATALOG_PAGE_SIZE_MAX,
+      status: true
+    })
+    if (!read.ok) return read
+    details = read
+  }
 
   return {
     ok: true,
@@ -151,14 +179,29 @@ export function buildAnchorStatusPayload ({
       unanchored: count(stats && stats.unanchored),
       neverChecked: count(stats && stats.neverChecked),
       lastCheckedAt: timestampOrNull(lastCheckedAt),
-      entries
+      entries: details ? anchorStatusEntries(details.entries) : null,
+      ...(details
+        ? {
+            pagination: {
+              limit: details.limit,
+              nextCursor: details.cursor,
+              complete: details.complete
+            },
+            snapshot: details.snapshot,
+            entryCount: details.snapshot.entryCount,
+            entrySchema: {
+              version: 2,
+              fields: [...ANCHOR_DETAIL_FIELDS],
+              omittedLegacyFields: [...ANCHOR_DETAIL_OMITTED_LEGACY_FIELDS]
+            }
+          }
+        : {})
     }
   }
 }
 
-export function anchorStatusEntries (appRegistry) {
-  if (!appRegistry || typeof appRegistry.catalog !== 'function') return []
-  return appRegistry.catalog().map(anchorStatusEntry)
+export function anchorStatusEntries (entries) {
+  return Array.isArray(entries) ? entries.map(anchorStatusEntry) : []
 }
 
 export function anchorStatusEntry (entry = {}) {
@@ -166,9 +209,6 @@ export function anchorStatusEntry (entry = {}) {
     appKey: entry.appKey,
     type: entry.type,
     anchored: entry.anchored,
-    anchoredAt: entry.anchoredAt,
-    anchoredLength: entry.anchoredLength,
-    custodyIntentId: entry.custodyIntentId || null,
     blind: entry.blind === true,
     storageClass: entry.storageClass || null,
     availabilityClass: entry.availabilityClass || null

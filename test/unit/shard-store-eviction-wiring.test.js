@@ -87,7 +87,10 @@ test('STO-005 wiring: the EvictionManager sweep tick drives the shard-store evic
   // Stub the eviction deps so _ensureEviction can construct a real
   // EvictionManager without a running swarm/registry.
   node.swarm = { keyPair: { publicKey: Buffer.alloc(32, 7) } }
-  node.appRegistry = { entries: () => [][Symbol.iterator]() }
+  node.appRegistry = {
+    page: () => ({ entries: [], examined: 0, complete: true }),
+    releasePopulationConsumer: () => true
+  }
   node.seedingRegistry = { getRelaysForApp: () => [] }
   node.storageAccounting = { getBytes: () => 0, getSummary: () => ({ totalBytes: 0 }) }
   node.diskMonitor = { getInfo: () => ({ usedPct: 88, totalBytes: 1e9 }) }
@@ -108,5 +111,5 @@ test('STO-005 wiring: the EvictionManager sweep tick drives the shard-store evic
   await Promise.resolve()
   t.is(hookCalls, 1, 'the eviction sweep tick drove the shard-store eviction hook')
 
-  node.eviction.stop()
+  await node.eviction.stop()
 })

@@ -4,5 +4,5 @@ import { sdk } from './sdk'
 // data volume (HOME=/data → ~/.hiverelay). Backing it up captures the whole
 // node; a restore brings the relay back as itself (same identity + seed).
 export const { createBackup, restoreInit } = sdk.setupBackups(
-  async ({ effects }) => sdk.Backups.ofVolumes('main'),
+  async ({ effects }) => sdk.Backups.ofVolumes('main', 'generation'),
 )

@@ -1,0 +1,9 @@
+{
+  "name": "@hiverelay/blind-core-paid-proof-routing-v1",
+  "version": "0.0.0-r01.1",
+  "private": true,
+  "type": "module",
+  "exports": { ".": "./index.js" },
+  "scripts": { "test": "node --test test/*.test.mjs", "check:bindings": "node source-bindings.mjs --check" },
+  "engines": { "node": ">=22.22.0" }
+}

@@ -12,7 +12,8 @@ import {
 import {
   acquireBlindStoreSessionTransactionLease,
   transferBlindStoreSessionTransactionLease,
-  verifyBlindStoreSessionTransactionLease
+  verifyBlindStoreSessionTransactionLease,
+  verifyBlindStoreSessionWriterLease
 } from './store-session.js'
 import { deriveBlindVirtualBucket } from './virtual-bucket.js'
 
@@ -53,6 +54,7 @@ const WAL_HASH_DOMAIN = b4a.from('hiverelay.blind.wal-frame-hash.v1', 'ascii')
 const OPEN_STORE_ROOTS = new Set()
 const TRANSACTION_STORE_SESSION_LEASES = new WeakMap()
 const TRANSACTION_STORE_RECOVERY_HANDOFFS = new WeakMap()
+const GENERATION_STARTUP_HANDOFFS = new WeakMap()
 const ACTIVE_WAL_BARRIER_AUTHORITIES = new WeakSet()
 const WAL_BARRIER_AUTHORITY_STATE = new WeakMap()
 const ACTIVE_WAL_ANCHORS = new WeakSet()
@@ -704,6 +706,11 @@ export class BlindTransactionStore {
     }
     this.beforeRecovery = options.beforeRecovery || null
     this.storeSessionContext = options.storeSessionContext == null ? null : options.storeSessionContext
+    if (options.generationStartupHandoff != null &&
+        (options.recoveryHandoff != null || options.storeSessionContext != null || options.beforeRecovery != null)) {
+      throw new TypeError('generation startup handoff owns the recovery boundary exclusively')
+    }
+    GENERATION_STARTUP_HANDOFFS.set(this, options.generationStartupHandoff || null)
     const recoveryHandoff = normalizeRecoveryHandoff(options.recoveryHandoff)
     if (recoveryHandoff && this.storeSessionContext !== null) {
       throw new TypeError('recoveryHandoff and storeSessionContext are mutually exclusive')
@@ -768,7 +775,16 @@ export class BlindTransactionStore {
     try {
       if (!FS_CONSTANTS.O_NOFOLLOW) throw new BlindWalIntegrityError('O_NOFOLLOW is required for the blind store')
       const recoveryHandoff = TRANSACTION_STORE_RECOVERY_HANDOFFS.get(this)
-      if (recoveryHandoff) {
+      const startupHandoff = GENERATION_STARTUP_HANDOFFS.get(this)
+      if (startupHandoff) {
+        const { verifyBlindGenerationStartupHandoff } = await import('./generation-startup.js')
+        const lease = await verifyBlindGenerationStartupHandoff(startupHandoff, this.root)
+        if (this.closing) throw new Error('transaction store is closing before startup lease transfer')
+        const transferred = await transferBlindStoreSessionTransactionLease(lease, this.root)
+        TRANSACTION_STORE_SESSION_LEASES.set(this, transferred)
+        GENERATION_STARTUP_HANDOFFS.delete(this)
+        await verifyBlindStoreSessionTransactionLease(transferred, this.root)
+      } else if (recoveryHandoff) {
         await verifyBlindStoreSessionTransactionLease(recoveryHandoff.lease, this.root)
         await verifyPrivateDirectory(this.root, 'store root')
         await verifyPrivateDirectory(this.controlDirectory, 'control directory')
@@ -814,6 +830,8 @@ export class BlindTransactionStore {
           this.root
         ))
       }
+      const activeLease = TRANSACTION_STORE_SESSION_LEASES.get(this)
+      if (activeLease) await verifyBlindStoreSessionWriterLease(activeLease, this.root)
       if (!recoveryHandoff) await verifyPrivateDirectory(this.root, 'store root')
       if (this.closing) throw new Error('transaction store is closing before store mutation')
       if (TRANSACTION_STORE_SESSION_LEASES.get(this)) {

@@ -3,10 +3,11 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { mkdir, rm } from 'fs/promises'
-import { AppRegistry } from 'p2p-hiverelay/core/app-registry.js'
+import { AppRegistry, APP_RETIREMENT_STATE } from 'p2p-hiverelay/core/app-registry.js'
 import { AppLifecycle } from 'p2p-hiverelay/core/relay-node/app-lifecycle.js'
 import { LifecycleScope } from 'p2p-hiverelay/core/relay-node/lifecycle-scope.js'
 import { RelayNode } from 'p2p-hiverelay/core/relay-node/index.js'
+import createTestnet from '@hyperswarm/testnet'
 import { measureStorageTreeBytes } from '../../packages/core/config/storage-cap.js'
 
 function tmpStorage () {
@@ -103,18 +104,19 @@ test('AppLifecycle: failed durable unseed retains retry debt after ordered live 
 })
 
 test('RelayNode: seedApp rolls back registry when explicit registry persist fails', async (t) => {
+  const testnet = await createTestnet(2, t)
   const storage = tmpStorage()
   await mkdir(storage, { recursive: true })
   const node = new RelayNode({
     storage,
+    bootstrapNodes: testnet.bootstrap,
     enableAPI: false,
     enableNetworkDiscovery: false,
     enableHolesail: false,
     physicalEnforcer: testPhysicalEnforcer(storage)
   })
   t.teardown(async () => {
-    try { await node.stop() } catch (_) {}
-    try { await node.store.close() } catch (_) {}
+    await node.stop()
     await rm(storage, { recursive: true, force: true })
   })
   await node.start()
@@ -124,17 +126,24 @@ test('RelayNode: seedApp rolls back registry when explicit registry persist fail
   node.appRegistry.set(appKey, placeholder, { persist: false })
   const previous = node.appRegistry.get(appKey)
   node.storageAdmission.adoptRecovery(`drive:${appKey}`, 1024 * 1024, { kind: 'drive' })
+  const persistEntry = node.appRegistry.persistEntry
   node.appRegistry.persistEntry = async () => {
     throw new Error('disk full')
   }
 
-  await t.exception(
-    node.seedApp(appKey, { maxStorage: 1024 * 1024 }),
-    /disk full/,
-    'seedApp rejects when the durable registry write fails'
-  )
+  try {
+    await t.exception(
+      node.seedApp(appKey, { maxStorage: 1024 * 1024 }),
+      /disk full/,
+      'seedApp rejects when the durable registry write fails'
+    )
+  } finally {
+    node.appRegistry.persistEntry = persistEntry
+  }
 
   t.alike(node.appRegistry.get(appKey), previous, 'failed seed restores only the pre-existing key placeholder')
+  await node.stop()
+  t.is(node.running, false, 'relay shuts down after the scoped persistence failure')
 })
 
 test('AppLifecycle: stale live entry cannot fast-path ACK and mixed-case calls share one mutation key', async (t) => {
@@ -411,4 +420,482 @@ test('AppLifecycle: queued seed admission times out or aborts without later exec
     await lifecycle._seedTail
     t.is(runs, 1, `${mode}: cancelled queued closure never runs later`)
   }
+})
+
+test('AppLifecycle: boot replay skips removed rows and keeps retained recovery entries', async (t) => {
+  const removed = '1'.repeat(64)
+  const kept = '2'.repeat(64)
+  const registry = new AppRegistry(null)
+  const entries = [removed, kept].map(appKey => ({ appKey, maxStorage: 4096 }))
+  for (const entry of entries) registry.set(entry.appKey, entry, { persist: false })
+  registry.delete(removed, { persist: false })
+  await registry.markEvicted(removed)
+  const lifecycle = new AppLifecycle({ appRegistry: registry })
+  const opened = []
+  const reseeded = []
+  const skipped = []
+  lifecycle.seedApp = async (appKey) => { opened.push(appKey) }
+  lifecycle.on('reseeded', event => reseeded.push(event.appKey))
+  lifecycle.on('reseed-skipped', () => { throw new Error('observer failure') })
+  lifecycle.on('reseed-skipped', event => skipped.push(event))
+
+  await lifecycle.reseedDrives(entries)
+
+  t.alike(opened, [kept], 'a stale boot row does not enter seed admission')
+  t.alike(reseeded, [kept], 'only a retained row reports recovery success')
+  t.alike(skipped, [{ appKey: removed, reason: 'registry-entry-removed' }])
+  t.ok(registry.isEvicted(removed), 'recovery preserves the removal tombstone')
+  t.absent(registry.has(removed), 'recovery does not recreate the removed row')
+})
+
+test('AppLifecycle: boot replay rechecks removal after waiting for seed admission', async (t) => {
+  const removed = '3'.repeat(64)
+  const kept = '4'.repeat(64)
+  const fresh = '5'.repeat(64)
+  const registry = new AppRegistry(null)
+  const entries = [removed, kept].map(appKey => ({ appKey, maxStorage: 4096 }))
+  for (const entry of entries) registry.set(entry.appKey, entry, { persist: false })
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    seeder: {},
+    config: { strictSeedingPrivacy: true }
+  })
+  const opened = []
+  const reseeded = []
+  const skipped = []
+  const errors = []
+  lifecycle._seedAppInner = async (appKey) => {
+    opened.push(appKey)
+    registry.set(appKey, { maxStorage: 4096 }, { persist: false })
+  }
+  lifecycle.on('reseeded', event => reseeded.push(event.appKey))
+  lifecycle.on('reseed-skipped', event => skipped.push(event))
+  lifecycle.on('reseed-error', event => errors.push(event))
+
+  let releaseAdmission
+  const gate = new Promise(resolve => { releaseAdmission = resolve })
+  const owner = lifecycle._queueSeedAdmission(() => gate)
+  t.teardown(() => releaseAdmission())
+  await Promise.resolve()
+  const replay = lifecycle.reseedDrives(entries)
+  registry.delete(removed, { persist: false })
+  await registry.markEvicted(removed)
+  releaseAdmission()
+  await Promise.all([owner, replay])
+
+  t.alike(opened, [kept], 'a row removed while queued is never opened or downloaded')
+  t.alike(reseeded, [kept], 'replay continues to the retained row')
+  t.alike(skipped, [{ appKey: removed, reason: 'registry-entry-removed' }])
+  t.alike(errors, [], 'operator removal is an intentional recovery skip')
+  t.absent(registry.has(removed), 'queued recovery cannot recreate a removed registry entry')
+  t.ok(registry.isEvicted(removed), 'queued recovery preserves the removal tombstone')
+
+  await lifecycle.seedApp(fresh, { maxStorage: 4096 })
+  t.alike(opened, [kept, fresh], 'ordinary explicit seeding can still admit a new key')
+})
+
+test('AppLifecycle: forget drains repair before entering the durable key lane', async (t) => {
+  const appKey = 'e'.repeat(64)
+  const events = []
+  const registry = new AppRegistry(null)
+  registry.set(appKey, {
+    maxStorage: 4096,
+    drive: { async close () { events.push('drive-close') } },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  registry.persistDelete = async (_key, opts) => {
+    events.push(`delete:${opts.retirementId}`)
+  }
+
+  let finishRepair = null
+  const repairGate = new Promise(resolve => { finishRepair = resolve })
+  const storageAdmission = {
+    runKeyMutation: async (_key, run) => {
+      events.push('key-lane')
+      return run()
+    },
+    releaseRetirement: () => { events.push('release'); return true }
+  }
+  const lifecycle = new AppLifecycle({ appRegistry: registry, storageAdmission, swarm: {} })
+  lifecycle._repairUnanchoredOwned = async () => {
+    events.push('repair-start')
+    await repairGate
+    events.push('repair-end')
+    return false
+  }
+
+  const repair = lifecycle.repairUnanchored(appKey)
+  const forget = lifecycle.unseedApp(appKey)
+  await Promise.resolve()
+  t.alike(events, ['repair-start'], 'phase two cannot take the key lane while repair is live')
+  finishRepair()
+  await Promise.allSettled([repair, forget])
+  t.alike(events.slice(0, 4), ['repair-start', 'repair-end', 'drive-close', 'key-lane'])
+  t.ok(events[4].startsWith('delete:'))
+  t.is(events[5], 'release')
+})
+
+test('AppLifecycle: release failure retains tombstone and retries the same retirement id', async (t) => {
+  const appKey = 'f'.repeat(64)
+  const registry = new AppRegistry(null)
+  let closes = 0
+  let deletes = 0
+  const releaseIds = []
+  registry.set(appKey, {
+    maxStorage: 8192,
+    drive: { async close () { closes++ } },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  registry.persistDelete = async () => { deletes++ }
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    swarm: {},
+    storageAdmission: {
+      releaseRetirement (_key, retirementId) {
+        releaseIds.push(retirementId)
+        return releaseIds.length > 1
+      }
+    }
+  })
+
+  const first = await Promise.allSettled([lifecycle.unseedApp(appKey)])
+  t.is(first[0].reason?.code, 'APP_RETIREMENT_RELEASE_PENDING')
+  t.absent(registry.has(appKey), 'a committed delete is never resurrected')
+  const retained = lifecycle._retiringDrives.get(appKey)
+  t.is(retained.state, APP_RETIREMENT_STATE.RELEASE_PENDING)
+  t.is(registry.retirementTombstones(APP_RETIREMENT_STATE.FORGOTTEN).length, 0)
+
+  await lifecycle.unseedApp(appKey)
+  t.is(closes, 1, 'terminal close is exact-once')
+  t.is(deletes, 1, 'durable deletion is exact-once')
+  t.is(releaseIds.length, 2)
+  t.is(releaseIds[0], releaseIds[1], 'release retry is bound to one stable retirement id')
+  t.is(registry.retirementTombstone(appKey).state, APP_RETIREMENT_STATE.FORGOTTEN)
+})
+
+test('AppLifecycle: final tombstone failure repeats only idempotent release', async (t) => {
+  const appKey = '1'.repeat(64)
+  const registry = new AppRegistry(null)
+  let closes = 0
+  let deletes = 0
+  let finalWrites = 0
+  const releaseIds = []
+  registry.set(appKey, {
+    maxStorage: 4096,
+    drive: { async close () { closes++ } },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  registry.persistDelete = async () => { deletes++ }
+  registry.persistRetirementState = async () => {
+    finalWrites++
+    if (finalWrites === 1) throw new Error('final tombstone write failed')
+  }
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    swarm: {},
+    storageAdmission: {
+      releaseRetirement (_key, retirementId) {
+        releaseIds.push(retirementId)
+        return releaseIds.every(id => id === retirementId)
+      }
+    }
+  })
+
+  await t.exception(lifecycle.unseedApp(appKey), /final tombstone write failed/)
+  t.absent(registry.has(appKey))
+  await lifecycle.unseedApp(appKey)
+  t.is(closes, 1)
+  t.is(deletes, 1)
+  t.is(finalWrites, 2)
+  t.is(releaseIds.length, 2)
+  t.is(releaseIds[0], releaseIds[1])
+})
+
+test('AppLifecycle: a post-append delete failure advances only to release-pending', async (t) => {
+  const appKey = '6'.repeat(64)
+  const registry = new AppRegistry(null)
+  let deletes = 0
+  let releases = 0
+  registry.set(appKey, {
+    maxStorage: 4096,
+    drive: { async close () {} },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  registry.persistDelete = async (key, opts) => {
+    deletes++
+    registry.delete(key, { persist: false })
+    await registry.persistRetirementState(key, opts)
+    const err = new Error('journal authority settlement failed')
+    err.durableDeleteCommitted = true
+    err.retirementId = opts.retirementId
+    throw err
+  }
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    swarm: {},
+    storageAdmission: {
+      releaseRetirement () { releases++; return true }
+    }
+  })
+
+  await t.exception(lifecycle.unseedApp(appKey), /journal authority settlement failed/)
+  t.absent(registry.has(appKey))
+  t.is(lifecycle._retiringDrives.get(appKey).state, APP_RETIREMENT_STATE.RELEASE_PENDING)
+  await lifecycle.unseedApp(appKey)
+  t.is(deletes, 1, 'retry never repeats the already committed delete')
+  t.is(releases, 1)
+  t.is(registry.retirementTombstone(appKey).state, APP_RETIREMENT_STATE.FORGOTTEN)
+})
+
+test('AppLifecycle: shutdown joins a forget accepted before the global fence', async (t) => {
+  const appKey = '7'.repeat(64)
+  const registry = new AppRegistry(null)
+  let finishDelete
+  const deleteGate = new Promise(resolve => { finishDelete = resolve })
+  registry.set(appKey, {
+    maxStorage: 4096,
+    drive: { async close () {} },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  registry.persistDelete = async () => { await deleteGate }
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    swarm: {},
+    storageAdmission: { releaseRetirement: () => true }
+  })
+
+  const forget = lifecycle.unseedApp(appKey)
+  await Promise.resolve()
+  lifecycle.beginShutdown()
+  const shutdownJoin = lifecycle.unseedApp(appKey, { forget: false })
+  finishDelete()
+  await Promise.all([forget, shutdownJoin])
+  t.absent(registry.has(appKey), 'shutdown never downgrades an already accepted durable forget')
+  t.absent(lifecycle._retiringDrives.has(appKey))
+})
+
+test('AppLifecycle: shutdown fence rejects later forget but permits preserving teardown', async (t) => {
+  const appKey = '2'.repeat(64)
+  const registry = new AppRegistry(null)
+  registry.set(appKey, {
+    drive: { async close () {} },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  const lifecycle = new AppLifecycle({ appRegistry: registry, swarm: {} })
+  lifecycle.beginShutdown()
+  const result = await Promise.allSettled([lifecycle.unseedApp(appKey)])
+  t.is(result[0].reason?.code, 'SHUTTING_DOWN')
+  t.ok(registry.has(appKey), 'post-fence forget cannot remove durable state')
+  await lifecycle.unseedApp(appKey, { forget: false })
+  t.ok(registry.has(appKey), 'shutdown teardown preserves the durable row')
+})
+
+test('AppLifecycle: unresolved terminal close is retained and never double-invoked', async (t) => {
+  const appKey = '3'.repeat(64)
+  const registry = new AppRegistry(null)
+  let closes = 0
+  registry.set(appKey, {
+    maxStorage: 4096,
+    drive: { close () { closes++; return new Promise(() => {}) } },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    swarm: {},
+    config: { driveCloseTimeoutMs: 5 },
+    storageAdmission: { releaseRetirement: () => true }
+  })
+  await t.exception(lifecycle.unseedApp(appKey), /drive close timed out/)
+  await t.exception(lifecycle.unseedApp(appKey), /drive close timed out/)
+  t.is(closes, 1, 'retry waits on the exact unresolved close')
+  t.ok(registry.has(appKey), 'pre-delete failure preserves the row')
+  t.is(lifecycle._retiringDrives.get(appKey).state, APP_RETIREMENT_STATE.LIVE)
+})
+
+test('AppLifecycle: an unresolved owned operation is bounded and retains its exact owner', async (t) => {
+  const appKey = '8'.repeat(64)
+  const registry = new AppRegistry(null)
+  let closes = 0
+  registry.set(appKey, {
+    maxStorage: 4096,
+    drive: { async close () { closes++ } },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    swarm: {},
+    config: { driveCloseTimeoutMs: 5 },
+    storageAdmission: { releaseRetirement: () => true }
+  })
+  const entry = registry.get(appKey)
+  const driveOwner = lifecycle._driveOwner(entry, appKey)
+  const pending = new Promise(() => {})
+  driveOwner.operations.add(pending)
+
+  await t.exception(lifecycle.unseedApp(appKey), /drive owner operations timed out/)
+  t.is(closes, 1, 'terminal close still runs after the bounded operation drain')
+  t.ok(registry.has(appKey), 'operator forget preserves the row when quiescence cannot be proved')
+  t.is(lifecycle._retiringDrives.get(appKey).driveOwner, driveOwner)
+  t.ok(driveOwner.operations.has(pending), 'the unresolved operation owner remains reachable for retry')
+})
+
+test('AppLifecycle: an unresolved persistent registration cannot block terminal close', async (t) => {
+  const appKey = '9'.repeat(64)
+  const registry = new AppRegistry(null)
+  const registration = { settled: new Promise(() => {}) }
+  let closes = 0
+  let deletes = 0
+  let releases = 0
+  registry.set(appKey, {
+    maxStorage: 4096,
+    downloadRegistration: registration,
+    drive: { async close () { closes++ } },
+    discoveryHandles: new Set()
+  }, { persist: false })
+  registry.persistDelete = async () => { deletes++ }
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    swarm: {},
+    config: { driveCloseTimeoutMs: 5 },
+    storageAdmission: {
+      releaseRetirement () { releases++; return true }
+    }
+  })
+
+  await t.exception(lifecycle.unseedApp(appKey), /persistent download registration timed out/)
+  t.is(closes, 1, 'terminal close starts exactly once after the registration deadline')
+  t.is(deletes, 0, 'durable row is retained while registration ownership is unresolved')
+  t.is(releases, 0, 'storage commitment is retained while registration ownership is unresolved')
+  t.is(registry.get(appKey).downloadRegistration, registration, 'exact registration owner remains reachable')
+  t.is(lifecycle._retiringDrives.get(appKey).state, APP_RETIREMENT_STATE.LIVE)
+})
+
+test('AppLifecycle: fencing during anchor persistence restores the prior durable tuple', async (t) => {
+  const appKey = 'a'.repeat(64)
+  const registry = new AppRegistry(null)
+  const drive = { closed: false, closing: false }
+  registry.set(appKey, {
+    anchored: false,
+    drive,
+    maxStorage: 4096
+  }, { persist: false })
+  let releasePersist = null
+  let persistStarted = null
+  const persistGate = new Promise(resolve => { releasePersist = resolve })
+  const started = new Promise(resolve => { persistStarted = resolve })
+  const persisted = []
+  registry.persistEntry = async () => {
+    persisted.push({
+      anchored: registry.get(appKey).anchored,
+      storageProvedDriveVersion: registry.get(appKey).storageProvedDriveVersion
+    })
+    if (persisted.length === 1) {
+      persistStarted()
+      await persistGate
+    }
+  }
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    storageAdmission: { canAcknowledge: () => true }
+  })
+  const proof = {
+    driveVersion: 3,
+    metaLength: 1,
+    blobLength: 1,
+    totalBytes: 2,
+    metaFork: 0,
+    blobFork: 0
+  }
+
+  const commit = lifecycle._commitAnchoredProof(appKey, drive, proof)
+  await started
+  lifecycle._fenceDriveOwner(registry.get(appKey), appKey)
+  releasePersist()
+
+  t.is(await commit, false, 'fenced owner cannot complete an anchor commit')
+  t.alike(persisted, [
+    { anchored: true, storageProvedDriveVersion: 3 },
+    { anchored: false, storageProvedDriveVersion: null }
+  ], 'the pre-fence tuple is persisted after the raced write')
+  t.is(registry.get(appKey).anchored, false)
+  t.is(registry.get(appKey).storageProvedDriveVersion, null)
+})
+
+test('AppLifecycle: fencing during share read prevents custody receipt publication', async (t) => {
+  const appKey = 'b'.repeat(64)
+  const registry = new AppRegistry(null)
+  registry.set(appKey, { drive: {}, maxStorage: 4096 }, { persist: false })
+  let releaseRead = null
+  let readStarted = null
+  const readGate = new Promise(resolve => { releaseRead = resolve })
+  const started = new Promise(resolve => { readStarted = resolve })
+  let receiptCalls = 0
+  let receiptEvents = 0
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    config: { region: 'test' },
+    swarm: { keyPair: { publicKey: Buffer.alloc(32), secretKey: Buffer.alloc(64) } },
+    seedingRegistry: {
+      getCustodyIntent: () => ({
+        shareScheme: 'pvss-test',
+        shareBundleKey: 'c'.repeat(64)
+      }),
+      async recordCustodyReceipt () { receiptCalls++ }
+    }
+  })
+  lifecycle._readShareBundle = async () => {
+    readStarted()
+    await readGate
+    return {}
+  }
+  lifecycle.on('custody-receipt', () => { receiptEvents++ })
+  const entry = registry.get(appKey)
+  const operation = lifecycle._trackDriveOperation(
+    entry,
+    appKey,
+    'custody receipt race',
+    (_owner, ownerToken) => lifecycle._recordCustodyReceipt(appKey, {
+      blind: true,
+      custodyIntentId: 'intent-1',
+      shareScheme: 'pvss-test'
+    }, 1, ownerToken)
+  )
+  await started
+  lifecycle._fenceDriveOwner(entry, appKey)
+  releaseRead()
+  const [result] = await Promise.allSettled([operation])
+
+  t.is(result.reason?.code, 'APP_LIFECYCLE_OWNER_RETIRED')
+  t.is(receiptCalls, 0, 'no receipt append starts after the owner fence')
+  t.is(receiptEvents, 0, 'no custody receipt event is published after the owner fence')
+})
+
+test('AppLifecycle: startup resumes a release-pending tombstone', async (t) => {
+  const appKey = '4'.repeat(64)
+  const retirementId = '5'.repeat(32)
+  const registry = new AppRegistry(null)
+  await registry.persistRetirementState(appKey, {
+    retirementId,
+    retirementState: APP_RETIREMENT_STATE.RELEASE_PENDING,
+    retiredAt: 1_700_000_000_000,
+    retirementBoundBytes: 4096
+  })
+  const adopted = []
+  const released = []
+  const lifecycle = new AppLifecycle({
+    appRegistry: registry,
+    config: { storage: join(tmpdir(), 'hiverelay-no-legacy-registry') },
+    swarm: {},
+    storageAdmission: {
+      adoptRecovery (key, bound) { adopted.push([key, bound]); return {} },
+      runKeyMutation: async (_key, run) => run(),
+      releaseRetirement (key, id) { released.push([key, id]); return true },
+      markRecoveryReady () {}
+    }
+  })
+  await lifecycle.loadRegistry()
+  t.alike(adopted, [[`drive:${appKey}`, 4096]])
+  t.alike(released, [[`drive:${appKey}`, retirementId]])
+  t.is(registry.retirementTombstone(appKey).state, APP_RETIREMENT_STATE.FORGOTTEN)
+  t.is(lifecycle._retiringDrives.size, 0)
 })

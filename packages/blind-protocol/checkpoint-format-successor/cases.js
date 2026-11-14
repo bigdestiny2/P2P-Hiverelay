@@ -1,0 +1,148 @@
+import b4a from 'b4a'
+import { positives, clone, H, wal, family, paidOpen, coreWithProof, successor, mirrorLifecycle, lifecycleSuccessors, populatedFamily, continuitySuccessors, expireProof } from './fixtures.js'
+import { encode, participantHash } from './codec.js'
+
+export function negatives () {
+  const cases = []
+  const value = (id, make, mutate, pattern) => { const input = clone(make()); mutate(input); cases.push({ id, mode: 'encode', type: 'Snapshot', input, pattern }) }
+  const cell = () => family(1)
+  value('missing-history', cell, s => { delete s.history }, 'object')
+  value('unknown-field', cell, s => { s.unreviewed = 1 }, 'exact fields')
+  value('unknown-major', cell, s => { s.formatMajor = 3 }, 'must be 2')
+  value('unknown-minor', cell, s => { s.formatMinor = 1 }, 'must be 0')
+  value('unknown-hash', cell, s => { s.formatHash = H(99) }, 'unknown successor')
+  value('role-payload-fork', cell, s => { s.identity.role = 2 }, 'role payload')
+  value('zero-root', cell, s => { s.identity.rootId = b4a.alloc(32) }, 'nonzero')
+  value('descriptor-zero', cell, s => { s.floors.descriptorSequence = 0n }, 'positive')
+  value('global-floor-fork', cell, s => { s.floors.epoch++ }, 'global/floor')
+  value('missing-global', cell, s => { s.cell = [] }, 'global/floor')
+  value('duplicate-row', cell, s => { s.cell.push(clone(s.cell[0])) }, 'sorted and unique')
+  value('global-key', cell, s => { s.cell[0].key = H(1) }, 'key/value identity')
+  value('unknown-row', cell, s => { s.cell[0].subtype = 9 }, 'unknown family')
+  value('provisional-row', cell, s => { s.cell[0].kind = 2 }, 'drain')
+  value('malformed-row-bytes', cell, s => { s.cell[0].value = b4a.from([1]) }, 'truncated')
+  for (const id of ['cell-populated', 'inbox-populated-retry', 'inbox-expired-append']) {
+    const make = () => populatedFamily(id)
+    const rows = s => s.cell || s.inbox
+    value(`${id}-key-mismatch`, make, s => { rows(s)[0].key[0] ^= 1 }, 'key/value identity')
+    value(`${id}-false-history`, make, s => { s.history.irreversible = 0 }, 'false history')
+    value(`${id}-malformed-row`, make, s => { rows(s)[0].value = b4a.from([1]) }, 'truncated')
+  }
+  value('compaction-beyond-anchor', cell, s => { s.compactionWalHighWater = s.coveredWal.sequence + 1n }, 'coverage mismatch')
+  value('retention-beyond-anchor', cell, s => { s.retainFromSequence = s.coveredWal.sequence + 1n }, 'coverage mismatch')
+  value('u64-overflow', cell, s => { s.coveredWal.sequence = 1n << 64n }, 'outside u64')
+  value('u64-number', cell, s => { s.coveredWal.sequence = 300001 }, 'requires bigint')
+  value('paid-open-false-history', paidOpen, s => { s.history.irreversible = 0 }, 'false history')
+  value('paid-open-missing-trigger', paidOpen, s => { s.history.firstTriggerHash = null }, 'first trigger')
+  value('paid-open-missing-admission', paidOpen, s => { s.core.admissions = []; s.core.counts.admissions = 0 }, 'ownership')
+  value('paid-open-zero-cost', paidOpen, s => { s.core.admissions[0].value.costUnits = 0n }, 'positive')
+  value('paid-open-unknown-admission-field', paidOpen, s => { s.core.admissions[0].value.extra = 1 }, 'noncanonical object')
+  value('paid-open-class-fork', paidOpen, s => { s.core.admissions[0].value.resourceClass = 2 }, 'OPEN admission')
+  value('paid-open-logical-fork', paidOpen, s => { s.core.opens[0].value.logicalRetryKey = H(80) }, 'OPEN identity')
+  value('paid-open-result-identity-fork', () => paidOpen(1), s => { s.identity.storeId = H(80) }, 'result identity')
+  value('paid-open-incomplete-counts', paidOpen, s => { s.core.counts.opens = 0 }, 'count mismatch')
+  value('proof-missing-original-admission', coreWithProof, s => { s.core.admissions.pop() }, 'ownership')
+  value('proof-missing-source', coreWithProof, s => { s.core.proofs[0].source.revision = 9n }, 'source mismatch')
+  value('proof-expiry-before-pin', coreWithProof, s => { s.core.proofs[0].expiresAtUnixMillis = 1n }, 'bounds/lifecycle')
+  value('proof-wrong-band', coreWithProof, s => { s.core.admissions[1].value.resourceClass = 2 }, 'admission band')
+  value('expired-proof-counted-live', () => coreWithProof(true), s => { s.core.counts.liveProofPins = 1 }, 'accounting')
+  value('inactive-floor-without-expiry', coreWithProof, s => { s.core.floors[0].expiryWal = null }, 'expiry evidence')
+  value('missing-durable-floor', coreWithProof, s => { s.core.floors = []; s.core.counts.floors = 0 }, 'latest floor')
+  value('missing-activation', coreWithProof, s => { s.core.generations = [] }, 'activation evidence')
+  for (const group of ['admissions', 'mirrors', 'generations', 'proofs']) value(`duplicate-core-${group}`, coreWithProof, s => { s.core[group].push(clone(s.core[group][0])) }, 'sorted and unique')
+  value('duplicate-core-opens', paidOpen, s => { s.core.opens.push(clone(s.core.opens[0])) }, 'sorted and unique')
+  value('candidate-not-activation-revision', coreWithProof, s => { s.core.mirrors[0].candidateRevision = 1n }, 'basis/revision')
+  value('wrong-corpus-bucket', coreWithProof, s => { s.core.generations[0].corpus.virtualBucket ^= 1 }, 'bucket mismatch')
+  value('activation-beyond-anchor', coreWithProof, s => { s.coveredWal.sequence = 2n }, 'checkpoint')
+  const relation = (id, mutate, pattern, make = paidOpen) => {
+    const previous = make(); const input = successor(previous); mutate(input, previous)
+    cases.push({ id, mode: 'snapshot-successor', previous, input, pattern })
+  }
+  relation('regressed-history', s => { s.history.irreversible = 0 }, 'false history|history regressed')
+  relation('retired-history-cleared', s => { s.history.irreversible = 0 }, 'history regressed', () => { const s = cell(); s.history.irreversible = 1; s.history.firstTriggerHash = H(13); return s })
+  relation('first-trigger-replaced', s => { s.history.firstTriggerHash = H(80) }, 'history regressed')
+  relation('history-record-fork', s => { s.history.authorityRecordHash = H(80) }, 'authority sequence fork')
+  relation('foreign-installation', s => { s.identity.installationId = H(80) }, 'lineage mismatch')
+  relation('foreign-role-root', s => { s.identity.rootId = H(80) }, 'lineage mismatch')
+  relation('previous-snapshot-fork', s => { s.previousSnapshotHash = H(80) }, 'lineage mismatch')
+  relation('wal-regression', s => { s.coveredWal.sequence = 300000n }, 'lineage mismatch')
+  relation('descriptor-fork', s => { s.floors.descriptorHash = H(80) }, 'forked')
+  relation('writer-fork', s => { s.writer.fenceHash = H(80) }, 'writer')
+  relation('core-admissions-retired', s => { s.core.admissions = []; s.core.opens = []; Object.assign(s.core.counts, { admissions: 0, opens: 0, controlBytes: 0n }) }, 'retired')
+  relation('mirror-terminal-regresses-to-accepted', s => { Object.assign(s.core.mirrors[0], { state: 1, terminalReason: null }) }, 'MIRROR lifecycle', () => mirrorLifecycle(4))
+  relation('mirror-acceptance-wal-replaced', s => { s.core.mirrors[0].acceptanceWal.hash = H(88) }, 'acceptance evidence', () => mirrorLifecycle(2))
+  relation('mirror-retry-count-regresses', s => { Object.assign(s.core.mirrors[0], { state: 1, retryCount: 0, retryReason: null }) }, 'MIRROR lifecycle', () => mirrorLifecycle(2))
+  relation('mirror-retry-reason-replaced', s => { s.core.mirrors[0].retryReason = 2; s.core.mirrors[0].lifecycleWal = s.coveredWal }, 'MIRROR lifecycle', () => mirrorLifecycle(2))
+  relation('mirror-terminal-reason-replaced', s => { s.core.mirrors[0].terminalReason = 2 }, 'MIRROR lifecycle', () => mirrorLifecycle(4))
+  const expiredFloor = () => lifecycleSuccessors().find(([id]) => id === 'floor-active-to-expired')[2]
+  relation('expired-floor-reactivated-same-generation', s => { Object.assign(s.core.floors[0], { active: 1, expiredAtEpoch: null, expiryWal: null }); Object.assign(s.core.counts, { activeCores: 1, liveCorpusBytes: 100n }) }, 'floor expiry', expiredFloor)
+  relation('floor-expiry-evidence-replaced', s => { s.core.floors[0].expiryWal.hash = H(88) }, 'floor expiry', expiredFloor)
+  relation('mirror-active-retry-evidence-replaced', s => { s.core.mirrors[0].retryReason = 1 }, 'MIRROR lifecycle', expiredFloor)
+  const progress = lifecycleSuccessors().find(([id]) => id === 'mirror-pending-retry-increment')
+  const early = clone(progress[2]); early.core.mirrors[0].lifecycleWal = progress[1].coveredWal
+  cases.push({ id: 'mirror-progress-outside-suffix', mode: 'snapshot-successor', previous: progress[1], input: early, pattern: 'MIRROR lifecycle' })
+  const retainedRelation = (id, make, mutate, pattern, standaloneValid = true) => {
+    const previous = make(); const input = successor(previous); mutate(input, previous)
+    cases.push({ id, mode: 'snapshot-successor', previous, input, pattern, standaloneValid })
+  }
+  for (const state of [1, 2, 3]) {
+    const make = () => paidOpen(state)
+    retainedRelation(`open-${state}-parent-replaced`, make, s => { s.core.opens[0].value.parentSessionId = H(88) }, 'OPEN identity')
+    retainedRelation(`open-${state}-same-state-wal-rewind`, make, s => { s.core.opens[0].lifecycleWal = wal(1) }, 'OPEN lifecycle')
+    retainedRelation(`open-${state}-same-state-wal-hash-replaced`, make, s => { s.core.opens[0].lifecycleWal.hash = H(88) }, 'OPEN lifecycle')
+    retainedRelation(`open-${state}-same-state-wal-advanced`, make, s => { s.core.opens[0].lifecycleWal = s.coveredWal }, 'OPEN lifecycle')
+    if (state !== 3) retainedRelation(`open-${state}-same-state-result-replaced`, make, s => { s.core.opens[0].value.resultBytes[s.core.opens[0].value.resultBytes.length - 1] ^= 1 }, 'OPEN lifecycle')
+  }
+  const openTransitions = continuitySuccessors().filter(([id]) => id.startsWith('open-'))
+  for (const [id, previous, next] of openTransitions) {
+    for (const [label, anchor, standaloneValid] of [['below', previous.coveredWal.sequence - 1n, true], ['equal', previous.coveredWal.sequence, true], ['above-next', next.coveredWal.sequence + 1n, false]]) {
+      const input = clone(next); input.core.opens[0].lifecycleWal = wal(anchor)
+      cases.push({ id: `${id}-wal-${label}`, mode: 'snapshot-successor', previous, input, pattern: 'OPEN lifecycle|OPEN identity/request/capture', standaloneValid })
+    }
+    if (next.core.opens[0].value.resultBytes) {
+      const input = clone(next); const result = input.core.opens[0].value.resultBytes; result[result.length - 1] ^= 1
+      cases.push({ id: `${id}-result-replaced`, mode: 'snapshot-successor', previous, input, pattern: 'OPEN retained result', standaloneValid: true })
+    }
+  }
+  retainedRelation('open-live-to-reserved', () => paidOpen(2), s => { s.core.opens[0].value.lifecycleState = 1; s.core.opens[0].lifecycleWal = s.coveredWal }, 'OPEN lifecycle')
+  retainedRelation('open-terminal-reason-replaced', paidOpen, s => { s.core.opens[0].value.terminalReason = b4a.from('new-reason') }, 'OPEN lifecycle')
+  const terminalWithResult = () => clone(openTransitions.find(([id]) => id === 'open-2-to-3-retained-result')[2])
+  retainedRelation('open-terminal-result-cleared', terminalWithResult, s => { s.core.opens[0].value.resultBytes = null }, 'OPEN lifecycle')
+  retainedRelation('open-terminal-resurrected', terminalWithResult, s => { const o = s.core.opens[0]; o.value.lifecycleState = 2; o.value.terminalReason = null; o.lifecycleWal = s.coveredWal }, 'OPEN lifecycle')
+  for (const [label, delta, standaloneValid] of [['below', -1n, true], ['equal', 0n, true], ['above-next', 2n, false]]) {
+    retainedRelation(`proof-new-expiry-wal-${label}`, coreWithProof, (s, p) => expireProof(s, wal(p.coveredWal.sequence + delta)), 'proof expiry|proof capture', standaloneValid)
+  }
+  for (const [label, mutate] of [
+    ['original-pin-hash', p => { p.pinWal.hash = H(88) }],
+    ['original-pin-time', p => { p.pinnedAtUnixMillis++ }],
+    ['original-deadline', p => { p.expiresAtUnixMillis-- }],
+    ['original-proof-hash', p => { p.proofHash = H(88) }]
+  ]) retainedRelation(`proof-expiry-rewrites-${label}`, coreWithProof, s => { expireProof(s, s.coveredWal); mutate(s.core.proofs[0]) }, 'proof evidence')
+  retainedRelation('proof-expired-wal-hash-replaced', () => coreWithProof(true), s => { s.core.proofs[0].expiryWal.hash = H(88) }, 'proof evidence')
+  retainedRelation('proof-expired-time-replaced', () => coreWithProof(true), s => { s.core.proofs[0].expiredAtUnixMillis++ }, 'proof evidence')
+  retainedRelation('proof-expired-reactivated', () => coreWithProof(true), s => { Object.assign(s.core.proofs[0], { expiryWal: null, expiredAtUnixMillis: null }); Object.assign(s.core.counts, { liveProofPins: 1, liveCorpusBytes: 100n, proofPinBytes: 1024n, tombstoneBytes: 0n }) }, 'proof evidence')
+  retainedRelation('proof-expiry-before-pin-wal', coreWithProof, s => expireProof(s, s.core.proofs[0].pinWal), 'expiry evidence', false)
+  retainedRelation('proof-expiry-before-deadline', coreWithProof, s => { expireProof(s, s.coveredWal); s.core.proofs[0].expiredAtUnixMillis-- }, 'bounds/lifecycle', false)
+  const participants = positives().find(([id]) => id === 'typed-four-participants')[2]
+  const participant = (id, mutate, pattern) => { const input = clone(participants); mutate(input); cases.push({ id, mode: 'encode', type: 'Participants', input, pattern }) }
+  participant('hc11-is-not-blind-wal', s => { s.hc11.wal = s.blind[0].wal }, 'exact fields')
+  participant('hc11-invalid-activation-length', s => { s.hc11.length = 2n }, 'one-block')
+  participant('hc11-invalid-fork', s => { s.hc11.fork = 1n }, 'one-block')
+  participant('participants-root-collision', s => { s.hc11.rootId = s.blind[0].rootId }, 'collide')
+  participant('participants-role-duplicate', s => { s.blind[1].role = 1 }, 'sorted and unique')
+  participant('participants-trigger-missing', s => { s.firstTriggerHash = null }, 'first trigger')
+  const next = clone(participants); next.revision++; next.previousAuthorityHash = participantHash(participants); next.hc11 = null
+  cases.push({ id: 'hc11-participant-removed', mode: 'participants-successor', previous: participants, input: next, pattern: 'changed/removed' })
+  const replay = positives().find(([id]) => id === 'bounded-large-head-empty-suffix')[2]
+  for (const [id, mutate] of [['suffix-frame-budget', x => { x.observedFrames = 2 }], ['suffix-byte-budget', x => { x.observedBytes = 1025n }], ['suffix-anchor-fork', x => { x.head.hash = H(80) }]]) {
+    const input = clone(replay); input.head = clone(input.head); mutate(input); cases.push({ id, mode: 'encode', type: 'ReplayBinding', input, pattern: 'bounds invalid' })
+  }
+  const bytes = encode('Snapshot', cell())
+  cases.push({ id: 'trailing-bytes', mode: 'decode', type: 'Snapshot', input: b4a.concat([bytes, b4a.from([0])]), pattern: 'trailing' })
+  cases.push({ id: 'truncated-snapshot', mode: 'decode', type: 'Snapshot', input: bytes.subarray(0, bytes.length - 1), pattern: 'truncated' })
+  const overlong = encode('Participants', participants); const at = 82 // fixed header, present first trigger, before blind array
+  // Derive the array marker location from fixed field widths, not a scan for a byte value.
+  overlong[at] = 0xfd
+  cases.push({ id: 'noncanonical-count', mode: 'decode', type: 'Participants', input: b4a.concat([overlong.subarray(0, at + 1), b4a.from([3, 0]), overlong.subarray(at + 1)]), pattern: 'non-canonical' })
+  return cases
+}

@@ -4,8 +4,21 @@ import { tmpdir } from 'os'
 import { join } from 'path'
 import { AppRegistry } from '../../packages/core/core/app-registry.js'
 import { AppLifecycle } from '../../packages/core/core/relay-node/app-lifecycle.js'
+import { MAX_POPULATION_RECORDS } from '../../packages/core/core/generation-population.js'
 
 const K1 = 'a'.repeat(64)
+
+test('AppRegistry rejects an over-capacity JSON inventory before row validation or hydration', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'registry-row-bound-'))
+  t.teardown(() => rm(dir, { recursive: true, force: true }))
+  // Repeated nulls are cheap to construct and distinguish the early population
+  // check from later per-row validation. They are never adopted as records.
+  await writeFile(join(dir, 'app-registry.json'), JSON.stringify(new Array(MAX_POPULATION_RECORDS + 1).fill(null)))
+  const registry = new AppRegistry(dir)
+  await t.exception(registry.load(), /inventory-row-limit/)
+  t.is(registry.size, 0)
+  t.is(registry._metadataBudgets.size, 0)
+})
 
 test('AppRegistry JSON rejects an invalid tail without partial hydration', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'registry-strict-json-'))

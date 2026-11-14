@@ -1,0 +1,130 @@
+# Pear dependency candidate, 2026-09-28
+
+This is local `0.27.0-rc.1` dependency preparation. It does not publish a
+release, authorize storage conversion, enable native blind-peer storage, or
+change fleet channels. Pear native relay remains disabled by default.
+
+## Exact current runtime cohort
+
+Official npm registry metadata was read on 2026-09-28. The public Core, Client,
+Services and Verifier workspaces pin their applicable direct packages exactly;
+the root lock and overrides keep storage/transport test imports on that same
+cohort. Root fixture dependencies are explicit so a nested worktree cannot
+silently load a parent checkout's older Corestore, Hyperdrive or Hyperswarm.
+
+| Package | Candidate |
+| --- | --- |
+| Hypercore | 11.37.0 |
+| Corestore | 7.12.6 |
+| Hypercore storage | 3.3.1, with the existing pointer migration fix |
+| Hyperbee | 2.27.3 |
+| Hyperdrive | 13.3.4 |
+| HyperDHT | 6.34.0 |
+| Hyperswarm | 4.17.2 |
+| Hyperswarm secret-stream | 6.9.2 |
+| Protomux | 3.12.1 |
+| blind-relay | 1.6.1 |
+| bare / bare-runtime / Linux x64 runtime | 1.33.4 |
+| bare-crypto / bare-events | 1.15.3 / 2.9.2 |
+| bare-fs / bare-http1 / bare-path | 4.8.2 / 4.6.2 / 3.1.2 |
+| b4a / compact-encoding | 1.9.0 / 3.5.2 |
+| pear-gracedown / paparam | 1.0.5 / 1.13.0 |
+| brittle | 4.2.0 (tests only) |
+| Autobee | 2.12.1 (tests only) |
+
+`pear` on npm is installer 3.0.0; the separately distributed official Pear CLI
+release is 3.4.0. `pear-runtime` remains 1.3.1. HiveRelay's public Node/Bare
+runtime does not embed Pear CLI or use Autobee/Autobase for its storage.
+Autobee 2.12.1 uses Hyperbee2 2.18.0 and Hypercore >=11.37.0. Its upstream
+README still calls it experimental and warns of breaking changes.
+
+The Bare npm wrapper has a wildcard peer dependency on `bare-runtime`.
+Updating only `bare` leaves an old runtime installed. This candidate pins the
+actual runtime, as well as the wrapper. Bare 1.33.5 exists but synchronized
+`bare-runtime` platform packages currently stop at 1.33.4, so 1.33.4 is the
+qualified target; a wrapper version is not proof of the executable version.
+
+## Compatibility and migration constraints
+
+The upstream `hypercore-storage` 3.2.0 and 3.3.1 migration source is byte-identical:
+`f3ff8483854e93fd30e1db9e2228ac535bf29b057a978b1d157955cfd8bb4d7c`.
+The two existing pointer fixes still produce
+`04153bfa8de76c0dc2a802936cbbeea6c22f20a1a79035cd65ed1957cc8ff2d5`.
+The packaged Core postinstall verifies both version and hashes before patching;
+root postinstall calls that same verifier directly. The 3.2.0 root patch remains
+byte-exact frozen evidence, while the current installer targets 3.3.1 explicitly.
+The installer resolves the package directory and checks each lexical migration
+path component, rejecting symlinked directories or source files before patching.
+
+**Storage authority transition is a fleet rollout blocker.** Existing receipts
+and envelopes bound to `hypercore-storage@3.2.0` are refused by the 3.3.1
+candidate, even though their migration source and patch hashes are unchanged
+and the envelope still has version 1. A predecessor receipt fails with
+`CORESTORE_GENERATION_RECEIPT_INVALID`; re-ratification of its existing envelope
+fails with `CORESTORE_GENERATION_INVALID` and leaves its bytes unchanged.
+This is a deliberate fail-closed authority discontinuity, not transparent
+upgrade compatibility. Before any existing fleet root can use this candidate,
+a separately reviewed, versioned authority-transition procedure must bind the
+prior envelope/receipt and backup to the new dependency authority and prove
+restore/rollback behavior. No such procedure or fleet approval is supplied by
+this dependency lane. Do not edit old receipts, regenerate envelopes in place,
+broaden the validator, or remove old-writer fences to bypass this hold.
+
+Protomux 3.12.1 changes rejection handling for already closed channels and caps
+batched message boundaries. The private blind-relay admission adapter retains
+its before-allocation guard and binds the new reviewed Protomux source hash;
+real-library pair/session limits, framed streams and cleanup must pass again.
+
+Corestore 7.12 removes an implicit flush from `suspend()`. The relay currently
+does not call Corestore suspend; shutdown, restart, migration and restore checks
+remain required. Hypercore 11.37 accepts manifest version 3; older readers reject
+it. Existing single-writer stores keep their existing manifests. A version bump
+does not authorize creating v3 data for old fleet consumers or reverse-converting
+RocksDB storage. Autobee fixtures use disposable directories, two admitted
+writers, a fresh reader and cold reopen; they never open a HiveRelay data root.
+
+## Explicit holds
+
+- Frozen blind protocol/IPC/SDK packages keep compact-encoding 2.x and
+  sodium-universal 4.x. They are separately versioned wire authorities.
+- `blind-core-upstream-hc11-v1` keeps its exact private HC11 cohort: dependency
+  versions are part of `PROFILE_DIGEST`, hence corpus/proof bytes. Updating that
+  cohort requires a versioned format authority and independent approval.
+  The preserved vectors and real proof/storage tests were exercised using the
+  **current root dependency cohort** only. They provide additive format
+  compatibility evidence, not standalone private-lock/runtime qualification.
+- Private intent Bare and Pear consumer cohorts retain their explicit native
+  flag/runtime allowlists (Bare 1.31.0 and sidecar 0.5.2's Bare 1.29.4).
+  New helper or sidecar versions do not establish ABI qualification.
+- distributed-drive stays exact 0.1.1. Upstream 1.0.1 removes the symmetric
+  `addPeer` API and replaces it with server/client Corestore ownership. It needs
+  a separate bridge migration and consumer qualification.
+- Legacy standalone, index-sidecar, examples and frozen browser predecessors
+  are not public-workspace rollout artifacts and retain their historical locks.
+- Current public browser successor evidence is not regenerated by this lane.
+  Its frozen authority checks include earlier root manifests, an inherited
+  release gate which this dependency refresh does not waive.
+
+## Verification and rollback
+
+Use `npm ci`, `npm run test:autobee`, `npm run test:autobee:bare`,
+`npm run test:bare`, the real Pear relay tests, storage generation/import/restore
+and shutdown tests, and `node scripts/verify-packed-corestore-migration-patch.mjs`.
+The unit suite discovers the Autobee test; CI also runs it in the real Bare job.
+Raw commands/results and exact source identity belong to the dependency-refresh
+maintenance lane evidence. Local success does not establish Linux fleet,
+physical appliance, packaging/signing, soak or promotion gates.
+
+Rollback before rollout is a source/lock revert and fresh install in the isolated
+candidate. After any authorized future storage migration, restore the exact
+pre-migration backup and installation authority through the existing guarded
+recovery procedure. Never run an old writer against a newly written storage
+root, remove its fence, or infer downgrade safety from semver.
+
+Official sources: [Pear CLI 3.4](https://github.com/holepunchto/pear/releases/tag/v3.4.0),
+[Autobee 2.12.1](https://github.com/holepunchto/autobee/tree/v2.12.1),
+[Corestore changes](https://github.com/holepunchto/corestore/compare/v7.11.1...v7.12.6),
+[Hypercore changes](https://github.com/holepunchto/hypercore/compare/v11.34.1...v11.37.0),
+[storage changes](https://github.com/holepunchto/hypercore-storage/compare/v3.2.0...v3.3.1),
+[Protomux changes](https://github.com/holepunchto/protomux/compare/v3.11.0...v3.12.1),
+[distributed-drive changes](https://github.com/holepunchto/distributed-drive/compare/v0.1.1...v1.0.1).

@@ -3,6 +3,7 @@ import {
   isCapacityProfile,
   planBoundedCapacity
 } from '../../config/capacity-plan.js'
+import { ACCOUNTING_ALLOWED_INTERVAL_MS } from '../protocol/accounting-receipt.js'
 
 export const CAPACITY_MEASUREMENT_MAX_AGE_MS = 5 * 60 * 1000
 
@@ -11,7 +12,7 @@ export const CAPACITY_MEASUREMENT_MAX_AGE_MS = 5 * 60 * 1000
 // any cadence, so it stays fail-closed rather than being granted an ever-wider
 // window. Reaching it is an operator signal: split the store, or accept that
 // this root is not capacity-measurable.
-export const CAPACITY_MEASUREMENT_MAX_AGE_CEILING_MS = 60 * 60 * 1000
+export const CAPACITY_MEASUREMENT_MAX_AGE_CEILING_MS = 24 * 60 * 60 * 1000
 
 function bytes (value) {
   return Number.isSafeInteger(value) && value >= 0 ? value : null
@@ -39,18 +40,19 @@ function duration (value) {
 export function measurementWindowMs ({
   floorMs = CAPACITY_MEASUREMENT_MAX_AGE_MS,
   durationMs = null,
-  intervalMs = null,
   ceilingMs = CAPACITY_MEASUREMENT_MAX_AGE_CEILING_MS
 } = {}) {
   const observed = duration(durationMs)
-  const cadence = duration(intervalMs)
   if (observed === null) return { windowMs: floorMs, derived: false, exceedsCeiling: false }
   // Two walks plus one cadence gap: the newest finished sample is already
   // `duration + interval` old, and doubling the walk absorbs one pass that ran
   // slower than the last. Hosts that finish well inside the floor keep the
   // floor — the derived window only ever engages where the floor is
   // unachievable by construction.
-  const required = 2 * observed + (cadence ?? 0)
+  if (observed > Math.floor((Number.MAX_SAFE_INTEGER - ACCOUNTING_ALLOWED_INTERVAL_MS) / 2)) {
+    return { windowMs: ceilingMs, derived: true, exceedsCeiling: true }
+  }
+  const required = 2 * observed + ACCOUNTING_ALLOWED_INTERVAL_MS
   if (required <= floorMs) return { windowMs: floorMs, derived: false, exceedsCeiling: false }
   if (required > ceilingMs) {
     // Do not widen past the ceiling. The host keeps the capped window, which it
@@ -113,10 +115,12 @@ export function buildCapacityStatus ({
   const floorMs = Number.isSafeInteger(measurementMaxAgeMs) && measurementMaxAgeMs > 0
     ? measurementMaxAgeMs
     : CAPACITY_MEASUREMENT_MAX_AGE_MS
+  const storageDurationMs = storage && storage.diskObservedAt != null && storage.diskCompletedAt != null
+    ? storage.diskCompletedAt - storage.diskObservedAt
+    : storage && storage.diskMeasureDurationMs
   const freshness = measurementWindowMs({
     floorMs,
-    durationMs: storage && storage.diskMeasureDurationMs,
-    intervalMs: storage && storage.diskIntervalMs
+    durationMs: storageDurationMs
   })
   const maxAgeMs = freshness.windowMs
   const configuredProfile = config && config.capacityProfile
@@ -129,7 +133,7 @@ export function buildCapacityStatus ({
     ? null
     : Math.max(diskMeasureBytes, storageTotalBytes ?? diskMeasureBytes)
   const diskCheckedAt = timestamp(disk && disk.checkedAt)
-  const storageMeasuredAt = timestamp(storage && storage.diskMeasuredAt)
+  const storageMeasuredAt = timestamp(storage && (storage.diskObservedAt ?? storage.diskMeasuredAt))
   const measurementComplete = storage?.diskMeasurementComplete === true
   const operatorCapBytes = bytes(config && config.maxStorageBytes)
   const snapshot = authoritySnapshot(storageAdmission)
@@ -146,7 +150,7 @@ export function buildCapacityStatus ({
   const measurementUsable = measurementAvailable && measurementComplete
   // The statfs sample is cheap on every host, so it keeps the strict floor.
   // Only the storage tree walk gets the derived, hardware-sized window.
-  const measurementFresh = measurementUsable &&
+  const measurementFresh = measurementUsable && !freshness.exceedsCeiling &&
     isFreshMeasurement(diskCheckedAt, currentTime, floorMs) &&
     isFreshMeasurement(storageMeasuredAt, currentTime, maxAgeMs)
 
@@ -214,7 +218,8 @@ export function buildCapacityStatus ({
       floorMs,
       derivedWindow: freshness.derived,
       windowCapped: freshness.exceedsCeiling,
-      durationMs: duration(storage && storage.diskMeasureDurationMs),
+      durationMs: duration(storageDurationMs),
+      completedAt: timestamp(storage && storage.diskCompletedAt),
       diskCheckedAt,
       storageMeasuredAt
     },
