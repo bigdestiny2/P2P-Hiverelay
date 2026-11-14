@@ -109,13 +109,13 @@ LABEL org.opencontainers.image.revision="$SOURCE_COMMIT"
 
 WORKDIR /app
 
-# Bring in already-installed modules from the deps stage. npm 7+ hoists
-# most workspace deps to the root `node_modules/`. Per-package
-# `node_modules/` only exist when there's a version conflict — historically
-# `packages/core/node_modules/` etc. weren't created by `npm ci --workspaces`
-# at all, so the per-package COPY commands here used to fail the whole
-# build. Copy the root tree once; that's enough for production startup.
+# Preserve both hoisted and workspace-local production dependencies. Conflicting
+# versions (including the pinned sodium cohort and x402 SDK) live under packages;
+# copying only the root tree silently resolves an older hoisted package instead.
+# The dependency-stage packages directory always exists and also carries native
+# workspace build outputs. The exact source overlay below replaces its manifests.
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/packages ./packages
 
 # Copy application source (respects .dockerignore)
 COPY . .
@@ -124,6 +124,9 @@ COPY . .
 # compiler toolchain are present. Its workspace build output is not hoisted
 # into node_modules, so carry it into the otherwise toolchain-free runtime.
 COPY --from=deps /app/packages/blind-peercred/build ./packages/blind-peercred/build
+
+# Resolve from each actual consuming workspace, not the root's different graph.
+RUN node packages/core/platform/verify-production-workspace-dependencies.js
 
 # Non-root user for security. Fixed UID/GID so volume permissions stay
 # consistent across image rebuilds — operators with existing data
