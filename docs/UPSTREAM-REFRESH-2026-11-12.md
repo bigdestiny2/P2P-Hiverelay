@@ -40,6 +40,22 @@ The raw-CS7 offline importer also declares the already-resolved
 `fs-native-extensions@1.5.0` directly for its read-only shared source lock;
 the exclusive source-writer exclusion is qualified on native Linux.
 
+A final transitive check also adopts RocksDB native 3.19.5, Bare Buffer 3.7.2
+and Bare URL 2.5.7, including Holesail's `url` alias. These November 13 releases
+were missing from the earlier direct-dependency check. RocksDB now rejects
+batch operations when opening fails and releases operation counters after
+invalid keys; compaction also waits for resume. Its native wrapper frees the
+environment on failed open, without an engine-version or storage-format change
+in that diff. Bare Buffer adds allocation and binding checks and buffer pooling;
+Bare URL adds native input checks, keeps setters within their URL component,
+and corrects query escaping. Only four root-lock entries change, within their
+existing supported ranges. No private lock or ABI is rebound.
+
+The development-only Bare TLS/HTTPS major upgrade and packages absent from this
+relay graph are research findings, not silently adopted runtime changes. The
+development inspector and Autobee wakeup graph remain at their tested versions;
+the production refresh is not a claim that every development transitive is latest.
+
 Upstream changes include shared in-flight block reads, replication/clear/proof
 corrections, reduced bitfield allocation, lower-RTT relay selection, corrected
 purge behavior and rejection of nested Protomux batches. These are upstream
@@ -151,3 +167,7 @@ Primary references:
 - [Autobee November 13 fixes](https://github.com/holepunchto/autobee/compare/v2.13.4...v2.13.6)
 - [Holesail 2.4.1 to 2.4.4 source changes](https://github.com/holesail/holesail/compare/64226f3a317da6c3eee543ed50f51adce155612a...c50d03f260ee28494ade347f84e1f6f6bbfc963a)
 - [Pear 3.7.0 release](https://github.com/holepunchto/pear/releases/tag/v3.7.0)
+- [RocksDB native 3.19.5 changes](https://github.com/holepunchto/rocksdb-native/compare/v3.19.3...v3.19.5)
+- [Native RocksDB environment cleanup](https://github.com/holepunchto/librocksdb/compare/94d4ba2...2030346)
+- [Bare Buffer 3.7.2 changes](https://github.com/holepunchto/bare-buffer/compare/v3.6.1...v3.7.2)
+- [Bare URL 2.5.7 changes](https://github.com/holepunchto/bare-url/compare/v2.4.5...v2.5.7)
