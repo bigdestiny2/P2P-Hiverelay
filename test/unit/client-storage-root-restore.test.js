@@ -19,6 +19,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from 'fs
 import { join, basename, dirname } from 'path'
 import { tmpdir } from 'os'
 import { ForkDetector } from 'p2p-hiverelay/core/fork-detector.js'
+import { BootstrapCache } from 'p2p-hiverelay/core/bootstrap-cache.js'
 import { HiveRelayClient } from 'p2p-hiverelay-client'
 
 const DRIVE_KEY = 'a'.repeat(64)
@@ -27,6 +28,7 @@ const FORKED_KEY = 'c'.repeat(64)
 // Loopback-only so a started client never emits a packet off the machine.
 const BOOTSTRAP = [{ host: '127.0.0.1', port: 49737 }]
 const CACHED_PEER = { host: '127.0.0.1', port: 49738, lastSeen: 1 }
+const LEARNED_PEER = { host: '127.0.0.1', port: 49739 }
 
 function tmpDir () {
   const d = mkdtempSync(join(tmpdir(), 'client-storage-root-'))
@@ -70,7 +72,25 @@ test('pre-7 client root: all four sidecars survive and the client still loads th
   t.teardown(a.cleanup)
   await seedLegacyRoot(a.dir)
 
-  const client = await startClient(t, a.dir)
+  // Capture the exact loaded state before connections can extend the cache.
+  // Then exercise the real cache connection callback during client startup:
+  // learning another peer must not make preservation depend on cache length.
+  let loadedPeers
+  const cacheStart = BootstrapCache.prototype.start
+  BootstrapCache.prototype.start = function (swarm) {
+    loadedPeers = this._peers.map(peer => ({ ...peer }))
+    const result = cacheStart.call(this, swarm)
+    this._connectionHandler({
+      rawStream: { remoteHost: LEARNED_PEER.host, remotePort: LEARNED_PEER.port }
+    })
+    return result
+  }
+  let client
+  try {
+    client = await startClient(t, a.dir)
+  } finally {
+    BootstrapCache.prototype.start = cacheStart
+  }
 
   t.ok(existsSync(join(a.dir, 'CORESTORE')), 'corestore 7 marker written')
   for (const name of ['forks.json', 'pending-seeds.json', 'app-drives.json', 'bootstrap-cache.json']) {
@@ -83,8 +103,9 @@ test('pre-7 client root: all four sidecars survive and the client still loads th
   t.is(client._pendingSeeds.size, 1, 'seed retry queue survived the upgrade')
   t.is(client._pendingSeeds.get(DRIVE_KEY)?.attempts, 2, 'queue entry kept its retry count')
   t.is(await client._loadAppDriveMapping('my-app'), DRIVE_KEY, 'app->drive mapping survived the upgrade')
-  t.is(client._bootstrapCache._peers.length, 1, 'cached bootstrap peers survived the upgrade')
-  t.is(client._bootstrapCache._peers[0].port, CACHED_PEER.port, 'cached peer intact')
+  t.alike(loadedPeers, [CACHED_PEER], 'the exact cached peer state was loaded before learning')
+  t.alike(client._bootstrapCache._peers.find(peer => peer.host === CACHED_PEER.host && peer.port === CACHED_PEER.port), CACHED_PEER, 'cached peer remains intact after learning')
+  t.ok(client._bootstrapCache._peers.some(peer => peer.host === LEARNED_PEER.host && peer.port === LEARNED_PEER.port), 'a newly learned peer coexists with the restored peer')
 
   // Migration bookkeeping is fully retired once the restore completes.
   t.absent(existsSync(stageDir(a.dir)), 'staging directory removed after restore')
