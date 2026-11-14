@@ -77,7 +77,7 @@ test('storage migration runtime binding rejects predecessor packages with identi
   const modules = path.join(root, 'node_modules')
   const dependency = path.join(modules, 'hypercore-storage')
   fs.mkdirSync(path.join(dependency, 'migrations', '0'), { recursive: true })
-  for (const name of ['device-file', 'fd-lock']) {
+  for (const name of ['device-file', 'fd-lock', 'fs-native-extensions']) {
     fs.symlinkSync(path.dirname(fileURLToPath(import.meta.resolve(name))), path.join(modules, name))
   }
   fs.copyFileSync(new URL('../../packages/core/core/persistence/corestore-generation-envelope.js', import.meta.url), path.join(root, 'binding.mjs'))

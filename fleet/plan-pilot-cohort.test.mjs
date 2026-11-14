@@ -43,7 +43,7 @@ test('current fleet excludes missing Bern and blocks a stale pilot target', asyn
   assert.equal(report.options[0].recommended, true)
   assert.equal(report.options[0].status, 'requires-reviewed-tooling-change')
   assert.deepEqual(report.options[1].rebindToStable, ['utah-2gb-a'])
-  assert.equal(report.options[1].status, 'blocked-by-channel-target-drift')
+  assert.equal(report.options[1].status, 'requires-human-fleet-lease')
   assert.equal(report.authority.authorizesMutation, false)
   assert.equal(report.authority.authorizesPublication, false)
   assert.equal(report.authority.authorizesHttpsActivation, false)
