@@ -2083,8 +2083,7 @@ export class RelayNode extends EventEmitter {
         this._serviceContext = this._buildServiceContext()
         const startupResult = await this.serviceRegistry.startAll(this._serviceContext)
         if (startupResult.failed.length > 0 && this.config.servicesFailOpen !== true) {
-          const names = startupResult.failed.map(s => s.name).join(', ')
-          throw new Error(`SERVICE_START_FAILED: ${names}`)
+          throw this.serviceRegistry.startupError(startupResult.failed)
         }
         this._startServiceSupervision()
 

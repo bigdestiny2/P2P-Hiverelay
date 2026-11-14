@@ -30,6 +30,14 @@ function overridesMethod (provider, method) {
   return !!proto && Object.prototype.hasOwnProperty.call(proto, method)
 }
 
+function failureCode (value) {
+  return typeof value === 'string' && /^[A-Z][A-Z0-9_]{1,95}$/.test(value) ? value : null
+}
+
+function failureReason (value) {
+  return typeof value === 'string' && /^(storage|capacity|outboxlog)-[a-z-]{1,96}$/.test(value) ? value : null
+}
+
 export class ServiceRegistry extends EventEmitter {
   constructor (opts = {}) {
     super()
@@ -40,6 +48,27 @@ export class ServiceRegistry extends EventEmitter {
     this._lifecycleTail = Promise.resolve()
     this._lifecyclePending = 0
     this._stopAllPending = 0
+  }
+
+  startupError (failed) {
+    // Startup callers need actionable local codes without propagating provider
+    // messages, which may contain application payloads or configuration values.
+    const failures = failed.map(failure => ({
+      name: failure.name,
+      code: failureCode(failure.code) || 'SERVICE_START_FAILED',
+      reason: failureReason(failure.reason)
+    }))
+    const details = failures.map(failure => `${failure.name} [${failure.code}${failure.reason ? ': ' + failure.reason : ''}]`)
+    const error = new Error('SERVICE_START_FAILED: ' + details.join(', '))
+    error.code = 'SERVICE_START_FAILED'
+    error.failures = failures
+    error.cause = new AggregateError(failures.map(failure => {
+      const cause = new Error(failure.code + (failure.reason ? ': ' + failure.reason : ''))
+      cause.code = failure.code
+      cause.reason = failure.reason
+      return cause
+    }), 'Configured service startup failed')
+    return error
   }
 
   /**
@@ -303,6 +332,10 @@ export class ServiceRegistry extends EventEmitter {
           entry.lastError = err.message || String(err)
           this.emit('service-start-error', { name, error: err.message })
           const failure = { name, error: err.message || String(err) }
+          const code = failureCode(err.code)
+          const reason = failureReason(err.storageAdmission?.reason || err.reason)
+          if (code) failure.code = code
+          if (reason) failure.reason = reason
 
           // start() may fail after opening cores, timers, sockets, or other
           // append-capable resources. Never discard that provider until its

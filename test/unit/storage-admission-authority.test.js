@@ -22,6 +22,68 @@ const CAP = 10 * GiB
 const STORAGE = '/verified/storage'
 const K1 = 'a'.repeat(64)
 
+test('outbox recovery charges exact bytes and every finite promise while leaving unknown pins closed', t => {
+  const journalKey = 'outboxlog:outboxlog/operations'
+  for (const deficit of [0, 1]) {
+    const a = authority({ cap: 4 * GiB - deficit, getUsedBytes: () => GiB, recoveryKinds: [] })
+    a.adoptRecovery('workload:registry', GiB, { kind: 'workload' })
+    const pending = a.reserve('workload:pending', GiB, { kind: 'workload' })
+    t.ok(pending.allowed)
+    a.adoptRecovery(`drive:${K1}`, null, { kind: 'drive' })
+    a.adoptRecovery('core:' + 'b'.repeat(64), null, { kind: 'core' })
+    const before = a.snapshot().records
+    const result = a.recoverOutboxJournal(journalKey, GiB, 1024)
+    t.is(result.allowed, deficit === 0)
+    if (deficit) t.alike(a.snapshot().records, before, 'one-byte cap shortfall leaves all records unchanged')
+    else {
+      t.is(result.admission.usedBytes, 3 * GiB, 'tree plus committed and pending promises, without actual-byte discounts')
+      t.is(a.get(journalKey).boundBytes, GiB)
+      t.is(a.get(`drive:${K1}`).state, 'unknown-recovery')
+      t.is(a.reserve('core:' + 'c'.repeat(64), 1).reason, 'storage-commitment-unknown')
+      t.is(a.recoverOutboxJournal(journalKey, GiB, 1024).reason, 'outboxlog-recovery-already-owned')
+    }
+  }
+})
+
+test('outbox recovery retains fresh statfs reserve, capacity profile and root identity checks', t => {
+  const journalKey = 'outboxlog:outboxlog/operations'
+  const make = opts => {
+    const a = authority({ recoveryKinds: [], ...opts })
+    a.adoptRecovery(`drive:${K1}`, null, { kind: 'drive' })
+    return a
+  }
+  const physical = make({ sampleFilesystem: () => ({ ...physicalSample(), freeBytes: 11 * GiB }) })
+  physical.adoptRecovery('workload:registry', GiB / 2, { kind: 'workload' })
+  t.is(physical.recoverOutboxJournal(journalKey, GiB / 2 + 1, 0).reason, 'insufficient-storage')
+  t.absent(physical.get(journalKey), 'physical reserve and finite debt cannot be spent twice')
+  let samples = 0
+  const swapped = make({ sampleFilesystem: () => ({ ...physicalSample(), inode: String(++samples) }) })
+  t.is(swapped.recoverOutboxJournal(journalKey, GiB, 0).reason, 'storage-filesystem-changed-during-usage-measurement')
+  const invalidProfile = make({ capacityProfile: 'not-a-profile' })
+  t.is(invalidProfile.recoverOutboxJournal(journalKey, GiB, 0).reason, 'capacity-profile-invalid')
+  t.absent(invalidProfile.get(journalKey))
+})
+
+test('outbox recovery refuses unsealed, stopped, fatal, unrecognized unknown and conflicting records', t => {
+  const journalKey = 'outboxlog:outboxlog/operations'
+  const cases = [
+    ['unsealed', a => a.beginRecovery(['drives']), 'storage-recovery-inventory-pending'],
+    ['stopped', a => a.closeMutations('stopped'), 'stopped'],
+    ['fatal', a => a.failClosed('fatal'), 'fatal'],
+    ['required physical enforcement', a => { a.config.requirePhysicalEnforcement = true }, 'storage-physical-enforcement-unavailable'],
+    ['unknown workload', a => a.adoptRecovery('workload:unproven', null), 'storage-commitment-unknown'],
+    ['noncanonical pin', a => a.adoptRecovery('drive:BAD', null, { kind: 'drive' }), 'storage-commitment-unknown'],
+    ['conflicting journal', a => a.adoptRecovery(journalKey, null), 'outboxlog-recovery-already-owned']
+  ]
+  for (const [label, setup, reason] of cases) {
+    const a = authority({ recoveryKinds: [] })
+    setup(a)
+    const before = a.snapshot().records
+    t.is(a.recoverOutboxJournal(journalKey, GiB, 0).reason, reason, label)
+    t.alike(a.snapshot().records, before)
+  }
+})
+
 function healthySample (checkedAt = Date.now()) {
   return {
     ok: true,

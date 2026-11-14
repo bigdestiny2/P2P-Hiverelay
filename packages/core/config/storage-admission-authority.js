@@ -859,6 +859,10 @@ export class StorageAdmissionAuthority extends EventEmitter {
 
     const committedRemainder = this._committedRemainder({ excluding: opts.excluding || null })
     if (committedRemainder === null) return admissionFailure('storage-commitment-unknown')
+    return this._evaluateMeasuredAdmission(additional, committedRemainder, sample)
+  }
+
+  _evaluateMeasuredAdmission (additional, committedRemainder, sample, physicalLimit = null) {
     const measuredUsed = finiteNonNegativeInteger(this.getUsedBytes())
     if (measuredUsed === null) return admissionFailure('storage-usage-invalid')
     // The exact tree walk may be long. Re-sample after it and bind both sides
@@ -874,8 +878,11 @@ export class StorageAdmissionAuthority extends EventEmitter {
     // Bind the ceiling to the same re-sampled filesystem the capacity terms
     // came from, so a mount swap mid-admission cannot pair one device's size
     // with another device's usage.
-    const ceiling = this.capacityCeiling(finalSample)
+    let ceiling = this.capacityCeiling(finalSample)
     if (ceiling && ceiling.invalid) return admissionFailure(ceiling.reason)
+    if (physicalLimit !== null && (!ceiling || physicalLimit < ceiling.bytes)) {
+      ceiling = { bytes: physicalLimit, source: 'physical-enforcement' }
+    }
     return evaluateStorageAdmission(this.config, {
       usedBytes,
       additionalBytes: additional,
@@ -884,6 +891,68 @@ export class StorageAdmissionAuthority extends EventEmitter {
       capCeilingBytes: ceiling ? ceiling.bytes : null,
       capCeilingSource: ceiling ? ceiling.source : null
     })
+  }
+
+  /**
+   * Restore the finite commitment proved by OutboxLog's local durable journal.
+   * The caller must first validate its owner, identity, bound and debt ledger.
+   * This is not fresh admission: only canonical serve-only drive/core recovery
+   * records may lack bounds. Their existing bytes remain in the exact tree
+   * measurement; every finite promise is still charged in full. Normal
+   * admission deliberately continues to reject those unknown commitments.
+   */
+  recoverOutboxJournal (key, boundBytes, actualBytes) {
+    const admission = this.mutationAdmission()
+    if (!admission.allowed) return admission
+    const bound = positiveStorageBound(boundBytes)
+    const actual = finiteNonNegativeInteger(actualBytes)
+    if (typeof key !== 'string' || !key.startsWith('outboxlog:') || key.length <= 10 ||
+        bound === null || actual === null || actual > bound) {
+      return admissionFailure('outboxlog-recovery-invalid')
+    }
+    if (!this.recoveryReady) return admissionFailure('storage-recovery-inventory-pending')
+    let physicalLimit = null
+    if (this.config?.requirePhysicalEnforcement === true || this.physicalEnforcer) {
+      const attestation = this.physicalEnforcementSnapshot()
+      if (!this.physicalEnforcementActive || !attestation ||
+          positiveStorageBound(attestation.hardLimitBytes) === null ||
+          !Number.isSafeInteger(attestation.usedAllocatedBytes) ||
+          attestation.usedAllocatedBytes >= attestation.hardLimitBytes) {
+        return admissionFailure('storage-physical-enforcement-unavailable')
+      }
+      physicalLimit = attestation.hardLimitBytes
+    }
+    if (this._records.has(key) || this._ownedLeases.has(key)) {
+      return admissionFailure('outboxlog-recovery-already-owned')
+    }
+    const sample = this.filesystemSample({ refresh: true })
+    if (sample.ok !== true) return sample
+    let commitments = 0
+    for (const [recordKey, record] of this._records) {
+      if (record.state === 'unknown-recovery' && record.recovery === true && record.boundBytes === null &&
+          (record.kind === 'drive' || record.kind === 'core') &&
+          new RegExp(`^${record.kind}:[0-9a-f]{64}$`).test(recordKey)) continue
+      const remaining = this._remainingBytes(recordKey, record)
+      if (remaining === null || !Number.isSafeInteger(commitments + remaining)) {
+        return admissionFailure('storage-commitment-unknown')
+      }
+      commitments += remaining
+    }
+    const capacity = this._evaluateMeasuredAdmission(bound, commitments, sample, physicalLimit)
+    if (!capacity.allowed) return capacity
+    // No await separates the exact proof and the installed debt. Concurrent
+    // recoveries and reservations must observe this whole promise immediately.
+    this._setRecord(key, {
+      key,
+      kind: 'outboxlog',
+      boundBytes: bound,
+      overheadBytes: 0,
+      state: 'committed',
+      recovery: true,
+      tokenId: null,
+      actualBytesOverride: actual
+    })
+    return { allowed: true, key, boundBytes: bound, actualBytes: actual, admission: capacity }
   }
 
   reserve (key, boundBytes, opts = {}) {

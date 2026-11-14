@@ -26,8 +26,8 @@
  * OutboxLogApp (in-memory persistence — the durability backend is
  * orthogonal to this journey) on a hyperswarm testnet; clients drive the
  * real /api/sync and /api/admin HTTP surface. The RelayNode-boots-
- * outboxlog-with-hypercore-journal path on a fresh store is separately
- * broken upstream of these journeys — see the marked GAP test below.
+ * outboxlog-with-hypercore-journal path is exercised separately below on
+ * fresh storage and a cold restart with a legacy unknown core pin.
  */
 
 import test from 'brittle'
@@ -235,46 +235,23 @@ test('journey namespace × blind: two apps share one relay under blind namespace
   t.is(betaOutbox.body, null, 'beta outbox never gained the replayed record')
 })
 
-// ─── MARKED GAP (GIGA DoD §7 "Cross-feature journeys" — namespace rows) ──
-//
-// RelayNode + PluginLoader + outboxlog with the operator-required bounded
-// persistence backend (`outboxlog.journal: 'hypercore'`) does NOT boot on a
-// fresh disk store with the vendored hypercore 11.34.1 / corestore 7.11.1:
-//
-//   1. createHypercoreOutboxJournal probes the named journal core via
-//      `store.get({ name, createIfMissing: false })`. On a fresh store that
-//      open fails STORAGE_EMPTY — and the failed core is never evicted from
-//      corestore's tracker, so the follow-up `store.get({ name })` creation
-//      resumes the same poisoned core and fails STORAGE_EMPTY again
-//      (reproduced standalone: probe → create on an empty Corestore).
-//   2. Even with the journal core pre-created, JournalStorageController
-//      .measureExact() throws "OutboxLog exact core storage info
-//      unavailable" because `core.info({ storage: true }).storage` is null
-//      with the vendored hypercore.
-//
-// Consequence: an operator enabling `plugins: ['outboxlog']` with the
-// bounded-persistence journal (the ONLY persistence shape RelayNode's
-// storage-admission gate accepts) gets SERVICE_START_FAILED on first boot.
-// The journeys above therefore register the real OutboxLogApp with
-// in-memory persistence (its documented constructor option); the
-// namespace/blind/takedown semantics under test are independent of the
-// durability backend.
-//
-// This skipped test encodes the expected composition once the journal's
-// probe/measure path is repaired — unskip it as the fix verification.
-test.skip('gap: RelayNode boots outboxlog with hypercore journal on a fresh store (GIGA DoD §7)', async (t) => {
+// Actual service composition: ordinary fresh admission, then durable recovery
+// beside a legacy unknown pin. No offline bootstrap exception is involved.
+test('RelayNode boots and cold-recovers bounded outboxlog beside an unknown legacy core', async (t) => {
   const dir = tmpdir(t)
   const relayStorage = path.join(dir, 'relay')
   fs.mkdirSync(relayStorage, { recursive: true })
   const testnet = await createTestnet(3)
-  const relay = new RelayNode({
+  const config = {
     storage: relayStorage,
+    maxStorageBytes: 1024 ** 3,
+    bootstrapCacheEnabled: false,
     bootstrapNodes: testnet.bootstrap,
     enableAPI: false,
     enableRelay: false,
     enableSeeding: true,
     enableServices: true,
-    plugins: ['outboxlog'],
+    plugins: ['outboxlog', 'notify', 'vrf'],
     enableNetworkDiscovery: false,
     enableHolesail: false,
     outboxlog: {
@@ -282,7 +259,8 @@ test.skip('gap: RelayNode boots outboxlog with hypercore journal on a fresh stor
       maxJournalStorageBytes: 16 * 1024 * 1024,
       namespaces: NAMESPACES
     }
-  })
+  }
+  let relay = new RelayNode(config)
   t.teardown(async () => {
     try { await relay.stop() } catch {}
     try { await testnet.destroy() } catch {}
@@ -290,4 +268,23 @@ test.skip('gap: RelayNode boots outboxlog with hypercore journal on a fresh stor
   await relay.start()
   t.is(relay.serviceRegistry.services.get('outboxlog')?.status, 'running',
     'outboxlog boots with the bounded hypercore journal on a fresh store')
+  const legacyCore = relay.store.get({ name: 'fixture-legacy-unknown-core' })
+  await legacyCore.ready()
+  await legacyCore.append(Buffer.from('retained legacy data'))
+  const key = legacyCore.key.toString('hex')
+  await legacyCore.close()
+  const identity = relay.publicKey.toString('hex')
+  await relay.stop()
+  fs.writeFileSync(path.join(relayStorage, 'seeded-cores.json'), JSON.stringify({ schemaVersion: 1, cores: [key] }))
+  relay = new RelayNode(config)
+  await relay.start()
+  for (const name of config.plugins) t.is(relay.serviceRegistry.services.get(name)?.status, 'running', name + ' recovered')
+  t.is(relay.publicKey.toString('hex'), identity, 'identity survives cold service recovery')
+  t.is(relay.storageAdmission.get('core:' + key)?.state, 'unknown-recovery')
+  t.is(relay.storageAdmission.reserve('core:' + 'f'.repeat(64), 1024).reason, 'storage-commitment-unknown', 'fresh admission remains blocked')
+  const retained = relay.store.get({ key: Buffer.from(key, 'hex') })
+  await retained.ready()
+  t.is((await retained.get(0, { wait: false })).toString(), 'retained legacy data')
+  await retained.close()
+  await relay.stop()
 })
