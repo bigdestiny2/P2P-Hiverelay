@@ -1275,8 +1275,14 @@ export class AppLifecycle extends EventEmitter {
       const maxStorage = positiveStorageBound(opts.maxStorage)
 
       const previousRegistryEntry = node.appRegistry.get(appKeyHex) || null
-      const readOnlyRecovery = recoveringExisting &&
+      // Boot recovery attaches process-local handles to the accepted row. A
+      // partial seed-options projection must not rewrite publisher commitments
+      // or descriptive metadata (including fields unknown to this version).
+      // External re-pins and changed bounds still use normal admission/persist.
+      const attachingRecoveredRuntime = recoveringExisting &&
         opts[STORAGE_RECOVERY_INGRESS] === true &&
+        recoveredCapPlan?.changed === false
+      const readOnlyRecovery = attachingRecoveredRuntime &&
         node.appRegistry.physicalReadOnly === true
       const nextRegistryEntry = {
         drive,
@@ -1314,7 +1320,7 @@ export class AppLifecycle extends EventEmitter {
         // eviction must not shed early. Set by the lease gate on a verified seed.
         leaseManaged: opts.leaseManaged === true
       }
-      if (readOnlyRecovery) {
+      if (attachingRecoveredRuntime) {
         if (typeof node.appRegistry.attachRuntime !== 'function' ||
             node.appRegistry.attachRuntime(appKeyHex, {
               drive,
@@ -1334,7 +1340,7 @@ export class AppLifecycle extends EventEmitter {
         if (reservation && !node.storageAdmission.owns(reservation)) {
           throw new Error('storage reservation ownership lost before persistence')
         }
-        if (!readOnlyRecovery) {
+        if (!attachingRecoveredRuntime) {
           if (typeof node.appRegistry.persistEntry === 'function') {
             await node.appRegistry.persistEntry(appKeyHex, { throwOnError: true })
           } else {
@@ -1344,7 +1350,7 @@ export class AppLifecycle extends EventEmitter {
       } catch (err) {
         // Per-key CAS rollback: never restore a whole registry snapshot and
         // erase/resurrect unrelated concurrent mutations.
-        if (!readOnlyRecovery) {
+        if (!attachingRecoveredRuntime) {
           try {
             if (node.appRegistry.get(appKeyHex) === stagedRegistryEntry) {
               node.appRegistry.delete(appKeyHex, { persist: false })
